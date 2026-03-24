@@ -13,6 +13,7 @@
 mod claude;
 mod codex;
 mod gemini;
+mod importing;
 mod opencode;
 mod validation;
 
@@ -28,6 +29,16 @@ pub use gemini::{
     import_from_gemini, remove_server_from_gemini, sync_enabled_to_gemini,
     sync_single_server_to_gemini,
 };
+pub use importing::{McpImportIssue, McpImportIssueKind, McpImportResult};
 pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
+pub(crate) use claude::parse_import_from_claude;
+pub(crate) use codex::parse_import_from_codex;
+pub(crate) use gemini::parse_import_from_gemini;
+pub(crate) use importing::{
+    apply_parsed_import, build_imported_server, conflict_issue, invalid_issue, reconcile_imported_server,
+    ImportMergeAction, ParsedImport,
+};
+pub(crate) use opencode::parse_import_from_opencode;
+pub(crate) use validation::normalize_server_spec;

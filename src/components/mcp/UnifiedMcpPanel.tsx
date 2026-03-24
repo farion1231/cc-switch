@@ -9,7 +9,7 @@ import {
   useDeleteMcpServer,
   useImportMcpFromApps,
 } from "@/hooks/useMcp";
-import type { McpServer } from "@/types";
+import type { McpImportIssue, McpServer } from "@/types";
 import type { AppId } from "@/lib/api/types";
 import McpFormModal from "./McpFormModal";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -65,6 +65,41 @@ const UnifiedMcpPanel = React.forwardRef<
     return counts;
   }, [serverEntries]);
 
+  const formatImportIssues = (issues: McpImportIssue[]) => {
+    const visibleIssues = issues.slice(0, 3);
+    const lines = visibleIssues.map((issue) => {
+      const sourceApp = t(`mcp.unifiedPanel.apps.${issue.sourceApp}`);
+
+      if (issue.kind === "conflict") {
+        const existingApps = issue.existingApps
+          .map((app) => t(`mcp.unifiedPanel.apps.${app}`))
+          .join(", ");
+
+        return t("mcp.unifiedPanel.importConflictItem", {
+          id: issue.id,
+          sourceApp,
+          existingApps,
+        });
+      }
+
+      return t("mcp.unifiedPanel.importInvalidItem", {
+        id: issue.id,
+        sourceApp,
+      });
+    });
+
+    if (issues.length > visibleIssues.length) {
+      lines.push(
+        t("mcp.unifiedPanel.importWarningMore", {
+          count: issues.length - visibleIssues.length,
+        }),
+      );
+    }
+
+    lines.push(t("mcp.unifiedPanel.importWarningHint"));
+    return lines.join("\n");
+  };
+
   const handleToggleApp = async (
     serverId: string,
     app: AppId,
@@ -89,13 +124,33 @@ const UnifiedMcpPanel = React.forwardRef<
 
   const handleImport = async () => {
     try {
-      const count = await importMutation.mutateAsync();
-      if (count === 0) {
+      const result = await importMutation.mutateAsync();
+      const changedCount = result.added + result.refreshed + result.enabledOnly;
+      const hasWarnings = result.conflicts > 0 || result.invalid > 0;
+
+      if (changedCount === 0 && !hasWarnings) {
         toast.success(t("mcp.unifiedPanel.noImportFound"), {
           closeButton: true,
         });
-      } else {
-        toast.success(t("mcp.unifiedPanel.importSuccess", { count }), {
+        return;
+      }
+
+      if (changedCount > 0) {
+        toast.success(
+          t("mcp.unifiedPanel.importSummary", {
+            added: result.added,
+            refreshed: result.refreshed,
+            enabledOnly: result.enabledOnly,
+          }),
+          {
+            closeButton: true,
+          },
+        );
+      }
+
+      if (hasWarnings) {
+        toast.warning(t("mcp.unifiedPanel.importWarningTitle"), {
+          description: formatImportIssues(result.issues),
           closeButton: true,
         });
       }

@@ -3,10 +3,11 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+use crate::app_config::{AppType, McpConfig, MultiAppConfig};
 use crate::error::AppError;
 
-use super::validation::{extract_server_spec, validate_server_spec};
+use super::validation::{extract_server_spec, normalize_server_spec};
+use super::{apply_parsed_import, build_imported_server, invalid_issue, ParsedImport};
 
 fn should_sync_claude_mcp() -> bool {
     // Claude 未安装/未初始化时：通常 ~/.claude 目录与 ~/.claude.json 都不存在。
@@ -49,66 +50,39 @@ pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), AppError> {
 /// 从 ~/.claude.json 导入 mcpServers 到统一结构（v3.7.0+）
 /// 已存在的服务器将启用 Claude 应用，不覆盖其他字段和应用状态
 pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError> {
+    let parsed = parse_import_from_claude()?;
+    apply_parsed_import(config, parsed, AppType::Claude)
+}
+
+pub(crate) fn parse_import_from_claude() -> Result<ParsedImport, AppError> {
     let text_opt = crate::claude_mcp::read_mcp_json()?;
-    let Some(text) = text_opt else { return Ok(0) };
+    let Some(text) = text_opt else {
+        return Ok(ParsedImport::default());
+    };
 
     let v: Value = serde_json::from_str(&text)
         .map_err(|e| AppError::McpValidation(format!("解析 ~/.claude.json 失败: {e}")))?;
     let Some(map) = v.get("mcpServers").and_then(|x| x.as_object()) else {
-        return Ok(0);
+        return Ok(ParsedImport::default());
     };
 
-    // 确保新结构存在
-    let servers = config.mcp.servers.get_or_insert_with(HashMap::new);
-
-    let mut changed = 0;
-    let mut errors = Vec::new();
+    let mut parsed = ParsedImport::default();
 
     for (id, spec) in map.iter() {
-        // 校验：单项失败不中止，收集错误继续处理
-        if let Err(e) = validate_server_spec(spec) {
-            log::warn!("跳过无效 MCP 服务器 '{id}': {e}");
-            errors.push(format!("{id}: {e}"));
-            continue;
-        }
-
-        if let Some(existing) = servers.get_mut(id) {
-            // 已存在：仅启用 Claude 应用
-            if !existing.apps.claude {
-                existing.apps.claude = true;
-                changed += 1;
-                log::info!("MCP 服务器 '{id}' 已启用 Claude 应用");
+        match normalize_server_spec(spec) {
+            Ok(spec) => parsed
+                .servers
+                .push(build_imported_server(id.clone(), AppType::Claude, spec)),
+            Err(e) => {
+                log::warn!("跳过无效 MCP 服务器 '{id}': {e}");
+                parsed
+                    .issues
+                    .push(invalid_issue(id.clone(), AppType::Claude, e.to_string()));
             }
-        } else {
-            // 新建服务器：默认仅启用 Claude
-            servers.insert(
-                id.clone(),
-                McpServer {
-                    id: id.clone(),
-                    name: id.clone(),
-                    server: spec.clone(),
-                    apps: McpApps {
-                        claude: true,
-                        codex: false,
-                        gemini: false,
-                        opencode: false,
-                    },
-                    description: None,
-                    homepage: None,
-                    docs: None,
-                    tags: Vec::new(),
-                },
-            );
-            changed += 1;
-            log::info!("导入新 MCP 服务器 '{id}'");
         }
     }
 
-    if !errors.is_empty() {
-        log::warn!("导入完成，但有 {} 项失败: {:?}", errors.len(), errors);
-    }
-
-    Ok(changed)
+    Ok(parsed)
 }
 
 /// 将单个 MCP 服务器同步到 Claude live 配置

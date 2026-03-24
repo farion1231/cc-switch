@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   McpConfigResponse,
+  McpImportResult,
   McpServer,
   McpServerSpec,
   McpServersMap,
@@ -123,7 +124,7 @@ export const mcpApi = {
   /**
    * 从所有应用导入 MCP 服务器
    */
-  async importFromApps(): Promise<number> {
+  async importFromApps(): Promise<McpImportResult> {
     return await invoke("import_mcp_from_apps");
   },
 };

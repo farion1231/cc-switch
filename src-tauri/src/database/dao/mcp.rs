@@ -5,6 +5,7 @@
 use crate::app_config::{McpApps, McpServer};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use crate::mcp::normalize_server_spec;
 use indexmap::IndexMap;
 use rusqlite::params;
 
@@ -66,6 +67,7 @@ impl Database {
 
     /// 保存 MCP 服务器
     pub fn save_mcp_server(&self, server: &McpServer) -> Result<(), AppError> {
+        let canonical_server = normalize_server_spec(&server.server)?;
         let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
@@ -75,7 +77,7 @@ impl Database {
             params![
                 server.id,
                 server.name,
-                serde_json::to_string(&server.server).map_err(|e| AppError::Database(format!(
+                serde_json::to_string(&canonical_server).map_err(|e| AppError::Database(format!(
                     "Failed to serialize server config: {e}"
                 )))?,
                 server.description,

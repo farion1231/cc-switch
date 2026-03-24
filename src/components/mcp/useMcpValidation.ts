@@ -73,11 +73,23 @@ export function useMcpValidation() {
           }
 
           const typ = (obj as any)?.type;
+          const hasUrl = Object.prototype.hasOwnProperty.call(obj, "url");
+          const hasCommand = Object.prototype.hasOwnProperty.call(
+            obj,
+            "command",
+          );
+
+          if (!typ && hasUrl) {
+            return t("mcp.error.typeRequiredForUrl");
+          }
           if (typ === "stdio" && !(obj as any)?.command?.trim()) {
             return t("mcp.error.commandRequired");
           }
           if ((typ === "http" || typ === "sse") && !(obj as any)?.url?.trim()) {
             return t("mcp.wizard.urlRequired");
+          }
+          if (!typ && hasCommand) {
+            return "";
           }
         }
       } catch {

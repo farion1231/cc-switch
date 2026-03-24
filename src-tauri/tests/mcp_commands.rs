@@ -301,6 +301,48 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
 }
 
 #[test]
+fn upsert_mcp_server_rejects_url_without_type() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+
+    let err = McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "remote-server".to_string(),
+            name: "Remote Server".to_string(),
+            server: json!({
+                "url": "https://example.com/mcp"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect_err("url-only server without type should be rejected");
+
+    match err {
+        AppError::McpValidation(msg) => assert!(
+            msg.contains("显式指定 type") || msg.contains("type"),
+            "unexpected error message: {msg}"
+        ),
+        other => panic!("unexpected error variant: {other:?}"),
+    }
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    assert!(servers.is_empty(), "invalid server should not be persisted");
+}
+
+#[test]
 fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -418,6 +460,181 @@ command = "echo"
     let entry = servers.get("shared").expect("shared server exists");
     assert!(entry.apps.claude, "shared should enable Claude");
     assert!(entry.apps.codex, "shared should enable Codex");
+}
+
+#[test]
+fn import_from_codex_refreshes_codex_owned_entry() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(
+        codex_dir.join("config.toml"),
+        r#"[mcp_servers.existing]
+type = "stdio"
+command = "echo"
+"#,
+    )
+    .expect("seed codex config");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "existing".to_string(),
+            name: "existing".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "prev"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+            },
+            description: Some("Keep me".to_string()),
+            homepage: Some("https://example.com".to_string()),
+            docs: None,
+            tags: vec!["demo".to_string()],
+        })
+        .expect("seed codex-owned server");
+
+    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    assert!(changed >= 1, "import should refresh changed server");
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("existing").expect("existing entry");
+    assert_eq!(
+        entry.server.get("command").and_then(|v| v.as_str()),
+        Some("echo"),
+        "Codex-owned entry should be refreshed from import"
+    );
+    assert_eq!(entry.description.as_deref(), Some("Keep me"));
+    assert_eq!(entry.homepage.as_deref(), Some("https://example.com"));
+    assert_eq!(entry.tags, vec!["demo".to_string()]);
+}
+
+#[test]
+fn import_from_apps_detailed_only_enables_matching_cross_app_server() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(
+        codex_dir.join("config.toml"),
+        r#"[mcp_servers.shared]
+type = "stdio"
+command = "echo"
+"#,
+    )
+    .expect("seed codex config");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "shared".to_string(),
+            name: "shared".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("seed shared server");
+
+    let result = McpService::import_from_apps_detailed(&state).expect("import from apps");
+    assert_eq!(result.added, 0);
+    assert_eq!(result.refreshed, 0);
+    assert_eq!(result.enabled_only, 1);
+    assert_eq!(result.conflicts, 0);
+    assert_eq!(result.invalid, 0);
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("shared").expect("shared entry");
+    assert!(entry.apps.claude);
+    assert!(entry.apps.codex, "Codex should be enabled for identical spec");
+    assert_eq!(
+        entry.server.get("command").and_then(|v| v.as_str()),
+        Some("echo"),
+        "same-spec import should not rewrite server config"
+    );
+}
+
+#[test]
+fn import_from_apps_detailed_reports_conflict_for_shared_mismatch() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(
+        codex_dir.join("config.toml"),
+        r#"[mcp_servers.shared]
+type = "stdio"
+command = "echo"
+"#,
+    )
+    .expect("seed codex config");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "shared".to_string(),
+            name: "shared".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "prev"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: true,
+                opencode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("seed multi-app shared server");
+
+    let result = McpService::import_from_apps_detailed(&state).expect("import from apps");
+    assert_eq!(result.added, 0);
+    assert_eq!(result.refreshed, 0);
+    assert_eq!(result.enabled_only, 0);
+    assert_eq!(result.conflicts, 1);
+    assert_eq!(result.invalid, 0);
+    assert_eq!(result.issues[0].id, "shared");
+    assert_eq!(result.issues[0].source_app.as_str(), "codex");
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("shared").expect("shared entry");
+    assert!(
+        !entry.apps.codex,
+        "conflicting import should not silently enable source app"
+    );
+    assert_eq!(
+        entry.server.get("command").and_then(|v| v.as_str()),
+        Some("prev"),
+        "conflicting import should preserve existing server config"
+    );
 }
 
 #[test]
