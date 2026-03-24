@@ -1,5 +1,9 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const ICONS_DIR = path.join(__dirname, '../src/icons/extracted');
 const INDEX_FILE = path.join(ICONS_DIR, 'index.ts');
@@ -44,22 +48,46 @@ const KNOWN_METADATA = {
   link: { name: 'link', displayName: 'Link', category: 'other', keywords: ['url', 'hyperlink'], defaultColor: '#6B7280' },
 };
 
+// Icon aliases for backward compatibility
+// Maps canonical name -> actual filename
+const ICON_ALIASES = {
+  'opencode': 'opencode-logo-light',
+  'openclaw': 'claw',
+  'aihubmix': 'aihubmix-color',
+  'aigocode': 'algocode',
+};
+
 // Get all SVG files
 const files = fs.readdirSync(ICONS_DIR).filter(file => file.endsWith('.svg'));
 
 console.log(`Found ${files.length} SVG files.`);
 
+// Build icon map: canonical name -> SVG content
+const iconMap = new Map();
+for (const file of files) {
+  const name = path.basename(file, '.svg');
+  const svg = fs.readFileSync(path.join(ICONS_DIR, file), 'utf-8');
+  iconMap.set(name, svg);
+}
+
+// Add aliases - they point to the same SVG content
+for (const [alias, target] of Object.entries(ICON_ALIASES)) {
+  if (iconMap.has(target)) {
+    iconMap.set(alias, iconMap.get(target));
+  }
+}
+
 // Generate index.ts
+const entries = Array.from(iconMap.entries()).map(([name, svg]) => {
+  const escaped = svg.replace(/`/g, '\\`').replace(/\$/g, '\\$');
+  return `  '${name}': \`${escaped}\`,`;
+});
+
 const indexContent = `// Auto-generated icon index
 // Do not edit manually
 
 export const icons: Record<string, string> = {
-${files.map(file => {
-  const name = path.basename(file, '.svg');
-  const svg = fs.readFileSync(path.join(ICONS_DIR, file), 'utf-8');
-  const escaped = svg.replace(/`/g, '\\`').replace(/\$/g, '\\$');
-  return `  '${name}': \`${escaped}\`,`;
-}).join('\n')}
+${entries.join('\n')}
 };
 
 export const iconList = Object.keys(icons);
@@ -77,17 +105,28 @@ fs.writeFileSync(INDEX_FILE, indexContent);
 console.log(`Generated ${INDEX_FILE}`);
 
 // Generate metadata.ts
-const metadataEntries = files.map(file => {
+// For aliases, use the target's metadata
+const metadataEntries = [];
+for (const file of files) {
   const name = path.basename(file, '.svg').toLowerCase();
   const known = KNOWN_METADATA[name];
-  
+
   if (known) {
-    return `  ${name}: ${JSON.stringify(known)},`;
+    metadataEntries.push(`  ${name}: ${JSON.stringify(known)},`);
+  } else {
+    metadataEntries.push(`  '${name}': { name: '${name}', displayName: '${name}', category: 'other', keywords: [], defaultColor: 'currentColor' },`);
   }
-  
-  // Default metadata for unknown icons
-  return `  '${name}': { name: '${name}', displayName: '${name}', category: 'other', keywords: [], defaultColor: 'currentColor' },`;
-});
+}
+
+// Add metadata for aliases
+for (const [alias, target] of Object.entries(ICON_ALIASES)) {
+  const targetMetadata = KNOWN_METADATA[target] || KNOWN_METADATA[alias];
+  if (targetMetadata) {
+    metadataEntries.push(`  ${alias}: ${JSON.stringify({ ...targetMetadata, name: alias })},`);
+  } else {
+    metadataEntries.push(`  '${alias}': { name: '${alias}', displayName: '${alias}', category: 'other', keywords: [], defaultColor: 'currentColor' },`);
+  }
+}
 
 const metadataContent = `// Icon metadata for search and categorization
 import { IconMetadata } from '@/types/icon';
