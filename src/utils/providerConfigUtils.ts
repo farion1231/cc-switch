@@ -364,6 +364,8 @@ export interface UpdateTomlCommonConfigResult {
   error?: string;
 }
 
+const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
+
 const getTomlRootScalarSnippetKeys = (
   snippet: Record<string, any>,
 ): Set<string> => {
@@ -374,45 +376,136 @@ const getTomlRootScalarSnippetKeys = (
   );
 };
 
-const liftMisplacedTomlRootScalars = (
-  config: Record<string, any>,
-  snippet: Record<string, any>,
-): Record<string, any> => {
-  const rootScalarKeys = getTomlRootScalarSnippetKeys(snippet);
-  if (rootScalarKeys.size === 0) {
-    return config;
+const trimTomlBlankLines = (lines: string[]): string[] => {
+  let start = 0;
+  let end = lines.length;
+
+  while (start < end && lines[start].trim() === "") {
+    start += 1;
+  }
+  while (end > start && lines[end - 1].trim() === "") {
+    end -= 1;
   }
 
-  const liftedEntries = new Map<string, any>();
+  return lines.slice(start, end);
+};
 
-  const visit = (node: Record<string, any>, isRoot: boolean) => {
-    Object.entries(node).forEach(([key, value]) => {
-      if (isPlainObject(value)) {
-        visit(value, false);
-        if (Object.keys(value).length === 0) {
-          delete node[key];
-        }
-        return;
-      }
+const getTomlAssignmentKey = (line: string): string | undefined => {
+  const match = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/);
+  return match?.[1];
+};
 
-      if (!isRoot && rootScalarKeys.has(key)) {
-        if (!Object.prototype.hasOwnProperty.call(config, key)) {
-          liftedEntries.set(key, value);
-        }
-        delete node[key];
-      }
-    });
-  };
+const getTomlRootScalarSnippetBlock = (
+  snippetString: string,
+  rootScalarKeys: Set<string>,
+): string[] => {
+  const lines = normalizeTomlText(snippetString).split("\n");
+  const firstSectionIndex = lines.findIndex((line) =>
+    TOML_SECTION_HEADER_PATTERN.test(line),
+  );
+  const rootLines =
+    firstSectionIndex === -1 ? lines : lines.slice(0, firstSectionIndex);
+  const trimmedRootLines = trimTomlBlankLines(rootLines);
 
-  visit(config, true);
-
-  liftedEntries.forEach((value, key) => {
-    if (!Object.prototype.hasOwnProperty.call(config, key)) {
-      config[key] = value;
-    }
+  const hasRootScalarAssignment = trimmedRootLines.some((line) => {
+    const key = getTomlAssignmentKey(line);
+    return key !== undefined && rootScalarKeys.has(key);
   });
 
-  return config;
+  return hasRootScalarAssignment ? trimmedRootLines : [];
+};
+
+const normalizeMalformedTrailingTomlRootScalars = (
+  tomlString: string,
+  snippetString: string,
+): string => {
+  if (!tomlString.trim()) {
+    return tomlString;
+  }
+
+  let snippet: Record<string, any>;
+  try {
+    snippet = parseToml(normalizeTomlText(snippetString)) as Record<
+      string,
+      any
+    >;
+  } catch {
+    return tomlString;
+  }
+
+  const rootScalarKeys = getTomlRootScalarSnippetKeys(snippet);
+  if (rootScalarKeys.size === 0) {
+    return tomlString;
+  }
+
+  const snippetBlock = getTomlRootScalarSnippetBlock(
+    snippetString,
+    rootScalarKeys,
+  );
+  if (snippetBlock.length === 0) {
+    return tomlString;
+  }
+
+  const lines = normalizeTomlText(tomlString).split("\n");
+  let docEndIndex = lines.length;
+  while (docEndIndex > 0 && lines[docEndIndex - 1].trim() === "") {
+    docEndIndex -= 1;
+  }
+
+  const blockStartIndex = docEndIndex - snippetBlock.length;
+  if (blockStartIndex <= 0) {
+    return tomlString;
+  }
+
+  const trailingBlock = lines.slice(blockStartIndex, docEndIndex);
+  if (
+    trailingBlock.length !== snippetBlock.length ||
+    trailingBlock.some(
+      (line, index) => line.trim() !== snippetBlock[index].trim(),
+    )
+  ) {
+    return tomlString;
+  }
+
+  if (lines[blockStartIndex - 1].trim() !== "") {
+    return tomlString;
+  }
+
+  let lastSectionIndex = -1;
+  for (let index = 0; index < blockStartIndex; index += 1) {
+    if (TOML_SECTION_HEADER_PATTERN.test(lines[index])) {
+      lastSectionIndex = index;
+    }
+  }
+  if (lastSectionIndex === -1) {
+    return tomlString;
+  }
+
+  const withoutTrailingBlock = [
+    ...lines.slice(0, blockStartIndex - 1),
+    ...lines.slice(docEndIndex),
+  ];
+  const insertIndex = getTopLevelEndIndex(withoutTrailingBlock);
+  const rebuiltLines = [...withoutTrailingBlock];
+
+  const blockToInsert = [...snippetBlock];
+  if (
+    insertIndex > 0 &&
+    rebuiltLines[insertIndex - 1] !== undefined &&
+    rebuiltLines[insertIndex - 1].trim() !== ""
+  ) {
+    blockToInsert.unshift("");
+  }
+  if (
+    insertIndex < rebuiltLines.length &&
+    rebuiltLines[insertIndex] !== undefined &&
+    rebuiltLines[insertIndex].trim() !== ""
+  ) {
+    blockToInsert.push("");
+  }
+
+  rebuiltLines.splice(insertIndex, 0, ...blockToInsert);
+  return finalizeTomlText(rebuiltLines);
 };
 
 // Write/remove common config snippet to/from TOML config (structural merge)
@@ -426,21 +519,21 @@ export const updateTomlCommonConfigSnippet = (
   }
 
   try {
-    const config = parseToml(normalizeTomlText(tomlString || ""));
-    const snippet = parseToml(normalizeTomlText(snippetString));
-    const normalizedConfig = liftMisplacedTomlRootScalars(
-      deepClone(config) as Record<string, any>,
-      snippet as Record<string, any>,
+    const normalizedTomlString = normalizeMalformedTrailingTomlRootScalars(
+      tomlString || "",
+      snippetString,
     );
+    const config = parseToml(normalizeTomlText(normalizedTomlString));
+    const snippet = parseToml(normalizeTomlText(snippetString));
 
     if (enabled) {
       const merged = deepMerge(
-        normalizedConfig,
+        deepClone(config) as Record<string, any>,
         deepClone(snippet) as Record<string, any>,
       );
       return { updatedConfig: stringifyToml(merged) };
     } else {
-      const result = normalizedConfig;
+      const result = deepClone(config) as Record<string, any>;
       deepRemove(result, snippet as Record<string, any>);
       return { updatedConfig: stringifyToml(result) };
     }
@@ -457,13 +550,13 @@ export const hasTomlCommonConfigSnippet = (
   if (!snippetString.trim()) return false;
 
   try {
-    const config = parseToml(normalizeTomlText(tomlString || ""));
-    const snippet = parseToml(normalizeTomlText(snippetString));
-    const normalizedConfig = liftMisplacedTomlRootScalars(
-      deepClone(config) as Record<string, any>,
-      snippet as Record<string, any>,
+    const normalizedTomlString = normalizeMalformedTrailingTomlRootScalars(
+      tomlString || "",
+      snippetString,
     );
-    return isSubset(normalizedConfig, snippet);
+    const config = parseToml(normalizeTomlText(normalizedTomlString));
+    const snippet = parseToml(normalizeTomlText(snippetString));
+    return isSubset(config, snippet);
   } catch {
     // Fallback to text-based matching if TOML parsing fails
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -473,7 +566,6 @@ export const hasTomlCommonConfigSnippet = (
 
 // ========== Codex base_url utils ==========
 
-const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
 const TOML_BASE_URL_PATTERN =
   /^\s*base_url\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_MODEL_PATTERN = /^\s*model\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;

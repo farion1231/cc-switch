@@ -212,4 +212,36 @@ describe("Codex TOML utils", () => {
     expect(output).not.toContain('approval_policy = "never"');
     expect(output).not.toContain('sandbox_mode = "danger-full-access"');
   });
+
+  it("does not treat matching fields inside the last table as malformed common config", () => {
+    const input = [
+      'model_provider = "quicklyapi"',
+      'model = "gpt-5.4"',
+      "",
+      "[tool]",
+      "network_access = true",
+      "web_search = true",
+      'approval_policy = "never"',
+      'sandbox_mode = "danger-full-access"',
+      'extra = "keep"',
+      "",
+    ].join("\n");
+    const snippet = [
+      "network_access = true",
+      "web_search = true",
+      'approval_policy = "never"',
+      'sandbox_mode = "danger-full-access"',
+      "",
+    ].join("\n");
+
+    expect(hasTomlCommonConfigSnippet(input, snippet)).toBe(false);
+
+    const output = updateTomlCommonConfigSnippet(
+      input,
+      snippet,
+      false,
+    ).updatedConfig;
+    expect(output).toContain("[tool]\nnetwork_access = true");
+    expect(output).toContain('extra = "keep"');
+  });
 });
