@@ -245,7 +245,7 @@ async fn handle_notify(
     let session_id = payload.session_id.as_deref().unwrap_or_default();
     let should_emit = {
         let mut dedupe = state.dedupe.lock().await;
-        dedupe.should_emit(session_id, &event_type)
+        dedupe.should_emit(session_id, &event_type, payload.timestamp)
     };
 
     if !should_emit {
