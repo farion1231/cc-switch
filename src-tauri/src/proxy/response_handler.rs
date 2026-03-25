@@ -13,6 +13,12 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+#[inline]
+fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
+    line.strip_prefix(&format!("{field}: "))
+        .or_else(|| line.strip_prefix(&format!("{field}:")))
+}
+
 /// 响应类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -90,7 +96,7 @@ impl StreamHandler {
                             buffer = buffer[pos + 2..].to_string();
 
                             for line in event_text.lines() {
-                                if let Some(data) = line.strip_prefix("data: ") {
+                                if let Some(data) = strip_sse_field(line, "data") {
                                     if data.trim() != "[DONE]" {
                                         if let Ok(json) = serde_json::from_str::<Value>(data) {
                                             let mut guard = events.lock().await;
@@ -210,5 +216,25 @@ mod tests {
     fn test_stream_handler_creation() {
         let handler = StreamHandler::new(30);
         assert_eq!(handler.idle_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_strip_sse_field_accepts_optional_space() {
+        assert_eq!(
+            strip_sse_field("data: {\"ok\":true}", "data"),
+            Some("{\"ok\":true}")
+        );
+        assert_eq!(
+            strip_sse_field("data:{\"ok\":true}", "data"),
+            Some("{\"ok\":true}")
+        );
+        assert_eq!(
+            strip_sse_field("event: message_start", "event"),
+            Some("message_start")
+        );
+        assert_eq!(
+            strip_sse_field("event:message_start", "event"),
+            Some("message_start")
+        );
     }
 }
