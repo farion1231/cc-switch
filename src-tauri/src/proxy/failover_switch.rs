@@ -2,15 +2,12 @@
 //!
 //! 处理故障转移成功后的供应商切换逻辑，包括：
 //! - 去重控制（避免多个请求同时触发）
-//! - 数据库更新
 //! - 托盘菜单更新
 //! - 前端事件发射
-//! - Live 备份更新
 
 use crate::database::Database;
 use crate::error::AppError;
 use std::collections::HashSet;
-use std::str::FromStr;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
@@ -98,30 +95,21 @@ impl FailoverSwitchManager {
 
         log::info!("[FO-001] 切换: {app_type} → {provider_name}");
 
-        // 1. 更新数据库 is_current
-        self.db.set_current_provider(app_type, provider_id)?;
+        let mut switched = false;
 
-        // 2. 更新本地 settings（设备级）
-        let app_type_enum = crate::app_config::AppType::from_str(app_type)
-            .map_err(|_| AppError::Message(format!("无效的应用类型: {app_type}")))?;
-        crate::settings::set_current_provider(&app_type_enum, Some(provider_id))?;
-
-        // 3. 更新托盘菜单和发射事件
         if let Some(app) = app_handle {
-            // 更新托盘菜单
             if let Some(app_state) = app.try_state::<crate::store::AppState>() {
-                // 更新 Live 备份（确保代理停止时恢复正确配置）
-                if let Ok(Some(provider)) = self.db.get_provider_by_id(provider_id, app_type) {
-                    if let Err(e) = app_state
-                        .proxy_service
-                        .update_live_backup_from_provider(app_type, &provider)
-                        .await
-                    {
-                        log::warn!("[FO-003] Live 备份更新失败: {e}");
-                    }
+                switched = app_state
+                    .proxy_service
+                    .hot_switch_provider(app_type, provider_id)
+                    .await
+                    .map_err(AppError::Message)?
+                    .logical_target_changed;
+
+                if !switched {
+                    return Ok(false);
                 }
 
-                // 重建托盘菜单
                 if let Ok(new_menu) = crate::tray::create_tray_menu(app, app_state.inner()) {
                     if let Some(tray) = app.tray_by_id("main") {
                         if let Err(e) = tray.set_menu(Some(new_menu)) {
@@ -142,6 +130,6 @@ impl FailoverSwitchManager {
             }
         }
 
-        Ok(true)
+        Ok(switched)
     }
 }
