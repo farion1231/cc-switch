@@ -2,17 +2,12 @@
 //!
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
+use crate::proxy::sse::strip_sse_field;
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
-
-#[inline]
-fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    line.strip_prefix(&format!("{field}: "))
-        .or_else(|| line.strip_prefix(&format!("{field}:")))
-}
 
 /// OpenAI 流式响应数据结构
 #[derive(Debug, Deserialize)]

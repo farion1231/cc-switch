@@ -5,6 +5,7 @@
 use super::session::ProxySession;
 use super::usage::parser::TokenUsage;
 use super::ProxyError;
+use crate::proxy::sse::strip_sse_field;
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
@@ -12,12 +13,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
-
-#[inline]
-fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    line.strip_prefix(&format!("{field}: "))
-        .or_else(|| line.strip_prefix(&format!("{field}:")))
-}
 
 /// 响应类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,19 +216,19 @@ mod tests {
     #[test]
     fn test_strip_sse_field_accepts_optional_space() {
         assert_eq!(
-            strip_sse_field("data: {\"ok\":true}", "data"),
+            super::strip_sse_field("data: {\"ok\":true}", "data"),
             Some("{\"ok\":true}")
         );
         assert_eq!(
-            strip_sse_field("data:{\"ok\":true}", "data"),
+            super::strip_sse_field("data:{\"ok\":true}", "data"),
             Some("{\"ok\":true}")
         );
         assert_eq!(
-            strip_sse_field("event: message_start", "event"),
+            super::strip_sse_field("event: message_start", "event"),
             Some("message_start")
         );
         assert_eq!(
-            strip_sse_field("event:message_start", "event"),
+            super::strip_sse_field("event:message_start", "event"),
             Some("message_start")
         );
     }

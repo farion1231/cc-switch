@@ -9,16 +9,11 @@
 //! 与 Chat Completions 的 delta chunk 模型完全不同，需要独立的状态机处理。
 
 use super::transform_responses::{build_anthropic_usage_from_responses, map_responses_stop_reason};
+use crate::proxy::sse::strip_sse_field;
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-
-#[inline]
-fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    line.strip_prefix(&format!("{field}: "))
-        .or_else(|| line.strip_prefix(&format!("{field}:")))
-}
 
 #[inline]
 fn response_object_from_event(data: &Value) -> &Value {

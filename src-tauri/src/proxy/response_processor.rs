@@ -6,6 +6,7 @@ use super::{
     handler_config::UsageParserConfig,
     handler_context::{RequestContext, StreamingTimeoutConfig},
     server::ProxyState,
+    sse::strip_sse_field,
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -22,12 +23,6 @@ use std::{
     time::Duration,
 };
 use tokio::sync::Mutex;
-
-#[inline]
-fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    line.strip_prefix(&format!("{field}: "))
-        .or_else(|| line.strip_prefix(&format!("{field}:")))
-}
 
 // ============================================================================
 // 公共接口
@@ -600,22 +595,22 @@ mod tests {
     #[test]
     fn test_strip_sse_field_accepts_optional_space() {
         assert_eq!(
-            strip_sse_field("data: {\"ok\":true}", "data"),
+            super::strip_sse_field("data: {\"ok\":true}", "data"),
             Some("{\"ok\":true}")
         );
         assert_eq!(
-            strip_sse_field("data:{\"ok\":true}", "data"),
+            super::strip_sse_field("data:{\"ok\":true}", "data"),
             Some("{\"ok\":true}")
         );
         assert_eq!(
-            strip_sse_field("event: message_start", "event"),
+            super::strip_sse_field("event: message_start", "event"),
             Some("message_start")
         );
         assert_eq!(
-            strip_sse_field("event:message_start", "event"),
+            super::strip_sse_field("event:message_start", "event"),
             Some("message_start")
         );
-        assert_eq!(strip_sse_field("id:1", "data"), None);
+        assert_eq!(super::strip_sse_field("id:1", "data"), None);
     }
 
     fn build_state(db: Arc<Database>) -> ProxyState {
