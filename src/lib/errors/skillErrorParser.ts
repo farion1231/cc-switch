@@ -36,9 +36,16 @@ function getErrorI18nKey(code: string): string {
     DOWNLOAD_FAILED: "skills.error.downloadFailed",
     SKILL_DIR_NOT_FOUND: "skills.error.skillDirNotFound",
     SKILL_DIRECTORY_CONFLICT: "skills.error.directoryConflict",
+    INVALID_SKILL_DIRECTORY: "skills.error.skillDirNotFound",
     EMPTY_ARCHIVE: "skills.error.emptyArchive",
     GET_HOME_DIR_FAILED: "skills.error.getHomeDirFailed",
     NO_SKILLS_IN_ZIP: "skills.error.noSkillsInZip",
+    INVALID_GIT_URL: "skills.error.invalidGitUrl",
+    GIT_NOT_FOUND: "skills.error.gitNotFound",
+    GIT_CLONE_FAILED: "skills.error.gitCloneFailed",
+    SKILL_SELECTOR_REQUIRED: "skills.error.skillSelectorRequired",
+    GIT_SUBMODULES_NOT_SUPPORTED: "skills.error.gitSubmodulesNotSupported",
+    SKILL_SYMLINK_NOT_ALLOWED: "skills.error.skillSymlinkNotAllowed",
   };
 
   return mapping[code] || "skills.error.unknownError";
@@ -56,6 +63,7 @@ function getSuggestionI18nKey(suggestion: string): string {
     checkPermission: "skills.error.suggestion.checkPermission",
     uninstallFirst: "skills.error.suggestion.uninstallFirst",
     checkZipContent: "skills.error.suggestion.checkZipContent",
+    installGit: "skills.error.suggestion.installGit",
     http403: "skills.error.http403",
     http404: "skills.error.http404",
     http429: "skills.error.http429",

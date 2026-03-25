@@ -86,6 +86,12 @@ export interface SkillRepo {
   enabled: boolean;
 }
 
+export interface GitSkillInstallRequest {
+  repoUrl: string;
+  skill?: string;
+  branch?: string;
+}
+
 // ========== API ==========
 
 export const skillsApi = {
@@ -208,5 +214,13 @@ export const skillsApi = {
     currentApp: AppId,
   ): Promise<InstalledSkill[]> {
     return await invoke("install_skills_from_zip", { filePath, currentApp });
+  },
+
+  /** 从 Git URL 安装 Skills */
+  async installFromGitUrl(
+    request: GitSkillInstallRequest,
+    currentApp: AppId,
+  ): Promise<InstalledSkill[]> {
+    return await invoke("install_skills_from_git_url", { request, currentApp });
   },
 };

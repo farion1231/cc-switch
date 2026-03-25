@@ -1549,6 +1549,12 @@
       "parseMetadataFailed": "スキルメタデータの解析に失敗しました",
       "getHomeDirFailed": "ユーザーのホームディレクトリを取得できません",
       "noSkillsInZip": "ZIP ファイルにスキルが見つかりません（SKILL.md ファイルが必要です）",
+      "invalidGitUrl": "HTTPS の Git リポジトリ URL（.git で終わるもの）のみ対応しています",
+      "gitNotFound": "システムの git コマンドが見つかりません",
+      "gitCloneFailed": "リポジトリの clone に失敗しました: {{message}}",
+      "skillSelectorRequired": "このリポジトリには複数のスキルがあります。skill パスを指定してください",
+      "gitSubmodulesNotSupported": "Git submodule を含むスキルリポジトリは現在サポートしていません",
+      "skillSymlinkNotAllowed": "スキルディレクトリにシンボリックリンクが含まれているため、安全のためインストールを拒否しました: {{path}}",
       "networkError": "ネットワークエラー",
       "fsError": "ファイルシステムエラー",
       "unknownError": "不明なエラー",
@@ -1560,7 +1566,8 @@
         "checkDiskSpace": "ディスク容量を確認してください",
         "checkPermission": "ディレクトリの権限を確認してください",
         "uninstallFirst": "同名のスキルを先にアンインストールしてください",
-        "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）が含まれていることを確認してください"
+        "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）が含まれていることを確認してください",
+        "installGit": "git をインストールし、PATH から `git` コマンドを実行できることを確認してください"
       }
     },
     "repo": {
@@ -1640,6 +1647,23 @@
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
       "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
+    },
+    "installFromGitUrl": {
+      "button": "URL からインストール",
+      "title": "Git URL からインストール",
+      "description": "HTTPS の Git リポジトリ URL を入力し、インストールする skill を選択してください。複数 skill を含むリポジトリでは skill パスが必須です。",
+      "url": "リポジトリ URL",
+      "urlPlaceholder": "https://example.com/team/skills.git",
+      "skill": "Skill パス",
+      "skillPlaceholder": "dbus-caller-verification-check",
+      "skillHint": "複数 skill を含むリポジトリでは必須です。1 つだけの場合は省略できます。",
+      "branch": "ブランチ（任意）",
+      "branchPlaceholder": "main",
+      "warning": "HTTPS の Git リポジトリのみ対応しています。インストール時はシステムの git コマンドで shallow clone を行い、シンボリックリンクを含む skill は拒否されます。",
+      "submit": "インストール",
+      "installing": "インストール中...",
+      "successSingle": "スキル {{name}} をインストールしました",
+      "successMultiple": "{{count}} 件のスキルをインストールしました"
     }
   },
   "deeplink": {

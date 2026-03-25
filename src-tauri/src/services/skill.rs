@@ -9,8 +9,10 @@ use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use tokio::time::timeout;
 
@@ -97,6 +99,23 @@ pub struct SkillRepo {
     pub branch: String,
     /// 是否启用
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitSkillInstallRequest {
+    pub repo_url: String,
+    pub skill: Option<String>,
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ImportSourceInfo {
+    id: String,
+    repo_owner: Option<String>,
+    repo_name: Option<String>,
+    repo_branch: Option<String>,
+    readme_url: Option<String>,
 }
 
 /// 技能安装状态（旧版兼容）
@@ -1867,14 +1886,246 @@ impl SkillService {
         zip_path: &Path,
         current_app: &AppType,
     ) -> Result<Vec<InstalledSkill>> {
-        // 解压到临时目录
         let temp_dir = Self::extract_local_zip(zip_path)?;
+        let zip_stem = zip_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
 
-        // 扫描所有包含 SKILL.md 的目录
-        let skill_dirs = Self::scan_skills_in_dir(&temp_dir)?;
+        let result = Self::install_from_staging_dir(
+            db,
+            &temp_dir,
+            None,
+            zip_stem.as_deref(),
+            ImportSourceInfo {
+                id: "local".to_string(),
+                repo_owner: None,
+                repo_name: None,
+                repo_branch: None,
+                readme_url: None,
+            },
+            current_app,
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        result
+    }
+
+    pub fn install_from_git_url(
+        db: &Arc<Database>,
+        request: &GitSkillInstallRequest,
+        current_app: &AppType,
+    ) -> Result<Vec<InstalledSkill>> {
+        let sanitized_url = Self::sanitize_git_https_url(&request.repo_url)?;
+        let temp_dir = Self::clone_git_repo_to_temp(&sanitized_url, request.branch.as_deref())?;
+        let source_info = Self::build_git_import_source_info(
+            &sanitized_url,
+            request
+                .branch
+                .clone()
+                .or_else(|| Self::detect_checked_out_branch(&temp_dir).ok()),
+            request.skill.as_deref(),
+        );
+
+        let result = Self::install_from_staging_dir(
+            db,
+            &temp_dir,
+            request.skill.as_deref(),
+            None,
+            source_info,
+            current_app,
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        result
+    }
+
+    #[doc(hidden)]
+    pub fn install_from_git_url_for_test(
+        db: &Arc<Database>,
+        repo_dir: &Path,
+        repo_url: &str,
+        skill: Option<&str>,
+        branch: Option<&str>,
+        current_app: &AppType,
+    ) -> Result<Vec<InstalledSkill>> {
+        let source_info = Self::build_git_import_source_info(
+            repo_url,
+            branch.map(str::to_string),
+            skill,
+        );
+        Self::install_from_staging_dir(db, repo_dir, skill, None, source_info, current_app)
+    }
+
+    fn sanitize_git_https_url(raw: &str) -> Result<String> {
+        let trimmed = raw.trim();
+        let url = url::Url::parse(trimmed).map_err(|_| {
+            anyhow!(format_skill_error(
+                "INVALID_GIT_URL",
+                &[("url", trimmed)],
+                Some("checkRepoUrl"),
+            ))
+        })?;
+
+        if url.scheme() != "https" || url.host_str().is_none() {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_GIT_URL",
+                &[("url", trimmed)],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_GIT_URL",
+                &[("url", trimmed)],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        if !url.path().ends_with(".git") {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_GIT_URL",
+                &[("url", trimmed)],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        Ok(url.to_string())
+    }
+
+    fn clone_git_repo_to_temp(repo_url: &str, branch: Option<&str>) -> Result<PathBuf> {
+        let temp_dir = tempfile::tempdir()?;
+        let temp_path = temp_dir.path().to_path_buf();
+        let _ = temp_dir.keep();
+
+        let git_check = Command::new("git").arg("--version").output();
+        if !matches!(git_check, Ok(ref output) if output.status.success()) {
+            let _ = fs::remove_dir_all(&temp_path);
+            return Err(anyhow!(format_skill_error(
+                "GIT_NOT_FOUND",
+                &[],
+                Some("installGit"),
+            )));
+        }
+
+        let mut command = Command::new("git");
+        command
+            .arg("clone")
+            .arg("--depth")
+            .arg("1")
+            .arg("--single-branch")
+            .arg("-c")
+            .arg("advice.detachedHead=false")
+            .arg("-c")
+            .arg("credential.interactive=never")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_LFS_SKIP_SMUDGE", "1")
+            .env("GIT_ASKPASS", "")
+            .env("SSH_ASKPASS", "")
+            .env("GCM_INTERACTIVE", "never");
+
+        if let Some(branch) = branch.filter(|value| !value.trim().is_empty()) {
+            command.arg("--branch").arg(branch.trim());
+        }
+
+        command.arg(repo_url).arg(&temp_path);
+
+        let output = command.output().map_err(|_| {
+            anyhow!(format_skill_error(
+                "GIT_NOT_FOUND",
+                &[],
+                Some("installGit"),
+            ))
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let _ = fs::remove_dir_all(&temp_path);
+            return Err(anyhow!(format_skill_error(
+                "GIT_CLONE_FAILED",
+                &[("message", &stderr)],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        Ok(temp_path)
+    }
+
+    fn detect_checked_out_branch(repo_dir: &Path) -> Result<String> {
+        let output = Command::new("git")
+            .arg("rev-parse")
+            .arg("--abbrev-ref")
+            .arg("HEAD")
+            .current_dir(repo_dir)
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!("failed to detect git branch"));
+        }
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch.is_empty() || branch == "HEAD" {
+            return Err(anyhow!("invalid git branch"));
+        }
+        Ok(branch)
+    }
+
+    fn build_git_import_source_info(
+        repo_url: &str,
+        branch: Option<String>,
+        selected_skill: Option<&str>,
+    ) -> ImportSourceInfo {
+        let parsed = url::Url::parse(repo_url).ok();
+        let path_segments = parsed
+            .as_ref()
+            .and_then(|url| url.path_segments())
+            .map(|segments| segments.collect::<Vec<_>>())
+            .unwrap_or_default();
+        let repo_name = path_segments
+            .last()
+            .map(|name| name.trim_end_matches(".git").to_string())
+            .filter(|name| !name.is_empty());
+        let repo_owner = if path_segments.len() >= 2 {
+            Some(path_segments[path_segments.len() - 2].to_string())
+        } else {
+            parsed
+                .as_ref()
+                .and_then(|url| url.host_str())
+                .map(str::to_string)
+        };
+        let install_target = selected_skill
+            .and_then(|value| Path::new(value).file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("skill")
+            .to_string();
+
+        ImportSourceInfo {
+            id: format!("git:{repo_url}#{install_target}"),
+            repo_owner,
+            repo_name,
+            repo_branch: branch.or_else(|| Some("main".to_string())),
+            readme_url: None,
+        }
+    }
+
+    fn install_from_staging_dir(
+        db: &Arc<Database>,
+        staging_dir: &Path,
+        selected_skill: Option<&str>,
+        root_name_hint: Option<&str>,
+        source_info: ImportSourceInfo,
+        current_app: &AppType,
+    ) -> Result<Vec<InstalledSkill>> {
+        if staging_dir.join(".gitmodules").exists() {
+            return Err(anyhow!(format_skill_error(
+                "GIT_SUBMODULES_NOT_SUPPORTED",
+                &[],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        let skill_dirs = Self::select_skill_dirs_in_staging(staging_dir, selected_skill, source_info.id.starts_with("git:"))?;
 
         if skill_dirs.is_empty() {
-            let _ = fs::remove_dir_all(&temp_dir);
             return Err(anyhow!(format_skill_error(
                 "NO_SKILLS_IN_ZIP",
                 &[],
@@ -1885,13 +2136,21 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
         let mut installed = Vec::new();
         let existing_skills = db.get_all_installed_skills()?;
-        let zip_stem = zip_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
+        let mut occupied_directories: HashSet<String> = existing_skills
+            .values()
+            .map(|skill| skill.directory.to_lowercase())
+            .collect();
 
         for skill_dir in skill_dirs {
-            // 解析元数据（提前解析，用于确定安装名）
+            if Self::contains_symlink(&skill_dir)? {
+                Self::rollback_installed_batch(db, &installed);
+                return Err(anyhow!(format_skill_error(
+                    "SKILL_SYMLINK_NOT_ALLOWED",
+                    &[("path", &skill_dir.display().to_string())],
+                    Some("checkZipContent"),
+                )));
+            }
+
             let skill_md = skill_dir.join("SKILL.md");
             let meta = if skill_md.exists() {
                 Self::parse_skill_metadata_static(&skill_md).ok()
@@ -1899,21 +2158,17 @@ impl SkillService {
                 None
             };
 
-            // 获取目录名称作为安装名
-            // 当 SKILL.md 在 ZIP 根目录时，skill_dir == temp_dir，
-            // file_name() 会返回临时目录名（如 .tmpDZKGpF），需要回退到其他来源
             let install_name = {
                 let dir_name = skill_dir
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default();
 
-                if skill_dir == temp_dir || dir_name.is_empty() || dir_name.starts_with('.') {
-                    // SKILL.md 在根目录：优先用元数据 name，否则用 ZIP 文件名
+                if skill_dir == staging_dir || dir_name.is_empty() || dir_name.starts_with('.') {
                     meta.as_ref()
                         .and_then(|m| m.name.as_deref())
                         .and_then(Self::sanitize_install_name)
-                        .or_else(|| zip_stem.as_deref().and_then(Self::sanitize_install_name))
+                        .or_else(|| root_name_hint.and_then(Self::sanitize_install_name))
                 } else {
                     Self::sanitize_install_name(&dir_name)
                         .or_else(|| {
@@ -1921,31 +2176,21 @@ impl SkillService {
                                 .and_then(|m| m.name.as_deref())
                                 .and_then(Self::sanitize_install_name)
                         })
-                        .or_else(|| zip_stem.as_deref().and_then(Self::sanitize_install_name))
+                        .or_else(|| root_name_hint.and_then(Self::sanitize_install_name))
                 }
             };
-            let install_name = match install_name {
-                Some(name) => name,
-                None => {
-                    let _ = fs::remove_dir_all(&temp_dir);
-                    return Err(anyhow!(format_skill_error(
-                        "INVALID_SKILL_DIRECTORY",
-                        &[("zip", &zip_path.display().to_string())],
-                        Some("checkZipContent"),
-                    )));
-                }
-            };
+            let install_name = install_name.ok_or_else(|| {
+                anyhow!(format_skill_error(
+                    "INVALID_SKILL_DIRECTORY",
+                    &[("path", &skill_dir.display().to_string())],
+                    Some("checkZipContent"),
+                ))
+            })?;
 
-            // 检查是否已有同名 directory 的 skill
-            let conflict = existing_skills
-                .values()
-                .find(|s| s.directory.eq_ignore_ascii_case(&install_name));
-
-            if let Some(existing) = conflict {
+            if occupied_directories.contains(&install_name.to_lowercase()) {
                 log::warn!(
-                    "Skill directory '{}' already exists (from {}), skipping",
+                    "Skill directory '{}' already exists in current install set, skipping",
                     install_name,
-                    existing.id
                 );
                 continue;
             }
@@ -1958,45 +2203,152 @@ impl SkillService {
                 None => (install_name.clone(), None),
             };
 
-            // 复制到 SSOT
             let dest = ssot_dir.join(&install_name);
             if dest.exists() {
                 let _ = fs::remove_dir_all(&dest);
             }
-            Self::copy_dir_recursive(&skill_dir, &dest)?;
+            if let Err(err) = Self::copy_installable_skill_dir(&skill_dir, &dest) {
+                Self::rollback_installed_batch(db, &installed);
+                return Err(err);
+            }
 
-            // 创建 InstalledSkill 记录
             let skill = InstalledSkill {
-                id: format!("local:{install_name}"),
+                id: format!("{}:{install_name}", source_info.id),
                 name,
                 description,
                 directory: install_name.clone(),
-                repo_owner: None,
-                repo_name: None,
-                repo_branch: None,
-                readme_url: None,
+                repo_owner: source_info.repo_owner.clone(),
+                repo_name: source_info.repo_name.clone(),
+                repo_branch: source_info.repo_branch.clone(),
+                readme_url: source_info.readme_url.clone(),
                 apps: SkillApps::only(current_app),
                 installed_at: chrono::Utc::now().timestamp(),
             };
 
-            // 保存到数据库
-            db.save_skill(&skill)?;
-
-            // 同步到当前应用目录
-            Self::sync_to_app_dir(&install_name, current_app)?;
-
-            log::info!(
-                "Skill {} installed from ZIP, enabled for {:?}",
-                skill.name,
-                current_app
-            );
+            if let Err(err) = db.save_skill(&skill) {
+                let _ = fs::remove_dir_all(&dest);
+                Self::rollback_installed_batch(db, &installed);
+                return Err(err.into());
+            }
+            if let Err(err) = Self::sync_to_app_dir(&install_name, current_app) {
+                let _ = db.delete_skill(&skill.id);
+                let _ = fs::remove_dir_all(&dest);
+                Self::rollback_installed_batch(db, &installed);
+                return Err(err);
+            }
+            occupied_directories.insert(install_name.to_lowercase());
             installed.push(skill);
         }
 
-        // 清理临时目录
-        let _ = fs::remove_dir_all(&temp_dir);
-
         Ok(installed)
+    }
+
+    fn select_skill_dirs_in_staging(
+        staging_dir: &Path,
+        selected_skill: Option<&str>,
+        require_selector_for_multi: bool,
+    ) -> Result<Vec<PathBuf>> {
+        let skill_dirs = Self::scan_skills_in_dir(staging_dir)?;
+
+        if let Some(selected_skill) = selected_skill {
+            let selected_rel = Self::sanitize_skill_source_path(selected_skill).ok_or_else(|| {
+                anyhow!(format_skill_error(
+                    "INVALID_SKILL_DIRECTORY",
+                    &[("directory", selected_skill)],
+                    Some("checkRepoUrl"),
+                ))
+            })?;
+
+            let selected = skill_dirs
+                .into_iter()
+                .find(|dir| dir.strip_prefix(staging_dir).ok() == Some(selected_rel.as_path()))
+                .ok_or_else(|| {
+                    anyhow!(format_skill_error(
+                        "SKILL_DIR_NOT_FOUND",
+                        &[("path", selected_skill)],
+                        Some("checkRepoUrl"),
+                    ))
+                })?;
+            return Ok(vec![selected]);
+        }
+
+        if skill_dirs.is_empty() {
+            return Ok(skill_dirs);
+        }
+
+        if require_selector_for_multi && skill_dirs.len() > 1 {
+            return Err(anyhow!(format_skill_error(
+                "SKILL_SELECTOR_REQUIRED",
+                &[("count", &skill_dirs.len().to_string())],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        Ok(skill_dirs)
+    }
+
+    fn contains_symlink(root: &Path) -> Result<bool> {
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(path) = stack.pop() {
+            for entry in fs::read_dir(&path)? {
+                let entry = entry?;
+                let path = entry.path();
+                let metadata = fs::symlink_metadata(&path)?;
+                if metadata.file_type().is_symlink() {
+                    return Ok(true);
+                }
+                if metadata.is_dir() {
+                    if entry.file_name() == OsStr::new(".git") {
+                        continue;
+                    }
+                    stack.push(path);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn copy_installable_skill_dir(src: &Path, dest: &Path) -> Result<()> {
+        fs::create_dir_all(dest)?;
+
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            if entry.file_name() == OsStr::new(".git") {
+                continue;
+            }
+
+            let path = entry.path();
+            let dest_path = dest.join(entry.file_name());
+            let metadata = fs::symlink_metadata(&path)?;
+
+            if metadata.file_type().is_symlink() {
+                return Err(anyhow!(format_skill_error(
+                    "SKILL_SYMLINK_NOT_ALLOWED",
+                    &[("path", &path.display().to_string())],
+                    Some("checkZipContent"),
+                )));
+            }
+
+            if metadata.is_dir() {
+                Self::copy_installable_skill_dir(&path, &dest_path)?;
+            } else {
+                fs::copy(&path, &dest_path)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn rollback_installed_batch(db: &Arc<Database>, installed: &[InstalledSkill]) {
+        for skill in installed.iter().rev() {
+            for app in AppType::all() {
+                let _ = Self::remove_from_app(&skill.directory, &app);
+            }
+            if let Ok(ssot_dir) = Self::get_ssot_dir() {
+                let _ = fs::remove_dir_all(ssot_dir.join(&skill.directory));
+            }
+            let _ = db.delete_skill(&skill.id);
+        }
     }
 
     /// 解压本地 ZIP 文件到临时目录
@@ -2072,14 +2424,18 @@ impl SkillService {
         if let Ok(entries) = fs::read_dir(current) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_dir() {
-                    // 跳过隐藏目录
-                    let dir_name = entry.file_name().to_string_lossy().to_string();
-                    if dir_name.starts_with('.') {
-                        continue;
-                    }
-                    Self::scan_skills_recursive(&path, results)?;
+                let Ok(metadata) = fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    continue;
                 }
+                // 跳过隐藏目录
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+                Self::scan_skills_recursive(&path, results)?;
             }
         }
 

@@ -1,7 +1,8 @@
 use std::fs;
 
 use cc_switch_lib::{
-    migrate_skills_to_ssot, AppType, ImportSkillSelection, InstalledSkill, SkillApps, SkillService,
+    migrate_skills_to_ssot, AppType, GitSkillInstallRequest, ImportSkillSelection, InstalledSkill,
+    SkillApps, SkillService,
 };
 
 #[path = "support.rs"]
@@ -15,6 +16,31 @@ fn write_skill(dir: &std::path::Path, name: &str) {
         format!("---\nname: {name}\ndescription: Test skill\n---\n"),
     )
     .expect("write SKILL.md");
+}
+
+fn git_available() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn init_git_repo(repo_dir: &std::path::Path) {
+    let run = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo_dir)
+            .status()
+            .expect("run git command");
+        assert!(status.success(), "git command failed: {:?}", args);
+    };
+
+    run(&["init", "-b", "main"]);
+    run(&["config", "user.email", "tests@example.com"]);
+    run(&["config", "user.name", "CC Switch Tests"]);
+    run(&["add", "."]);
+    run(&["commit", "-m", "init"]);
 }
 
 #[cfg(unix)]
@@ -382,4 +408,136 @@ fn migration_snapshot_overrides_multi_source_directory_inference() {
         !migrated.apps.opencode,
         "migration should no longer infer OpenCode enablement from a duplicate directory alone"
     );
+}
+
+#[test]
+fn install_from_git_url_rejects_non_https_urls() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let state = create_test_state().expect("create test state");
+
+    let err = SkillService::install_from_git_url(
+        &state.db,
+        &GitSkillInstallRequest {
+            repo_url: "http://example.com/repo.git".to_string(),
+            skill: Some("demo".to_string()),
+            branch: None,
+        },
+        &AppType::Claude,
+    )
+    .expect_err("non-https url should be rejected");
+
+    assert!(err.to_string().contains("INVALID_GIT_URL"));
+}
+
+#[test]
+fn install_from_git_url_requires_skill_for_multi_skill_repo() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    if !git_available() {
+        return;
+    }
+
+    let repo_root = tempfile::tempdir().expect("tempdir");
+    write_skill(&repo_root.path().join("alpha"), "Alpha Skill");
+    write_skill(&repo_root.path().join("beta"), "Beta Skill");
+    init_git_repo(repo_root.path());
+
+    let state = create_test_state().expect("create test state");
+    let repo_url = format!(
+        "https://example.com/{}.git",
+        repo_root.path().file_name().unwrap().to_string_lossy()
+    );
+
+    let err = SkillService::install_from_git_url_for_test(
+        &state.db,
+        repo_root.path(),
+        &repo_url,
+        None,
+        None,
+        &AppType::Claude,
+    )
+    .expect_err("multi-skill repo without selector should fail");
+
+    assert!(err.to_string().contains("SKILL_SELECTOR_REQUIRED"));
+}
+
+#[test]
+fn install_from_git_url_rejects_skill_with_symlink() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    if !git_available() {
+        return;
+    }
+
+    let repo_root = tempfile::tempdir().expect("tempdir");
+    let skill_dir = repo_root.path().join("danger-skill");
+    write_skill(&skill_dir, "Danger Skill");
+    fs::write(repo_root.path().join("secret.txt"), "secret").expect("write secret");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(repo_root.path().join("secret.txt"), skill_dir.join("linked.txt"))
+        .expect("create symlink");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(
+        repo_root.path().join("secret.txt"),
+        skill_dir.join("linked.txt"),
+    )
+    .expect("create symlink");
+    init_git_repo(repo_root.path());
+
+    let state = create_test_state().expect("create test state");
+    let repo_url = format!(
+        "https://example.com/{}.git",
+        repo_root.path().file_name().unwrap().to_string_lossy()
+    );
+
+    let err = SkillService::install_from_git_url_for_test(
+        &state.db,
+        repo_root.path(),
+        &repo_url,
+        Some("danger-skill"),
+        None,
+        &AppType::Claude,
+    )
+    .expect_err("skill symlink should be rejected");
+
+    assert!(err.to_string().contains("SKILL_SYMLINK_NOT_ALLOWED"));
+}
+
+#[test]
+fn install_from_git_url_installs_selected_skill() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    if !git_available() {
+        return;
+    }
+
+    let home = ensure_test_home();
+    let repo_root = tempfile::tempdir().expect("tempdir");
+    write_skill(&repo_root.path().join("alpha"), "Alpha Skill");
+    write_skill(&repo_root.path().join("beta"), "Beta Skill");
+    init_git_repo(repo_root.path());
+
+    let state = create_test_state().expect("create test state");
+    let repo_url = format!(
+        "https://example.com/{}.git",
+        repo_root.path().file_name().unwrap().to_string_lossy()
+    );
+
+    let installed = SkillService::install_from_git_url_for_test(
+        &state.db,
+        repo_root.path(),
+        &repo_url,
+        Some("beta"),
+        Some("main"),
+        &AppType::Claude,
+    )
+    .expect("install selected skill");
+
+    assert_eq!(installed.len(), 1);
+    assert_eq!(installed[0].name, "Beta Skill");
+    assert_eq!(installed[0].directory, "beta");
+    assert_eq!(installed[0].repo_branch.as_deref(), Some("main"));
+    assert!(home.join(".cc-switch").join("skills").join("beta").join("SKILL.md").exists());
+    assert!(home.join(".claude").join("skills").join("beta").exists());
 }

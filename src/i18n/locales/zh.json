@@ -1549,6 +1549,12 @@
       "parseMetadataFailed": "解析技能元数据失败",
       "getHomeDirFailed": "无法获取用户主目录",
       "noSkillsInZip": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
+      "invalidGitUrl": "仅支持 HTTPS Git 仓库地址，且必须以 .git 结尾",
+      "gitNotFound": "未检测到系统 git 命令",
+      "gitCloneFailed": "克隆仓库失败：{{message}}",
+      "skillSelectorRequired": "该仓库包含多个技能，请填写要安装的 skill 路径",
+      "gitSubmodulesNotSupported": "当前不支持包含 Git 子模块的技能仓库",
+      "skillSymlinkNotAllowed": "技能目录包含符号链接，出于安全考虑已拒绝安装：{{path}}",
       "networkError": "网络错误",
       "fsError": "文件系统错误",
       "unknownError": "未知错误",
@@ -1560,7 +1566,8 @@
         "checkDiskSpace": "请检查磁盘空间",
         "checkPermission": "请检查目录权限",
         "uninstallFirst": "请先卸载已安装的同名技能",
-        "checkZipContent": "请确认 ZIP 文件包含有效的技能目录（含 SKILL.md 文件）"
+        "checkZipContent": "请确认 ZIP 文件包含有效的技能目录（含 SKILL.md 文件）",
+        "installGit": "请先在系统中安装 git，并确保命令行可直接执行 git"
       }
     },
     "repo": {
@@ -1640,6 +1647,23 @@
       "successSingle": "技能 {{name}} 已安装",
       "successMultiple": "成功安装 {{count}} 个技能",
       "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
+    },
+    "installFromGitUrl": {
+      "button": "从 URL 安装",
+      "title": "从 Git URL 安装",
+      "description": "输入 HTTPS Git 仓库地址并选择要安装的 skill。多 skill 仓库必须填写 skill 路径。",
+      "url": "仓库 URL",
+      "urlPlaceholder": "https://example.com/team/skills.git",
+      "skill": "Skill 路径",
+      "skillPlaceholder": "dbus-caller-verification-check",
+      "skillHint": "多 skill 仓库必须填写；单 skill 仓库可留空。",
+      "branch": "分支（可选）",
+      "branchPlaceholder": "main",
+      "warning": "仅支持 HTTPS Git 仓库。安装时会调用系统 git 进行浅克隆；如果 skill 目录中包含符号链接，将拒绝安装。",
+      "submit": "安装",
+      "installing": "安装中...",
+      "successSingle": "技能 {{name}} 已安装",
+      "successMultiple": "成功安装 {{count}} 个技能"
     }
   },
   "deeplink": {
