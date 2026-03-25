@@ -103,11 +103,15 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1, provider TEXT NOT NULL DEFAULT 'github',
+            repo_url TEXT, PRIMARY KEY (owner, name)
         )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Self::add_column_if_missing(conn, "skill_repos", "provider", "TEXT NOT NULL DEFAULT 'github'")?;
+        Self::add_column_if_missing(conn, "skill_repos", "repo_url", "TEXT")?;
 
         // 7. Settings 表
         conn.execute(

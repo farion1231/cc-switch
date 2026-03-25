@@ -1574,7 +1574,7 @@
       "title": "Manage Skill Repositories",
       "description": "Add or remove GitHub skill repository sources",
       "url": "Repository URL",
-      "urlPlaceholder": "owner/name or https://github.com/owner/name",
+      "urlPlaceholder": "owner/name, GitHub URL, or GitLab URL",
       "branch": "Branch",
       "branchPlaceholder": "main",
       "path": "Skills Path",

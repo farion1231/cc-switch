@@ -1574,7 +1574,7 @@
       "title": "スキルリポジトリを管理",
       "description": "GitHub のスキルリポジトリソースを追加または削除します",
       "url": "リポジトリ URL",
-      "urlPlaceholder": "owner/name または https://github.com/owner/name",
+      "urlPlaceholder": "owner/name、GitHub URL、または GitLab URL",
       "branch": "ブランチ",
       "branchPlaceholder": "main",
       "path": "スキルパス",

@@ -48,6 +48,7 @@ export interface DiscoverableSkill {
   repoOwner: string;
   repoName: string;
   repoBranch: string;
+  repoUrl?: string;
 }
 
 /** 未管理的 Skill（用于导入） */
@@ -84,6 +85,8 @@ export interface SkillRepo {
   name: string;
   branch: string;
   enabled: boolean;
+  provider?: "github" | "gitlab";
+  repoUrl?: string;
 }
 
 export interface GitSkillInstallRequest {

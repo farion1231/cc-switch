@@ -1574,7 +1574,7 @@
       "title": "管理技能仓库",
       "description": "添加或删除 GitHub 技能仓库源",
       "url": "仓库 URL",
-      "urlPlaceholder": "owner/name 或 https://github.com/owner/name",
+      "urlPlaceholder": "owner/name、GitHub URL 或 GitLab URL",
       "branch": "分支",
       "branchPlaceholder": "main",
       "path": "技能路径",

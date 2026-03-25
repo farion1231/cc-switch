@@ -8,6 +8,49 @@ import { settingsApi } from "@/lib/api";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
 
+const SUPPORTED_GITLAB_HOSTS = new Set(["gitlab.com", "gitlabwh.uniontech.com"]);
+
+function parseSkillRepoUrl(
+  url: string,
+): { owner: string; name: string; provider: "github" | "gitlab"; repoUrl?: string } | null {
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+
+  const githubShorthand = trimmed.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+  const githubParts = githubShorthand.split("/");
+  if (githubParts.length === 2 && githubParts[0] && githubParts[1]) {
+    const isGithubUrl = /^https?:\/\/github\.com\//.test(trimmed) || !trimmed.includes("://");
+    if (isGithubUrl) {
+      return { owner: githubParts[0], name: githubParts[1], provider: "github" };
+    }
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:") return null;
+    const isGitLab = SUPPORTED_GITLAB_HOSTS.has(parsed.hostname);
+    const isGitHub = parsed.hostname === "github.com";
+    if (!isGitLab && !isGitHub) return null;
+
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) return null;
+    if (parts.includes("tree") || parts.includes("blob") || parts.includes("-")) {
+      return null;
+    }
+    const name = parts.at(-1)?.replace(/\.git$/, "") || "";
+    const ownerPath = parts.slice(0, -1).join("/");
+    if (!ownerPath || !name) return null;
+    return {
+      owner: isGitLab ? `${parsed.hostname}/${ownerPath}` : ownerPath,
+      name,
+      provider: isGitLab ? "gitlab" : "github",
+      repoUrl: isGitLab ? `${parsed.origin}/${ownerPath}/${name}.git` : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
   skills: DiscoverableSkill[];
@@ -36,25 +79,11 @@ export function RepoManagerPanel({
         (skill.repoBranch || "main") === (repo.branch || "main"),
     ).length;
 
-  const parseRepoUrl = (
-    url: string,
-  ): { owner: string; name: string } | null => {
-    let cleaned = url.trim();
-    cleaned = cleaned.replace(/^https?:\/\/github\.com\//, "");
-    cleaned = cleaned.replace(/\.git$/, "");
-
-    const parts = cleaned.split("/");
-    if (parts.length === 2 && parts[0] && parts[1]) {
-      return { owner: parts[0], name: parts[1] };
-    }
-
-    return null;
-  };
 
   const handleAdd = async () => {
     setError("");
 
-    const parsed = parseRepoUrl(repoUrl);
+    const parsed = parseSkillRepoUrl(repoUrl);
     if (!parsed) {
       setError(t("skills.repo.invalidUrl"));
       return;
@@ -66,6 +95,8 @@ export function RepoManagerPanel({
         name: parsed.name,
         branch: branch || "main",
         enabled: true,
+        provider: parsed.provider,
+        repoUrl: parsed.repoUrl,
       });
 
       setRepoUrl("");
@@ -75,9 +106,11 @@ export function RepoManagerPanel({
     }
   };
 
-  const handleOpenRepo = async (owner: string, name: string) => {
+  const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(`https://github.com/${owner}/${name}`);
+      await settingsApi.openExternal(
+        repo.repoUrl?.replace(/\.git$/, "") || `https://github.com/${repo.owner}/${repo.name}`,
+      );
     } catch (error) {
       console.error("Failed to open URL:", error);
     }
@@ -154,6 +187,9 @@ export function RepoManagerPanel({
                 <div>
                   <div className="text-sm font-medium text-foreground">
                     {repo.owner}/{repo.name}
+                    {repo.provider === "gitlab" && (
+                      <span className="ml-2 text-[11px] text-muted-foreground">GitLab</span>
+                    )}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     {t("skills.repo.branch")}: {repo.branch || "main"}
@@ -169,7 +205,7 @@ export function RepoManagerPanel({
                     variant="ghost"
                     size="icon"
                     type="button"
-                    onClick={() => handleOpenRepo(repo.owner, repo.name)}
+                    onClick={() => handleOpenRepo(repo)}
                     title={t("common.view", { defaultValue: "查看" })}
                     className="hover:bg-black/5 dark:hover:bg-white/5"
                   >

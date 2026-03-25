@@ -38,6 +38,7 @@ pub enum SyncMethod {
 
 /// 可发现的技能（来自仓库）
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DiscoverableSkill {
     /// 唯一标识: "owner/name:directory"
     pub key: String,
@@ -47,18 +48,16 @@ pub struct DiscoverableSkill {
     pub description: String,
     /// 目录名称 (安装路径的最后一段)
     pub directory: String,
-    /// GitHub README URL
-    #[serde(rename = "readmeUrl")]
+    /// README URL
     pub readme_url: Option<String>,
     /// 仓库所有者
-    #[serde(rename = "repoOwner")]
     pub repo_owner: String,
     /// 仓库名称
-    #[serde(rename = "repoName")]
     pub repo_name: String,
     /// 分支名称
-    #[serde(rename = "repoBranch")]
     pub repo_branch: String,
+    /// 原始仓库 URL（GitLab 来源使用）
+    pub repo_url: Option<String>,
 }
 
 /// 技能对象（兼容旧 API，内部使用 DiscoverableSkill）
@@ -90,8 +89,9 @@ pub struct Skill {
 
 /// 仓库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillRepo {
-    /// GitHub 用户/组织名
+    /// GitHub/GitLab 用户或组名
     pub owner: String,
     /// 仓库名称
     pub name: String,
@@ -99,6 +99,18 @@ pub struct SkillRepo {
     pub branch: String,
     /// 是否启用
     pub enabled: bool,
+    /// 仓库来源类型（默认 github）
+    #[serde(default = "default_skill_repo_provider")]
+    pub provider: String,
+    /// GitLab 仓库原始 URL（GitHub 来源为空）
+    #[serde(default)]
+    pub repo_url: Option<String>,
+}
+
+const SUPPORTED_GITLAB_HOSTS: &[&str] = &["gitlab.com", "gitlabwh.uniontech.com"];
+
+fn default_skill_repo_provider() -> String {
+    "github".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +129,7 @@ struct ImportSourceInfo {
     repo_branch: Option<String>,
     readme_url: Option<String>,
 }
+
 
 /// 技能安装状态（旧版兼容）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,24 +160,32 @@ impl Default for SkillStore {
                     name: "skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
+                    provider: default_skill_repo_provider(),
+                    repo_url: None,
                 },
                 SkillRepo {
                     owner: "ComposioHQ".to_string(),
                     name: "awesome-claude-skills".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
+                    provider: default_skill_repo_provider(),
+                    repo_url: None,
                 },
                 SkillRepo {
                     owner: "cexll".to_string(),
                     name: "myclaude".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
+                    provider: default_skill_repo_provider(),
+                    repo_url: None,
                 },
                 SkillRepo {
                     owner: "JimLiu".to_string(),
                     name: "baoyu-skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
+                    provider: default_skill_repo_provider(),
+                    repo_url: None,
                 },
             ],
         }
@@ -388,6 +409,114 @@ impl SkillService {
         format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
     }
 
+    fn build_gitlab_doc_url(repo_url: &str, branch: &str, doc_path: &str) -> String {
+        let base = repo_url.trim_end_matches(".git").trim_end_matches('/');
+        format!("{base}/-/blob/{branch}/{doc_path}")
+    }
+
+    fn is_supported_gitlab_host(host: &str) -> bool {
+        SUPPORTED_GITLAB_HOSTS
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(host))
+    }
+
+    pub fn validate_skill_repo(repo: &SkillRepo) -> Result<()> {
+        if repo.owner.trim().is_empty() || repo.name.trim().is_empty() {
+            return Err(anyhow!(format_skill_error(
+                "MISSING_REPO_INFO",
+                &[],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        match repo.provider.as_str() {
+            "github" => {
+                if repo.repo_url.is_some() {
+                    return Err(anyhow!(format_skill_error(
+                        "INVALID_GIT_URL",
+                        &[("url", repo.repo_url.as_deref().unwrap_or(""))],
+                        Some("checkRepoUrl"),
+                    )));
+                }
+            }
+            "gitlab" => {
+                let repo_url = repo.repo_url.as_deref().ok_or_else(|| {
+                    anyhow!(format_skill_error(
+                        "INVALID_GIT_URL",
+                        &[("url", "")],
+                        Some("checkRepoUrl"),
+                    ))
+                })?;
+                let sanitized = Self::sanitize_gitlab_repo_url(repo_url)?;
+                let parsed = url::Url::parse(&sanitized).map_err(|_| {
+                    anyhow!(format_skill_error(
+                        "INVALID_GIT_URL",
+                        &[("url", repo_url)],
+                        Some("checkRepoUrl"),
+                    ))
+                })?;
+                let host = parsed.host_str().unwrap_or_default();
+                let path = parsed.path().trim_start_matches('/').trim_end_matches(".git");
+                let expected_path = format!("{}/{}", repo.owner.trim_start_matches(&format!("{host}/")), repo.name);
+                if !path.eq_ignore_ascii_case(&expected_path) {
+                    return Err(anyhow!(format_skill_error(
+                        "INVALID_GIT_URL",
+                        &[("url", repo_url)],
+                        Some("checkRepoUrl"),
+                    )));
+                }
+            }
+            _ => {
+                return Err(anyhow!(format_skill_error(
+                    "INVALID_GIT_URL",
+                    &[("url", repo.repo_url.as_deref().unwrap_or(""))],
+                    Some("checkRepoUrl"),
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn sanitize_gitlab_repo_url(raw: &str) -> Result<String> {
+        let sanitized = Self::sanitize_git_https_url(raw)?;
+        let parsed = url::Url::parse(&sanitized).map_err(|_| {
+            anyhow!(format_skill_error(
+                "INVALID_GIT_URL",
+                &[("url", raw)],
+                Some("checkRepoUrl"),
+            ))
+        })?;
+        let host = parsed.host_str().unwrap_or_default();
+        if !Self::is_supported_gitlab_host(host) {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_GIT_URL",
+                &[("url", raw)],
+                Some("checkRepoUrl"),
+            )));
+        }
+        Ok(sanitized)
+    }
+
+    fn is_gitlab_discoverable_skill(skill: &DiscoverableSkill) -> bool {
+        skill.repo_url.as_deref().is_some()
+            || skill
+                .readme_url
+                .as_deref()
+                .is_some_and(|url| url.contains("/-/blob/"))
+    }
+
+    fn extract_gitlab_repo_url_from_doc_url(url: &str) -> Option<String> {
+        let (base, _) = url.split_once("/-/blob/")?;
+        let trimmed = base.trim_end_matches('/');
+        Some(format!("{trimmed}.git"))
+    }
+
+    fn is_gitlab_repo(repo: &SkillRepo) -> bool {
+        repo.provider.eq_ignore_ascii_case("gitlab")
+    }
+
+
     /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
     fn extract_doc_path_from_url(url: &str) -> Option<String> {
         let marker = if url.contains("/blob/") {
@@ -489,6 +618,40 @@ impl SkillService {
         skill: &DiscoverableSkill,
         current_app: &AppType,
     ) -> Result<InstalledSkill> {
+        if Self::is_gitlab_discoverable_skill(skill) {
+            let repo_url = skill
+                .repo_url
+                .clone()
+                .or_else(|| {
+                    skill
+                        .readme_url
+                        .as_deref()
+                        .and_then(Self::extract_gitlab_repo_url_from_doc_url)
+                })
+                .ok_or_else(|| {
+                    anyhow!(format_skill_error(
+                        "INVALID_GIT_URL",
+                        &[("url", "")],
+                        Some("checkRepoUrl"),
+                    ))
+                })?;
+            let repo_url = Self::sanitize_gitlab_repo_url(&repo_url)?;
+            let installed = Self::install_from_git_url(
+                db,
+                &GitSkillInstallRequest {
+                    repo_url,
+                    skill: Some(skill.directory.clone()),
+                    branch: Some(skill.repo_branch.clone()),
+                },
+                current_app,
+            )?;
+
+            return installed
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("GitLab skill install returned no installed result"));
+        }
+
         let ssot_dir = Self::get_ssot_dir()?;
 
         // 允许多级目录（如 a/b/c），但必须是安全的相对路径。
@@ -566,6 +729,8 @@ impl SkillService {
                 name: skill.repo_name.clone(),
                 branch: skill.repo_branch.clone(),
                 enabled: true,
+                provider: default_skill_repo_provider(),
+                repo_url: None,
             };
 
             // 下载仓库
@@ -1242,9 +1407,7 @@ impl SkillService {
         // 仅使用启用的仓库
         let enabled_repos: Vec<SkillRepo> = repos.into_iter().filter(|repo| repo.enabled).collect();
 
-        let fetch_tasks = enabled_repos
-            .iter()
-            .map(|repo| self.fetch_repo_skills(repo));
+        let fetch_tasks = enabled_repos.iter().map(|repo| self.fetch_repo_skills(repo));
 
         let results: Vec<Result<Vec<DiscoverableSkill>>> =
             futures::future::join_all(fetch_tasks).await;
@@ -1332,7 +1495,35 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_dir, resolved_branch) =
+        let (temp_dir, resolved_branch) = if Self::is_gitlab_repo(repo) {
+            let repo_url = repo.repo_url.as_deref().ok_or_else(|| {
+                anyhow!(format_skill_error(
+                    "INVALID_GIT_URL",
+                    &[("url", &format!("{}/{}", repo.owner, repo.name))],
+                    Some("checkRepoUrl"),
+                ))
+            })?;
+            let repo_url = Self::sanitize_gitlab_repo_url(repo_url)?;
+            let temp_dir = timeout(
+                std::time::Duration::from_secs(60),
+                async { Self::clone_git_repo_to_temp(&repo_url, Some(&repo.branch)) },
+            )
+            .await
+            .map_err(|_| {
+                anyhow!(format_skill_error(
+                    "DOWNLOAD_TIMEOUT",
+                    &[
+                        ("owner", &repo.owner),
+                        ("name", &repo.name),
+                        ("timeout", "60")
+                    ],
+                    Some("checkNetwork"),
+                ))
+            })??;
+            let branch = Self::detect_checked_out_branch(&temp_dir)
+                .unwrap_or_else(|_| repo.branch.clone());
+            (temp_dir, branch)
+        } else {
             timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
                 .await
                 .map_err(|_| {
@@ -1345,7 +1536,8 @@ impl SkillService {
                         ],
                         Some("checkNetwork"),
                     ))
-                })??;
+                })??
+        };
 
         let mut skills = Vec::new();
         let scan_dir = temp_dir.clone();
@@ -1397,10 +1589,15 @@ impl SkillService {
         for entry in fs::read_dir(current_dir)? {
             let entry = entry?;
             let path = entry.path();
-
-            if path.is_dir() {
-                self.scan_dir_recursive(&path, base_dir, repo, skills)?;
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                continue;
             }
+            let dir_name = entry.file_name().to_string_lossy().to_string();
+            if dir_name.starts_with('.') {
+                continue;
+            }
+            self.scan_dir_recursive(&path, base_dir, repo, skills)?;
         }
 
         Ok(())
@@ -1416,20 +1613,29 @@ impl SkillService {
     ) -> Result<DiscoverableSkill> {
         let meta = self.parse_skill_metadata(skill_md)?;
 
+        let readme_url = if Self::is_gitlab_repo(repo) {
+            repo.repo_url
+                .as_deref()
+                .map(|repo_url| Self::build_gitlab_doc_url(repo_url, &repo.branch, doc_path))
+        } else {
+            Some(Self::build_skill_doc_url(
+                &repo.owner,
+                &repo.name,
+                &repo.branch,
+                doc_path,
+            ))
+        };
+
         Ok(DiscoverableSkill {
             key: format!("{}/{}:{}", repo.owner, repo.name, directory),
             name: meta.name.unwrap_or_else(|| directory.to_string()),
             description: meta.description.unwrap_or_default(),
             directory: directory.to_string(),
-            readme_url: Some(Self::build_skill_doc_url(
-                &repo.owner,
-                &repo.name,
-                &repo.branch,
-                doc_path,
-            )),
+            readme_url,
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
+            repo_url: repo.repo_url.clone(),
         })
     }
 
@@ -2084,13 +2290,20 @@ impl SkillService {
             .last()
             .map(|name| name.trim_end_matches(".git").to_string())
             .filter(|name| !name.is_empty());
-        let repo_owner = if path_segments.len() >= 2 {
-            Some(path_segments[path_segments.len() - 2].to_string())
+        let repo_owner = if let Some(url) = parsed.as_ref() {
+            if let Some(host) = url.host_str() {
+                if Self::is_supported_gitlab_host(host) && path_segments.len() >= 2 {
+                    Some(format!("{host}/{}", path_segments[..path_segments.len() - 1].join("/")))
+                } else if path_segments.len() >= 2 {
+                    Some(path_segments[path_segments.len() - 2].to_string())
+                } else {
+                    Some(host.to_string())
+                }
+            } else {
+                None
+            }
         } else {
-            parsed
-                .as_ref()
-                .and_then(|url| url.host_str())
-                .map(str::to_string)
+            None
         };
         let install_target = selected_skill
             .and_then(|value| Path::new(value).file_name())
@@ -2538,6 +2751,8 @@ fn save_repos_from_lock(
                     // 未知分支时使用 HEAD 语义，后续下载会回退到 main/master。
                     branch: info.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
                     enabled: true,
+                    provider: default_skill_repo_provider(),
+                    repo_url: None,
                 };
                 if let Err(e) = db.save_skill_repo(&skill_repo) {
                     log::warn!("保存 skill 仓库 {}/{} 失败: {}", info.owner, info.repo, e);

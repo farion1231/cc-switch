@@ -257,6 +257,7 @@ pub fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>,
 /// 添加技能仓库
 #[tauri::command]
 pub fn add_skill_repo(repo: SkillRepo, app_state: State<'_, AppState>) -> Result<bool, String> {
+    SkillService::validate_skill_repo(&repo).map_err(|e| e.to_string())?;
     app_state
         .db
         .save_skill_repo(&repo)

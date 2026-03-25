@@ -202,6 +202,8 @@ fn schema_migration_adds_missing_columns_for_providers() {
         ("prompts", "updated_at"),
         ("skills", "installed_at"),
         ("skill_repos", "enabled"),
+        ("skill_repos", "provider"),
+        ("skill_repos", "repo_url"),
     ] {
         assert!(
             Database::has_column(&conn, table, column).expect("check column"),
@@ -266,6 +268,18 @@ fn schema_migration_aligns_column_defaults_and_types() {
         normalize_default(&skill_repo_enabled.default).as_deref(),
         Some("1")
     );
+
+    let skill_repo_provider = get_column_info(&conn, "skill_repos", "provider");
+    assert_eq!(skill_repo_provider.r#type, "TEXT");
+    assert_eq!(skill_repo_provider.notnull, 1);
+    assert_eq!(
+        normalize_default(&skill_repo_provider.default).as_deref(),
+        Some("github")
+    );
+
+    let skill_repo_url = get_column_info(&conn, "skill_repos", "repo_url");
+    assert_eq!(skill_repo_url.r#type, "TEXT");
+    assert_eq!(skill_repo_url.notnull, 0);
 }
 
 #[test]
