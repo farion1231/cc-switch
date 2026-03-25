@@ -7,6 +7,9 @@ import React, {
 } from "react";
 import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   extractCodexTopLevelInt,
   setCodexTopLevelInt,
@@ -94,6 +97,26 @@ interface CodexConfigSectionProps {
   onEditCommonConfig: () => void;
   commonConfigError?: string;
   configError?: string;
+}
+
+function ToggleChip({
+  checked,
+  label,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  label: string;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-border/70 bg-background/55 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-border-hover hover:text-foreground">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(nextChecked) => onCheckedChange(nextChecked === true)}
+      />
+      <span>{label}</span>
+    </label>
+  );
 }
 
 /**
@@ -213,34 +236,37 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   }, []);
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <label
-          htmlFor="codexConfig"
-          className="block text-sm font-medium text-foreground"
-        >
-          {t("codexConfig.configToml")}
-        </label>
+    <div className="space-y-4 rounded-[calc(var(--radius)+0.25rem)] border border-border/70 bg-card/45 p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div className="space-y-1">
+          <label
+            htmlFor="codexConfig"
+            className="block text-sm font-medium text-foreground"
+          >
+            {t("codexConfig.configToml")}
+          </label>
+          <p className="text-xs text-muted-foreground">
+            {t("codexConfig.configTomlHint")}
+          </p>
+        </div>
 
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={useCommonConfig}
-            onChange={(e) => onCommonConfigToggle(e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default  rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          {t("codexConfig.writeCommonConfig")}
-        </label>
+        <ToggleChip
+          checked={useCommonConfig}
+          onCheckedChange={onCommonConfigToggle}
+          label={t("codexConfig.writeCommonConfig")}
+        />
       </div>
 
       <div className="flex items-center justify-end">
-        <button
+        <Button
           type="button"
           onClick={onEditCommonConfig}
-          className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
+          variant="link"
+          size="sm"
+          className="h-auto px-0 py-0 text-xs"
         >
           {t("codexConfig.editCommonConfig")}
-        </button>
+        </Button>
       </div>
 
       {commonConfigError && (
@@ -249,19 +275,15 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         </p>
       )}
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.contextWindow1M}
-            onChange={(e) => handleContextWindowToggle(e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          <span>{t("codexConfig.contextWindow1M")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2">
+        <ToggleChip
+          checked={toggleStates.contextWindow1M}
+          onCheckedChange={handleContextWindowToggle}
+          label={t("codexConfig.contextWindow1M")}
+        />
+        <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/55 px-3 py-1.5 text-sm text-muted-foreground">
           <span>{t("codexConfig.autoCompactLimit")}:</span>
-          <input
+          <Input
             type="text"
             inputMode="numeric"
             pattern="[0-9]*"
@@ -269,9 +291,9 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
             defaultValue={toggleStates.compactLimit}
             disabled={!toggleStates.contextWindow1M}
             onChange={(e) => handleCompactLimitChange(e.target.value)}
-            className="w-28 h-7 px-2 text-sm rounded border border-border bg-background text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+            className="h-7 w-28 border-border/70 bg-background/70 px-2 text-sm"
           />
-        </label>
+        </div>
       </div>
 
       <JsonEditor
@@ -286,12 +308,6 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
 
       {configError && (
         <p className="text-xs text-red-500 dark:text-red-400">{configError}</p>
-      )}
-
-      {!configError && (
-        <p className="text-xs text-muted-foreground">
-          {t("codexConfig.configTomlHint")}
-        </p>
       )}
     </div>
   );

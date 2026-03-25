@@ -184,7 +184,7 @@ export function RepoManager({
                           type="button"
                           onClick={() => onRemove(repo.owner, repo.name)}
                           title={t("common.delete")}
-                          className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+                          className="hover:bg-destructive/10 hover:text-destructive"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

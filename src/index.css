@@ -32,6 +32,24 @@
     --radius: 0.5rem;
   }
 
+  :root[data-theme-preset="bubblegum"] {
+    --primary: 333 82% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 318 100% 97%;
+    --secondary-foreground: 326 36% 18%;
+
+    --muted: 312 45% 95%;
+    --muted-foreground: 326 12% 39%;
+    --accent: 42 100% 88%;
+    --accent-foreground: 24 45% 22%;
+
+    --border: 327 54% 85%;
+    --input: 327 54% 85%;
+    --ring: 333 82% 60%;
+    --radius: 1rem;
+  }
+
   .dark {
     --background: 240 5% 12%;
     --foreground: 0 0% 98%;
@@ -58,45 +76,77 @@
     --input: 240 5% 24%;
     --ring: 210 100% 54%;
   }
+
+  .dark[data-theme-preset="bubblegum"] {
+    --background: 318 30% 12%;
+    --foreground: 330 100% 98%;
+    --card: 318 28% 16%;
+    --card-foreground: 330 100% 98%;
+    --popover: 318 28% 16%;
+    --popover-foreground: 330 100% 98%;
+
+    --primary: 332 82% 68%;
+    --primary-foreground: 318 30% 12%;
+
+    --secondary: 314 24% 22%;
+    --secondary-foreground: 330 100% 96%;
+
+    --muted: 314 24% 22%;
+    --muted-foreground: 326 18% 72%;
+    --accent: 36 88% 62%;
+    --accent-foreground: 20 64% 12%;
+
+    --border: 315 23% 26%;
+    --input: 315 23% 26%;
+    --ring: 332 82% 68%;
+    --radius: 1rem;
+  }
 }
 
 .glass {
-  background: rgba(255, 255, 255, 0.7);
+  background: hsl(var(--card) / 0.82);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border: 1px solid hsl(var(--border) / 0.75);
+  box-shadow: 0 12px 30px hsl(var(--foreground) / 0.05);
 }
 
 .dark .glass {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: hsl(var(--card) / 0.72);
+  border: 1px solid hsl(var(--border) / 0.8);
+  box-shadow: 0 18px 40px hsl(var(--background) / 0.65);
 }
 
 .glass-card {
-  background: rgba(255, 255, 255, 0.8);
+  background: linear-gradient(
+    160deg,
+    hsl(var(--card) / 0.92) 0%,
+    hsl(var(--card) / 0.78) 100%
+  );
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border: 1px solid hsl(var(--border) / 0.7);
+  box-shadow: 0 18px 40px hsl(var(--foreground) / 0.07);
 }
 
 .dark .glass-card {
   background: linear-gradient(
     145deg,
-    rgba(255, 255, 255, 0.05) 0%,
-    rgba(255, 255, 255, 0.01) 100%
+    hsl(var(--card) / 0.85) 0%,
+    hsl(var(--card) / 0.68) 100%
   );
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  border: 1px solid hsl(var(--border) / 0.75);
+  box-shadow: 0 18px 40px hsl(var(--background) / 0.75);
 }
 
 .glass-card-active {
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px solid rgba(59, 130, 246, 0.4);
+  background: hsl(var(--primary) / 0.08);
+  border: 1px solid hsl(var(--primary) / 0.35);
 }
 
 .dark .glass-card-active {
-  background: rgba(59, 130, 246, 0.12);
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: hsl(var(--primary) / 0.14);
+  border: 1px solid hsl(var(--primary) / 0.28);
 }
 
 .glass-header {
@@ -150,7 +200,8 @@ html.dark {
 }
 
 *:focus-visible {
-  @apply outline-2 outline-blue-500 outline-offset-2;
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 
 @layer utilities {

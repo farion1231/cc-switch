@@ -700,7 +700,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       onClose={onClose}
       footer={footer}
     >
-      <div className="glass rounded-xl border border-white/10 px-6 py-4 flex items-center justify-between gap-4">
+      <div className="glass flex items-center justify-between gap-4 rounded-xl border border-border/50 px-6 py-4">
         <p className="text-base font-medium leading-none text-foreground">
           {t("usageScript.enableUsageQuery")}
         </p>
@@ -714,7 +714,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       {script.enabled && (
         <div className="space-y-6">
           {/* 预设模板选择 */}
-          <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
+          <div className="glass space-y-4 rounded-xl border border-border/50 p-6">
             <Label className="text-base font-medium">
               {t("usageScript.presetTemplate")}
             </Label>
@@ -754,14 +754,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
             {/* 自定义模式：变量提示和具体值 */}
             {selectedTemplate === TEMPLATE_TYPES.CUSTOM && (
-              <div className="space-y-2 border-t border-white/10 pt-3">
+              <div className="space-y-2 border-t border-border/50 pt-3">
                 <h4 className="text-sm font-medium text-foreground">
                   {t("usageScript.supportedVariables")}
                 </h4>
                 <div className="space-y-1 text-xs">
                   {/* baseUrl */}
                   <div className="flex items-center gap-2 py-1">
-                    <code className="text-emerald-500 dark:text-emerald-400 font-mono shrink-0">
+                    <code className="text-primary font-mono shrink-0">
                       {"{{baseUrl}}"}
                     </code>
                     <span className="text-muted-foreground/50">=</span>
@@ -778,7 +778,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                   {/* apiKey */}
                   <div className="flex items-center gap-2 py-1">
-                    <code className="text-emerald-500 dark:text-emerald-400 font-mono shrink-0">
+                    <code className="text-primary font-mono shrink-0">
                       {"{{apiKey}}"}
                     </code>
                     <span className="text-muted-foreground/50">=</span>
@@ -822,7 +822,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
             {/* Copilot 模式：自动认证提示 */}
             {selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT && (
-              <div className="space-y-2 border-t border-white/10 pt-3">
+              <div className="space-y-2 border-t border-border/50 pt-3">
                 <p className="text-sm text-muted-foreground">
                   {t("usageScript.copilotAutoAuth")}
                 </p>
@@ -919,7 +919,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             }
                             placeholder={t("usageScript.apiKeyPlaceholder")}
                             autoComplete="off"
-                            className="border-white/10"
+                            className="border-border/60"
                           />
                           {script.apiKey && (
                             <button
@@ -958,7 +958,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           }
                           placeholder={t("usageScript.baseUrlPlaceholder")}
                           autoComplete="off"
-                          className="border-white/10"
+                          className="border-border/60"
                         />
                       </div>
                     </>
@@ -979,7 +979,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           }
                           placeholder="https://api.newapi.com"
                           autoComplete="off"
-                          className="border-white/10"
+                          className="border-border/60"
                         />
                       </div>
 
@@ -1002,7 +1002,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                               "usageScript.accessTokenPlaceholder",
                             )}
                             autoComplete="off"
-                            className="border-white/10"
+                            className="border-border/60"
                           />
                           {script.accessToken && (
                             <button
@@ -1040,7 +1040,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           }
                           placeholder={t("usageScript.userIdPlaceholder")}
                           autoComplete="off"
-                          className="border-white/10"
+                          className="border-border/60"
                         />
                       </div>
                     </>
@@ -1050,7 +1050,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             )}
 
             {/* 通用配置（始终显示） */}
-            <div className="grid gap-4 md:grid-cols-2 pt-4 border-t border-white/10">
+            <div className="grid gap-4 border-t border-border/50 pt-4 md:grid-cols-2">
               {/* 超时时间 */}
               <div className="space-y-2">
                 <Label htmlFor="usage-timeout">
@@ -1076,7 +1076,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       timeout: validateTimeout(e.target.value),
                     })
                   }
-                  className="border-white/10"
+                  className="border-border/60"
                 />
               </div>
 
@@ -1110,7 +1110,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       ),
                     })
                   }
-                  className="border-white/10"
+                  className="border-border/60"
                 />
               </div>
             </div>
@@ -1119,14 +1119,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           {/* 提取器代码 - Copilot 模板不需要 */}
           {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
             selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
-              <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
-                <div className="flex items-center justify-between">
-                  <Label className="text-base font-medium">
-                    {t("usageScript.extractorCode")}
-                  </Label>
-                  <div className="text-xs text-muted-foreground">
-                    {t("usageScript.extractorHint")}
-                  </div>
+              <div className="glass space-y-4 rounded-xl border border-border/50 p-6">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-medium">
+                  {t("usageScript.extractorCode")}
+                </Label>
+                <div className="text-xs text-muted-foreground">
+                  {t("usageScript.extractorHint")}
                 </div>
                 <JsonEditor
                   id="usage-code"
@@ -1144,15 +1143,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           {/* 帮助信息 - Copilot 模板不需要 */}
           {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
             selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
-              <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
-                <h4 className="font-medium mb-2">
-                  {t("usageScript.scriptHelp")}
-                </h4>
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <strong>{t("usageScript.configFormat")}</strong>
-                    <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
-                      {`({
+              <div className="glass rounded-xl border border-border/50 p-6 text-sm text-foreground/90">
+              <h4 className="font-medium mb-2">
+                {t("usageScript.scriptHelp")}
+              </h4>
+              <div className="space-y-3 text-xs">
+                <div>
+                  <strong>{t("usageScript.configFormat")}</strong>
+                  <pre className="mt-1 overflow-x-auto rounded border border-border/60 bg-muted/60 p-2 text-[10px] text-foreground">
+                    {`({
   request: {
     url: "{{baseUrl}}/api/usage",
     method: "POST",

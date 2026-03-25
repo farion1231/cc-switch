@@ -296,7 +296,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
           type="button"
           variant="ghost"
           size="icon"
-          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+          className="h-7 w-7 hover:bg-destructive/10 hover:text-destructive"
           onClick={() => onDelete(id)}
           title={t("common.delete")}
         >

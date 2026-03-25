@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -200,12 +200,26 @@ export function ProviderCard({
     usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
 
   const [isExpanded, setIsExpanded] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const [actionsWidth, setActionsWidth] = useState(0);
 
   useEffect(() => {
     if (hasMultiplePlans) {
       setIsExpanded(true);
     }
   }, [hasMultiplePlans]);
+
+  useEffect(() => {
+    if (actionsRef.current) {
+      const updateWidth = () => {
+        const width = actionsRef.current?.offsetWidth || 0;
+        setActionsWidth(width);
+      };
+      updateWidth();
+      window.addEventListener("resize", updateWidth);
+      return () => window.removeEventListener("resize", updateWidth);
+    }
+  }, [onTest, onOpenTerminal]);
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -244,13 +258,12 @@ export function ProviderCard({
         "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
         "bg-card text-card-foreground group",
         isAutoFailoverEnabled || isProxyTakeover
-          ? "hover:border-emerald-500/50"
+          ? "hover:border-primary/50"
           : "hover:border-border-active",
         shouldUseGreen &&
-          "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
-        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
-        !(isActiveProvider || hasPersistentConfigHighlight) &&
-          "hover:shadow-sm",
+          "border-[hsl(var(--success))]/60 shadow-sm shadow-[hsl(var(--success))/0.10]",
+        shouldUseBlue && "border-primary/60 shadow-sm shadow-primary/10",
+        !(isActiveProvider || hasPersistentConfigHighlight) && "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
@@ -258,8 +271,8 @@ export function ProviderCard({
       <div
         className={cn(
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
-          shouldUseGreen && "from-emerald-500/10",
-          shouldUseBlue && "from-blue-500/10",
+          shouldUseGreen && "from-[hsl(var(--success))/0.10]",
+          shouldUseBlue && "from-primary/10",
           !shouldUseGreen && !shouldUseBlue && "from-primary/10",
           isActiveProvider || hasPersistentConfigHighlight
             ? "opacity-100"
@@ -298,13 +311,13 @@ export function ProviderCard({
               </h3>
 
               {isOmo && (
-                <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                <span className="inline-flex items-center rounded-md border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                   OMO
                 </span>
               )}
 
               {isOmoSlim && (
-                <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                <span className="inline-flex items-center rounded-md border border-secondary/70 bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-secondary-foreground">
                   Slim
                 </span>
               )}
@@ -324,7 +337,7 @@ export function ProviderCard({
               {provider.category === "third_party" &&
                 provider.meta?.isPartner && (
                   <span
-                    className="text-yellow-500 dark:text-yellow-400"
+                    className="text-accent-foreground"
                     title={t("provider.officialPartner", {
                       defaultValue: "官方合作伙伴",
                     })}
@@ -341,7 +354,7 @@ export function ProviderCard({
                 className={cn(
                   "inline-flex items-center text-sm max-w-[280px]",
                   isClickableUrl
-                    ? "text-blue-500 transition-colors hover:underline dark:text-blue-400 cursor-pointer"
+                    ? "text-primary transition-colors hover:underline cursor-pointer"
                     : "text-muted-foreground cursor-default",
                 )}
                 title={displayUrl}
@@ -353,9 +366,16 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div className="flex items-center ml-auto min-w-0 gap-3">
+        <div
+          className="relative flex items-center ml-auto min-w-0 gap-3"
+          style={
+            {
+              "--actions-width": `${actionsWidth || 320}px`,
+            } as React.CSSProperties
+          }
+        >
           <div className="ml-auto">
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 transition-transform duration-200 group-hover:-translate-x-[var(--actions-width)] group-focus-within:-translate-x-[var(--actions-width)]">
               {isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
@@ -375,7 +395,7 @@ export function ProviderCard({
                   isCurrent={isCurrent}
                 />
               ) : hasMultiplePlans ? (
-                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="font-medium">
                     {t("usage.multiplePlans", {
                       count: usage?.data?.length || 0,
@@ -400,7 +420,7 @@ export function ProviderCard({
                     e.stopPropagation();
                     setIsExpanded(!isExpanded);
                   }}
-                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  className="p-1 rounded hover:bg-accent transition-colors text-muted-foreground flex-shrink-0"
                   title={
                     isExpanded
                       ? t("usage.collapse", { defaultValue: "收起" })
@@ -417,7 +437,10 @@ export function ProviderCard({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+          <div
+            ref={actionsRef}
+            className="absolute right-0 top-1/2 flex -translate-y-1/2 translate-x-2 items-center gap-1.5 pl-3 opacity-0 pointer-events-none transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 group-focus-within:pointer-events-auto"
+          >
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}

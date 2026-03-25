@@ -346,7 +346,7 @@ export function RequestLogTable({
       </div>
 
       {isLoading ? (
-        <div className="h-[400px] animate-pulse rounded bg-gray-100" />
+        <div className="h-[400px] animate-pulse rounded-lg bg-muted/60" />
       ) : (
         <>
           <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-x-auto">
@@ -464,11 +464,11 @@ export function RequestLogTable({
                             const durationSec = durationMs / 1000;
                             const durationColor = Number.isFinite(durationSec)
                               ? durationSec <= 5
-                                ? "bg-green-100 text-green-800"
+                                ? "border border-primary/20 bg-primary/10 text-primary"
                                 : durationSec <= 120
-                                  ? "bg-orange-100 text-orange-800"
-                                  : "bg-red-200 text-red-900"
-                              : "bg-gray-100 text-gray-700";
+                                  ? "border border-accent/40 bg-accent/20 text-accent-foreground"
+                                  : "border border-destructive/20 bg-destructive/10 text-destructive"
+                              : "border border-border/70 bg-muted/60 text-muted-foreground";
                             return (
                               <span
                                 className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs ${durationColor}`}
@@ -485,11 +485,11 @@ export function RequestLogTable({
                               const firstSec = log.firstTokenMs / 1000;
                               const firstColor = Number.isFinite(firstSec)
                                 ? firstSec <= 5
-                                  ? "bg-green-100 text-green-800"
+                                  ? "border border-primary/20 bg-primary/10 text-primary"
                                   : firstSec <= 120
-                                    ? "bg-orange-100 text-orange-800"
-                                    : "bg-red-200 text-red-900"
-                                : "bg-gray-100 text-gray-700";
+                                    ? "border border-accent/40 bg-accent/20 text-accent-foreground"
+                                    : "border border-destructive/20 bg-destructive/10 text-destructive"
+                                : "border border-border/70 bg-muted/60 text-muted-foreground";
                               return (
                                 <span
                                   className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs ${firstColor}`}
@@ -503,8 +503,8 @@ export function RequestLogTable({
                           <span
                             className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs ${
                               log.isStreaming
-                                ? "bg-blue-100 text-blue-800"
-                                : "bg-purple-100 text-purple-800"
+                                ? "border border-primary/20 bg-primary/10 text-primary"
+                                : "border border-secondary/70 bg-secondary text-secondary-foreground"
                             }`}
                           >
                             {log.isStreaming
@@ -515,10 +515,10 @@ export function RequestLogTable({
                       </TableCell>
                       <TableCell>
                         <span
-                          className={`inline-flex rounded-full px-2 py-1 text-xs ${
+                          className={`inline-flex rounded-full border px-2 py-1 text-xs ${
                             log.statusCode >= 200 && log.statusCode < 300
-                              ? "bg-green-100 text-green-800"
-                              : "bg-red-100 text-red-800"
+                              ? "border-primary/20 bg-primary/10 text-primary"
+                              : "border-destructive/20 bg-destructive/10 text-destructive"
                           }`}
                         >
                           {log.statusCode}

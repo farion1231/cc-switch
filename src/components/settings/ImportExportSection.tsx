@@ -60,7 +60,7 @@ export function ImportExportSection({
           <div className="relative">
             <Button
               type="button"
-              className={`w-full h-auto py-3 px-4 bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white ${selectedFile && !isImporting ? "flex-col items-start" : "items-center"}`}
+              className={`w-full h-auto py-3 px-4 bg-primary hover:bg-primary/90 text-primary-foreground ${selectedFile && !isImporting ? "flex-col items-start" : "items-center"}`}
               onClick={!selectedFile ? onSelectFile : onImport}
               disabled={isImporting}
             >
@@ -104,7 +104,7 @@ export function ImportExportSection({
           <div>
             <Button
               type="button"
-              className="w-full h-full py-3 px-4 bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white items-center"
+              className="w-full h-full py-3 px-4 bg-primary hover:bg-primary/90 text-primary-foreground items-center"
               onClick={onExport}
             >
               <Save className="mr-2 h-4 w-4" />
@@ -146,14 +146,12 @@ function ImportStatusMessage({
   if (status === "importing") {
     return (
       <div
-        className={`${baseClass} border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400`}
+        className={`${baseClass} border-primary/30 bg-primary/10 text-primary`}
       >
         <Loader2 className="mt-0.5 h-5 w-5 flex-shrink-0 animate-spin" />
         <div>
           <p className="font-semibold">{t("settings.importing")}</p>
-          <p className="text-blue-600/80 dark:text-blue-400/80">
-            {t("common.loading")}
-          </p>
+          <p className="text-primary/80">{t("common.loading")}</p>
         </div>
       </div>
     );

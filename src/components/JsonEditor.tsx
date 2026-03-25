@@ -84,54 +84,89 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     // 创建编辑器扩展
     const minHeightPx = height ? undefined : Math.max(1, rows) * 18;
 
-    // 使用 baseTheme 定义基础样式，优先级低于 oneDark，但可以正确响应主题
-    const baseTheme = EditorView.baseTheme({
-      ".cm-editor": {
-        border: "1px solid hsl(var(--border))",
-        borderRadius: "0.5rem",
-        background: "transparent",
-      },
-      ".cm-editor.cm-focused": {
-        outline: "none",
-        borderColor: "hsl(var(--primary))",
-      },
-      ".cm-scroller": {
-        background: "transparent",
-      },
-      ".cm-gutters": {
-        background: "transparent",
-        borderRight: "1px solid hsl(var(--border))",
-        color: "hsl(var(--muted-foreground))",
-      },
-      ".cm-selectionBackground, .cm-content ::selection": {
-        background: "hsl(var(--primary) / 0.18)",
-      },
-      ".cm-selectionMatch": {
-        background: "hsl(var(--primary) / 0.12)",
-      },
-      ".cm-activeLine": {
-        background: "hsl(var(--primary) / 0.08)",
-      },
-      ".cm-activeLineGutter": {
-        background: "hsl(var(--primary) / 0.08)",
-      },
-    });
-
     // 使用 theme 定义尺寸和字体样式
     const heightValue = height
       ? typeof height === "number"
         ? `${height}px`
         : height
       : undefined;
+    const editorTheme = EditorView.theme(
+      {
+        "&": heightValue
+          ? { height: heightValue }
+          : { minHeight: `${minHeightPx}px` },
+        ".cm-editor": {
+          height: "100%",
+          backgroundColor: "transparent",
+          color: "hsl(var(--foreground))",
+        },
+        ".cm-editor.cm-focused": {
+          outline: "none",
+        },
+        ".cm-scroller": {
+          overflow: "auto",
+          backgroundColor: "transparent",
+        },
+        ".cm-content": {
+          padding: "0.875rem 0",
+          caretColor: "hsl(var(--primary))",
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+          fontSize: "14px",
+        },
+        ".cm-line": {
+          padding: "0 1rem",
+        },
+        ".cm-placeholder": {
+          color: "hsl(var(--muted-foreground) / 0.85)",
+        },
+        ".cm-cursor, .cm-dropCursor": {
+          borderLeftColor: "hsl(var(--primary))",
+        },
+        ".cm-gutters": {
+          minHeight: "100%",
+          backgroundColor: "hsl(var(--muted) / 0.65)",
+          color: "hsl(var(--muted-foreground))",
+          borderRight: "1px solid hsl(var(--border))",
+        },
+        ".cm-gutterElement": {
+          padding: "0 0.75rem",
+        },
+        ".cm-activeLine": {
+          backgroundColor: "hsl(var(--accent) / 0.28)",
+        },
+        ".cm-activeLineGutter": {
+          backgroundColor: "hsl(var(--accent) / 0.4)",
+          color: "hsl(var(--foreground))",
+        },
+        ".cm-selectionBackground, .cm-content ::selection": {
+          backgroundColor: "hsl(var(--primary) / 0.18) !important",
+        },
+        ".cm-selectionMatch": {
+          backgroundColor: "hsl(var(--primary) / 0.12)",
+        },
+        ".cm-matchingBracket": {
+          backgroundColor: "hsl(var(--accent) / 0.45)",
+          outline: "1px solid hsl(var(--border))",
+          color: "hsl(var(--foreground))",
+        },
+        ".cm-nonmatchingBracket": {
+          color: "hsl(var(--destructive))",
+        },
+        ".cm-panels, .cm-tooltip": {
+          backgroundColor: "hsl(var(--popover))",
+          color: "hsl(var(--popover-foreground))",
+          border: "1px solid hsl(var(--border))",
+        },
+        ".cm-diagnosticText": {
+          color: "hsl(var(--destructive))",
+        },
+      },
+      { dark: darkMode },
+    );
     const sizingTheme = EditorView.theme({
-      "&": heightValue
-        ? { height: heightValue }
-        : { minHeight: `${minHeightPx}px` },
-      ".cm-scroller": { overflow: "auto" },
       ".cm-content": {
-        fontFamily:
-          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-        fontSize: "14px",
+        lineHeight: "1.6",
       },
     });
 
@@ -139,7 +174,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       basicSetup,
       language === "javascript" ? javascript() : json(),
       placeholder(placeholderText || ""),
-      baseTheme,
+      editorTheme,
       sizingTheme,
       jsonLinter,
       EditorView.updateListener.of((update) => {
@@ -150,43 +185,8 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       }),
     ];
 
-    // 如果启用深色模式，添加深色主题
     if (darkMode) {
-      extensions.push(oneDark);
-      // 在 oneDark 之后强制覆盖边框样式
-      extensions.push(
-        EditorView.theme({
-          ".cm-editor": {
-            border: "1px solid hsl(var(--border))",
-            borderRadius: "0.5rem",
-            background: "transparent",
-          },
-          ".cm-editor.cm-focused": {
-            outline: "none",
-            borderColor: "hsl(var(--primary))",
-          },
-          ".cm-scroller": {
-            background: "transparent",
-          },
-          ".cm-gutters": {
-            background: "transparent",
-            borderRight: "1px solid hsl(var(--border))",
-            color: "hsl(var(--muted-foreground))",
-          },
-          ".cm-selectionBackground, .cm-content ::selection": {
-            background: "hsl(var(--primary) / 0.18)",
-          },
-          ".cm-selectionMatch": {
-            background: "hsl(var(--primary) / 0.12)",
-          },
-          ".cm-activeLine": {
-            background: "hsl(var(--primary) / 0.08)",
-          },
-          ".cm-activeLineGutter": {
-            background: "hsl(var(--primary) / 0.08)",
-          },
-        }),
-      );
+      extensions.unshift(oneDark);
     }
 
     // 创建初始状态
@@ -208,7 +208,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       view.destroy();
       viewRef.current = null;
     };
-  }, [darkMode, rows, height, language, jsonLinter]); // 依赖项中不包含 onChange 和 placeholder，避免不必要的重建
+  }, [darkMode, rows, height, language, jsonLinter, placeholderText]);
 
   // 当 value 从外部改变时更新编辑器内容
   useEffect(() => {
@@ -257,20 +257,28 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       className={isFullHeight ? "flex flex-col" : ""}
     >
       <div
-        ref={editorRef}
-        style={{ width: "100%", height: isFullHeight ? undefined : "auto" }}
-        className={isFullHeight ? "flex-1 min-h-0" : ""}
-      />
-      {language === "json" && (
-        <button
-          type="button"
-          onClick={handleFormat}
-          className={`${isFullHeight ? "mt-2 flex-shrink-0" : "mt-2"} inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors`}
-        >
-          <Wand2 className="w-3.5 h-3.5" />
-          {t("common.format", { defaultValue: "格式化" })}
-        </button>
-      )}
+        className={`overflow-hidden rounded-[calc(var(--radius)+0.125rem)] border border-border/80 bg-card/85 shadow-sm ${
+          isFullHeight ? "flex min-h-0 flex-1 flex-col" : ""
+        }`}
+      >
+        <div
+          ref={editorRef}
+          style={{ width: "100%", height: isFullHeight ? undefined : "auto" }}
+          className={isFullHeight ? "min-h-0 flex-1" : ""}
+        />
+        {language === "json" && (
+          <div className="flex items-center justify-end border-t border-border/70 bg-muted/35 px-3 py-2">
+            <button
+              type="button"
+              onClick={handleFormat}
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/70 hover:text-accent-foreground"
+            >
+              <Wand2 className="h-3.5 w-3.5" />
+              {t("common.format", { defaultValue: "格式化" })}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

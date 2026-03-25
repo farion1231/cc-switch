@@ -73,7 +73,7 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
           className={cn(
             "h-4 w-4 transition-colors",
             takeoverEnabled
-              ? "text-emerald-500 animate-pulse"
+              ? "text-primary animate-pulse"
               : "text-muted-foreground",
           )}
         />

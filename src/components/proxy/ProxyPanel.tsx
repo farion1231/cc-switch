@@ -202,7 +202,7 @@ export function ProxyPanel({
       <section className="space-y-4">
         {/* [1] Enable proxy button on main page — always visible */}
         <ToggleRow
-          icon={<Zap className="h-4 w-4 text-green-500" />}
+          icon={<Zap className="h-4 w-4 text-primary" />}
           title={t("settings.advanced.proxy.enableFeature")}
           description={t("settings.advanced.proxy.enableFeatureDescription")}
           checked={enableLocalProxy}
@@ -213,7 +213,7 @@ export function ProxyPanel({
         <div className="flex items-center justify-between rounded-xl border border-border bg-card/50 p-4 transition-colors hover:bg-muted/50">
           <div className="flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-background ring-1 ring-border">
-              <Power className="h-4 w-4 text-green-500" />
+              <Power className="h-4 w-4 text-primary" />
             </div>
             <div className="space-y-1">
               <p className="text-sm font-medium leading-none">
@@ -360,7 +360,7 @@ export function ProxyPanel({
                     </span>
                   </p>
                 ) : (
-                  <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                  <p className="text-sm text-muted-foreground">
                     {t("proxy.panel.waitingFirstRequest", {
                       defaultValue: "当前 Provider：等待首次请求…",
                     })}
@@ -598,8 +598,8 @@ interface StatCardProps {
 function StatCard({ icon, label, value, variant = "default" }: StatCardProps) {
   const variantStyles = {
     default: "",
-    success: "border-green-500/40 bg-green-500/5",
-    warning: "border-yellow-500/40 bg-yellow-500/5",
+    success: "border-primary/30 bg-primary/5",
+    warning: "border-accent/40 bg-accent/20",
   };
 
   return (

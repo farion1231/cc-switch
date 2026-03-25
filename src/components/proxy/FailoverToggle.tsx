@@ -60,9 +60,7 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
         <Shuffle
           className={cn(
             "h-4 w-4 transition-colors",
-            isEnabled
-              ? "text-emerald-500 animate-pulse"
-              : "text-muted-foreground",
+            isEnabled ? "text-primary animate-pulse" : "text-muted-foreground",
           )}
         />
       )}

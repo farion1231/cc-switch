@@ -22,7 +22,7 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
 
       <div className="space-y-3">
         <ToggleRow
-          icon={<Power className="h-4 w-4 text-orange-500" />}
+          icon={<Power className="h-4 w-4 text-primary" />}
           title={t("settings.launchOnStartup")}
           description={t("settings.launchOnStartupDescription")}
           checked={!!settings.launchOnStartup}
@@ -39,7 +39,7 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
               transition={{ duration: 0.3 }}
             >
               <ToggleRow
-                icon={<EyeOff className="h-4 w-4 text-green-500" />}
+                icon={<EyeOff className="h-4 w-4 text-accent-foreground" />}
                 title={t("settings.silentStartup")}
                 description={t("settings.silentStartupDescription")}
                 checked={!!settings.silentStartup}
@@ -50,7 +50,7 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
         </AnimatePresence>
 
         <ToggleRow
-          icon={<MonitorUp className="h-4 w-4 text-purple-500" />}
+          icon={<MonitorUp className="h-4 w-4 text-primary" />}
           title={t("settings.enableClaudePluginIntegration")}
           description={t("settings.enableClaudePluginIntegrationDescription")}
           checked={!!settings.enableClaudePluginIntegration}
@@ -60,7 +60,7 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
         />
 
         <ToggleRow
-          icon={<MonitorUp className="h-4 w-4 text-cyan-500" />}
+          icon={<MonitorUp className="h-4 w-4 text-accent-foreground" />}
           title={t("settings.skipClaudeOnboarding")}
           description={t("settings.skipClaudeOnboardingDescription")}
           checked={!!settings.skipClaudeOnboarding}
@@ -68,7 +68,7 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
         />
 
         <ToggleRow
-          icon={<AppWindow className="h-4 w-4 text-blue-500" />}
+          icon={<AppWindow className="h-4 w-4 text-primary" />}
           title={t("settings.minimizeToTray")}
           description={t("settings.minimizeToTrayDescription")}
           checked={settings.minimizeToTrayOnClose}

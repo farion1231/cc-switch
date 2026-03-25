@@ -329,7 +329,7 @@ export function DeepLinkImportDialog() {
             </DialogHeader>
 
             {/* 主体内容整体右移，略大于标题内边距，让内容看起来不贴边 */}
-            <div className="space-y-4 px-8 py-4 max-h-[60vh] overflow-y-auto [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:block [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-200 dark:[&::-webkit-scrollbar-thumb]:bg-gray-700">
+            <div className="max-h-[60vh] space-y-4 overflow-y-auto px-8 py-4 [scrollbar-width:thin] [&::-webkit-scrollbar]:block [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/70">
               {request.resource === "prompt" && (
                 <PromptConfirmation request={request} />
               )}
@@ -380,7 +380,7 @@ export function DeepLinkImportDialog() {
                     <div className="font-medium text-sm text-muted-foreground">
                       {t("deeplink.homepage")}
                     </div>
-                    <div className="col-span-2 text-sm break-all text-blue-600 dark:text-blue-400">
+                    <div className="col-span-2 text-sm break-all text-primary">
                       {request.homepage}
                     </div>
                   </div>
@@ -501,7 +501,7 @@ export function DeepLinkImportDialog() {
                           {t("deeplink.configSource")}
                         </div>
                         <div className="col-span-2 text-sm">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs font-medium">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-primary/10 text-primary text-xs font-medium">
                             {configSource === "base64"
                               ? t("deeplink.configEmbedded")
                               : t("deeplink.configRemote")}
@@ -635,8 +635,8 @@ export function DeepLinkImportDialog() {
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${
                               request.usageEnabled !== false
-                                ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
-                                : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+                                ? "border border-primary/20 bg-primary/10 text-primary"
+                                : "border border-border/70 bg-muted/60 text-muted-foreground"
                             }`}
                           >
                             {request.usageEnabled !== false
@@ -703,7 +703,7 @@ export function DeepLinkImportDialog() {
                   )}
 
                   {/* Warning */}
-                  <div className="rounded-lg bg-yellow-50 dark:bg-yellow-900/20 p-3 text-sm text-yellow-800 dark:text-yellow-200">
+                  <div className="rounded-lg border border-accent/40 bg-accent/20 p-3 text-sm text-accent-foreground">
                     {t("deeplink.warning")}
                   </div>
                 </>

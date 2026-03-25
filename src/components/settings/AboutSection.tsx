@@ -65,13 +65,11 @@ const ENV_BADGE_CONFIG: Record<
   },
   windows: {
     labelKey: "settings.envBadge.windows",
-    className:
-      "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+    className: "bg-primary/10 text-primary border-primary/20",
   },
   macos: {
     labelKey: "settings.envBadge.macos",
-    className:
-      "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20",
+    className: "bg-muted text-muted-foreground border-border/70",
   },
   linux: {
     labelKey: "settings.envBadge.linux",

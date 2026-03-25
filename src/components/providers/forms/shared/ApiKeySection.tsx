@@ -66,7 +66,7 @@ export function ApiKeySection({
             href={websiteUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+            className="text-xs text-primary hover:text-primary/80 transition-colors"
           >
             {t("providerForm.getApiKey", {
               defaultValue: "获取 API Key",
@@ -75,8 +75,8 @@ export function ApiKeySection({
 
           {/* 合作伙伴促销信息 */}
           {isPartner && partnerPromotionKey && (
-            <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 p-2.5 border border-blue-200 dark:border-blue-800">
-              <p className="text-xs leading-relaxed text-blue-700 dark:text-blue-300">
+            <div className="rounded-md bg-primary/10 p-2.5 border border-primary/20">
+              <p className="text-xs leading-relaxed text-primary">
                 💡{" "}
                 {t(`providerForm.partnerPromotion.${partnerPromotionKey}`, {
                   defaultValue: "",

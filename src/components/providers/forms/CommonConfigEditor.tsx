@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Save, Download, Loader2, Package } from "lucide-react";
 import JsonEditor from "@/components/JsonEditor";
 
@@ -19,6 +20,24 @@ interface CommonConfigEditorProps {
   onModalClose: () => void;
   onExtract?: () => void;
   isExtracting?: boolean;
+}
+
+interface ConfigToggleProps {
+  checked: boolean;
+  label: string;
+  onCheckedChange: (checked: boolean) => void;
+}
+
+function ConfigToggle({ checked, label, onCheckedChange }: ConfigToggleProps) {
+  return (
+    <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-border/70 bg-background/55 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-border-hover hover:text-foreground">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(nextChecked) => onCheckedChange(nextChecked === true)}
+      />
+      <span>{label}</span>
+    </label>
+  );
 }
 
 export function CommonConfigEditor({
@@ -156,94 +175,82 @@ export function CommonConfigEditor({
 
   return (
     <>
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <Label htmlFor="settingsConfig">{t("provider.configJson")}</Label>
-          <div className="flex items-center gap-2">
-            <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-              <input
-                type="checkbox"
-                id="useCommonConfig"
-                checked={useCommonConfig}
-                onChange={(e) => onCommonConfigToggle(e.target.checked)}
-                className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-              />
-              <span>
-                {t("claudeConfig.writeCommonConfig", {
-                  defaultValue: "写入通用配置",
-                })}
-              </span>
-            </label>
+      <div className="space-y-4 rounded-[calc(var(--radius)+0.25rem)] border border-border/70 bg-card/45 p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="settingsConfig">{t("provider.configJson")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("claudeConfig.commonConfigHint", {
+                defaultValue: "通用配置片段将合并到所有启用它的供应商配置中",
+              })}
+            </p>
           </div>
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-border/70 bg-background/55 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-border-hover hover:text-foreground">
+            <Checkbox
+              id="useCommonConfig"
+              checked={useCommonConfig}
+              onCheckedChange={(checked) =>
+                onCommonConfigToggle(checked === true)
+              }
+            />
+            <span>
+              {t("claudeConfig.writeCommonConfig", {
+                defaultValue: "写入通用配置",
+              })}
+            </span>
+          </label>
         </div>
+
         <div className="flex items-center justify-end">
-          <button
+          <Button
             type="button"
             onClick={onEditClick}
-            className="text-xs text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+            variant="link"
+            size="sm"
+            className="h-auto px-0 py-0 text-xs"
           >
             {t("claudeConfig.editCommonConfig", {
               defaultValue: "编辑通用配置",
             })}
-          </button>
+          </Button>
         </div>
         {commonConfigError && !isModalOpen && (
-          <p className="text-xs text-red-500 dark:text-red-400 text-right">
+          <p className="text-right text-xs text-red-500 dark:text-red-400">
             {commonConfigError}
           </p>
         )}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={toggleStates.hideAttribution}
-              onChange={(e) =>
-                handleToggle("hideAttribution", e.target.checked)
-              }
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            <span>{t("claudeConfig.hideAttribution")}</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={toggleStates.teammates}
-              onChange={(e) => handleToggle("teammates", e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            <span>{t("claudeConfig.enableTeammates")}</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={toggleStates.enableToolSearch}
-              onChange={(e) =>
-                handleToggle("enableToolSearch", e.target.checked)
-              }
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            <span>{t("claudeConfig.enableToolSearch")}</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={toggleStates.effortHigh}
-              onChange={(e) => handleToggle("effortHigh", e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            <span>{t("claudeConfig.effortHigh")}</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={toggleStates.disableAutoUpgrade}
-              onChange={(e) =>
-                handleToggle("disableAutoUpgrade", e.target.checked)
-              }
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            <span>{t("claudeConfig.disableAutoUpgrade")}</span>
-          </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <ConfigToggle
+            checked={toggleStates.hideAttribution}
+            onCheckedChange={(checked) =>
+              handleToggle("hideAttribution", checked)
+            }
+            label={t("claudeConfig.hideAttribution")}
+          />
+          <ConfigToggle
+            checked={toggleStates.teammates}
+            onCheckedChange={(checked) => handleToggle("teammates", checked)}
+            label={t("claudeConfig.enableTeammates")}
+          />
+          <ConfigToggle
+            checked={toggleStates.enableToolSearch}
+            onCheckedChange={(checked) =>
+              handleToggle("enableToolSearch", checked)
+            }
+            label={t("claudeConfig.enableToolSearch")}
+          />
+          <ConfigToggle
+            checked={toggleStates.effortHigh}
+            onCheckedChange={(checked) => handleToggle("effortHigh", checked)}
+            label={t("claudeConfig.effortHigh")}
+          />
+          <ConfigToggle
+            checked={toggleStates.disableAutoUpgrade}
+            onCheckedChange={(checked) =>
+              handleToggle("disableAutoUpgrade", checked)
+            }
+            label={t("claudeConfig.disableAutoUpgrade")}
+          />
         </div>
         <JsonEditor
           value={localValue}

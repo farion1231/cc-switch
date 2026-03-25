@@ -435,7 +435,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       >
         <div className="flex flex-col h-full gap-6">
           {/* 上半部分：表单字段 */}
-          <div className="glass rounded-xl p-6 border border-white/10 space-y-6 flex-shrink-0">
+          <div className="glass flex-shrink-0 space-y-6 rounded-xl border border-border/50 p-6">
             {/* 预设选择（仅新增时展示） */}
             {!isEditing && (
               <div>
@@ -448,7 +448,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     onClick={applyCustom}
                     className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                       selectedPreset === -1
-                        ? "bg-emerald-500 text-white dark:bg-emerald-600"
+                        ? "bg-primary text-primary-foreground"
                         : "bg-accent text-muted-foreground hover:bg-accent/80"
                     }`}
                   >
@@ -463,7 +463,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                         onClick={() => applyPreset(idx)}
                         className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                           selectedPreset === idx
-                            ? "bg-emerald-500 text-white dark:bg-emerald-600"
+                            ? "bg-primary text-primary-foreground"
                             : "bg-accent text-muted-foreground hover:bg-accent/80"
                         }`}
                         title={t(descriptionKey)}
@@ -653,7 +653,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
           </div>
 
           {/* 下半部分：JSON 配置编辑器 - 自适应剩余高度 */}
-          <div className="glass rounded-xl p-6 border border-white/10 flex flex-col flex-1 min-h-0">
+          <div className="glass flex min-h-0 flex-1 flex-col rounded-xl border border-border/50 p-6">
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
               <label className="text-sm font-medium text-foreground">
                 {useToml ? t("mcp.form.tomlConfig") : t("mcp.form.jsonConfig")}
@@ -662,7 +662,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsWizardOpen(true)}
-                  className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+                  className="text-sm text-primary hover:text-primary/80 transition-colors"
                 >
                   {t("mcp.form.useWizard")}
                 </button>

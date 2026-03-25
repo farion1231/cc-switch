@@ -32,7 +32,7 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
       onClick={onClick}
       className={`
         relative h-8 w-8 rounded-full
-        ${isActive ? "text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-500/10" : "text-muted-foreground hover:bg-muted/60"}
+        ${isActive ? "text-primary hover:bg-primary/10" : "text-muted-foreground hover:bg-muted/60"}
         ${className}
       `}
     >

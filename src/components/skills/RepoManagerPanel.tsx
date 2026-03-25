@@ -171,7 +171,7 @@ export function RepoManagerPanel({
                     type="button"
                     onClick={() => handleOpenRepo(repo.owner, repo.name)}
                     title={t("common.view", { defaultValue: "查看" })}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                    className="hover:bg-accent/60"
                   >
                     <ExternalLink className="h-4 w-4" />
                   </Button>
@@ -181,7 +181,7 @@ export function RepoManagerPanel({
                     type="button"
                     onClick={() => onRemove(repo.owner, repo.name)}
                     title={t("common.delete")}
-                    className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+                    className="hover:bg-destructive/10 hover:text-destructive"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
@@ -574,7 +575,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           type="button"
           variant="ghost"
           size="icon"
-          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+          className="h-7 w-7 hover:bg-destructive/10 hover:text-destructive"
           onClick={onUninstall}
           title={t("skills.uninstall")}
         >
@@ -781,10 +782,9 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                 key={skill.directory}
                 className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={selected.has(skill.directory)}
-                  onChange={() => toggleSelect(skill.directory)}
+                  onCheckedChange={() => toggleSelect(skill.directory)}
                   className="mt-1"
                 />
                 <div className="flex-1 min-w-0">

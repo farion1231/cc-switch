@@ -4,6 +4,7 @@ import { Zap, Loader2, Plus, X, AlertCircle, Save } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { vscodeApi } from "@/lib/api/vscode";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { CustomEndpoint, EndpointCandidate } from "@/types";
@@ -482,21 +483,20 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       onClose={onClose}
       footer={footer}
     >
-      <div className="glass rounded-xl p-6 border border-white/10 flex flex-col gap-6">
+      <div className="glass flex flex-col gap-6 rounded-xl border border-border/50 p-6">
         {/* 测速控制栏 */}
         <div className="flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
             {entries.length} {t("endpointTest.endpoints")}
           </div>
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
-              <input
-                type="checkbox"
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Checkbox
                 checked={autoSelect}
-                onChange={(event) => {
-                  onAutoSelectChange(event.target.checked);
+                onCheckedChange={(checked) => {
+                  onAutoSelectChange(checked === true);
                 }}
-                className="h-3.5 w-3.5 rounded border-border-default bg-background text-primary focus:ring-2 focus:ring-primary/20"
+                className="h-3.5 w-3.5"
               />
               {t("endpointTest.autoSelect")}
             </label>
@@ -576,9 +576,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                     {/* 选择指示器 */}
                     <div
                       className={`h-1.5 w-1.5 flex-shrink-0 rounded-full transition ${
-                        isSelected
-                          ? "bg-blue-500 dark:bg-blue-400"
-                          : "bg-gray-300 dark:bg-gray-700"
+                        isSelected ? "bg-primary" : "bg-muted-foreground/35"
                       }`}
                     />
 
@@ -609,13 +607,13 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                         </div>
                       </div>
                     ) : isTesting ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                     ) : entry.error ? (
-                      <div className="text-xs text-gray-400">
+                      <div className="text-xs text-muted-foreground">
                         {t("endpointTest.failed")}
                       </div>
                     ) : (
-                      <div className="text-xs text-gray-400">—</div>
+                      <div className="text-xs text-muted-foreground">—</div>
                     )}
 
                     <button

@@ -107,7 +107,7 @@ export function ProviderActions({
           disabled: false,
           variant: "secondary" as const,
           className:
-            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+            "bg-secondary text-secondary-foreground hover:bg-secondary hover:text-secondary-foreground",
           icon: <Check className="h-4 w-4" />,
           text: t("provider.inUse"),
         };
@@ -128,7 +128,7 @@ export function ProviderActions({
           disabled: isDefaultModel === true,
           variant: "secondary" as const,
           className: cn(
-            "bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-900/70",
+            "bg-secondary text-secondary-foreground hover:bg-secondary/80",
             isDefaultModel && "opacity-40 cursor-not-allowed",
           ),
           icon: <Minus className="h-4 w-4" />,
@@ -138,8 +138,7 @@ export function ProviderActions({
       return {
         disabled: false,
         variant: "default" as const,
-        className:
-          "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+        className: "bg-primary hover:bg-primary/90",
         icon: <Plus className="h-4 w-4" />,
         text: t("provider.addToConfig", { defaultValue: "添加" }),
       };
@@ -151,7 +150,7 @@ export function ProviderActions({
           disabled: false,
           variant: "secondary" as const,
           className:
-            "bg-blue-100 text-blue-600 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:hover:bg-blue-900/70",
+            "bg-primary/10 text-primary hover:bg-primary/15 dark:text-primary",
           icon: <Check className="h-4 w-4" />,
           text: t("failover.inQueue", { defaultValue: "已加入" }),
         };
@@ -159,8 +158,7 @@ export function ProviderActions({
       return {
         disabled: false,
         variant: "default" as const,
-        className:
-          "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+        className: "bg-primary hover:bg-primary/90",
         icon: <Plus className="h-4 w-4" />,
         text: t("failover.addQueue", { defaultValue: "加入" }),
       };
@@ -171,7 +169,7 @@ export function ProviderActions({
         disabled: true,
         variant: "secondary" as const,
         className:
-          "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          "bg-secondary text-secondary-foreground hover:bg-secondary hover:text-secondary-foreground",
         icon: <Check className="h-4 w-4" />,
         text: t("provider.inUse"),
       };
@@ -180,9 +178,7 @@ export function ProviderActions({
     return {
       disabled: false,
       variant: "default" as const,
-      className: isProxyTakeover
-        ? "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
-        : "",
+      className: isProxyTakeover ? "bg-primary hover:bg-primary/90" : "",
       icon: <Play className="h-4 w-4" />,
       text: t("provider.enable"),
     };
@@ -203,8 +199,8 @@ export function ProviderActions({
           className={cn(
             "w-fit px-2.5",
             isDefaultModel
-              ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
-              : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+              ? "bg-secondary text-secondary-foreground opacity-60 cursor-not-allowed"
+              : "bg-primary hover:bg-primary/90",
           )}
         >
           <Zap className="h-4 w-4" />
@@ -284,10 +280,7 @@ export function ProviderActions({
             variant="ghost"
             onClick={onOpenTerminal}
             title={t("provider.openTerminal", "打开终端")}
-            className={cn(
-              iconButtonClass,
-              "hover:text-emerald-600 dark:hover:text-emerald-400",
-            )}
+            className={cn(iconButtonClass, "hover:text-primary")}
           >
             <Terminal className="h-4 w-4" />
           </Button>
@@ -300,7 +293,7 @@ export function ProviderActions({
           title={t("common.delete")}
           className={cn(
             iconButtonClass,
-            canDelete && "hover:text-red-500 dark:hover:text-red-400",
+            canDelete && "hover:text-destructive",
             !canDelete && "opacity-40 cursor-not-allowed text-muted-foreground",
           )}
         >

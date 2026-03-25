@@ -225,7 +225,7 @@ function App() {
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
   const addActionButtonClass =
-    "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
+    "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 rounded-full w-8 h-8";
 
   const {
     isRunning: isProxyRunning,
@@ -1115,8 +1115,8 @@ function App() {
                     className={cn(
                       "text-xl font-semibold transition-colors",
                       isProxyRunning && isCurrentAppTakeoverActive
-                        ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
-                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
+                        ? "text-primary hover:text-primary/80"
+                        : "text-foreground/80 hover:text-foreground",
                     )}
                   >
                     CC Switch
@@ -1130,7 +1130,7 @@ function App() {
                     setCurrentView("settings");
                   }}
                   title={t("common.settings")}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                  className="hover:bg-accent/60"
                 >
                   <Settings className="w-4 h-4" />
                 </Button>
@@ -1151,7 +1151,7 @@ function App() {
                     title={t("usage.title", {
                       defaultValue: "使用统计",
                     })}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                    className="hover:bg-accent/60"
                   >
                     <BarChart2 className="w-4 h-4" />
                   </Button>
@@ -1189,7 +1189,7 @@ function App() {
                     variant="ghost"
                     size="sm"
                     onClick={() => promptPanelRef.current?.openAdd()}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                    className="hover:bg-accent/60"
                   >
                     <Plus className="w-4 h-4 mr-2" />
                     {t("prompts.add")}
@@ -1201,7 +1201,7 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() => mcpPanelRef.current?.openImport()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="hover:bg-accent/60"
                     >
                       <Download className="w-4 h-4 mr-2" />
                       {t("mcp.importExisting")}
@@ -1210,7 +1210,7 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() => mcpPanelRef.current?.openAdd()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="hover:bg-accent/60"
                     >
                       <Plus className="w-4 h-4 mr-2" />
                       {t("mcp.addMcp")}
@@ -1225,7 +1225,7 @@ function App() {
                       onClick={() =>
                         unifiedSkillsPanelRef.current?.openRestoreFromBackup()
                       }
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="hover:bg-accent/60"
                     >
                       <History className="w-4 h-4 mr-2" />
                       {t("skills.restoreFromBackup.button")}
@@ -1236,7 +1236,7 @@ function App() {
                       onClick={() =>
                         unifiedSkillsPanelRef.current?.openInstallFromZip()
                       }
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="hover:bg-accent/60"
                     >
                       <FolderArchive className="w-4 h-4 mr-2" />
                       {t("skills.installFromZip.button")}
@@ -1247,7 +1247,7 @@ function App() {
                       onClick={() =>
                         unifiedSkillsPanelRef.current?.openImport()
                       }
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="hover:bg-accent/60"
                     >
                       <Download className="w-4 h-4 mr-2" />
                       {t("skills.import")}
@@ -1256,7 +1256,7 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() => setCurrentView("skillsDiscovery")}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="hover:bg-accent/60"
                     >
                       <Search className="w-4 h-4 mr-2" />
                       {t("skills.discover")}
@@ -1269,7 +1269,7 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() => skillsPageRef.current?.refresh()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="hover:bg-accent/60"
                     >
                       <RefreshCw className="w-4 h-4 mr-2" />
                       {t("skills.refresh")}
@@ -1278,7 +1278,7 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() => skillsPageRef.current?.openRepoManager()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="hover:bg-accent/60"
                     >
                       <Settings className="w-4 h-4 mr-2" />
                       {t("skills.repoManager")}
@@ -1312,7 +1312,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("workspace")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-accent/60"
                                 title={t("workspace.manage")}
                               >
                                 <FolderOpen className="w-4 h-4" />
@@ -1321,7 +1321,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("openclawEnv")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-accent/60"
                                 title={t("openclaw.env.title")}
                               >
                                 <KeyRound className="w-4 h-4" />
@@ -1330,7 +1330,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("openclawTools")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-accent/60"
                                 title={t("openclaw.tools.title")}
                               >
                                 <Shield className="w-4 h-4" />
@@ -1339,7 +1339,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("openclawAgents")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-accent/60"
                                 title={t("openclaw.agents.title")}
                               >
                                 <Cpu className="w-4 h-4" />
@@ -1348,7 +1348,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("sessions")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-accent/60"
                                 title={t("sessionManager.title")}
                               >
                                 <History className="w-4 h-4" />
@@ -1361,7 +1361,7 @@ function App() {
                                 size="sm"
                                 onClick={() => setCurrentView("skills")}
                                 className={cn(
-                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "text-muted-foreground hover:text-foreground hover:bg-accent/60",
                                   "transition-all duration-200 ease-in-out overflow-hidden",
                                   hasSkillsSupport
                                     ? "opacity-100 w-8 scale-100 px-2"
@@ -1375,7 +1375,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("prompts")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-accent/60"
                                 title={t("prompts.manage")}
                               >
                                 <Book className="w-4 h-4" />
@@ -1385,7 +1385,7 @@ function App() {
                                 size="sm"
                                 onClick={() => setCurrentView("sessions")}
                                 className={cn(
-                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "text-muted-foreground hover:text-foreground hover:bg-accent/60",
                                   "transition-all duration-200 ease-in-out overflow-hidden",
                                   hasSessionSupport
                                     ? "opacity-100 w-8 scale-100 px-2"
@@ -1399,7 +1399,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("mcp")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-accent/60"
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={16} />

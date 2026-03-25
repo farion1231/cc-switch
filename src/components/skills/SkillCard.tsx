@@ -101,7 +101,7 @@ export function SkillCard({
           {skill.installed && (
             <Badge
               variant="default"
-              className="shrink-0 bg-green-600/90 hover:bg-green-600 dark:bg-green-700/90 dark:hover:bg-green-700 text-white border-0"
+              className="shrink-0 border-0 bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {t("skills.installed")}
             </Badge>

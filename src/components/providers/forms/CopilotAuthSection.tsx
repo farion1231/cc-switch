@@ -202,7 +202,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-red-500"
+                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
                     onClick={(e) => handleRemoveAccount(account.id, e)}
                     disabled={isRemovingAccount}
                     title={t("copilot.removeAccount", "移除账号")}
@@ -282,7 +282,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
               href={deviceCode.verification_uri}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-sm text-blue-500 hover:underline"
+              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
             >
               {deviceCode.verification_uri}
               <ExternalLink className="h-3 w-3" />

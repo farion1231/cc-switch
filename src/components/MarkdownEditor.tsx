@@ -32,34 +32,70 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   useEffect(() => {
     if (!editorRef.current) return;
 
-    // 定义基础主题
-    const baseTheme = EditorView.baseTheme({
-      "&": {
-        height: "100%",
-        minHeight,
-        maxHeight: maxHeight || "none",
+    const editorTheme = EditorView.theme(
+      {
+        "&": {
+          height: "100%",
+          minHeight,
+          maxHeight: maxHeight || "none",
+        },
+        ".cm-editor": {
+          height: "100%",
+          backgroundColor: "transparent",
+          color: "hsl(var(--foreground))",
+        },
+        ".cm-scroller": {
+          overflow: "auto",
+          backgroundColor: "transparent",
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+          fontSize: "14px",
+        },
+        ".cm-content": {
+          padding: "0.875rem 1rem",
+          caretColor: "hsl(var(--primary))",
+          lineHeight: "1.6",
+        },
+        ".cm-placeholder": {
+          color: "hsl(var(--muted-foreground) / 0.85)",
+        },
+        ".cm-cursor, .cm-dropCursor": {
+          borderLeftColor: "hsl(var(--primary))",
+        },
+        ".cm-gutters": {
+          minHeight: "100%",
+          backgroundColor: "hsl(var(--muted) / 0.65)",
+          color: "hsl(var(--muted-foreground))",
+          borderRight: "1px solid hsl(var(--border))",
+        },
+        ".cm-gutterElement": {
+          padding: "0 0.75rem",
+        },
+        ".cm-activeLine": {
+          backgroundColor: readOnly
+            ? "transparent"
+            : "hsl(var(--accent) / 0.28)",
+        },
+        ".cm-activeLineGutter": {
+          backgroundColor: readOnly
+            ? "transparent"
+            : "hsl(var(--accent) / 0.4)",
+          color: "hsl(var(--foreground))",
+        },
+        ".cm-selectionBackground, .cm-content ::selection": {
+          backgroundColor: "hsl(var(--primary) / 0.18) !important",
+        },
+        "&.cm-focused": {
+          outline: "none",
+        },
       },
-      ".cm-scroller": {
-        overflow: "auto",
-        fontFamily:
-          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-        fontSize: "14px",
-      },
-      "&light .cm-content, &dark .cm-content": {
-        padding: "12px 0",
-      },
-      "&light .cm-editor, &dark .cm-editor": {
-        backgroundColor: "transparent",
-      },
-      "&.cm-focused": {
-        outline: "none",
-      },
-    });
+      { dark: darkMode },
+    );
 
     const extensions = [
       basicSetup,
       markdown(),
-      baseTheme,
+      editorTheme,
       EditorView.lineWrapping,
       EditorState.readOnly.of(readOnly),
     ];
@@ -84,32 +120,8 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       );
     }
 
-    // 如果启用深色模式，添加深色主题
     if (darkMode) {
-      extensions.push(oneDark);
-    } else {
-      // 浅色模式下的简单样式调整，使其更融入 UI
-      extensions.push(
-        EditorView.theme(
-          {
-            "&": {
-              backgroundColor: "transparent",
-            },
-            ".cm-content": {
-              color: "#374151", // text-gray-700
-            },
-            ".cm-gutters": {
-              backgroundColor: "#f9fafb", // bg-gray-50
-              color: "#9ca3af", // text-gray-400
-              borderRight: "1px solid #e5e7eb", // border-gray-200
-            },
-            ".cm-activeLineGutter": {
-              backgroundColor: "#e5e7eb",
-            },
-          },
-          { dark: false },
-        ),
-      );
+      extensions.unshift(oneDark);
     }
 
     // 创建初始状态
@@ -149,9 +161,7 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   return (
     <div
       ref={editorRef}
-      className={`border rounded-md overflow-hidden ${
-        darkMode ? "border-gray-800" : "border-gray-200"
-      } ${className}`}
+      className={`overflow-hidden rounded-[calc(var(--radius)+0.125rem)] border border-border/80 bg-card/85 shadow-sm ${className}`}
     />
   );
 };
