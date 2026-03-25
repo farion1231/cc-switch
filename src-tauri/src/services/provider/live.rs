@@ -420,29 +420,31 @@ fn apply_common_config_to_settings(
         AppType::Claude => {
             let source = serde_json::from_str::<Value>(trimmed)
                 .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
-            let mut result = settings.clone();
-            json_deep_merge(&mut result, &source);
+            // Provider settings override common config: merge provider ON TOP of common config
+            // so that per-provider edits to shared fields are preserved.
+            let mut result = source;
+            json_deep_merge(&mut result, settings);
             Ok(result)
         }
         AppType::Codex => {
             let mut result = settings.clone();
             let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
-            let mut target_doc = if config_toml.trim().is_empty() {
-                DocumentMut::new()
-            } else {
-                config_toml.parse::<DocumentMut>().map_err(|e| {
-                    AppError::Message(format!(
-                        "Invalid Codex config.toml while applying common config: {e}"
-                    ))
-                })?
-            };
             let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
                 AppError::Message(format!("Invalid Codex common config snippet: {e}"))
             })?;
 
-            merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+            // Provider config overrides common config: merge provider ON TOP of common config
+            let mut merged_doc = source_doc;
+            if !config_toml.trim().is_empty() {
+                let target_doc = config_toml.parse::<DocumentMut>().map_err(|e| {
+                    AppError::Message(format!(
+                        "Invalid Codex config.toml while applying common config: {e}"
+                    ))
+                })?;
+                merge_toml_table_like(merged_doc.as_table_mut(), target_doc.as_table());
+            }
             if let Some(obj) = result.as_object_mut() {
-                obj.insert("config".to_string(), Value::String(target_doc.to_string()));
+                obj.insert("config".to_string(), Value::String(merged_doc.to_string()));
             }
             Ok(result)
         }
@@ -451,7 +453,10 @@ fn apply_common_config_to_settings(
                 .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
             let mut result = settings.clone();
             if let Some(env) = result.get_mut("env") {
-                json_deep_merge(env, &source);
+                // Provider env overrides common config: merge provider ON TOP of common config
+                let mut merged_env = source;
+                json_deep_merge(&mut merged_env, env);
+                *env = merged_env;
             } else if let Some(obj) = result.as_object_mut() {
                 obj.insert("env".to_string(), source);
             }
@@ -1407,6 +1412,56 @@ mod tests {
                 "allowedTools": ["tool2"]
             })
         );
+    }
+
+    #[test]
+    fn claude_provider_override_wins_over_common_config() {
+        // Regression test: when a provider has a value that differs from common config,
+        // the provider's value should take precedence after apply.
+        let settings = json!({
+            "env": {
+                "ENABLE_LSP_TOOLS": "0",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test"
+            }
+        });
+        let snippet = r#"{
+  "env": {
+    "ENABLE_LSP_TOOLS": "1"
+  }
+}"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(
+            applied["env"]["ENABLE_LSP_TOOLS"],
+            json!("0"),
+            "provider-specific value should override common config"
+        );
+        assert_eq!(applied["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-test"));
+    }
+
+    #[test]
+    fn claude_common_config_fills_absent_fields() {
+        // When provider doesn't have a field, common config should fill it in.
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-test"
+            }
+        });
+        let snippet = r#"{
+  "env": {
+    "ENABLE_LSP_TOOLS": "1"
+  }
+}"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(
+            applied["env"]["ENABLE_LSP_TOOLS"],
+            json!("1"),
+            "common config should fill in absent fields"
+        );
+        assert_eq!(applied["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-test"));
     }
 
     #[test]
