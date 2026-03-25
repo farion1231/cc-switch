@@ -1015,16 +1015,18 @@ fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
         .output()
         .map_err(|e| format!("执行 Ghostty AppleScript 失败: {e}"))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Ghostty 执行失败 (exit code: {:?}): {}",
-            output.status.code(),
-            stderr
-        ));
+    if output.status.success() {
+        return Ok(());
     }
 
-    Ok(())
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    log::warn!(
+        "Ghostty AppleScript 启动失败，回退到 open -a Ghostty --args: exit_code={:?}, stderr={}",
+        output.status.code(),
+        stderr.trim()
+    );
+
+    launch_macos_open_app("Ghostty", script_file, true)
 }
 
 #[cfg(target_os = "macos")]
