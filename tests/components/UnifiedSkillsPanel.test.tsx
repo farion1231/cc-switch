@@ -13,6 +13,8 @@ const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
+let installedSkillsData: any[] = [];
+let unmanagedSkillsData: any[] = [];
 
 vi.mock("sonner", () => ({
   toast: {
@@ -24,7 +26,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/hooks/useSkills", () => ({
   useInstalledSkills: () => ({
-    data: [],
+    data: installedSkillsData,
     isLoading: false,
   }),
   useSkillBackups: () => ({
@@ -47,15 +49,7 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: uninstallSkillMock,
   }),
   useScanUnmanagedSkills: () => ({
-    data: [
-      {
-        directory: "shared-skill",
-        name: "Shared Skill",
-        description: "Imported from Claude",
-        foundIn: ["claude"],
-        path: "/tmp/shared-skill",
-      },
-    ],
+    data: unmanagedSkillsData,
     refetch: scanUnmanagedMock,
   }),
   useImportSkillsFromApps: () => ({
@@ -75,18 +69,26 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
 }));
 
+vi.mock("@/components/common/AppCountBar", () => ({
+  AppCountBar: ({ totalLabel }: { totalLabel: string }) => (
+    <div>{totalLabel}</div>
+  ),
+}));
+
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    installedSkillsData = [];
+    unmanagedSkillsData = [
+      {
+        directory: "shared-skill",
+        name: "Shared Skill",
+        description: "Imported from Claude",
+        foundIn: ["claude"],
+        path: "/tmp/shared-skill",
+      },
+    ];
     scanUnmanagedMock.mockResolvedValue({
-      data: [
-        {
-          directory: "shared-skill",
-          name: "Shared Skill",
-          description: "Imported from Claude",
-          foundIn: ["claude"],
-          path: "/tmp/shared-skill",
-        },
-      ],
+      data: unmanagedSkillsData,
     });
     toggleSkillAppMock.mockReset();
     uninstallSkillMock.mockReset();
@@ -116,5 +118,33 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
     });
+  });
+
+  it("shows nested installed skill directory context", async () => {
+    installedSkillsData = [
+      {
+        id: "local:superpowers/using-superpowers",
+        name: "using-superpowers",
+        description: "Imported from Claude",
+        directory: "superpowers/using-superpowers",
+        apps: {
+          claude: true,
+          codex: false,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+        },
+        installedAt: 1,
+      },
+    ];
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    expect(screen.getByText("using-superpowers")).toBeInTheDocument();
+    expect(
+      screen.getByText("superpowers/using-superpowers"),
+    ).toBeInTheDocument();
   });
 });

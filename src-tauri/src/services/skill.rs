@@ -1409,6 +1409,30 @@ impl SkillService {
         let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
         for (scan_dir, label) in &scan_sources {
+            if let Ok(app) = label.parse::<AppType>() {
+                let entries = Self::list_app_skill_entries(&app, scan_dir)?;
+                for (directory, path) in entries {
+                    if managed_dirs.contains(&directory) {
+                        continue;
+                    }
+
+                    let skill_md = path.join("SKILL.md");
+                    let (name, description) = Self::read_skill_name_desc(&skill_md, &directory);
+
+                    unmanaged
+                        .entry(directory.clone())
+                        .and_modify(|s| s.found_in.push(label.clone()))
+                        .or_insert(UnmanagedSkill {
+                            directory,
+                            name,
+                            description,
+                            found_in: vec![label.clone()],
+                            path: path.display().to_string(),
+                        });
+                }
+                continue;
+            }
+
             let entries = match fs::read_dir(scan_dir) {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -1597,7 +1621,10 @@ impl SkillService {
         let app_dir = Self::get_app_skills_dir(app)?;
         fs::create_dir_all(&app_dir)?;
 
-        let dest = app_dir.join(directory);
+        let dest = Self::app_skill_dest_path(app, &app_dir, directory);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
         // 如果已存在则先删除（无论是 symlink 还是真实目录）
         if dest.exists() || Self::is_symlink(&dest) {
@@ -1693,7 +1720,7 @@ impl SkillService {
     /// 从应用目录删除 Skill（支持 symlink 和真实目录）
     pub fn remove_from_app(directory: &str, app: &AppType) -> Result<()> {
         let app_dir = Self::get_app_skills_dir(app)?;
-        let skill_path = app_dir.join(directory);
+        let skill_path = Self::app_skill_dest_path(app, &app_dir, directory);
 
         if skill_path.exists() || Self::is_symlink(&skill_path) {
             Self::remove_path(&skill_path)?;
@@ -1711,7 +1738,10 @@ impl SkillService {
 
         let indexed_skills: HashMap<String, &InstalledSkill> = skills
             .values()
-            .map(|skill| (skill.directory.to_lowercase(), skill))
+            .filter_map(|skill| {
+                let relative = Self::app_relative_skill_path(app, &skill.directory)?;
+                Some((relative.to_string_lossy().to_lowercase(), skill))
+            })
             .collect();
 
         if app_dir.exists() {
@@ -1744,6 +1774,77 @@ impl SkillService {
         }
 
         Ok(())
+    }
+
+    fn app_skill_dest_path(app: &AppType, app_dir: &Path, directory: &str) -> PathBuf {
+        app_dir.join(
+            Self::app_relative_skill_path(app, directory)
+                .unwrap_or_else(|| PathBuf::from(directory)),
+        )
+    }
+
+    fn app_relative_skill_path(app: &AppType, directory: &str) -> Option<PathBuf> {
+        match app {
+            // Claude的skills目录按叶子skill进行暴露
+            // 对于类似superpowers/<skill>这类分组目录，同步时映射到顶层skill
+            AppType::Claude => Path::new(directory)
+                .file_name()
+                .map(PathBuf::from)
+                .filter(|name| !name.as_os_str().is_empty()),
+            _ => Some(PathBuf::from(directory)),
+        }
+    }
+
+    fn list_app_skill_entries(app: &AppType, app_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+        match app {
+            AppType::Claude => {
+                // Claude可能会把一组skillsg都放在分组目录下
+                // 这里递归扫描所有包含SKILL.md的叶子目录，并保留相对路径用于导入
+                let mut entries = Vec::new();
+                for skill_dir in Self::scan_skills_in_dir(app_dir)? {
+                    let Some(relative) = skill_dir.strip_prefix(app_dir).ok() else {
+                        continue;
+                    };
+                    let directory = relative
+                        .components()
+                        .filter_map(|component| match component {
+                            Component::Normal(name) => Some(name.to_string_lossy().to_string()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    if directory.is_empty() {
+                        continue;
+                    }
+                    entries.push((directory, skill_dir));
+                }
+                Ok(entries)
+            }
+            _ => {
+                let mut entries = Vec::new();
+                let read_dir = match fs::read_dir(app_dir) {
+                    Ok(entries) => entries,
+                    Err(_) => return Ok(entries),
+                };
+
+                for entry in read_dir.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let dir_name = entry.file_name().to_string_lossy().to_string();
+                    if dir_name.starts_with('.') {
+                        continue;
+                    }
+                    if !path.join("SKILL.md").exists() {
+                        continue;
+                    }
+                    entries.push((dir_name, path));
+                }
+
+                Ok(entries)
+            }
+        }
     }
 
     // ========== 发现功能（保留原有逻辑）==========

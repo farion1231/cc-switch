@@ -504,6 +504,9 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
     }
     return t("skills.local");
   }, [skill.repoOwner, skill.repoName, t]);
+  const nestedDirectory = /[\\/]/.test(skill.directory)
+    ? skill.directory
+    : null;
 
   return (
     <ListItemRow isLast={isLast}>
@@ -539,6 +542,14 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
             title={skill.description}
           >
             {skill.description}
+          </p>
+        )}
+        {nestedDirectory && (
+          <p
+            className="text-[11px] text-muted-foreground/70 font-mono truncate mt-0.5"
+            title={nestedDirectory}
+          >
+            {nestedDirectory}
           </p>
         )}
       </div>

@@ -75,6 +75,36 @@ fn import_from_apps_respects_explicit_app_selection() {
 }
 
 #[test]
+fn scan_unmanaged_detects_nested_claude_skills() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    write_skill(
+        &home
+            .join(".claude")
+            .join("skills")
+            .join("superpowers")
+            .join("brainstorming"),
+        "Brainstorming",
+    );
+
+    let state = create_test_state().expect("create test state");
+    let unmanaged = SkillService::scan_unmanaged(&state.db).expect("scan unmanaged skills");
+
+    let skill = unmanaged
+        .iter()
+        .find(|skill| skill.directory == "superpowers/brainstorming")
+        .expect("nested Claude skill should be discovered");
+
+    assert_eq!(skill.name, "Brainstorming");
+    assert!(
+        skill.found_in.iter().any(|source| source == "claude"),
+        "nested skill should be reported as coming from Claude"
+    );
+}
+
+#[test]
 fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -124,6 +154,49 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
     assert!(
         !opencode_skills_dir.join("orphan-skill").exists(),
         "orphaned symlink into SSOT should be cleaned up"
+    );
+}
+
+#[test]
+fn import_from_apps_accepts_nested_claude_skill_paths() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    write_skill(
+        &home
+            .join(".claude")
+            .join("skills")
+            .join("superpowers")
+            .join("brainstorming"),
+        "Brainstorming",
+    );
+
+    let state = create_test_state().expect("create test state");
+    let imported = SkillService::import_from_apps(
+        &state.db,
+        vec![ImportSkillSelection {
+            directory: "superpowers/brainstorming".to_string(),
+            apps: SkillApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+        }],
+    )
+    .expect("import nested Claude skill");
+
+    assert_eq!(imported.len(), 1);
+    assert_eq!(imported[0].directory, "superpowers/brainstorming");
+    assert!(
+        home.join(".cc-switch")
+            .join("skills")
+            .join("superpowers")
+            .join("brainstorming")
+            .join("SKILL.md")
+            .exists(),
+        "nested Claude skill should be copied into SSOT with its relative path"
     );
 }
 
@@ -275,6 +348,61 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
             .expect("query restored skill")
             .is_some(),
         "restored skill should be written back to the database"
+    );
+}
+
+#[test]
+fn sync_to_claude_flattens_nested_skill_paths_to_leaf_directory() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_skill_dir = home
+        .join(".cc-switch")
+        .join("skills")
+        .join("superpowers")
+        .join("brainstorming");
+    write_skill(&ssot_skill_dir, "Brainstorming");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:superpowers/brainstorming".to_string(),
+            name: "Brainstorming".to_string(),
+            description: Some("Nested Claude skill".to_string()),
+            directory: "superpowers/brainstorming".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            installed_at: 789,
+        })
+        .expect("save nested skill");
+
+    SkillService::sync_to_app(&state.db, &AppType::Claude).expect("sync Claude skills");
+
+    assert!(
+        home.join(".claude")
+            .join("skills")
+            .join("brainstorming")
+            .join("SKILL.md")
+            .exists(),
+        "nested skill should be exposed at Claude top level using its leaf directory"
+    );
+    assert!(
+        !home
+            .join(".claude")
+            .join("skills")
+            .join("superpowers")
+            .exists(),
+        "Claude live dir should not keep the grouping directory after sync"
     );
 }
 
