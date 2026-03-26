@@ -236,11 +236,9 @@ export function useSettings(): UseSettingsResult {
 
         // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
         // 仅在本次更新包含 skipClaudeOnboarding 时触发，避免其它自动保存误触发
+        // 不与 data（服务端快照）比较——快速切换时 data 可能尚未 refetch，导致跳过 API 调用
         const nextSkipClaudeOnboarding = updates.skipClaudeOnboarding;
-        if (
-          nextSkipClaudeOnboarding !== undefined &&
-          nextSkipClaudeOnboarding !== (data?.skipClaudeOnboarding ?? false)
-        ) {
+        if (nextSkipClaudeOnboarding !== undefined) {
           try {
             if (nextSkipClaudeOnboarding) {
               await settingsApi.applyClaudeOnboardingSkip();
@@ -270,11 +268,9 @@ export function useSettings(): UseSettingsResult {
         );
 
         // Claude Code 对话记录保护：开=写入 cleanupPeriodDays=99999；关=删除该字段
+        // 不与 data（服务端快照）比较——快速切换时 data 可能尚未 refetch，导致跳过 API 调用
         const nextKeepConversationHistory = updates.keepConversationHistory;
-        if (
-          nextKeepConversationHistory !== undefined &&
-          nextKeepConversationHistory !== (data?.keepConversationHistory ?? false)
-        ) {
+        if (nextKeepConversationHistory !== undefined) {
           try {
             if (nextKeepConversationHistory) {
               await settingsApi.applyTranscriptProtection();
@@ -395,6 +391,7 @@ export function useSettings(): UseSettingsResult {
         }
 
         // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
+        // 显式保存时保留 data 比较——防止 async 初始化未完成时用 false 默认值误清除
         const prevSkipClaudeOnboarding = data?.skipClaudeOnboarding ?? false;
         const nextSkipClaudeOnboarding = payload.skipClaudeOnboarding ?? false;
         if (nextSkipClaudeOnboarding !== prevSkipClaudeOnboarding) {
@@ -427,6 +424,7 @@ export function useSettings(): UseSettingsResult {
         );
 
         // Claude Code 对话记录保护：开=写入 cleanupPeriodDays=99999；关=删除该字段
+        // 显式保存时保留 data 比较——防止 async 初始化未完成时用 false 默认值误清除
         const prevKeepConversationHistory =
           data?.keepConversationHistory ?? false;
         const nextKeepConversationHistory =

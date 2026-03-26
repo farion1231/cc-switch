@@ -49,6 +49,8 @@ export function useSettingsForm(): UseSettingsFormResult {
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  // 用户手动操作过 keepConversationHistory 后，异步初始化读取不再覆盖
+  const userTouchedTranscriptRef = useRef(false);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -101,7 +103,9 @@ export function useSettingsForm(): UseSettingsFormResult {
     syncLanguage(normalizedLanguage);
 
     // 从 ~/.claude/settings.json 读取实际的 transcript protection 状态并同步到表单
+    // 仅在用户未手动操作过 toggle 时才覆盖，避免异步结果回滚用户选择
     settingsApi.getTranscriptProtection().then((isProtected) => {
+      if (userTouchedTranscriptRef.current) return;
       setSettingsState((prev) => {
         if (!prev || prev.keepConversationHistory === isProtected) return prev;
         return { ...prev, keepConversationHistory: isProtected };
@@ -113,6 +117,9 @@ export function useSettingsForm(): UseSettingsFormResult {
 
   const updateSettings = useCallback(
     (updates: Partial<SettingsFormState>) => {
+      if (updates.keepConversationHistory !== undefined) {
+        userTouchedTranscriptRef.current = true;
+      }
       setSettingsState((prev) => {
         const base =
           prev ??
