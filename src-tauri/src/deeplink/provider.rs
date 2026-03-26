@@ -316,7 +316,7 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let model_name = request
         .model
         .as_deref()
-        .unwrap_or("gpt-5-codex")
+        .unwrap_or("gpt-5.3-codex")
         .to_string();
 
     // Endpoint: normalize trailing slashes (use primary endpoint only)

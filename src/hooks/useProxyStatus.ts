@@ -143,7 +143,8 @@ export function useProxyStatus() {
     }: {
       appType: string;
       providerId: string;
-    }) => invoke("switch_proxy_provider", { appType, providerId }),
+    }) =>
+      invoke("switch_proxy_provider", { appType, providerId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
     },

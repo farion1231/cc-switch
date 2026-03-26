@@ -17,6 +17,9 @@ use std::sync::LazyLock;
 static CODEX_CLIENT_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(codex_vscode|codex_cli_rs)/[\d.]+").unwrap());
 
+/// Azure OpenAI 默认 API 版本
+const AZURE_DEFAULT_API_VERSION: &str = "2025-03-01-preview";
+
 /// Codex 适配器
 pub struct CodexAdapter;
 
@@ -33,18 +36,39 @@ impl CodexAdapter {
         CODEX_CLIENT_REGEX.is_match(user_agent)
     }
 
+    /// 检测 URL 是否为 Azure OpenAI 端点
+    fn is_azure_url(url: &str) -> bool {
+        url.contains(".cognitiveservices.azure.com")
+            || url.contains(".openai.azure.com")
+    }
+
+    /// 检测 Provider 的 base_url 是否为 Azure OpenAI 端点
+    fn is_azure_endpoint(&self, provider: &Provider) -> bool {
+        self.extract_base_url(provider)
+            .map(|url| Self::is_azure_url(&url))
+            .unwrap_or(false)
+    }
+
     /// 从 Provider 配置中提取 API Key
     fn extract_key(&self, provider: &Provider) -> Option<String> {
+        const KEY_NAMES: [&str; 1] = ["OPENAI_API_KEY"];
+
         // 1. 尝试从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
-            if let Some(key) = env.get("OPENAI_API_KEY").and_then(|v| v.as_str()) {
+            if let Some(key) = KEY_NAMES
+                .iter()
+                .find_map(|name| env.get(name).and_then(|v| v.as_str()))
+            {
                 return Some(key.to_string());
             }
         }
 
         // 2. 尝试从 auth 中获取 (Codex CLI 格式)
         if let Some(auth) = provider.settings_config.get("auth") {
-            if let Some(key) = auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) {
+            if let Some(key) = KEY_NAMES
+                .iter()
+                .find_map(|name| auth.get(name).and_then(|v| v.as_str()))
+            {
                 return Some(key.to_string());
             }
         }
@@ -133,8 +157,13 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        let strategy = if self.is_azure_endpoint(provider) {
+            AuthStrategy::AzureApiKey
+        } else {
+            AuthStrategy::Bearer
+        };
         self.extract_key(provider)
-            .map(|key| AuthInfo::new(key, AuthStrategy::Bearer))
+            .map(|key| AuthInfo::new(key, strategy))
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
@@ -171,11 +200,24 @@ impl ProviderAdapter for CodexAdapter {
             url = url.replace("/v1/v1", "/v1");
         }
 
+        // Azure OpenAI 旧版 API（不含 /v1 路径）需要 api-version 查询参数
+        // 新版 v1 API（路径含 /openai/v1）不需要 api-version
+        if Self::is_azure_url(base_trimmed)
+            && !base_trimmed.contains("/openai/v1")
+            && !url.contains("api-version")
+        {
+            let separator = if url.contains('?') { '&' } else { '?' };
+            url = format!("{url}{separator}api-version={AZURE_DEFAULT_API_VERSION}");
+        }
+
         url
     }
 
     fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
-        request.header("Authorization", format!("Bearer {}", auth.api_key))
+        match auth.strategy {
+            AuthStrategy::AzureApiKey => request.header("api-key", &auth.api_key),
+            _ => request.header("Authorization", format!("Bearer {}", auth.api_key)),
+        }
     }
 }
 
@@ -289,6 +331,121 @@ mod tests {
         assert!(!CodexAdapter::is_official_client("python-requests/2.25.1"));
         assert!(!CodexAdapter::is_official_client("codex_other/1.0.0"));
         assert!(!CodexAdapter::is_official_client(""));
+    }
+
+    #[test]
+    fn test_build_url_azure_v1_no_api_version() {
+        // 新版 v1 API 不需要 api-version
+        let adapter = CodexAdapter::new();
+        let url = adapter.build_url(
+            "https://myinstance.cognitiveservices.azure.com/openai/v1",
+            "/responses",
+        );
+        assert_eq!(
+            url,
+            "https://myinstance.cognitiveservices.azure.com/openai/v1/responses"
+        );
+        assert!(!url.contains("api-version"));
+    }
+
+    #[test]
+    fn test_build_url_azure_legacy_appends_api_version() {
+        // 旧版 API（不含 /openai/v1）自动追加 api-version
+        let adapter = CodexAdapter::new();
+        let url = adapter.build_url(
+            "https://myinstance.openai.azure.com/openai/deployments/gpt-4o",
+            "/chat/completions",
+        );
+        assert!(url.contains(&format!("api-version={AZURE_DEFAULT_API_VERSION}")));
+    }
+
+    #[test]
+    fn test_build_url_azure_legacy_preserves_existing_api_version() {
+        let adapter = CodexAdapter::new();
+        let url = adapter.build_url(
+            "https://myinstance.openai.azure.com/openai/deployments/gpt-4o?api-version=2024-10-21",
+            "/chat/completions",
+        );
+        assert!(!url.contains(&format!("api-version={AZURE_DEFAULT_API_VERSION}")));
+        assert!(url.contains("api-version=2024-10-21"));
+    }
+
+    #[test]
+    fn test_build_url_non_azure_no_api_version() {
+        let adapter = CodexAdapter::new();
+        let url = adapter.build_url("https://api.openai.com/v1", "/responses");
+        assert!(!url.contains("api-version"));
+    }
+
+    #[test]
+    fn test_extract_auth_azure_cognitive_services() {
+        let adapter = CodexAdapter::new();
+        let provider = create_provider(json!({
+            "base_url": "https://myinstance.cognitiveservices.azure.com/openai/v1",
+            "env": {
+                "OPENAI_API_KEY": "azure-key-12345678"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "azure-key-12345678");
+        assert_eq!(auth.strategy, AuthStrategy::AzureApiKey);
+    }
+
+    #[test]
+    fn test_extract_auth_azure_openai_domain() {
+        let adapter = CodexAdapter::new();
+        let provider = create_provider(json!({
+            "base_url": "https://myinstance.openai.azure.com/openai/v1",
+            "apiKey": "azure-key-87654321"
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::AzureApiKey);
+    }
+
+    #[test]
+    fn test_extract_auth_non_azure_uses_bearer() {
+        let adapter = CodexAdapter::new();
+        let provider = create_provider(json!({
+            "base_url": "https://api.openai.com/v1",
+            "env": {
+                "OPENAI_API_KEY": "sk-regular-key"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_add_auth_headers_azure() {
+        let adapter = CodexAdapter::new();
+        let auth = AuthInfo::new("azure-test-key".to_string(), AuthStrategy::AzureApiKey);
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let request = adapter.add_auth_headers(request, &auth);
+        let built = request.build().unwrap();
+        assert_eq!(
+            built.headers().get("api-key").unwrap().to_str().unwrap(),
+            "azure-test-key"
+        );
+        assert!(built.headers().get("Authorization").is_none());
+    }
+
+    #[test]
+    fn test_add_auth_headers_bearer() {
+        let adapter = CodexAdapter::new();
+        let auth = AuthInfo::new("sk-test-key".to_string(), AuthStrategy::Bearer);
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let request = adapter.add_auth_headers(request, &auth);
+        let built = request.build().unwrap();
+        assert_eq!(
+            built.headers().get("Authorization").unwrap().to_str().unwrap(),
+            "Bearer sk-test-key"
+        );
+        assert!(built.headers().get("api-key").is_none());
     }
 
     #[test]

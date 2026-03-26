@@ -287,6 +287,7 @@ async fn handle_claude_transform(
 /// 处理 /v1/chat/completions 请求（OpenAI Chat Completions API - Codex CLI）
 pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
@@ -298,11 +299,14 @@ pub async fn handle_chat_completions(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // 保留客户端原始 path + query，避免丢失 /v1 和 api-version 等参数
+    let endpoint = codex_forward_endpoint(&uri);
+
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/chat/completions",
+            &endpoint,
             body,
             headers,
             ctx.get_providers(),
@@ -328,6 +332,7 @@ pub async fn handle_chat_completions(
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
 pub async fn handle_responses(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
@@ -339,11 +344,14 @@ pub async fn handle_responses(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // 保留客户端原始 path + query，避免丢失 /v1 和 api-version 等参数
+    let endpoint = codex_forward_endpoint(&uri);
+
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/responses",
+            &endpoint,
             body,
             headers,
             ctx.get_providers(),
@@ -369,6 +377,7 @@ pub async fn handle_responses(
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
 pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
@@ -380,11 +389,14 @@ pub async fn handle_responses_compact(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // 保留客户端原始 path + query，避免丢失 /v1 和 api-version 等参数
+    let endpoint = codex_forward_endpoint(&uri);
+
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/responses/compact",
+            &endpoint,
             body,
             headers,
             ctx.get_providers(),
@@ -459,6 +471,22 @@ pub async fn handle_gemini(
     let response = result.response;
 
     process_response(response, &ctx, &state, &GEMINI_PARSER_CONFIG).await
+}
+
+fn codex_forward_endpoint(uri: &axum::http::Uri) -> String {
+    let endpoint = uri
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or(uri.path());
+
+    // 本地路由兼容别名：/codex/v1/* 仅用于接入层，转发到上游时应去掉 /codex 前缀
+    let normalized = endpoint.strip_prefix("/codex").unwrap_or(endpoint);
+
+    if normalized.is_empty() {
+        "/".to_string()
+    } else {
+        normalized.to_string()
+    }
 }
 
 // ============================================================================
@@ -539,5 +567,35 @@ async fn log_usage(
         is_streaming,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::codex_forward_endpoint;
+
+    #[test]
+    fn codex_forward_endpoint_keeps_query_and_v1() {
+        let uri: axum::http::Uri = "/v1/responses?api-version=2025-04-01-preview"
+            .parse()
+            .expect("valid uri");
+        let endpoint = codex_forward_endpoint(&uri);
+        assert_eq!(endpoint, "/v1/responses?api-version=2025-04-01-preview");
+    }
+
+    #[test]
+    fn codex_forward_endpoint_strips_local_codex_prefix() {
+        let uri: axum::http::Uri = "/codex/v1/responses?api-version=2025-04-01-preview"
+            .parse()
+            .expect("valid uri");
+        let endpoint = codex_forward_endpoint(&uri);
+        assert_eq!(endpoint, "/v1/responses?api-version=2025-04-01-preview");
+    }
+
+    #[test]
+    fn codex_forward_endpoint_keeps_plain_path() {
+        let uri: axum::http::Uri = "/responses".parse().expect("valid uri");
+        let endpoint = codex_forward_endpoint(&uri);
+        assert_eq!(endpoint, "/responses");
     }
 }
