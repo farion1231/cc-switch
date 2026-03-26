@@ -205,13 +205,29 @@ export function WebdavSyncSection({
   // Sync form when config is loaded/updated from backend, but not while user is editing
   useEffect(() => {
     if (!config || dirty) return;
-    setForm({
-      baseUrl: config.baseUrl ?? "",
-      username: config.username ?? "",
-      password: config.password ?? "",
-      remoteRoot: config.remoteRoot ?? "cc-switch-sync",
-      profile: config.profile ?? "default",
-      autoSync: config.autoSync ?? false,
+    setForm((prev) => {
+      const nextBaseUrl = config.baseUrl ?? "";
+      const nextUsername = config.username ?? "";
+      const nextRemoteRoot = config.remoteRoot ?? "cc-switch-sync";
+      const nextProfile = config.profile ?? "default";
+      const shouldPreserveRedactedPassword =
+        !config.password &&
+        !!prev.password &&
+        prev.baseUrl === nextBaseUrl &&
+        prev.username === nextUsername &&
+        prev.remoteRoot === nextRemoteRoot &&
+        prev.profile === nextProfile;
+
+      return {
+        baseUrl: nextBaseUrl,
+        username: nextUsername,
+        password: shouldPreserveRedactedPassword
+          ? prev.password
+          : (config.password ?? ""),
+        remoteRoot: nextRemoteRoot,
+        profile: nextProfile,
+        autoSync: config.autoSync ?? false,
+      };
     });
     setPasswordTouched(false);
     setPresetId(detectPreset(config.baseUrl ?? ""));

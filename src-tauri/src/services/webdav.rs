@@ -204,10 +204,11 @@ pub async fn ensure_remote_directories(
             s if s == StatusCode::CREATED || s.is_success() => {
                 log::info!("[WebDAV] MKCOL ok: {}", redact_url(&dir_url));
             }
-            // 405 commonly means "already exists" on many WebDAV servers
-            StatusCode::METHOD_NOT_ALLOWED => {}
             // Ambiguous — verify directory actually exists via PROPFIND
-            s if s == StatusCode::CONFLICT || s.is_redirection() => {
+            s if s == StatusCode::METHOD_NOT_ALLOWED
+                || s == StatusCode::CONFLICT
+                || s.is_redirection() =>
+            {
                 if !propfind_exists(&client, &dir_url, auth).await? {
                     return Err(webdav_status_error("MKCOL", status, &dir_url));
                 }
