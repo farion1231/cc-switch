@@ -1,5 +1,6 @@
 import { ChevronRight, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Tooltip,
   TooltipContent,
@@ -19,13 +20,21 @@ import {
 interface SessionItemProps {
   session: SessionMeta;
   isSelected: boolean;
+  selectionMode: boolean;
+  isChecked: boolean;
+  isCheckDisabled?: boolean;
   onSelect: (key: string) => void;
+  onToggleChecked: (checked: boolean) => void;
 }
 
 export function SessionItem({
   session,
   isSelected,
+  selectionMode,
+  isChecked,
+  isCheckDisabled = false,
   onSelect,
+  onToggleChecked,
 }: SessionItemProps) {
   const { t } = useTranslation();
   const title = formatSessionTitle(session);
@@ -44,6 +53,22 @@ export function SessionItem({
       )}
     >
       <div className="flex items-center gap-2 mb-1">
+        {selectionMode && (
+          <span
+            className="shrink-0"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <Checkbox
+              checked={isChecked}
+              disabled={isCheckDisabled}
+              aria-label={t("sessionManager.selectForBatch", {
+                defaultValue: "选择会话",
+              })}
+              onCheckedChange={(checked) => onToggleChecked(Boolean(checked))}
+            />
+          </span>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="shrink-0">

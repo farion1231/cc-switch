@@ -7,6 +7,11 @@ export interface DeleteSessionOptions {
   sourcePath: string;
 }
 
+export interface DeleteSessionResult extends DeleteSessionOptions {
+  success: boolean;
+  error?: string;
+}
+
 export const sessionsApi = {
   async list(): Promise<SessionMeta[]> {
     return await invoke("list_sessions");
@@ -26,6 +31,12 @@ export const sessionsApi = {
       sessionId,
       sourcePath,
     });
+  },
+
+  async deleteMany(
+    items: DeleteSessionOptions[],
+  ): Promise<DeleteSessionResult[]> {
+    return await invoke("delete_sessions", { items });
   },
 
   async launchTerminal(options: {
