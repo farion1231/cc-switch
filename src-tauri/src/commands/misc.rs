@@ -879,12 +879,11 @@ exec bash --norc --noprofile
         .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
     // Try the preferred terminal first, fall back to Terminal.app if it fails
-    // Note: Kitty doesn't need the -e flag, others do
     let result = match terminal {
         "iterm2" => launch_macos_iterm2(&script_file),
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
-        "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
+        "ghostty" => launch_macos_ghostty(&script_file),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
         _ => launch_macos_terminal_app(&script_file), // "terminal" or default
     };
@@ -961,6 +960,34 @@ end tell"#,
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
             "iTerm2 执行失败 (exit code: {:?}): {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+/// macOS: Ghostty — use the CLI binary to open a new window in the running instance
+#[cfg(target_os = "macos")]
+fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    // Ghostty CLI binary inside the app bundle
+    let ghostty_cli = "/Applications/Ghostty.app/Contents/MacOS/ghostty";
+
+    let input = format!("raw:bash '{}'\\n", script_file.display());
+
+    let output = Command::new(ghostty_cli)
+        .arg("--quit-after-last-window-closed=true")
+        .arg(format!("--input={input}"))
+        .output()
+        .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Ghostty 启动失败 (exit code: {:?}): {}",
             output.status.code(),
             stderr
         ));
