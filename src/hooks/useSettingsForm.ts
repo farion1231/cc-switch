@@ -79,6 +79,10 @@ export function useSettingsForm(): UseSettingsFormResult {
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  // 用户手动操作过 keepConversationHistory 后，异步初始化读取不再覆盖
+  const userTouchedTranscriptRef = useRef(false);
+  // 避免 data refetch 时重复读取 ~/.claude/settings.json
+  const hasSyncedTranscriptProtectionRef = useRef(false);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -134,18 +138,27 @@ export function useSettingsForm(): UseSettingsFormResult {
     syncLanguage(normalizedLanguage);
 
     // 从 ~/.claude/settings.json 读取实际的 transcript protection 状态并同步到表单
-    settingsApi.getTranscriptProtection().then((isProtected) => {
-      setSettingsState((prev) => {
-        if (!prev || prev.keepConversationHistory === isProtected) return prev;
-        return { ...prev, keepConversationHistory: isProtected };
+    // 仅在用户未手动操作过 toggle 时才覆盖，避免异步结果回滚用户选择
+    // 用 ref 保证只读取一次，防止 data refetch 时重复触发
+    if (!hasSyncedTranscriptProtectionRef.current) {
+      hasSyncedTranscriptProtectionRef.current = true;
+      settingsApi.getTranscriptProtection().then((isProtected) => {
+        if (userTouchedTranscriptRef.current) return;
+        setSettingsState((prev) => {
+          if (!prev || prev.keepConversationHistory === isProtected) return prev;
+          return { ...prev, keepConversationHistory: isProtected };
+        });
+      }).catch((err) => {
+        console.warn("[useSettingsForm] Failed to read transcript protection state", err);
       });
-    }).catch((err) => {
-      console.warn("[useSettingsForm] Failed to read transcript protection state", err);
-    });
+    }
   }, [data, readPersistedLanguage, syncLanguage]);
 
   const updateSettings = useCallback(
     (updates: Partial<SettingsFormState>) => {
+      if (updates.keepConversationHistory !== undefined) {
+        userTouchedTranscriptRef.current = true;
+      }
       setSettingsState((prev) => {
         const base =
           prev ??

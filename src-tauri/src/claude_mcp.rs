@@ -211,7 +211,7 @@ pub fn set_cleanup_period_days() -> Result<bool, AppError> {
     let already = obj
         .get("cleanupPeriodDays")
         .and_then(|v| v.as_u64())
-        .map_or(false, |d| d == 99999);
+        == Some(99999);
     if already {
         return Ok(false);
     }

@@ -63,6 +63,6 @@ pub async fn clear_transcript_protection() -> Result<bool, String> {
 #[tauri::command]
 pub async fn get_transcript_protection() -> Result<bool, String> {
     crate::claude_mcp::get_cleanup_period_days()
-        .map(|v| v.map_or(false, |days| days > 365))
+        .map(|v| v.is_some_and(|days| days > 365))
         .map_err(|e| e.to_string())
 }
