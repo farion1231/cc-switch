@@ -9,6 +9,13 @@ use crate::settings;
 use crate::store::AppState;
 use crate::usage_script;
 
+fn non_empty_trimmed(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 /// Execute usage script and format result (private helper method)
 pub(crate) async fn execute_and_format_usage_result(
     script_code: &str,
@@ -83,30 +90,81 @@ pub(crate) async fn execute_and_format_usage_result(
 
 /// Extract API key from provider configuration
 fn extract_api_key_from_provider(provider: &crate::provider::Provider) -> Option<String> {
-    if let Some(env) = provider.settings_config.get("env") {
-        // Try multiple possible API key fields
-        env.get("ANTHROPIC_AUTH_TOKEN")
-            .or_else(|| env.get("ANTHROPIC_API_KEY"))
-            .or_else(|| env.get("OPENROUTER_API_KEY"))
-            .or_else(|| env.get("GOOGLE_API_KEY"))
+    non_empty_trimmed(
+        provider
+            .settings_config
+            .get("apiKey")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    } else {
-        None
-    }
+            .or_else(|| {
+                provider
+                    .settings_config
+                    .get("options")
+                    .and_then(|v| v.get("apiKey"))
+                    .and_then(|v| v.as_str())
+            }),
+    )
+    .or_else(|| {
+        let env = provider.settings_config.get("env")?;
+        non_empty_trimmed(
+            env.get("ANTHROPIC_AUTH_TOKEN")
+                .or_else(|| env.get("ANTHROPIC_API_KEY"))
+                .or_else(|| env.get("OPENAI_API_KEY"))
+                .or_else(|| env.get("OPENROUTER_API_KEY"))
+                .or_else(|| env.get("GOOGLE_API_KEY"))
+                .or_else(|| env.get("GEMINI_API_KEY"))
+                .or_else(|| env.get("CODEX_API_KEY"))
+                .and_then(|v| v.as_str()),
+        )
+    })
 }
 
 /// Extract base URL from provider configuration
 fn extract_base_url_from_provider(provider: &crate::provider::Provider) -> Option<String> {
-    if let Some(env) = provider.settings_config.get("env") {
-        // Try multiple possible base URL fields
-        env.get("ANTHROPIC_BASE_URL")
-            .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
+    non_empty_trimmed(
+        provider
+            .settings_config
+            .get("baseUrl")
             .and_then(|v| v.as_str())
-            .map(|s| s.trim_end_matches('/').to_string())
-    } else {
-        None
-    }
+            .or_else(|| {
+                provider
+                    .settings_config
+                    .get("baseURL")
+                    .and_then(|v| v.as_str())
+            })
+            .or_else(|| {
+                provider
+                    .settings_config
+                    .get("options")
+                    .and_then(|v| v.get("baseURL"))
+                    .and_then(|v| v.as_str())
+            }),
+    )
+    .or_else(|| {
+        let env = provider.settings_config.get("env")?;
+        non_empty_trimmed(
+            env.get("ANTHROPIC_BASE_URL")
+                .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
+                .or_else(|| env.get("OPENAI_BASE_URL"))
+                .and_then(|v| v.as_str()),
+        )
+    })
+    .map(|s| s.trim_end_matches('/').to_string())
+}
+
+fn resolve_usage_credentials(
+    provider: &crate::provider::Provider,
+    api_key_override: Option<&str>,
+    base_url_override: Option<&str>,
+) -> (String, String) {
+    let api_key = non_empty_trimmed(api_key_override)
+        .or_else(|| extract_api_key_from_provider(provider))
+        .unwrap_or_default();
+
+    let base_url = non_empty_trimmed(base_url_override)
+        .or_else(|| extract_base_url_from_provider(provider))
+        .unwrap_or_default();
+
+    (api_key, base_url)
 }
 
 /// Query provider usage (using saved script configuration)
@@ -144,20 +202,11 @@ pub async fn query_usage(
             ));
         }
 
-        // Get credentials: prioritize UsageScript values, fallback to provider config
-        let api_key = usage_script
-            .api_key
-            .clone()
-            .filter(|k| !k.is_empty())
-            .or_else(|| extract_api_key_from_provider(provider))
-            .unwrap_or_default();
-
-        let base_url = usage_script
-            .base_url
-            .clone()
-            .filter(|u| !u.is_empty())
-            .or_else(|| extract_base_url_from_provider(provider))
-            .unwrap_or_default();
+        let (api_key, base_url) = resolve_usage_credentials(
+            provider,
+            usage_script.api_key.as_deref(),
+            usage_script.base_url.as_deref(),
+        );
 
         (
             usage_script.code.clone(),
@@ -185,9 +234,9 @@ pub async fn query_usage(
 /// Test usage script (using temporary script content, not saved)
 #[allow(clippy::too_many_arguments)]
 pub async fn test_usage_script(
-    _state: &AppState,
-    _app_type: AppType,
-    _provider_id: &str,
+    state: &AppState,
+    app_type: AppType,
+    provider_id: &str,
     script_code: &str,
     timeout: u64,
     api_key: Option<&str>,
@@ -196,11 +245,21 @@ pub async fn test_usage_script(
     user_id: Option<&str>,
     template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
-    // Use provided credential parameters directly for testing
+    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let provider = providers.get(provider_id).ok_or_else(|| {
+        AppError::localized(
+            "provider.not_found",
+            format!("供应商不存在: {provider_id}"),
+            format!("Provider not found: {provider_id}"),
+        )
+    })?;
+    let (resolved_api_key, resolved_base_url) =
+        resolve_usage_credentials(provider, api_key, base_url);
+
     execute_and_format_usage_result(
         script_code,
-        api_key.unwrap_or(""),
-        base_url.unwrap_or(""),
+        &resolved_api_key,
+        &resolved_base_url,
         timeout,
         access_token,
         user_id,
@@ -225,4 +284,100 @@ pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::Provider;
+    use serde_json::json;
+
+    fn provider_with_settings(settings_config: serde_json::Value) -> Provider {
+        Provider {
+            id: "provider-1".to_string(),
+            name: "provider".to_string(),
+            settings_config,
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    #[test]
+    fn resolve_usage_credentials_falls_back_when_overrides_are_blank() {
+        let provider = provider_with_settings(json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-provider",
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic/"
+            }
+        }));
+
+        let (api_key, base_url) = resolve_usage_credentials(&provider, Some(""), Some("   "));
+
+        assert_eq!(api_key, "sk-provider");
+        assert_eq!(base_url, "https://api.deepseek.com/anthropic");
+    }
+
+    #[test]
+    fn resolve_usage_credentials_reads_top_level_and_options_values() {
+        let provider = provider_with_settings(json!({
+            "options": {
+                "apiKey": "sk-options",
+                "baseURL": "https://api.deepseek.com/v1/"
+            }
+        }));
+
+        let (api_key, base_url) = resolve_usage_credentials(&provider, None, None);
+
+        assert_eq!(api_key, "sk-options");
+        assert_eq!(base_url, "https://api.deepseek.com/v1");
+    }
+
+    #[test]
+    fn resolve_usage_credentials_prefers_non_empty_overrides() {
+        let provider = provider_with_settings(json!({
+            "apiKey": "sk-provider",
+            "baseUrl": "https://provider.example.com/",
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-env",
+                "ANTHROPIC_BASE_URL": "https://env.example.com/"
+            }
+        }));
+
+        let (api_key, base_url) = resolve_usage_credentials(
+            &provider,
+            Some("sk-override"),
+            Some("https://override.example.com/"),
+        );
+
+        assert_eq!(api_key, "sk-override");
+        assert_eq!(base_url, "https://override.example.com/");
+    }
+
+    #[test]
+    fn resolve_usage_credentials_ignores_blank_provider_fields_and_uses_env() {
+        let provider = provider_with_settings(json!({
+            "apiKey": "   ",
+            "baseUrl": "",
+            "options": {
+                "apiKey": "",
+                "baseURL": "   "
+            },
+            "env": {
+                "OPENAI_API_KEY": "sk-env",
+                "OPENAI_BASE_URL": "https://env.example.com/v1/"
+            }
+        }));
+
+        let (api_key, base_url) = resolve_usage_credentials(&provider, None, None);
+
+        assert_eq!(api_key, "sk-env");
+        assert_eq!(base_url, "https://env.example.com/v1");
+    }
 }
