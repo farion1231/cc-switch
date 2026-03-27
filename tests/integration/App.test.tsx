@@ -2,7 +2,11 @@ import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { resetProviderState } from "../msw/state";
+import {
+  resetProviderState,
+  setCurrentProviderId,
+  setProviders,
+} from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 
 const toastSuccessMock = vi.fn();
@@ -75,8 +79,11 @@ vi.mock("@/components/providers/EditProviderDialog", () => ({
         <button
           onClick={() =>
             onSubmit({
-              ...provider,
-              name: `${provider.name}-edited`,
+              provider: {
+                ...provider,
+                name: `${provider.name}-edited`,
+              },
+              originalId: provider.id,
             })
           }
         >
@@ -114,6 +121,7 @@ vi.mock("@/components/AppSwitcher", () => ({
       <span>{activeApp}</span>
       <button onClick={() => onSwitch("claude")}>switch-claude</button>
       <button onClick={() => onSwitch("codex")}>switch-codex</button>
+      <button onClick={() => onSwitch("openclaw")}>switch-openclaw</button>
     </div>
   ),
 }));
@@ -229,5 +237,47 @@ describe("App integration with MSW", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
+  });
+
+  it("duplicates openclaw providers with a generated provider key", async () => {
+    setProviders("openclaw", {
+      deepseek: {
+        id: "deepseek",
+        name: "DeepSeek",
+        settingsConfig: {
+          baseUrl: "https://api.deepseek.com",
+          apiKey: "test-key",
+          api: "openai-completions",
+          models: [],
+        },
+        category: "custom",
+        sortIndex: 0,
+        createdAt: Date.now(),
+      },
+    });
+    setCurrentProviderId("openclaw", "deepseek");
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    fireEvent.click(screen.getByText("switch-openclaw"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "deepseek",
+      ),
+    );
+
+    fireEvent.click(screen.getByText("duplicate"));
+
+    await waitFor(() => {
+      const providerList = screen.getByTestId("provider-list").textContent;
+      expect(providerList).toContain("deepseek-copy");
+      expect(providerList).toContain("DeepSeek copy");
+    });
+
+    expect(toastErrorMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("Provider key is required for openclaw"),
+    );
   });
 });

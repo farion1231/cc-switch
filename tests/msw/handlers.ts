@@ -67,6 +67,16 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/update_tray_menu`, () => success(true)),
 
+  http.post(`${TAURI_ENDPOINT}/get_openclaw_live_provider_ids`, () =>
+    success([]),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_openclaw_default_model`, () =>
+    success({ primary: null, fallback: [] }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/scan_openclaw_config_health`, () => success([])),
+
   http.post(`${TAURI_ENDPOINT}/switch_provider`, async ({ request }) => {
     const { id, app } = await withJson<{ id: string; app: AppId }>(request);
     const providers = listProviders(app);
@@ -173,6 +183,8 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/restart_app`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/get_settings`, () => success(getSettings())),
+
+  http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
 
   http.post(`${TAURI_ENDPOINT}/save_settings`, async ({ request }) => {
     const { settings } = await withJson<{ settings: Settings }>(request);
