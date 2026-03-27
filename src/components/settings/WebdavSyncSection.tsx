@@ -98,6 +98,20 @@ function formatDbCompatVersion(version?: number | null): string | null {
   return typeof version === "number" ? `db-v${version}` : null;
 }
 
+function buildPasswordPreservationKey(values: {
+  baseUrl?: string | null;
+  username?: string | null;
+  remoteRoot?: string | null;
+  profile?: string | null;
+}) {
+  return JSON.stringify({
+    baseUrl: values.baseUrl ?? "",
+    username: values.username ?? "",
+    remoteRoot: values.remoteRoot ?? "cc-switch-sync",
+    profile: values.profile ?? "default",
+  });
+}
+
 // ─── Types ──────────────────────────────────────────────────
 
 type ActionState =
@@ -167,6 +181,10 @@ export function WebdavSyncSection({
   const [passwordTouched, setPasswordTouched] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const justSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPasswordPreservationRef = useRef<{
+    key: string;
+    password: string;
+  } | null>(null);
 
   // Local form state — credentials are only persisted on explicit "Save".
   const [form, setForm] = useState(() => ({
@@ -205,25 +223,32 @@ export function WebdavSyncSection({
   // Sync form when config is loaded/updated from backend, but not while user is editing
   useEffect(() => {
     if (!config || dirty) return;
-    setForm((prev) => {
+    setForm(() => {
       const nextBaseUrl = config.baseUrl ?? "";
       const nextUsername = config.username ?? "";
       const nextRemoteRoot = config.remoteRoot ?? "cc-switch-sync";
       const nextProfile = config.profile ?? "default";
+      const nextKey = buildPasswordPreservationKey({
+        baseUrl: nextBaseUrl,
+        username: nextUsername,
+        remoteRoot: nextRemoteRoot,
+        profile: nextProfile,
+      });
       const shouldPreserveRedactedPassword =
         !config.password &&
-        !!prev.password &&
-        prev.baseUrl === nextBaseUrl &&
-        prev.username === nextUsername &&
-        prev.remoteRoot === nextRemoteRoot &&
-        prev.profile === nextProfile;
+        pendingPasswordPreservationRef.current?.key === nextKey &&
+        !!pendingPasswordPreservationRef.current.password;
+
+      const nextPassword = shouldPreserveRedactedPassword
+        ? pendingPasswordPreservationRef.current!.password
+        : (config.password ?? "");
+
+      pendingPasswordPreservationRef.current = null;
 
       return {
         baseUrl: nextBaseUrl,
         username: nextUsername,
-        password: shouldPreserveRedactedPassword
-          ? prev.password
-          : (config.password ?? ""),
+        password: nextPassword,
         remoteRoot: nextRemoteRoot,
         profile: nextProfile,
         autoSync: config.autoSync ?? false,
@@ -305,12 +330,13 @@ export function WebdavSyncSection({
       enabled: true,
       baseUrl,
       username: form.username.trim(),
-      password: form.password,
+      // 未重新触碰密码时，提交空值让后端沿用已保存密码，表单里的值仅用于 UI 显示
+      password: passwordTouched ? form.password : "",
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
       profile: form.profile.trim() || "default",
       autoSync: form.autoSync,
     };
-  }, [form]);
+  }, [form, passwordTouched]);
 
   // ─── Handlers ───────────────────────────────────────────
 
@@ -342,6 +368,12 @@ export function WebdavSyncSection({
       return;
     }
     setActionState("saving");
+    pendingPasswordPreservationRef.current = form.password
+      ? {
+          key: buildPasswordPreservationKey(settings),
+          password: form.password,
+        }
+      : null;
     try {
       await settingsApi.webdavSyncSaveSettings(settings, passwordTouched);
       setDirty(false);
@@ -355,6 +387,7 @@ export function WebdavSyncSection({
       }, 2000);
       await queryClient.invalidateQueries();
     } catch (error) {
+      pendingPasswordPreservationRef.current = null;
       toast.error(
         t("settings.webdavSync.saveFailed", {
           error: (error as Error)?.message ?? String(error),
@@ -378,7 +411,7 @@ export function WebdavSyncSection({
     } finally {
       setActionState("idle");
     }
-  }, [buildSettings, passwordTouched, queryClient, t]);
+  }, [buildSettings, form.password, passwordTouched, queryClient, t]);
 
   /** Fetch remote info, then open upload confirmation dialog. */
   const handleUploadClick = useCallback(async () => {
