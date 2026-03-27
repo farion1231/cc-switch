@@ -124,15 +124,22 @@ export function useGeminiCommonConfig({
     (envObj: Record<string, string>, snippetEnv: Record<string, string>) => {
       const entries = Object.entries(snippetEnv);
       if (entries.length === 0) return false;
-      return entries.every(([key, value]) => envObj[key] === value);
+      return entries.every(([key]) =>
+        Object.prototype.hasOwnProperty.call(envObj, key),
+      );
     },
     [],
   );
 
   const applySnippetToEnv = useCallback(
     (envObj: Record<string, string>, snippetEnv: Record<string, string>) => {
-      const updated = { ...envObj };
+      const updated: Record<string, string> = {};
       for (const [key, value] of Object.entries(snippetEnv)) {
+        if (typeof value === "string") {
+          updated[key] = value;
+        }
+      }
+      for (const [key, value] of Object.entries(envObj)) {
         if (typeof value === "string") {
           updated[key] = value;
         }

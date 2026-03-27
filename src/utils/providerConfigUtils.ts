@@ -62,6 +62,23 @@ const isSubset = (target: any, source: any): boolean => {
   return target === source;
 };
 
+const hasMatchingShape = (target: any, source: any): boolean => {
+  if (isPlainObject(source)) {
+    if (!isPlainObject(target)) return false;
+    return Object.entries(source).every(
+      ([key, value]) =>
+        Object.prototype.hasOwnProperty.call(target, key) &&
+        hasMatchingShape(target[key], value),
+    );
+  }
+
+  if (Array.isArray(source)) {
+    return Array.isArray(target);
+  }
+
+  return target !== undefined;
+};
+
 // 深拷贝函数
 const deepClone = <T>(obj: T): T => {
   if (obj === null || typeof obj !== "object") return obj;
@@ -137,7 +154,10 @@ export const updateCommonConfigSnippet = (
   const snippet = JSON.parse(snippetString) as Record<string, any>;
 
   if (enabled) {
-    const merged = deepMerge(deepClone(config), snippet);
+    const merged = deepMerge(
+      deepClone(snippet),
+      deepClone(config) as Record<string, any>,
+    );
     return {
       updatedConfig: JSON.stringify(merged, null, 2),
     };
@@ -159,8 +179,10 @@ export const hasCommonConfigSnippet = (
     if (!snippetString.trim()) return false;
     const config = jsonString ? JSON.parse(jsonString) : {};
     const snippet = JSON.parse(snippetString);
-    if (!isPlainObject(snippet)) return false;
-    return isSubset(config, snippet);
+    if (!isPlainObject(snippet) || Object.keys(snippet).length === 0) {
+      return false;
+    }
+    return hasMatchingShape(config, snippet);
   } catch (err) {
     return false;
   }
@@ -380,8 +402,8 @@ export const updateTomlCommonConfigSnippet = (
 
     if (enabled) {
       const merged = deepMerge(
-        deepClone(config) as Record<string, any>,
         deepClone(snippet) as Record<string, any>,
+        deepClone(config) as Record<string, any>,
       );
       return { updatedConfig: stringifyToml(merged) };
     } else {
@@ -404,7 +426,10 @@ export const hasTomlCommonConfigSnippet = (
   try {
     const config = parseToml(normalizeTomlText(tomlString || ""));
     const snippet = parseToml(normalizeTomlText(snippetString));
-    return isSubset(config, snippet);
+    if (!isPlainObject(snippet) || Object.keys(snippet).length === 0) {
+      return false;
+    }
+    return hasMatchingShape(config, snippet);
   } catch {
     // Fallback to text-based matching if TOML parsing fails
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();
