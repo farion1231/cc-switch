@@ -148,7 +148,8 @@
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
-    }
+    },
+    "importCurrentFailed": "現在の設定のインポートに失敗しました"
   },
   "notifications": {
     "providerAdded": "プロバイダーを追加しました",
