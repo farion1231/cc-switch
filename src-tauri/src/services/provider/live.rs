@@ -93,6 +93,18 @@ fn json_deep_merge(target: &mut Value, source: &Value) {
                 }
             }
         }
+        (Value::Array(target_arr), Value::Array(source_arr)) => {
+            // Set-union: append source items not already present in target.
+            // Uses json_is_subset for matching, consistent with json_remove_array_items.
+            for source_item in source_arr {
+                let already_present = target_arr
+                    .iter()
+                    .any(|target_item| json_is_subset(target_item, source_item));
+                if !already_present {
+                    target_arr.push(source_item.clone());
+                }
+            }
+        }
         (target_value, source_value) => {
             *target_value = source_value.clone();
         }
@@ -219,6 +231,24 @@ fn merge_toml_item(target: &mut Item, source: &Item) {
     if let Some(source_table) = source.as_table_like() {
         if let Some(target_table) = target.as_table_like_mut() {
             merge_toml_table_like(target_table, source_table);
+            return;
+        }
+    }
+
+    // Array set-union: append source items not already present in target.
+    // Mirrors toml_remove_array_items which uses toml_value_is_subset for matching.
+    if let (Some(target_value), Some(source_value)) = (target.as_value_mut(), source.as_value()) {
+        if let (Some(target_arr), Some(source_arr)) =
+            (target_value.as_array_mut(), source_value.as_array())
+        {
+            for source_item in source_arr.iter() {
+                let already_present = target_arr
+                    .iter()
+                    .any(|target_item| toml_value_is_subset(target_item, source_item));
+                if !already_present {
+                    target_arr.push(source_item.clone());
+                }
+            }
             return;
         }
     }
@@ -1492,5 +1522,86 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    #[test]
+    fn claude_common_config_array_roundtrip() {
+        // Provider stored ["tool2"] (after remove), snippet has ["tool1"].
+        // Apply should produce ["tool1", "tool2"]; remove should recover ["tool2"].
+        let stored = json!({ "allowedTools": ["tool2"] });
+        let snippet = r#"{ "allowedTools": ["tool1"] }"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &stored, snippet).unwrap();
+        let tools = applied["allowedTools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(tools.contains(&json!("tool1")));
+        assert!(tools.contains(&json!("tool2")));
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
+        assert_eq!(stripped, stored, "round-trip should recover stored provider settings");
+    }
+
+    #[test]
+    fn claude_common_config_array_deduplicates() {
+        // Both provider and snippet have "tool1". Should not appear twice.
+        let settings = json!({ "allowedTools": ["tool1", "tool2"] });
+        let snippet = r#"{ "allowedTools": ["tool1"] }"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        let tools = applied["allowedTools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2, "tool1 should not be duplicated");
+        assert!(tools.contains(&json!("tool1")));
+        assert!(tools.contains(&json!("tool2")));
+    }
+
+    #[test]
+    fn codex_common_config_array_roundtrip() {
+        let stored = json!({
+            "auth": {},
+            "config": "allowed_tools = [\"tool2\"]\n"
+        });
+        let snippet = "allowed_tools = [\"tool1\"]\n";
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Codex, &stored, snippet).unwrap();
+        let applied_config = applied["config"].as_str().unwrap_or_default();
+        let parsed = applied_config.parse::<DocumentMut>().unwrap();
+        let tools = parsed["allowed_tools"]
+            .as_array()
+            .expect("allowed_tools should be an array");
+        let values: Vec<&str> = tools.iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(values.len(), 2);
+        assert!(values.contains(&"tool1"));
+        assert!(values.contains(&"tool2"));
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
+        let stripped_config = stripped["config"].as_str().unwrap_or_default();
+        let stripped_parsed = stripped_config.parse::<DocumentMut>().unwrap();
+        let stripped_tools = stripped_parsed["allowed_tools"]
+            .as_array()
+            .expect("allowed_tools should remain");
+        let stripped_values: Vec<&str> = stripped_tools.iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(stripped_values, vec!["tool2"]);
+    }
+
+    #[test]
+    fn claude_common_config_scalar_still_overrides_with_array_union() {
+        // Scalars must still use provider-wins semantics; arrays use set-union.
+        let settings = json!({
+            "model": "claude-opus",
+            "allowedTools": ["tool2"]
+        });
+        let snippet = r#"{ "model": "claude-sonnet", "allowedTools": ["tool1"] }"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(applied["model"], json!("claude-opus"), "provider scalar should override snippet");
+        let tools = applied["allowedTools"].as_array().unwrap();
+        assert!(tools.contains(&json!("tool1")));
+        assert!(tools.contains(&json!("tool2")));
     }
 }
