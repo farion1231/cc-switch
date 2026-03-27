@@ -154,10 +154,7 @@ pub async fn send_request(
     // Transfer extensions from the incoming request — this carries the internal
     // `HeaderCaseMap` that tells the hyper client how to case each header name.
     // Debug: check extension count before transfer
-    log::debug!(
-        "[HyperClient] Transferring extensions to outgoing request (uri={})",
-        uri
-    );
+    log::debug!("[HyperClient] Transferring extensions to outgoing request (uri={uri})");
     *req.extensions_mut() = original_extensions;
 
     let client = global_hyper_client();
