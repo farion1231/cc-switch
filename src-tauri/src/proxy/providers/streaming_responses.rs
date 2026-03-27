@@ -9,6 +9,7 @@
 //! 与 Chat Completions 的 delta chunk 模型完全不同，需要独立的状态机处理。
 
 use super::transform_responses::{build_anthropic_usage_from_responses, map_responses_stop_reason};
+use crate::proxy::sse::strip_sse_field;
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
@@ -133,9 +134,9 @@ pub fn create_anthropic_sse_stream_from_responses(
                         let mut data_parts: Vec<String> = Vec::new();
 
                         for line in block.lines() {
-                            if let Some(evt) = line.strip_prefix("event: ") {
+                            if let Some(evt) = strip_sse_field(line, "event") {
                                 event_type = Some(evt.trim().to_string());
-                            } else if let Some(d) = line.strip_prefix("data: ") {
+                            } else if let Some(d) = strip_sse_field(line, "data") {
                                 data_parts.push(d.to_string());
                             }
                         }
@@ -810,7 +811,9 @@ mod tests {
         let events: Vec<Value> = merged
             .split("\n\n")
             .filter_map(|block| {
-                let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
                 serde_json::from_str::<Value>(data).ok()
             })
             .collect();

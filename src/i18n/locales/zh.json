@@ -65,7 +65,8 @@
     "hideAttribution": "隐藏 AI 署名",
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "启用 Tool Search",
-    "effortHigh": "高强度思考"
+    "effortHigh": "高强度思考",
+    "disableAutoUpgrade": "禁用自动升级"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",

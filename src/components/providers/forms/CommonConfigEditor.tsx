@@ -82,6 +82,9 @@ export function CommonConfigEditor({
           config?.env?.ENABLE_TOOL_SEARCH === "true" ||
           config?.env?.ENABLE_TOOL_SEARCH === "1",
         effortHigh: config?.effortLevel === "high",
+        disableAutoUpgrade:
+          config?.env?.DISABLE_AUTOUPDATER === "1" ||
+          config?.env?.DISABLE_AUTOUPDATER === 1,
       };
     } catch {
       return {
@@ -89,6 +92,7 @@ export function CommonConfigEditor({
         teammates: false,
         enableToolSearch: false,
         effortHigh: false,
+        disableAutoUpgrade: false,
       };
     }
   }, [localValue]);
@@ -129,6 +133,15 @@ export function CommonConfigEditor({
               config.effortLevel = "high";
             } else {
               delete config.effortLevel;
+            }
+            break;
+          case "disableAutoUpgrade":
+            if (!config.env) config.env = {};
+            if (checked) {
+              config.env.DISABLE_AUTOUPDATER = "1";
+            } else {
+              delete config.env.DISABLE_AUTOUPDATER;
+              if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
         }
@@ -219,6 +232,17 @@ export function CommonConfigEditor({
               className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
             />
             <span>{t("claudeConfig.effortHigh")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.disableAutoUpgrade}
+              onChange={(e) =>
+                handleToggle("disableAutoUpgrade", e.target.checked)
+              }
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.disableAutoUpgrade")}</span>
           </label>
         </div>
         <JsonEditor

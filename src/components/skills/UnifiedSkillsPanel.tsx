@@ -110,7 +110,16 @@ const UnifiedSkillsPanel = React.forwardRef<
       message: t("skills.uninstallConfirm", { name: skill.name }),
       onConfirm: async () => {
         try {
-          const result = await uninstallMutation.mutateAsync(skill.id);
+          // 构建 skillKey 用于更新 discoverable 缓存
+          const installName =
+            skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
+            skill.directory.toLowerCase();
+          const skillKey = `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
+
+          const result = await uninstallMutation.mutateAsync({
+            id: skill.id,
+            skillKey,
+          });
           setConfirmDialog(null);
           toast.success(t("skills.uninstallSuccess", { name: skill.name }), {
             description: result.backupPath

@@ -515,6 +515,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "StepFun Step Plan",
+    websiteUrl: "https://platform.stepfun.com/docs/zh/step-plan/overview",
+    apiKeyUrl: "https://platform.stepfun.com/interface-key",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StepFun Step Plan",
+      options: {
+        baseURL: "https://api.stepfun.com/step_plan/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "step-3.5-flash": { name: "Step 3.5 Flash" },
+      },
+    },
+    category: "cn_official",
+    icon: "stepfun",
+    iconColor: "#005AFF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "step-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "ModelScope",
     websiteUrl: "https://modelscope.cn",
     apiKeyUrl: "https://modelscope.cn/my/myaccesstoken",
