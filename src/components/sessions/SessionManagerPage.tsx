@@ -250,64 +250,72 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     }
 
     setIsBatchDeleting(true);
-    const results = await sessionsApi.deleteMany(
-      targets.map((session) => ({
-        providerId: session.providerId,
-        sessionId: session.sessionId,
-        sourcePath: session.sourcePath!,
-      })),
-    );
-
-    const deletedKeys = results
-      .filter((result) => result.success)
-      .map(
-        (result) =>
-          `${result.providerId}:${result.sessionId}:${result.sourcePath ?? ""}`,
+    try {
+      const results = await sessionsApi.deleteMany(
+        targets.map((session) => ({
+          providerId: session.providerId,
+          sessionId: session.sessionId,
+          sourcePath: session.sourcePath!,
+        })),
       );
 
-    const failedErrors = results
-      .filter((result) => !result.success)
-      .map((result) => result.error || t("common.unknown"));
+      const deletedKeys = results
+        .filter((result) => result.success)
+        .map(
+          (result) =>
+            `${result.providerId}:${result.sessionId}:${result.sourcePath ?? ""}`,
+        );
 
-    results
-      .filter((result) => result.success)
-      .forEach((result) => {
-        queryClient.removeQueries({
-          queryKey: ["sessionMessages", result.providerId, result.sourcePath],
+      const failedErrors = results
+        .filter((result) => !result.success)
+        .map((result) => result.error || t("common.unknown"));
+
+      results
+        .filter((result) => result.success)
+        .forEach((result) => {
+          queryClient.removeQueries({
+            queryKey: ["sessionMessages", result.providerId, result.sourcePath],
+          });
         });
+
+      setSelectedSessionKeys((current) => {
+        const next = new Set(current);
+        deletedKeys.forEach((key) => next.delete(key));
+        return next;
       });
 
-    setSelectedSessionKeys((current) => {
-      const next = new Set(current);
-      deletedKeys.forEach((key) => next.delete(key));
-      return next;
-    });
+      await queryClient.invalidateQueries({ queryKey: ["sessions"] });
 
-    await queryClient.invalidateQueries({ queryKey: ["sessions"] });
-    await refetch();
+      if (deletedKeys.length > 0) {
+        toast.success(
+          t("sessionManager.batchDeleteSuccess", {
+            defaultValue: "已删除 {{count}} 个会话",
+            count: deletedKeys.length,
+          }),
+        );
+      }
 
-    if (deletedKeys.length > 0) {
-      toast.success(
-        t("sessionManager.batchDeleteSuccess", {
-          defaultValue: "已删除 {{count}} 个会话",
-          count: deletedKeys.length,
-        }),
-      );
-    }
-
-    if (failedErrors.length > 0) {
+      if (failedErrors.length > 0) {
+        toast.error(
+          t("sessionManager.batchDeleteFailed", {
+            defaultValue: "{{failed}} 个会话删除失败",
+            failed: failedErrors.length,
+          }),
+          {
+            description: failedErrors[0],
+          },
+        );
+      }
+    } catch (error) {
       toast.error(
-        t("sessionManager.batchDeleteFailed", {
-          defaultValue: "{{failed}} 个会话删除失败",
-          failed: failedErrors.length,
-        }),
-        {
-          description: failedErrors[0],
-        },
+        extractErrorMessage(error) ||
+          t("sessionManager.batchDeleteRequestFailed", {
+            defaultValue: "批量删除失败，请稍后重试",
+          }),
       );
+    } finally {
+      setIsBatchDeleting(false);
     }
-
-    setIsBatchDeleting(false);
   };
 
   const deletableFilteredSessions = useMemo(
@@ -327,6 +335,29 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     () => selectedSessions.filter((session) => Boolean(session.sourcePath)),
     [selectedSessions],
   );
+
+  useEffect(() => {
+    if (!selectionMode) return;
+
+    const visibleKeys = new Set(
+      deletableFilteredSessions.map((session) => getSessionKey(session)),
+    );
+
+    setSelectedSessionKeys((current) => {
+      let changed = false;
+      const next = new Set<string>();
+
+      current.forEach((key) => {
+        if (visibleKeys.has(key)) {
+          next.add(key);
+        } else {
+          changed = true;
+        }
+      });
+
+      return changed ? next : current;
+    });
+  }, [deletableFilteredSessions, selectionMode]);
 
   const allFilteredSelected =
     deletableFilteredSessions.length > 0 &&
@@ -387,38 +418,62 @@ export function SessionManagerPage({ appId }: { appId: string }) {
             <Card className="flex flex-col flex-1 min-h-0 overflow-hidden">
               <CardHeader className="py-2 px-3 border-b">
                 {isSearchOpen ? (
-                  <div className="relative flex-1">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-                    <Input
-                      ref={searchInputRef}
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      placeholder={t("sessionManager.searchPlaceholder")}
-                      className="h-8 pl-8 pr-8 text-sm"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") {
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                      <Input
+                        ref={searchInputRef}
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder={t("sessionManager.searchPlaceholder")}
+                        className="h-8 pl-8 pr-8 text-sm"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            setIsSearchOpen(false);
+                            setSearch("");
+                          }
+                        }}
+                        onBlur={() => {
+                          if (search.trim() === "") {
+                            setIsSearchOpen(false);
+                          }
+                        }}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 size-6"
+                        onClick={() => {
                           setIsSearchOpen(false);
                           setSearch("");
-                        }
-                      }}
-                      onBlur={() => {
-                        if (search.trim() === "") {
-                          setIsSearchOpen(false);
-                        }
-                      }}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-1 top-1/2 -translate-y-1/2 size-6"
-                      onClick={() => {
-                        setIsSearchOpen(false);
-                        setSearch("");
-                      }}
-                    >
-                      <X className="size-3" />
-                    </Button>
+                        }}
+                      >
+                        <X className="size-3" />
+                      </Button>
+                    </div>
+                    {selectionMode && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="secondary"
+                            size="icon"
+                            className="size-7 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                            aria-label={t("sessionManager.exitBatchModeTooltip", {
+                              defaultValue: "退出批量管理",
+                            })}
+                            onClick={exitSelectionMode}
+                          >
+                            <CheckSquare className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {t("sessionManager.exitBatchModeTooltip", {
+                            defaultValue: "退出批量管理",
+                          })}
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col gap-2">
@@ -432,13 +487,18 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </Badge>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        {deletableFilteredSessions.length > 0 && (
+                        {(selectionMode ||
+                          deletableFilteredSessions.length > 0) && (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
                                 variant={selectionMode ? "secondary" : "ghost"}
                                 size="icon"
-                                className="size-7"
+                                className={
+                                  selectionMode
+                                    ? "size-7 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                                    : "size-7"
+                                }
                                 aria-label={
                                   selectionMode
                                     ? t("sessionManager.exitBatchModeTooltip", {
