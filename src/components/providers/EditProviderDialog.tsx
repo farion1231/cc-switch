@@ -14,7 +14,10 @@ interface EditProviderDialogProps {
   open: boolean;
   provider: Provider | null;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (provider: Provider) => Promise<void> | void;
+  onSubmit: (payload: {
+    provider: Provider;
+    originalId?: string;
+  }) => Promise<void> | void;
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
 }
@@ -165,9 +168,15 @@ export function EditProviderDialog({
         string,
         unknown
       >;
+      const nextProviderId =
+        (appId === "opencode" || appId === "openclaw") &&
+        values.providerKey?.trim()
+          ? values.providerKey.trim()
+          : provider.id;
 
       const updatedProvider: Provider = {
         ...provider,
+        id: nextProviderId,
         name: values.name.trim(),
         notes: values.notes?.trim() || undefined,
         websiteUrl: values.websiteUrl?.trim() || undefined,
@@ -179,10 +188,13 @@ export function EditProviderDialog({
         ...(values.meta ? { meta: values.meta } : {}),
       };
 
-      await onSubmit(updatedProvider);
+      await onSubmit({
+        provider: updatedProvider,
+        originalId: provider.id,
+      });
       onOpenChange(false);
     },
-    [onSubmit, onOpenChange, provider],
+    [appId, onSubmit, onOpenChange, provider],
   );
 
   if (!provider || !initialData) {

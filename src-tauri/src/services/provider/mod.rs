@@ -29,7 +29,8 @@ pub use live::{
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    strip_common_config_from_live_settings, sync_current_provider_for_app_to_live,
+    provider_exists_in_live_config, strip_common_config_from_live_settings,
+    sync_current_provider_for_app_to_live,
     write_live_with_common_config,
 };
 
@@ -166,7 +167,12 @@ impl ProviderService {
     }
 
     /// Add a new provider
-    pub fn add(state: &AppState, app_type: AppType, provider: Provider) -> Result<bool, AppError> {
+    pub fn add(
+        state: &AppState,
+        app_type: AppType,
+        provider: Provider,
+        add_to_live: bool,
+    ) -> Result<bool, AppError> {
         let mut provider = provider;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
@@ -176,7 +182,7 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        // Additive mode apps (OpenCode, OpenClaw) - always write to live config
+        // Additive mode apps (OpenCode, OpenClaw): optionally write to live config.
         if app_type.is_additive_mode() {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
             if matches!(app_type, AppType::OpenCode)
@@ -184,6 +190,9 @@ impl ProviderService {
             {
                 // Do not auto-enable newly added OMO / OMO Slim providers.
                 // Users must explicitly switch/apply an OMO provider to activate it.
+                return Ok(true);
+            }
+            if !add_to_live {
                 return Ok(true);
             }
             write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
@@ -207,18 +216,59 @@ impl ProviderService {
     pub fn update(
         state: &AppState,
         app_type: AppType,
+        original_id: Option<&str>,
         provider: Provider,
     ) -> Result<bool, AppError> {
         let mut provider = provider;
+        let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
+        let provider_id_changed = original_id != provider.id;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
 
+        if provider_id_changed {
+            if !app_type.is_additive_mode() {
+                return Err(AppError::Message(
+                    "Only additive-mode providers support changing provider key".to_string(),
+                ));
+            }
+
+            if provider_exists_in_live_config(&app_type, &original_id)? {
+                return Err(AppError::Message(
+                    "Provider key cannot be changed after the provider has been added to the app config"
+                        .to_string(),
+                ));
+            }
+
+            if state
+                .db
+                .get_provider_by_id(&provider.id, app_type.as_str())?
+                .is_some()
+                || provider_exists_in_live_config(&app_type, &provider.id)?
+            {
+                return Err(AppError::Message(format!(
+                    "Provider '{}' already exists in app '{}'",
+                    provider.id,
+                    app_type.as_str()
+                )));
+            }
+
+            state.db.save_provider(app_type.as_str(), &provider)?;
+            state.db.delete_provider(app_type.as_str(), &original_id)?;
+
+            if crate::settings::get_current_provider(&app_type).as_deref() == Some(&original_id) {
+                crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+            }
+
+            return Ok(true);
+        }
+
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        // Additive mode apps (OpenCode, OpenClaw) - always update in live config
+        // Additive mode apps (OpenCode, OpenClaw): only sync to live when the provider
+        // already exists in live config. Editing a DB-only provider must not auto-add it.
         if app_type.is_additive_mode() {
             if matches!(app_type, AppType::OpenCode) && provider.category.as_deref() == Some("omo")
             {
@@ -248,6 +298,9 @@ impl ProviderService {
                         &crate::services::omo::SLIM,
                     )?;
                 }
+                return Ok(true);
+            }
+            if !provider_exists_in_live_config(&app_type, &provider.id)? {
                 return Ok(true);
             }
             write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;

@@ -533,8 +533,14 @@ function App() {
     }
   };
 
-  const handleEditProvider = async (provider: Provider) => {
-    await updateProvider(provider);
+  const handleEditProvider = async ({
+    provider,
+    originalId,
+  }: {
+    provider: Provider;
+    originalId?: string;
+  }) => {
+    await updateProvider(provider, originalId);
     setEditingProvider(null);
   };
 
@@ -571,7 +577,7 @@ function App() {
     setConfirmAction(null);
   };
 
-  const generateUniqueOpencodeKey = (
+  const generateUniqueProviderCopyKey = (
     originalKey: string,
     existingKeys: string[],
   ): string => {
@@ -594,6 +600,7 @@ function App() {
 
     const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
       providerKey?: string;
+      addToLive?: boolean;
     } = {
       name: `${provider.name} copy`,
       settingsConfig: JSON.parse(JSON.stringify(provider.settingsConfig)), // 深拷贝
@@ -607,12 +614,13 @@ function App() {
       iconColor: provider.iconColor,
     };
 
-    if (activeApp === "opencode") {
+    if (activeApp === "opencode" || activeApp === "openclaw") {
       const existingKeys = Object.keys(providers);
-      duplicatedProvider.providerKey = generateUniqueOpencodeKey(
+      duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
         provider.id,
         existingKeys,
       );
+      duplicatedProvider.addToLive = false;
     }
 
     if (provider.sortIndex !== undefined) {
