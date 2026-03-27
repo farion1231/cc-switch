@@ -160,8 +160,7 @@ export function ClaudeFormFields({
     apiFormat !== "anthropic" ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN"
   );
-  const [advancedExpanded, setAdvancedExpanded] =
-    useState(hasAnyAdvancedValue);
+  const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
@@ -400,10 +399,7 @@ export function ClaudeFormFields({
 
       {/* 高级选项（API 格式 + 认证字段 + 模型映射） */}
       {shouldShowModelSelector && (
-        <Collapsible
-          open={advancedExpanded}
-          onOpenChange={setAdvancedExpanded}
-        >
+        <Collapsible open={advancedExpanded} onOpenChange={setAdvancedExpanded}>
           <CollapsibleTrigger asChild>
             <Button
               type="button"
