@@ -201,6 +201,63 @@ fn import_from_apps_accepts_nested_claude_skill_paths() {
 }
 
 #[test]
+fn import_from_apps_rejects_conflicting_claude_leaf_names() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    write_skill(
+        &home
+            .join(".claude")
+            .join("skills")
+            .join("superpowers")
+            .join("brainstorming"),
+        "Superpowers Brainstorming",
+    );
+    write_skill(
+        &home
+            .join(".claude")
+            .join("skills")
+            .join("tools")
+            .join("brainstorming"),
+        "Tools Brainstorming",
+    );
+
+    let state = create_test_state().expect("create test state");
+    let error = SkillService::import_from_apps(
+        &state.db,
+        vec![
+            ImportSkillSelection {
+                directory: "superpowers/brainstorming".to_string(),
+                apps: SkillApps {
+                    claude: true,
+                    codex: false,
+                    gemini: false,
+                    opencode: false,
+                },
+            },
+            ImportSkillSelection {
+                directory: "tools/brainstorming".to_string(),
+                apps: SkillApps {
+                    claude: true,
+                    codex: false,
+                    gemini: false,
+                    opencode: false,
+                },
+            },
+        ],
+    )
+    .expect_err("conflicting Claude leaf names should be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Claude skills 目标路径冲突: brainstorming"),
+        "unexpected error: {error:#}"
+    );
+}
+
+#[test]
 fn uninstall_skill_creates_backup_before_removing_ssot() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -403,6 +460,73 @@ fn sync_to_claude_flattens_nested_skill_paths_to_leaf_directory() {
             .join("superpowers")
             .exists(),
         "Claude live dir should not keep the grouping directory after sync"
+    );
+}
+
+#[test]
+fn sync_to_claude_cleans_legacy_nested_dir_and_scan_unmanaged_does_not_repeat() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    write_skill(
+        &home
+            .join(".claude")
+            .join("skills")
+            .join("superpowers")
+            .join("brainstorming"),
+        "Brainstorming",
+    );
+
+    let state = create_test_state().expect("create test state");
+    SkillService::import_from_apps(
+        &state.db,
+        vec![ImportSkillSelection {
+            directory: "superpowers/brainstorming".to_string(),
+            apps: SkillApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+        }],
+    )
+    .expect("import nested Claude skill");
+
+    SkillService::sync_to_app(&state.db, &AppType::Claude).expect("sync Claude skills");
+
+    assert!(
+        home.join(".claude")
+            .join("skills")
+            .join("brainstorming")
+            .join("SKILL.md")
+            .exists(),
+        "synced Claude leaf directory should exist"
+    );
+    assert!(
+        !home
+            .join(".claude")
+            .join("skills")
+            .join("superpowers")
+            .join("brainstorming")
+            .exists(),
+        "legacy nested Claude directory should be removed after sync"
+    );
+    assert!(
+        !home
+            .join(".claude")
+            .join("skills")
+            .join("superpowers")
+            .exists(),
+        "empty Claude grouping directory should be pruned after cleanup"
+    );
+
+    let unmanaged = SkillService::scan_unmanaged(&state.db).expect("scan unmanaged skills");
+    assert!(
+        unmanaged.iter().all(|skill| {
+            skill.directory != "brainstorming" && skill.directory != "superpowers/brainstorming"
+        }),
+        "managed nested Claude skill should not reappear as unmanaged after sync"
     );
 }
 

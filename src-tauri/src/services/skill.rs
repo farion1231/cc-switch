@@ -1327,6 +1327,14 @@ impl SkillService {
         restored_skill.apps = SkillApps::only(current_app);
         restored_skill.updated_at = 0;
 
+        let enabled_dirs = existing_skills
+            .values()
+            .filter(|skill| skill.apps.is_enabled_for(current_app))
+            .map(|skill| skill.directory.clone())
+            .chain(std::iter::once(restored_skill.directory.clone()))
+            .collect::<Vec<_>>();
+        Self::ensure_no_app_path_conflicts(current_app, &enabled_dirs)?;
+
         Self::copy_dir_recursive(&backup_skill_dir, &restore_path)?;
 
         // 重新计算内容哈希
@@ -1359,13 +1367,26 @@ impl SkillService {
     /// 启用：复制到应用目录
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
+        let existing_skills = db.get_all_installed_skills()?;
+
         // 获取当前 skill
-        let mut skill = db
-            .get_installed_skill(id)?
+        let mut skill = existing_skills
+            .get(id)
+            .cloned()
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
         // 更新状态
         skill.apps.set_enabled_for(app, enabled);
+
+        if enabled {
+            let enabled_dirs = existing_skills
+                .values()
+                .filter(|existing| existing.id != skill.id && existing.apps.is_enabled_for(app))
+                .map(|existing| existing.directory.clone())
+                .chain(std::iter::once(skill.directory.clone()))
+                .collect::<Vec<_>>();
+            Self::ensure_no_app_path_conflicts(app, &enabled_dirs)?;
+        }
 
         // 同步文件
         if enabled {
@@ -1389,8 +1410,9 @@ impl SkillService {
         let managed_skills = db.get_all_installed_skills()?;
         let managed_dirs: HashSet<String> = managed_skills
             .values()
-            .map(|s| s.directory.clone())
+            .map(|s| Self::normalize_skill_key(&s.directory))
             .collect();
+        let managed_app_paths = Self::collect_managed_app_paths(managed_skills.values());
 
         // 收集所有待扫描的目录及其来源标签
         let mut scan_sources: Vec<(PathBuf, String)> = Vec::new();
@@ -1412,7 +1434,19 @@ impl SkillService {
             if let Ok(app) = label.parse::<AppType>() {
                 let entries = Self::list_app_skill_entries(&app, scan_dir)?;
                 for (directory, path) in entries {
-                    if managed_dirs.contains(&directory) {
+                    let normalized_directory = Self::normalize_skill_key(&directory);
+                    let normalized_app_path = Self::app_relative_skill_path(&app, &directory)
+                        .map(|relative| Self::normalize_skill_path(&relative));
+
+                    // 对Claude这类会改写live目录结构的app，除了完整目录外
+                    // 按实际映射后的路径判断是否已被CC Switch管理，避免重复扫成unmanaged。
+                    if managed_dirs.contains(&normalized_directory)
+                        || normalized_app_path.as_ref().is_some_and(|path| {
+                            managed_app_paths
+                                .get(app.as_str())
+                                .is_some_and(|paths| paths.contains(path))
+                        })
+                    {
                         continue;
                     }
 
@@ -1479,6 +1513,21 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
         let agents_lock = parse_agents_lock();
         let mut imported = Vec::new();
+        let existing_skills = db.get_all_installed_skills()?;
+
+        let claude_enabled_dirs = existing_skills
+            .values()
+            .filter(|skill| skill.apps.claude)
+            .map(|skill| skill.directory.clone())
+            .chain(
+                imports
+                    .iter()
+                    .filter(|selection| selection.apps.claude)
+                    .map(|selection| selection.directory.clone()),
+            )
+            .collect::<Vec<_>>();
+        // Claude live目录会扁平到叶子skill名，这里提前拦截同名冲突，避免导入后互相覆盖
+        Self::ensure_no_app_path_conflicts(&AppType::Claude, &claude_enabled_dirs)?;
 
         // 将 lock 文件中发现的仓库保存到 skill_repos
         save_repos_from_lock(
@@ -1735,34 +1784,53 @@ impl SkillService {
         let skills = db.get_all_installed_skills()?;
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_app_skills_dir(app)?;
+        let enabled_dirs = skills
+            .values()
+            .filter(|skill| skill.apps.is_enabled_for(app))
+            .map(|skill| skill.directory.clone())
+            .collect::<Vec<_>>();
+        Self::ensure_no_app_path_conflicts(app, &enabled_dirs)?;
 
-        let indexed_skills: HashMap<String, &InstalledSkill> = skills
+        let enabled_indexed_skills: HashMap<String, &InstalledSkill> = skills
             .values()
             .filter_map(|skill| {
+                if !skill.apps.is_enabled_for(app) {
+                    return None;
+                }
                 let relative = Self::app_relative_skill_path(app, &skill.directory)?;
-                Some((relative.to_string_lossy().to_lowercase(), skill))
+                Some((Self::normalize_skill_path(&relative), skill))
             })
+            .collect();
+        let managed_app_paths: HashSet<String> = skills
+            .values()
+            .filter_map(|skill| {
+                Self::app_relative_skill_path(app, &skill.directory)
+                    .map(|relative| Self::normalize_skill_path(&relative))
+            })
+            .collect();
+        let managed_original_paths: HashSet<String> = skills
+            .values()
+            .map(|skill| Self::normalize_skill_key(&skill.directory))
             .collect();
 
         if app_dir.exists() {
-            for entry in fs::read_dir(&app_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                let dir_name = entry.file_name().to_string_lossy().to_string();
+            for (relative_path, path) in Self::list_existing_app_skill_entries(app, &app_dir)? {
+                let normalized_relative = Self::normalize_skill_key(&relative_path);
 
-                if dir_name.starts_with('.') {
+                if enabled_indexed_skills.contains_key(&normalized_relative) {
                     continue;
                 }
 
-                if let Some(skill) = indexed_skills.get(&dir_name.to_lowercase()) {
-                    if !skill.apps.is_enabled_for(app) {
-                        Self::remove_path(&path)?;
-                    }
-                    continue;
-                }
+                let should_remove = managed_app_paths.contains(&normalized_relative)
+                    || (matches!(app, AppType::Claude)
+                        && managed_original_paths.contains(&normalized_relative))
+                    || Self::is_symlink_to_ssot(&path, &ssot_dir);
 
-                if Self::is_symlink_to_ssot(&path, &ssot_dir) {
+                if should_remove {
                     Self::remove_path(&path)?;
+                    if matches!(app, AppType::Claude) {
+                        Self::prune_empty_parent_dirs(&app_dir, &path)?;
+                    }
                 }
             }
         }
@@ -1783,6 +1851,32 @@ impl SkillService {
         )
     }
 
+    fn ensure_no_app_path_conflicts(app: &AppType, directories: &[String]) -> Result<()> {
+        let mut path_to_directories: HashMap<String, Vec<String>> = HashMap::new();
+
+        for directory in directories {
+            let Some(relative) = Self::app_relative_skill_path(app, directory) else {
+                continue;
+            };
+            path_to_directories
+                .entry(Self::normalize_skill_path(&relative))
+                .or_default()
+                .push(directory.clone());
+        }
+
+        if let Some((leaf_path, conflicts)) = path_to_directories
+            .into_iter()
+            .find(|(_, directories)| directories.len() > 1)
+        {
+            return Err(anyhow!(
+                "{app:?} skills 目标路径冲突: {leaf_path} <- {}",
+                conflicts.join(", ")
+            ));
+        }
+
+        Ok(())
+    }
+
     fn app_relative_skill_path(app: &AppType, directory: &str) -> Option<PathBuf> {
         match app {
             // Claude的skills目录按叶子skill进行暴露
@@ -1798,7 +1892,7 @@ impl SkillService {
     fn list_app_skill_entries(app: &AppType, app_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
         match app {
             AppType::Claude => {
-                // Claude可能会把一组skillsg都放在分组目录下
+                // Claude可能会把一组skills放在分组目录下
                 // 这里递归扫描所有包含SKILL.md的叶子目录，并保留相对路径用于导入
                 let mut entries = Vec::new();
                 for skill_dir in Self::scan_skills_in_dir(app_dir)? {
@@ -1845,6 +1939,92 @@ impl SkillService {
                 Ok(entries)
             }
         }
+    }
+
+    fn list_existing_app_skill_entries(
+        app: &AppType,
+        app_dir: &Path,
+    ) -> Result<Vec<(String, PathBuf)>> {
+        match app {
+            AppType::Claude => Self::list_app_skill_entries(app, app_dir),
+            _ => {
+                let mut entries = Vec::new();
+                let read_dir = match fs::read_dir(app_dir) {
+                    Ok(entries) => entries,
+                    Err(_) => return Ok(entries),
+                };
+
+                for entry in read_dir.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let dir_name = entry.file_name().to_string_lossy().to_string();
+                    if dir_name.starts_with('.') {
+                        continue;
+                    }
+                    entries.push((dir_name, path));
+                }
+
+                Ok(entries)
+            }
+        }
+    }
+
+    fn normalize_skill_key(value: &str) -> String {
+        value.replace('\\', "/").to_lowercase()
+    }
+
+    fn collect_managed_app_paths<'a, I>(skills: I) -> HashMap<String, HashSet<String>>
+    where
+        I: IntoIterator<Item = &'a InstalledSkill>,
+    {
+        let skills = skills.into_iter().collect::<Vec<_>>();
+
+        AppType::all()
+            .into_iter()
+            .map(|app| {
+                let paths = skills
+                    .iter()
+                    .filter_map(|skill| {
+                        Self::app_relative_skill_path(&app, &skill.directory)
+                            .map(|relative| Self::normalize_skill_path(&relative))
+                    })
+                    .collect();
+                (app.as_str().to_string(), paths)
+            })
+            .collect()
+    }
+
+    fn normalize_skill_path(path: &Path) -> String {
+        path.components()
+            .filter_map(|component| match component {
+                Component::Normal(name) => Some(name.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+            .to_lowercase()
+    }
+
+    fn prune_empty_parent_dirs(root: &Path, path: &Path) -> Result<()> {
+        let mut current = path.parent();
+
+        while let Some(dir) = current {
+            if dir == root || !dir.starts_with(root) {
+                break;
+            }
+
+            let mut entries = fs::read_dir(dir)?;
+            if entries.next().is_some() {
+                break;
+            }
+
+            fs::remove_dir(dir)?;
+            current = dir.parent();
+        }
+
+        Ok(())
     }
 
     // ========== 发现功能（保留原有逻辑）==========
