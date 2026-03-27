@@ -9,7 +9,6 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
-use reqwest::RequestBuilder;
 
 /// Gemini 适配器
 pub struct GeminiAdapter;
@@ -217,17 +216,26 @@ impl ProviderAdapter for GeminiAdapter {
         url
     }
 
-    fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
+    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        use http::{HeaderName, HeaderValue};
         match auth.strategy {
-            // OAuth Bearer 认证
             AuthStrategy::GoogleOAuth => {
                 let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
-                request
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("x-goog-api-client", "GeminiCLI/1.0")
+                vec![
+                    (
+                        HeaderName::from_static("authorization"),
+                        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("x-goog-api-client"),
+                        HeaderValue::from_static("GeminiCLI/1.0"),
+                    ),
+                ]
             }
-            // API Key 认证
-            _ => request.header("x-goog-api-key", &auth.api_key),
+            _ => vec![(
+                HeaderName::from_static("x-goog-api-key"),
+                HeaderValue::from_str(&auth.api_key).unwrap(),
+            )],
         }
     }
 }

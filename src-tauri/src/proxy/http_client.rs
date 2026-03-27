@@ -219,7 +219,12 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(10)
-        .tcp_keepalive(Duration::from_secs(60));
+        .tcp_keepalive(Duration::from_secs(60))
+        // 禁用 reqwest 自动解压：防止 reqwest 覆盖客户端原始 accept-encoding header。
+        // 响应解压由 response_processor 根据 content-encoding 手动处理。
+        .no_gzip()
+        .no_brotli()
+        .no_deflate();
 
     // 有代理地址则使用代理，否则跟随系统代理
     if let Some(url) = proxy_url {
@@ -387,6 +392,9 @@ pub fn build_client_for_provider(proxy_config: Option<&ProviderProxyConfig>) -> 
         .connect_timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(10)
         .tcp_keepalive(Duration::from_secs(60))
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
         .proxy(proxy)
         .build()
     {

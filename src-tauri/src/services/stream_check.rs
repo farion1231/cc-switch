@@ -12,8 +12,8 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::copilot_auth;
+use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
 /// 健康状态枚举
@@ -365,8 +365,14 @@ impl StreamCheckService {
                 .header("accept-encoding", "identity")
                 .header("user-agent", copilot_auth::COPILOT_USER_AGENT)
                 .header("editor-version", copilot_auth::COPILOT_EDITOR_VERSION)
-                .header("editor-plugin-version", copilot_auth::COPILOT_PLUGIN_VERSION)
-                .header("copilot-integration-id", copilot_auth::COPILOT_INTEGRATION_ID)
+                .header(
+                    "editor-plugin-version",
+                    copilot_auth::COPILOT_PLUGIN_VERSION,
+                )
+                .header(
+                    "copilot-integration-id",
+                    copilot_auth::COPILOT_INTEGRATION_ID,
+                )
                 .header("x-github-api-version", copilot_auth::COPILOT_API_VERSION)
                 .header("openai-intent", "conversation-panel");
         } else if is_openai_chat {

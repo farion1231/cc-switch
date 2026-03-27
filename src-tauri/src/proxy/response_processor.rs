@@ -5,17 +5,19 @@
 use super::{
     handler_config::UsageParserConfig,
     handler_context::{RequestContext, StreamingTimeoutConfig},
+    hyper_client::ProxyResponse,
     server::ProxyState,
     sse::strip_sse_field,
     usage::parser::TokenUsage,
     ProxyError,
 };
+use axum::http::header::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
-use reqwest::header::HeaderMap;
 use serde_json::Value;
 use std::{
+    io::Read,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -25,23 +27,60 @@ use std::{
 use tokio::sync::Mutex;
 
 // ============================================================================
+// 响应解压
+// ============================================================================
+
+/// 根据 content-encoding 解压响应体字节
+///
+/// reqwest 自动解压已禁用（为了透传 accept-encoding），需要手动解压。
+fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    match content_encoding {
+        "gzip" | "x-gzip" => {
+            let mut decoder = flate2::read::GzDecoder::new(body);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed)?;
+            Ok(decompressed)
+        }
+        "deflate" => {
+            let mut decoder = flate2::read::DeflateDecoder::new(body);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed)?;
+            Ok(decompressed)
+        }
+        "br" => {
+            let mut decompressed = Vec::new();
+            brotli::BrotliDecompress(&mut std::io::Cursor::new(body), &mut decompressed)?;
+            Ok(decompressed)
+        }
+        _ => {
+            log::warn!("未知的 content-encoding: {content_encoding}，跳过解压");
+            Ok(body.to_vec())
+        }
+    }
+}
+
+/// 从响应头提取 content-encoding（忽略 identity 和 chunked）
+fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("content-encoding")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && s != "identity")
+}
+
+// ============================================================================
 // 公共接口
 // ============================================================================
 
 /// 检测响应是否为 SSE 流式响应
 #[inline]
-pub fn is_sse_response(response: &reqwest::Response) -> bool {
-    response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .map(|ct| ct.contains("text/event-stream"))
-        .unwrap_or(false)
+pub fn is_sse_response(response: &ProxyResponse) -> bool {
+    response.is_sse()
 }
 
 /// 处理流式响应
 pub async fn handle_streaming(
-    response: reqwest::Response,
+    response: ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
@@ -53,6 +92,15 @@ pub async fn handle_streaming(
         status.as_u16(),
         format_headers(response.headers())
     );
+    // 检查流式响应是否被压缩（SSE 通常不压缩，如果压缩则 SSE 解析会失败）
+    if let Some(encoding) = get_content_encoding(response.headers()) {
+        log::warn!(
+            "[{}] 流式响应含 content-encoding={encoding}，SSE 解析可能失败。\
+             上游在 accept-encoding 透传后压缩了 SSE 流。",
+            ctx.tag
+        );
+    }
+
     let mut builder = axum::response::Response::builder().status(status);
 
     // 复制响应头
@@ -61,9 +109,7 @@ pub async fn handle_streaming(
     }
 
     // 创建字节流
-    let stream = response
-        .bytes_stream()
-        .map(|chunk| chunk.map_err(|e| std::io::Error::other(e.to_string())));
+    let stream = response.bytes_stream();
 
     // 创建使用量收集器
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);
@@ -87,7 +133,7 @@ pub async fn handle_streaming(
 
 /// 处理非流式响应
 pub async fn handle_non_streaming(
-    response: reqwest::Response,
+    response: ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
@@ -96,17 +142,28 @@ pub async fn handle_non_streaming(
     let status = response.status();
 
     // 读取响应体
-    let body_bytes = response.bytes().await.map_err(|e| {
-        log::error!("[{}] 读取响应失败: {e}", ctx.tag);
-        ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
-    })?;
+    let raw_bytes = response.bytes().await?;
     log::debug!(
         "[{}] 已接收上游响应体: status={}, bytes={}, headers={}",
         ctx.tag,
         status.as_u16(),
-        body_bytes.len(),
+        raw_bytes.len(),
         format_headers(&response_headers)
     );
+
+    // 手动解压（reqwest 自动解压已禁用以透传 accept-encoding）
+    let body_bytes: Bytes = if let Some(encoding) = get_content_encoding(&response_headers) {
+        log::debug!("[{}] 解压非流式响应: content-encoding={encoding}", ctx.tag);
+        match decompress_body(&encoding, &raw_bytes) {
+            Ok(decompressed) => Bytes::from(decompressed),
+            Err(e) => {
+                log::warn!("[{}] 解压失败 ({encoding}): {e}，使用原始数据", ctx.tag);
+                raw_bytes
+            }
+        }
+    } else {
+        raw_bytes
+    };
 
     log::debug!(
         "[{}] 上游响应体内容: {}",
@@ -190,7 +247,7 @@ pub async fn handle_non_streaming(
 ///
 /// 根据响应类型自动选择流式或非流式处理
 pub async fn process_response(
-    response: reqwest::Response,
+    response: ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,

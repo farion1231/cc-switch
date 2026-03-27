@@ -1,6 +1,12 @@
 //! HTTP代理服务器
 //!
 //! 基于Axum的HTTP服务器，处理代理请求
+//!
+//! Uses a manual hyper HTTP/1.1 accept loop with `preserve_header_case(true)` so
+//! that the original header-name casing from the CLI client is captured in a
+//! `HeaderCaseMap` extension.  This map is later forwarded to the upstream via
+//! the hyper-based HTTP client, producing wire-level header casing identical to
+//! a direct (non-proxied) CLI request.
 
 use super::{
     failover_switch::FailoverSwitchManager, handlers, log_codes::srv as log_srv,
@@ -12,6 +18,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
@@ -114,15 +121,51 @@ impl ProxyServer {
         // 记录启动时间
         *self.state.start_time.write().await = Some(std::time::Instant::now());
 
-        // 启动服务器
+        // 启动服务器 — 使用手动 hyper HTTP/1.1 accept loop
+        // 开启 preserve_header_case 以捕获客户端请求头的原始大小写
         let state = self.state.clone();
         let handle = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    shutdown_rx.await.ok();
-                })
-                .await
-                .ok();
+            let mut shutdown_rx = shutdown_rx;
+            loop {
+                tokio::select! {
+                    result = listener.accept() => {
+                        let (stream, _remote_addr) = match result {
+                            Ok(v) => v,
+                            Err(e) => {
+                                log::error!("[{SRV}] accept 失败: {e}", SRV = log_srv::ACCEPT_ERR);
+                                continue;
+                            }
+                        };
+
+                        let app = app.clone();
+                        tokio::spawn(async move {
+                            // service_fn 将 axum Router（tower::Service）桥接到 hyper
+                            let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                                let mut router = app.clone();
+                                async move {
+                                    // 将 hyper::body::Incoming 转为 axum::body::Body，保留 extensions
+                                    let (parts, body) = req.into_parts();
+                                    let body = axum::body::Body::new(body);
+                                    let axum_req = http::Request::from_parts(parts, body);
+                                    <Router as tower::Service<http::Request<axum::body::Body>>>::call(&mut router, axum_req).await
+                                }
+                            });
+
+                            if let Err(e) = hyper::server::conn::http1::Builder::new()
+                                .preserve_header_case(true)
+                                .serve_connection(TokioIo::new(stream), service)
+                                .await
+                            {
+                                // Connection reset / broken pipe 等在代理场景下很常见，debug 级别
+                                log::debug!("[{SRV}] connection error: {e}", SRV = log_srv::CONN_ERR);
+                            }
+                        });
+                    }
+                    _ = &mut shutdown_rx => {
+                        break;
+                    }
+                }
+            }
 
             // 服务器停止后更新状态
             state.status.write().await.running = false;
