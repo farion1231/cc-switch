@@ -173,7 +173,7 @@ fn schema_migration_sets_user_version_when_missing() {
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
-    Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
+    Database::set_user_version(&conn, SCHEMA_VERSION + 2).expect("set future version");
 
     let err =
         Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject higher version");
@@ -289,6 +289,123 @@ fn schema_create_tables_include_pricing_model_columns() {
     let request_model = get_column_info(&conn, "proxy_request_logs", "request_model");
     assert_eq!(request_model.r#type, "TEXT");
     assert_eq!(request_model.notnull, 0);
+
+    let custom_title = get_column_info(&conn, "session_overrides", "custom_title");
+    assert_eq!(custom_title.r#type, "TEXT");
+    assert_eq!(custom_title.notnull, 1);
+}
+
+#[test]
+fn schema_migration_v6_adds_session_overrides_table() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE providers (
+            id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            settings_config TEXT NOT NULL DEFAULT '{}',
+            meta TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (id, app_type)
+        );
+        "#,
+    )
+    .expect("seed v6 schema");
+
+    Database::create_tables_on_conn(&conn).expect("create missing tables");
+    Database::set_user_version(&conn, 6).expect("set user_version=6");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(
+        Database::table_exists(&conn, "session_overrides").expect("check table"),
+        "session_overrides should exist for schema v6 databases"
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        6
+    );
+}
+
+#[test]
+fn schema_migration_normalizes_backward_compatible_v7_to_v6() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::set_user_version(&conn, 7).expect("set user_version=7");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(
+        Database::table_exists(&conn, "session_overrides").expect("check session_overrides"),
+        "session_overrides should still exist after normalization"
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after normalization"),
+        6
+    );
+}
+
+#[test]
+fn schema_migration_rejects_unknown_v7_without_session_overrides() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE providers (
+            id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            settings_config TEXT NOT NULL DEFAULT '{}',
+            meta TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (id, app_type)
+        );
+        "#,
+    )
+    .expect("seed partial schema");
+    Database::set_user_version(&conn, 7).expect("set user_version=7");
+
+    let err =
+        Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject unknown v7");
+    let message = err.to_string();
+    assert!(
+        message.contains("7") && message.contains("6"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn session_custom_title_round_trip_and_clear() {
+    let db = Database::memory().expect("create memory db");
+
+    db.set_session_custom_title(
+        "codex",
+        "session-1",
+        "C:\\sessions\\session-1.jsonl",
+        Some("Pinned session"),
+    )
+    .expect("save custom title");
+
+    let saved = db
+        .get_session_custom_title("codex", "session-1", "C:\\sessions\\session-1.jsonl")
+        .expect("read custom title");
+    assert_eq!(saved.as_deref(), Some("Pinned session"));
+
+    let overrides = db.list_session_title_overrides().expect("list overrides");
+    assert_eq!(overrides.len(), 1);
+    assert_eq!(overrides[0].custom_title, "Pinned session");
+
+    db.set_session_custom_title("codex", "session-1", "C:\\sessions\\session-1.jsonl", None)
+        .expect("clear custom title");
+
+    let cleared = db
+        .get_session_custom_title("codex", "session-1", "C:\\sessions\\session-1.jsonl")
+        .expect("read cleared title");
+    assert!(cleared.is_none());
+    assert!(
+        db.list_session_title_overrides()
+            .expect("list cleared overrides")
+            .is_empty()
+    );
 }
 
 #[test]

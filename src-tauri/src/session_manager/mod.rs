@@ -1,7 +1,9 @@
 pub mod providers;
 pub mod terminal;
 
+use crate::database::{Database, SessionOverrideKey};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use providers::{claude, codex, gemini, openclaw, opencode};
@@ -13,6 +15,10 @@ pub struct SessionMeta {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_custom_title: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -66,6 +72,60 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     });
 
     sessions
+}
+
+pub fn scan_sessions_with_overrides(db: &Database) -> Result<Vec<SessionMeta>, String> {
+    let mut sessions = scan_sessions();
+    apply_title_overrides(
+        &mut sessions,
+        db.list_session_title_overrides()
+            .map_err(|e| format!("Failed to load session title overrides: {e}"))?,
+    );
+    Ok(sessions)
+}
+
+pub fn rename_session(
+    db: &Database,
+    provider_id: &str,
+    session_id: &str,
+    source_path: &str,
+    custom_title: Option<&str>,
+) -> Result<(), String> {
+    db.set_session_custom_title(provider_id, session_id, source_path, custom_title)
+        .map_err(|e| format!("Failed to save session title override: {e}"))
+}
+
+fn apply_title_overrides(
+    sessions: &mut [SessionMeta],
+    overrides: Vec<crate::database::SessionTitleOverride>,
+) {
+    let overrides = overrides
+        .into_iter()
+        .map(|item| (item.key, item.custom_title))
+        .collect::<HashMap<_, _>>();
+
+    for session in sessions.iter_mut() {
+        let Some(source_path) = session.source_path.clone() else {
+            continue;
+        };
+
+        let key = SessionOverrideKey {
+            provider_id: session.provider_id.clone(),
+            session_id: session.session_id.clone(),
+            source_path,
+        };
+
+        let Some(custom_title) = overrides.get(&key) else {
+            session.has_custom_title = None;
+            session.original_title = None;
+            continue;
+        };
+
+        let original_title = session.title.clone();
+        session.title = Some(custom_title.clone());
+        session.original_title = original_title;
+        session.has_custom_title = Some(true);
+    }
 }
 
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
@@ -150,6 +210,7 @@ fn canonicalize_existing_path(path: &Path, label: &str) -> Result<PathBuf, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::{SessionOverrideKey, SessionTitleOverride};
     use tempfile::tempdir;
 
     #[test]
@@ -174,5 +235,38 @@ mod tests {
             .expect_err("expected missing source path to fail");
 
         assert!(err.contains("session source not found"));
+    }
+
+    #[test]
+    fn applies_custom_title_and_preserves_original_title() {
+        let mut sessions = vec![SessionMeta {
+            provider_id: "codex".to_string(),
+            session_id: "session-1".to_string(),
+            title: Some("Original title".to_string()),
+            original_title: None,
+            has_custom_title: None,
+            summary: None,
+            project_dir: None,
+            created_at: None,
+            last_active_at: None,
+            source_path: Some("C:\\sessions\\session-1.jsonl".to_string()),
+            resume_command: None,
+        }];
+
+        apply_title_overrides(
+            &mut sessions,
+            vec![SessionTitleOverride {
+                key: SessionOverrideKey {
+                    provider_id: "codex".to_string(),
+                    session_id: "session-1".to_string(),
+                    source_path: "C:\\sessions\\session-1.jsonl".to_string(),
+                },
+                custom_title: "Pinned session".to_string(),
+            }],
+        );
+
+        assert_eq!(sessions[0].title.as_deref(), Some("Pinned session"));
+        assert_eq!(sessions[0].original_title.as_deref(), Some("Original title"));
+        assert_eq!(sessions[0].has_custom_title, Some(true));
     }
 }

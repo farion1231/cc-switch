@@ -116,6 +116,19 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_overrides (
+                provider_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                custom_title TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (provider_id, session_id, source_path)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
@@ -337,6 +350,26 @@ impl Database {
         Ok(())
     }
 
+    fn is_backward_compatible_v7(conn: &Connection) -> Result<bool, AppError> {
+        if !Self::table_exists(conn, "session_overrides")? {
+            return Ok(false);
+        }
+
+        for column in [
+            "provider_id",
+            "session_id",
+            "source_path",
+            "custom_title",
+            "updated_at",
+        ] {
+            if !Self::has_column(conn, "session_overrides", column)? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
     /// 应用 Schema 迁移
     pub(crate) fn apply_schema_migrations(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -349,6 +382,14 @@ impl Database {
             .map_err(|e| AppError::Database(format!("开启迁移 savepoint 失败: {e}")))?;
 
         let mut version = Self::get_user_version(conn)?;
+
+        if version == SCHEMA_VERSION + 1 && Self::is_backward_compatible_v7(conn)? {
+            log::info!(
+                "Detected backward-compatible schema v{version}; normalizing user_version back to v{SCHEMA_VERSION}"
+            );
+            Self::set_user_version(conn, SCHEMA_VERSION)?;
+            version = SCHEMA_VERSION;
+        }
 
         if version > SCHEMA_VERSION {
             conn.execute("ROLLBACK TO schema_migration;", []).ok();

@@ -2,7 +2,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
-import type { DeleteSessionOptions } from "@/lib/api/sessions";
+import type {
+  DeleteSessionOptions,
+  RenameSessionOptions,
+} from "@/lib/api/sessions";
 import type { SwitchResult } from "@/lib/api/providers";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -305,6 +308,71 @@ export const useDeleteSessionMutation = () => {
       toast.error(
         t("sessionManager.deleteFailed", {
           defaultValue: "删除会话失败: {{error}}",
+          error: detail,
+        }),
+      );
+    },
+  });
+};
+
+export const useRenameSessionMutation = () => {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: async (input: RenameSessionOptions) => {
+      await sessionsApi.rename(input);
+      return input;
+    },
+    onSuccess: async (input) => {
+      queryClient.setQueryData<SessionMeta[]>(["sessions"], (current) =>
+        (current ?? []).map((session) => {
+          if (
+            session.providerId !== input.providerId ||
+            session.sessionId !== input.sessionId ||
+            session.sourcePath !== input.sourcePath
+          ) {
+            return session;
+          }
+
+          const originalTitle = session.originalTitle ?? session.title;
+          const nextTitle = input.customTitle?.trim();
+
+          if (!nextTitle) {
+            return {
+              ...session,
+              title: originalTitle,
+              originalTitle: undefined,
+              hasCustomTitle: false,
+            };
+          }
+
+          return {
+            ...session,
+            title: nextTitle,
+            originalTitle,
+            hasCustomTitle: true,
+          };
+        }),
+      );
+
+      await queryClient.invalidateQueries({ queryKey: ["sessions"] });
+
+      toast.success(
+        input.customTitle?.trim()
+          ? t("sessionManager.renameSaved", {
+              defaultValue: "Session name saved",
+            })
+          : t("sessionManager.renameCleared", {
+              defaultValue: "Session name restored",
+            }),
+      );
+    },
+    onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+      toast.error(
+        t("sessionManager.renameFailed", {
+          defaultValue: "Failed to save session name: {{error}}",
           error: detail,
         }),
       );

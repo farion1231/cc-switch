@@ -32,6 +32,7 @@ mod schema;
 mod tests;
 
 // DAO 类型导出供外部使用
+pub use dao::session_overrides::{SessionOverrideKey, SessionTitleOverride};
 pub use dao::FailoverQueueItem;
 
 use crate::config::get_app_config_dir;

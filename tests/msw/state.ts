@@ -395,6 +395,44 @@ export const deleteSession = (
   return true;
 };
 
+export const renameSession = (
+  providerId: string,
+  sessionId: string,
+  sourcePath: string,
+  customTitle?: string | null,
+) => {
+  sessionsState = sessionsState.map((session) => {
+    if (
+      session.providerId !== providerId ||
+      session.sessionId !== sessionId ||
+      session.sourcePath !== sourcePath
+    ) {
+      return session;
+    }
+
+    const originalTitle = session.originalTitle ?? session.title;
+    const nextTitle = customTitle?.trim();
+
+    if (!nextTitle) {
+      return {
+        ...session,
+        title: originalTitle,
+        originalTitle: undefined,
+        hasCustomTitle: false,
+      };
+    }
+
+    return {
+      ...session,
+      title: nextTitle,
+      originalTitle,
+      hasCustomTitle: true,
+    };
+  });
+
+  return true;
+};
+
 export const setSessionFixtures = (
   sessions: SessionMeta[],
   messages: Record<string, SessionMessage[]>,

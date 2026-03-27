@@ -158,6 +158,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
         title: title.clone(),
+        original_title: None,
+        has_custom_title: None,
         summary: title,
         project_dir: None, // project hash is not reversible
         created_at,

@@ -185,4 +185,47 @@ describe("SessionManagerPage", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   });
+
+  it("renames the selected session and keeps the original title searchable", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Rename session/i }));
+
+    const renameInput = screen.getByRole("textbox", { name: /Session name/i });
+    fireEvent.change(renameInput, { target: { value: "Renamed Alpha" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Renamed Alpha" }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(screen.getByText(/Original name/i)).toHaveTextContent(
+      "Original name: Alpha Session",
+    );
+
+    openSearch();
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "Alpha Session" },
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Renamed Alpha" }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(screen.getAllByText("Renamed Alpha").length).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).toHaveBeenCalled();
+  });
 });

@@ -7,6 +7,9 @@ import {
   RefreshCw,
   Search,
   Play,
+  Pencil,
+  Check,
+  RotateCcw,
   Trash2,
   MessageSquare,
   Clock,
@@ -15,6 +18,7 @@ import {
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
+  useRenameSessionMutation,
   useSessionMessagesQuery,
   useSessionsQuery,
 } from "@/lib/query";
@@ -48,6 +52,7 @@ import {
   formatSessionTitle,
   formatTimestamp,
   getBaseName,
+  getOriginalSessionTitle,
   getProviderIconName,
   getProviderLabel,
   getSessionKey,
@@ -74,6 +79,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [tocDialogOpen, setTocDialogOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
@@ -122,6 +129,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       selectedSession?.sourcePath,
     );
   const deleteSessionMutation = useDeleteSessionMutation();
+  const renameSessionMutation = useRenameSessionMutation();
 
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
@@ -156,6 +164,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       // 为了代码规范，我们在组件卸载时将 activeMessageIndex 重置 (虽然 React 会处理)
     };
   }, []);
+
+  useEffect(() => {
+    setIsEditingTitle(false);
+    setDraftTitle(selectedSession ? formatSessionTitle(selectedSession) : "");
+  }, [selectedKey, selectedSession]);
 
   const handleCopy = async (text: string, successMessage: string) => {
     try {
@@ -204,6 +217,58 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       sessionId: deleteTarget.sessionId,
       sourcePath: deleteTarget.sourcePath,
     });
+  };
+
+  const handleRenameSave = async () => {
+    if (!selectedSession?.sourcePath || renameSessionMutation.isPending) {
+      return;
+    }
+
+    const nextTitle = draftTitle.trim();
+    if (!nextTitle) {
+      return;
+    }
+
+    if (
+      !selectedSession.hasCustomTitle &&
+      nextTitle === formatSessionTitle(selectedSession)
+    ) {
+      setIsEditingTitle(false);
+      return;
+    }
+
+    const originalTitle = getOriginalSessionTitle(selectedSession);
+    const shouldClearRename =
+      Boolean(selectedSession.hasCustomTitle) && nextTitle === originalTitle;
+
+    await renameSessionMutation.mutateAsync({
+      providerId: selectedSession.providerId,
+      sessionId: selectedSession.sessionId,
+      sourcePath: selectedSession.sourcePath,
+      customTitle: shouldClearRename ? null : nextTitle,
+    });
+
+    setIsEditingTitle(false);
+  };
+
+  const handleRenameRestore = async () => {
+    if (
+      !selectedSession?.sourcePath ||
+      !selectedSession.hasCustomTitle ||
+      renameSessionMutation.isPending
+    ) {
+      return;
+    }
+
+    await renameSessionMutation.mutateAsync({
+      providerId: selectedSession.providerId,
+      sessionId: selectedSession.sessionId,
+      sourcePath: selectedSession.sourcePath,
+      customTitle: null,
+    });
+
+    setDraftTitle(getOriginalSessionTitle(selectedSession));
+    setIsEditingTitle(false);
   };
 
   return (
@@ -464,9 +529,50 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           <h2 className="text-base font-semibold truncate">
                             {formatSessionTitle(selectedSession)}
                           </h2>
+                          {!isEditingTitle && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7 shrink-0"
+                                  aria-label={t("sessionManager.rename", {
+                                    defaultValue: "Rename session",
+                                  })}
+                                  onClick={() => {
+                                    setDraftTitle(
+                                      formatSessionTitle(selectedSession),
+                                    );
+                                    setIsEditingTitle(true);
+                                  }}
+                                  disabled={
+                                    !selectedSession.sourcePath ||
+                                    renameSessionMutation.isPending
+                                  }
+                                >
+                                  <Pencil className="size-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {t("sessionManager.rename", {
+                                  defaultValue: "Rename session",
+                                })}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                         </div>
 
                         {/* 元信息 */}
+                        {selectedSession.hasCustomTitle &&
+                          selectedSession.originalTitle && (
+                            <p className="mb-2 text-xs text-muted-foreground">
+                              {t("sessionManager.originalName", {
+                                defaultValue: "Original name",
+                              })}
+                              : {selectedSession.originalTitle}
+                            </p>
+                          )}
+
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                           <div className="flex items-center gap-1">
                             <Clock className="size-3" />
@@ -510,6 +616,87 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </Tooltip>
                           )}
                         </div>
+
+                        {isEditingTitle && (
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <Input
+                              value={draftTitle}
+                              onChange={(event) =>
+                                setDraftTitle(event.target.value)
+                              }
+                              aria-label={t("sessionManager.renameInputLabel", {
+                                defaultValue: "Session name",
+                              })}
+                              placeholder={t(
+                                "sessionManager.renamePlaceholder",
+                                {
+                                  defaultValue: "Enter a custom session name",
+                                },
+                              )}
+                              className="h-8 max-w-md"
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void handleRenameSave();
+                                }
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  setDraftTitle(
+                                    formatSessionTitle(selectedSession),
+                                  );
+                                  setIsEditingTitle(false);
+                                }
+                              }}
+                            />
+                            <Button
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={() => void handleRenameSave()}
+                              disabled={
+                                !draftTitle.trim() ||
+                                renameSessionMutation.isPending
+                              }
+                            >
+                              <Check className="size-3.5" />
+                              <span>
+                                {t("common.save", { defaultValue: "Save" })}
+                              </span>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1.5"
+                              onClick={() => {
+                                setDraftTitle(formatSessionTitle(selectedSession));
+                                setIsEditingTitle(false);
+                              }}
+                              disabled={renameSessionMutation.isPending}
+                            >
+                              <X className="size-3.5" />
+                              <span>
+                                {t("common.cancel", {
+                                  defaultValue: "Cancel",
+                                })}
+                              </span>
+                            </Button>
+                            {selectedSession.hasCustomTitle && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="gap-1.5"
+                                onClick={() => void handleRenameRestore()}
+                                disabled={renameSessionMutation.isPending}
+                              >
+                                <RotateCcw className="size-3.5" />
+                                <span>
+                                  {t("sessionManager.restoreOriginalName", {
+                                    defaultValue: "Restore original",
+                                  })}
+                                </span>
+                              </Button>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       {/* 右侧：操作按钮组 */}

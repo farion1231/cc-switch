@@ -30,6 +30,7 @@ export function useSessionSearch({
       const metaContent = [
         session.sessionId,
         session.title,
+        session.originalTitle,
         session.summary,
         session.projectDir,
         session.sourcePath,
