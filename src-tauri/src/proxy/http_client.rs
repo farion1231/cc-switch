@@ -280,28 +280,6 @@ fn system_proxy_points_to_loopback() -> bool {
         .any(|value| proxy_points_to_loopback(&value))
 }
 
-/// 检查当前环境是否存在可用的系统代理配置。
-#[allow(dead_code)]
-pub fn has_system_proxy_env() -> bool {
-    const KEYS: [&str; 6] = [
-        "HTTP_PROXY",
-        "http_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-    ];
-
-    if system_proxy_points_to_loopback() {
-        return false;
-    }
-
-    KEYS.iter()
-        .filter_map(|key| env::var(key).ok())
-        .map(|value| value.trim().to_string())
-        .any(|value| !value.is_empty())
-}
-
 fn proxy_points_to_loopback(value: &str) -> bool {
     fn host_is_loopback(host: &str) -> bool {
         if host.eq_ignore_ascii_case("localhost") {
@@ -567,18 +545,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_has_system_proxy_env_ignores_own_loopback_proxy() {
-        let _guard = env_lock().lock().unwrap();
-        set_proxy_port(15721);
-        std::env::remove_var("HTTP_PROXY");
-
-        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:15721");
-        assert!(!has_system_proxy_env());
-
-        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:7890");
-        assert!(has_system_proxy_env());
-
-        std::env::remove_var("HTTP_PROXY");
-    }
 }

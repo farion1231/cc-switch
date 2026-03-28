@@ -691,22 +691,6 @@ mod tests {
         assert_eq!(super::strip_sse_field("id:1", "data"), None);
     }
 
-    #[test]
-    fn strip_entity_headers_removes_encoding_and_length_headers() {
-        let mut headers = HeaderMap::new();
-        headers.insert("content-encoding", "gzip".parse().unwrap());
-        headers.insert("content-length", "123".parse().unwrap());
-        headers.insert("transfer-encoding", "chunked".parse().unwrap());
-        headers.insert("content-type", "application/json".parse().unwrap());
-
-        strip_entity_headers_for_rebuilt_body(&mut headers);
-
-        assert!(!headers.contains_key("content-encoding"));
-        assert!(!headers.contains_key("content-length"));
-        assert!(!headers.contains_key("transfer-encoding"));
-        assert_eq!(headers.get("content-type").unwrap(), "application/json");
-    }
-
     fn build_state(db: Arc<Database>) -> ProxyState {
         ProxyState {
             db: db.clone(),

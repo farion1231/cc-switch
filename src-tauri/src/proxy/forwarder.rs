@@ -794,12 +794,7 @@ impl RequestForwarder {
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
-        let force_identity_encoding = should_force_identity_encoding(
-            effective_endpoint,
-            &filtered_body,
-            headers,
-            needs_transform,
-        );
+        let force_identity_encoding = needs_transform;
 
         // 获取认证头（提前准备，用于内联替换）
         let auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
@@ -1124,21 +1119,14 @@ impl RequestForwarder {
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            let http_proxy = if is_socks_proxy {
-                None
-            } else {
-                upstream_proxy_url.as_deref()
-            };
-            let mut ext = extensions.clone();
-            ext.insert(super::hyper_client::ExtensionDebugMarker);
             super::hyper_client::send_request(
                 uri,
                 http::Method::POST,
                 ordered_headers,
-                ext,
+                extensions.clone(),
                 body_bytes,
                 timeout,
-                http_proxy,
+                upstream_proxy_url.as_deref(),
             )
             .await?
         };
@@ -1305,22 +1293,6 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
         .find_map(|value| value.as_str().map(ToString::to_string))
 }
 
-/// Determine whether to force `accept-encoding: identity` on the upstream request.
-///
-/// Only forced for **transform** paths where the proxy must decompress and re-encode
-/// the response body.  For transparent passthrough (including streaming / SSE), the
-/// client's original `accept-encoding` is preserved so the wire behaviour matches a
-/// direct connection.  SSE usage parsing may fail on compressed streams, but the bytes
-/// are still forwarded correctly to the client.
-fn should_force_identity_encoding(
-    _endpoint: &str,
-    _body: &Value,
-    _headers: &axum::http::HeaderMap,
-    needs_transform: bool,
-) -> bool {
-    needs_transform
-}
-
 fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = normalized.trim();
@@ -1337,7 +1309,6 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::{header::ACCEPT, HeaderMap, HeaderValue};
     use serde_json::json;
 
     #[test]
@@ -1405,67 +1376,4 @@ mod tests {
         assert_eq!(summary, "line1 line2...");
     }
 
-    #[test]
-    fn force_identity_for_transform_requests() {
-        let headers = HeaderMap::new();
-
-        assert!(should_force_identity_encoding(
-            "/v1/messages",
-            &json!({ "model": "gpt-5" }),
-            &headers,
-            true,
-        ));
-    }
-
-    #[test]
-    fn transparent_encoding_for_streaming_passthrough() {
-        let headers = HeaderMap::new();
-
-        // Streaming passthrough should NOT force identity — transparent proxy
-        assert!(!should_force_identity_encoding(
-            "/v1/responses",
-            &json!({ "stream": true }),
-            &headers,
-            false,
-        ));
-    }
-
-    #[test]
-    fn transparent_encoding_for_gemini_stream_endpoints() {
-        let headers = HeaderMap::new();
-
-        // SSE endpoints without transform: transparent
-        assert!(!should_force_identity_encoding(
-            "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
-            &json!({ "model": "gemini-2.5-pro" }),
-            &headers,
-            false,
-        ));
-    }
-
-    #[test]
-    fn transparent_encoding_for_sse_accept_header() {
-        let mut headers = HeaderMap::new();
-        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
-
-        // SSE accept header without transform: transparent
-        assert!(!should_force_identity_encoding(
-            "/v1/responses",
-            &json!({ "model": "gpt-5" }),
-            &headers,
-            false,
-        ));
-    }
-
-    #[test]
-    fn non_streaming_requests_keep_original_encoding_behavior() {
-        let headers = HeaderMap::new();
-
-        assert!(!should_force_identity_encoding(
-            "/v1/responses",
-            &json!({ "model": "gpt-5" }),
-            &headers,
-            false,
-        ));
-    }
 }

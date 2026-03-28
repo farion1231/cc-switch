@@ -1,12 +1,8 @@
 //! Hyper-based HTTP client for proxy forwarding
 //!
-//! Uses hyper directly (instead of reqwest) to support:
-//! - `preserve_header_case(true)` — keeps original header name casing
-//! - Header order preservation via `HeaderCaseMap` extension transfer
-//! - `title_case_headers(true)` — fallback if HeaderCaseMap is absent
-//!
-//! Falls back to reqwest when an upstream proxy (HTTP/SOCKS5) is configured,
-//! since hyper-util's legacy client doesn't natively support proxy tunneling.
+//! Uses raw TCP/TLS writes to preserve exact original header name casing.
+//! Supports HTTP CONNECT tunneling through upstream proxies.
+//! Falls back to hyper-util Client (title-case headers) when raw write is not feasible.
 
 use super::ProxyError;
 use bytes::Bytes;
@@ -15,12 +11,6 @@ use http_body_util::BodyExt;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use std::sync::OnceLock;
-
-/// Debug marker inserted into extensions to verify they survive the chain.
-/// If this marker is found in hyper_client but HeaderCaseMap is not used,
-/// the issue is in hyper's encoder, not in extension passing.
-#[derive(Clone, Debug)]
-pub(crate) struct ExtensionDebugMarker;
 
 /// Our own header case map: maps lowercase header name → original wire-casing bytes.
 ///
