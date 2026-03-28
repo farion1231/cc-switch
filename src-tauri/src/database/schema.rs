@@ -350,26 +350,6 @@ impl Database {
         Ok(())
     }
 
-    fn is_backward_compatible_v7(conn: &Connection) -> Result<bool, AppError> {
-        if !Self::table_exists(conn, "session_overrides")? {
-            return Ok(false);
-        }
-
-        for column in [
-            "provider_id",
-            "session_id",
-            "source_path",
-            "custom_title",
-            "updated_at",
-        ] {
-            if !Self::has_column(conn, "session_overrides", column)? {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
-    }
-
     /// 应用 Schema 迁移
     pub(crate) fn apply_schema_migrations(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -382,14 +362,6 @@ impl Database {
             .map_err(|e| AppError::Database(format!("开启迁移 savepoint 失败: {e}")))?;
 
         let mut version = Self::get_user_version(conn)?;
-
-        if version == SCHEMA_VERSION + 1 && Self::is_backward_compatible_v7(conn)? {
-            log::info!(
-                "Detected backward-compatible schema v{version}; normalizing user_version back to v{SCHEMA_VERSION}"
-            );
-            Self::set_user_version(conn, SCHEMA_VERSION)?;
-            version = SCHEMA_VERSION;
-        }
 
         if version > SCHEMA_VERSION {
             conn.execute("ROLLBACK TO schema_migration;", []).ok();

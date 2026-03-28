@@ -173,7 +173,7 @@ fn schema_migration_sets_user_version_when_missing() {
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
-    Database::set_user_version(&conn, SCHEMA_VERSION + 2).expect("set future version");
+    Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
 
     let err =
         Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject higher version");
@@ -328,24 +328,6 @@ fn schema_migration_v6_adds_session_overrides_table() {
 }
 
 #[test]
-fn schema_migration_normalizes_backward_compatible_v7_to_v6() {
-    let conn = Connection::open_in_memory().expect("open memory db");
-    Database::create_tables_on_conn(&conn).expect("create tables");
-    Database::set_user_version(&conn, 7).expect("set user_version=7");
-
-    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
-
-    assert!(
-        Database::table_exists(&conn, "session_overrides").expect("check session_overrides"),
-        "session_overrides should still exist after normalization"
-    );
-    assert_eq!(
-        Database::get_user_version(&conn).expect("version after normalization"),
-        6
-    );
-}
-
-#[test]
 fn schema_migration_rejects_unknown_v7_without_session_overrides() {
     let conn = Connection::open_in_memory().expect("open memory db");
     conn.execute_batch(
@@ -366,6 +348,21 @@ fn schema_migration_rejects_unknown_v7_without_session_overrides() {
 
     let err =
         Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject unknown v7");
+    let message = err.to_string();
+    assert!(
+        message.contains("7") && message.contains("6"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn schema_migration_rejects_v7_even_if_session_overrides_exists() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::set_user_version(&conn, 7).expect("set user_version=7");
+
+    let err =
+        Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject future v7");
     let message = err.to_string();
     assert!(
         message.contains("7") && message.contains("6"),
