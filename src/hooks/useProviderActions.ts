@@ -139,21 +139,41 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
-      const requiresProxyForSwitch =
-        !isProxyRunning &&
-        provider.category !== "official" &&
-        ((activeApp === "claude" &&
-          (provider.meta?.isFullUrl ||
-            provider.meta?.apiFormat === "openai_chat" ||
-            provider.meta?.apiFormat === "openai_responses")) ||
-          (activeApp === "codex" && provider.meta?.isFullUrl));
-
+      // Determine why this provider requires the proxy
+      let proxyRequiredReason: string | null = null;
       if (
-        requiresProxyForSwitch
+        !isProxyRunning &&
+        provider.category !== "official"
       ) {
+        if (
+          provider.meta?.apiFormat === "openai_chat" &&
+          (activeApp === "claude")
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
+            defaultValue: "使用 OpenAI Chat 接口格式",
+          });
+        } else if (
+          provider.meta?.apiFormat === "openai_responses" &&
+          (activeApp === "claude")
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonOpenAIResponses", {
+            defaultValue: "使用 OpenAI Responses 接口格式",
+          });
+        } else if (
+          provider.meta?.isFullUrl &&
+          (activeApp === "claude" || activeApp === "codex")
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
+            defaultValue: "开启了完整 URL 连接模式",
+          });
+        }
+      }
+
+      if (proxyRequiredReason) {
         toast.warning(
           t("notifications.proxyRequiredForSwitch", {
-            defaultValue: "此供应商需要代理服务，请先启动代理",
+            reason: proxyRequiredReason,
+            defaultValue: "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
           }),
         );
         return;
@@ -174,27 +194,8 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
           );
         }
 
-        // 根据供应商类型显示不同的成功提示
-        if (
-          activeApp === "claude" &&
-          provider.category !== "official" &&
-          (provider.meta?.apiFormat === "openai_chat" ||
-            provider.meta?.apiFormat === "openai_responses")
-        ) {
-          // OpenAI format provider: show proxy hint
-          toast.info(
-            t("notifications.openAIFormatHint", {
-              defaultValue:
-                "此供应商使用 OpenAI 兼容格式，需要开启代理服务才能正常使用",
-            }),
-            {
-              duration: 5000,
-              closeButton: true,
-            },
-          );
-        } else {
-          // 普通供应商：显示切换成功
-          // OpenCode/OpenClaw: show "added to config" message instead of "switched"
+        // OpenCode/OpenClaw: show "added to config" message instead of "switched"
+        {
           const isMultiProviderApp =
             activeApp === "opencode" || activeApp === "openclaw";
           const messageKey = isMultiProviderApp
