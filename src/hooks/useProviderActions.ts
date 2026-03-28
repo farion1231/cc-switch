@@ -141,20 +141,17 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
     async (provider: Provider) => {
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
-      if (
-        !isProxyRunning &&
-        provider.category !== "official"
-      ) {
+      if (!isProxyRunning && provider.category !== "official") {
         if (
           provider.meta?.apiFormat === "openai_chat" &&
-          (activeApp === "claude")
+          activeApp === "claude"
         ) {
           proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
             defaultValue: "使用 OpenAI Chat 接口格式",
           });
         } else if (
           provider.meta?.apiFormat === "openai_responses" &&
-          (activeApp === "claude")
+          activeApp === "claude"
         ) {
           proxyRequiredReason = t("notifications.proxyReasonOpenAIResponses", {
             defaultValue: "使用 OpenAI Responses 接口格式",
@@ -173,7 +170,8 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         toast.warning(
           t("notifications.proxyRequiredForSwitch", {
             reason: proxyRequiredReason,
-            defaultValue: "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
+            defaultValue:
+              "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
           }),
         );
         return;
