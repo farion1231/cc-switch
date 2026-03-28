@@ -54,6 +54,11 @@ hyper-rustls = { version = "0.27", features = ["http1", "tls12", "ring", "webpki
 http = "1"
 http-body = "1"
 http-body-util = "0.1"
+httparse = "1"
+tokio-rustls = "0.26"
+rustls = "0.23"
+webpki-roots = "0.26"
+rustls-native-certs = "0.8"
 regex = "1.10"
 rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
 thiserror = "2.0"
