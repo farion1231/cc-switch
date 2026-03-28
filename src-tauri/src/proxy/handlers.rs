@@ -61,11 +61,17 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// - 现在 OpenRouter 已推出 Claude Code 兼容接口，默认不再启用该转换（逻辑保留以备回退）
 pub async fn handle_messages(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
+
+    let endpoint = uri
+        .path_and_query()
+        .map(|path_and_query| path_and_query.as_str())
+        .unwrap_or(uri.path());
 
     let is_stream = body
         .get("stream")
@@ -77,7 +83,7 @@ pub async fn handle_messages(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Claude,
-            "/v1/messages",
+            endpoint,
             body.clone(),
             headers,
             ctx.get_providers(),
@@ -280,6 +286,13 @@ async fn handle_claude_transform(
     })
 }
 
+fn endpoint_with_query(uri: &axum::http::Uri, endpoint: &str) -> String {
+    match uri.query() {
+        Some(query) => format!("{endpoint}?{query}"),
+        None => endpoint.to_string(),
+    }
+}
+
 // ============================================================================
 // Codex API 处理器
 // ============================================================================
@@ -287,11 +300,13 @@ async fn handle_claude_transform(
 /// 处理 /v1/chat/completions 请求（OpenAI Chat Completions API - Codex CLI）
 pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
         .get("stream")
@@ -302,7 +317,7 @@ pub async fn handle_chat_completions(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/chat/completions",
+            &endpoint,
             body,
             headers,
             ctx.get_providers(),
@@ -328,11 +343,13 @@ pub async fn handle_chat_completions(
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
 pub async fn handle_responses(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/responses");
 
     let is_stream = body
         .get("stream")
@@ -343,7 +360,7 @@ pub async fn handle_responses(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/responses",
+            &endpoint,
             body,
             headers,
             ctx.get_providers(),
@@ -369,11 +386,13 @@ pub async fn handle_responses(
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
 pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
         .get("stream")
@@ -384,7 +403,7 @@ pub async fn handle_responses_compact(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/responses/compact",
+            &endpoint,
             body,
             headers,
             ctx.get_providers(),
