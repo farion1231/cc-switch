@@ -26,7 +26,7 @@ impl Database {
                 "SELECT id, name, sort_index
                  FROM providers
                  WHERE app_type = ?1 AND in_failover_queue = 1
-                 ORDER BY CASE WHEN sort_index IS NULL THEN 0 ELSE 1 END ASC, sort_index ASC, id ASC",
+                 ORDER BY CASE WHEN sort_index IS NULL THEN 0 ELSE 1 END ASC, sort_index ASC, created_at DESC, id ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
