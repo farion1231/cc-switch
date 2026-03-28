@@ -18,7 +18,10 @@ use super::{
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
         transform_responses,
     },
-    response_processor::{create_logged_passthrough_stream, process_response, SseUsageCollector},
+    response_processor::{
+        create_logged_passthrough_stream, process_response, read_decoded_body,
+        strip_entity_headers_for_rebuilt_body, SseUsageCollector,
+    },
     server::ProxyState,
     types::*,
     usage::parser::TokenUsage,
@@ -211,9 +214,7 @@ async fn handle_claude_transform(
     }
 
     // 非流式响应转换 (OpenAI/Responses → Anthropic)
-    let response_headers = response.headers().clone();
-
-    let body_bytes = response.bytes().await?;
+    let (mut response_headers, _status, body_bytes) = read_decoded_body(response, ctx.tag).await?;
 
     let body_str = String::from_utf8_lossy(&body_bytes);
 
@@ -266,13 +267,10 @@ async fn handle_claude_transform(
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
 
     for (key, value) in response_headers.iter() {
-        if key.as_str().to_lowercase() != "content-length"
-            && key.as_str().to_lowercase() != "transfer-encoding"
-        {
-            builder = builder.header(key, value);
-        }
+        builder = builder.header(key, value);
     }
 
     builder = builder.header("content-type", "application/json");

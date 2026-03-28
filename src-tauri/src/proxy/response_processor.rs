@@ -68,6 +68,52 @@ fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
         .filter(|s| !s.is_empty() && s != "identity")
 }
 
+/// 移除在重建响应体后会失真的实体头。
+pub(crate) fn strip_entity_headers_for_rebuilt_body(headers: &mut HeaderMap) {
+    headers.remove(axum::http::header::CONTENT_ENCODING);
+    headers.remove(axum::http::header::CONTENT_LENGTH);
+    headers.remove(axum::http::header::TRANSFER_ENCODING);
+}
+
+/// 读取响应体并在需要时解压，确保 headers 与返回 body 一致。
+pub(crate) async fn read_decoded_body(
+    response: ProxyResponse,
+    tag: &str,
+) -> Result<(HeaderMap, http::StatusCode, Bytes), ProxyError> {
+    let mut headers = response.headers().clone();
+    let status = response.status();
+    let raw_bytes = response.bytes().await?;
+
+    log::debug!(
+        "[{tag}] 已接收上游响应体: status={}, bytes={}, headers={}",
+        status.as_u16(),
+        raw_bytes.len(),
+        format_headers(&headers)
+    );
+
+    let mut body_bytes = raw_bytes.clone();
+    let mut decoded = false;
+
+    if let Some(encoding) = get_content_encoding(&headers) {
+        log::debug!("[{tag}] 解压非流式响应: content-encoding={encoding}");
+        match decompress_body(&encoding, &raw_bytes) {
+            Ok(decompressed) => {
+                body_bytes = Bytes::from(decompressed);
+                decoded = true;
+            }
+            Err(e) => {
+                log::warn!("[{tag}] 解压失败 ({encoding}): {e}，使用原始数据");
+            }
+        }
+    }
+
+    if decoded {
+        strip_entity_headers_for_rebuilt_body(&mut headers);
+    }
+
+    Ok((headers, status, body_bytes))
+}
+
 // ============================================================================
 // 公共接口
 // ============================================================================
@@ -138,32 +184,7 @@ pub async fn handle_non_streaming(
     state: &ProxyState,
     parser_config: &UsageParserConfig,
 ) -> Result<Response, ProxyError> {
-    let response_headers = response.headers().clone();
-    let status = response.status();
-
-    // 读取响应体
-    let raw_bytes = response.bytes().await?;
-    log::debug!(
-        "[{}] 已接收上游响应体: status={}, bytes={}, headers={}",
-        ctx.tag,
-        status.as_u16(),
-        raw_bytes.len(),
-        format_headers(&response_headers)
-    );
-
-    // 手动解压（reqwest 自动解压已禁用以透传 accept-encoding）
-    let body_bytes: Bytes = if let Some(encoding) = get_content_encoding(&response_headers) {
-        log::debug!("[{}] 解压非流式响应: content-encoding={encoding}", ctx.tag);
-        match decompress_body(&encoding, &raw_bytes) {
-            Ok(decompressed) => Bytes::from(decompressed),
-            Err(e) => {
-                log::warn!("[{}] 解压失败 ({encoding}): {e}，使用原始数据", ctx.tag);
-                raw_bytes
-            }
-        }
-    } else {
-        raw_bytes
-    };
+    let (response_headers, status, body_bytes) = read_decoded_body(response, ctx.tag).await?;
 
     log::debug!(
         "[{}] 上游响应体内容: {}",
@@ -668,6 +689,22 @@ mod tests {
             Some("message_start")
         );
         assert_eq!(super::strip_sse_field("id:1", "data"), None);
+    }
+
+    #[test]
+    fn strip_entity_headers_removes_encoding_and_length_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-encoding", "gzip".parse().unwrap());
+        headers.insert("content-length", "123".parse().unwrap());
+        headers.insert("transfer-encoding", "chunked".parse().unwrap());
+        headers.insert("content-type", "application/json".parse().unwrap());
+
+        strip_entity_headers_for_rebuilt_body(&mut headers);
+
+        assert!(!headers.contains_key("content-encoding"));
+        assert!(!headers.contains_key("content-length"));
+        assert!(!headers.contains_key("transfer-encoding"));
+        assert_eq!(headers.get("content-type").unwrap(), "application/json");
     }
 
     fn build_state(db: Arc<Database>) -> ProxyState {
