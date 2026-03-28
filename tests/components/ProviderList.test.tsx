@@ -5,13 +5,7 @@ import type { ReactElement } from "react";
 import type { Provider } from "@/types";
 import { ProviderList } from "@/components/providers/ProviderList";
 
-const useDragSortMock = vi.fn();
-const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
-
-vi.mock("@/hooks/useDragSort", () => ({
-  useDragSort: (...args: unknown[]) => useDragSortMock(...args),
-}));
 
 vi.mock("@/components/providers/ProviderCard", () => ({
   ProviderCard: (props: any) => {
@@ -23,10 +17,11 @@ vi.mock("@/components/providers/ProviderCard", () => ({
       onDelete,
       onDuplicate,
       onConfigureUsage,
+      isDragging,
     } = props;
 
     return (
-      <div data-testid={`provider-card-${provider.id}`}>
+      <div data-testid={`provider-card-${provider.id}`} data-dragging={isDragging}>
         <button
           data-testid={`switch-${provider.id}`}
           onClick={() => onSwitch(provider)}
@@ -60,8 +55,8 @@ vi.mock("@/components/providers/ProviderCard", () => ({
         <span data-testid={`is-current-${provider.id}`}>
           {props.isCurrent ? "current" : "inactive"}
         </span>
-        <span data-testid={`drag-attr-${provider.id}`}>
-          {props.dragHandleProps?.attributes?.["data-dnd-id"] ?? "none"}
+        <span data-testid={`dragging-${provider.id}`}>
+          {isDragging ? "dragging" : "not-dragging"}
         </span>
       </div>
     );
@@ -71,15 +66,6 @@ vi.mock("@/components/providers/ProviderCard", () => ({
 vi.mock("@/components/UsageFooter", () => ({
   default: () => <div data-testid="usage-footer" />,
 }));
-
-vi.mock("@dnd-kit/sortable", async () => {
-  const actual = await vi.importActual<any>("@dnd-kit/sortable");
-
-  return {
-    ...actual,
-    useSortable: (...args: unknown[]) => useSortableMock(...args),
-  };
-});
 
 // Mock hooks that use QueryClient
 vi.mock("@/hooks/useStreamCheck", () => ({
@@ -121,24 +107,7 @@ function renderWithQueryClient(ui: ReactElement) {
 }
 
 beforeEach(() => {
-  useDragSortMock.mockReset();
-  useSortableMock.mockReset();
   providerCardRenderSpy.mockClear();
-
-  useSortableMock.mockImplementation(({ id }: { id: string }) => ({
-    setNodeRef: vi.fn(),
-    attributes: { "data-dnd-id": id },
-    listeners: { onPointerDown: vi.fn() },
-    transform: null,
-    transition: null,
-    isDragging: false,
-  }));
-
-  useDragSortMock.mockReturnValue({
-    sortedProviders: [],
-    sensors: [],
-    handleDragEnd: vi.fn(),
-  });
 });
 
 describe("ProviderList Component", () => {
@@ -165,11 +134,6 @@ describe("ProviderList Component", () => {
 
   it("should show empty state and trigger create callback when no providers exist", () => {
     const handleCreate = vi.fn();
-    useDragSortMock.mockReturnValueOnce({
-      sortedProviders: [],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
 
     renderWithQueryClient(
       <ProviderList
@@ -193,9 +157,9 @@ describe("ProviderList Component", () => {
     expect(handleCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("should render in order returned by useDragSort and pass through action callbacks", () => {
-    const providerA = createProvider({ id: "a", name: "A" });
-    const providerB = createProvider({ id: "b", name: "B" });
+  it("should render providers in sortIndex order and pass through action callbacks", () => {
+    const providerA = createProvider({ id: "a", name: "A", sortIndex: 1 });
+    const providerB = createProvider({ id: "b", name: "B", sortIndex: 0 });
 
     const handleSwitch = vi.fn();
     const handleEdit = vi.fn();
@@ -203,12 +167,6 @@ describe("ProviderList Component", () => {
     const handleDuplicate = vi.fn();
     const handleUsage = vi.fn();
     const handleOpenWebsite = vi.fn();
-
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [providerB, providerA],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
 
     renderWithQueryClient(
       <ProviderList
@@ -224,7 +182,7 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    // Verify sort order
+    // Verify sort order (providerB has sortIndex 0, so it should be first)
     expect(providerCardRenderSpy).toHaveBeenCalledTimes(2);
     expect(providerCardRenderSpy.mock.calls[0][0].provider.id).toBe("b");
     expect(providerCardRenderSpy.mock.calls[1][0].provider.id).toBe("a");
@@ -232,17 +190,10 @@ describe("ProviderList Component", () => {
     // Verify current provider marker
     expect(providerCardRenderSpy.mock.calls[0][0].isCurrent).toBe(true);
 
-    // Drag attributes from useSortable
-    expect(
-      providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
-      ],
-    ).toBe("b");
-    expect(
-      providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
-      ],
-    ).toBe("a");
+    // Verify native DnD props are passed
+    expect(providerCardRenderSpy.mock.calls[0][0].isDragging).toBe(false);
+    expect(typeof providerCardRenderSpy.mock.calls[0][0].onDragStart).toBe("function");
+    expect(typeof providerCardRenderSpy.mock.calls[0][0].onDragEnd).toBe("function");
 
     // Trigger action buttons
     fireEvent.click(screen.getByTestId("switch-b"));
@@ -256,23 +207,11 @@ describe("ProviderList Component", () => {
     expect(handleDuplicate).toHaveBeenCalledWith(providerB);
     expect(handleUsage).toHaveBeenCalledWith(providerB);
     expect(handleDelete).toHaveBeenCalledWith(providerA);
-
-    // Verify useDragSort call parameters
-    expect(useDragSortMock).toHaveBeenCalledWith(
-      { a: providerA, b: providerB },
-      "claude",
-    );
   });
 
   it("filters providers with the search input", () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
-
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [providerAlpha, providerBeta],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
 
     renderWithQueryClient(
       <ProviderList

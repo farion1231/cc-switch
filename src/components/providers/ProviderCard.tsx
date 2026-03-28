@@ -1,10 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type {
-  DraggableAttributes,
-  DraggableSyntheticListeners,
-} from "@dnd-kit/core";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -16,12 +12,6 @@ import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBa
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
-
-interface DragHandleProps {
-  attributes: DraggableAttributes;
-  listeners: DraggableSyntheticListeners;
-  isDragging: boolean;
-}
 
 interface ProviderCardProps {
   provider: Provider;
@@ -36,7 +26,7 @@ interface ProviderCardProps {
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
-  onConfigureUsage: (provider: Provider) => void;
+  onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
@@ -44,7 +34,6 @@ interface ProviderCardProps {
   isTesting?: boolean;
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
-  dragHandleProps?: DragHandleProps;
   isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
   failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
@@ -53,6 +42,10 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  // Native DnD props
+  isDragging?: boolean;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -108,15 +101,16 @@ export function ProviderCard({
   isTesting,
   isProxyRunning,
   isProxyTakeover = false,
-  dragHandleProps,
   isAutoFailoverEnabled = false,
   failoverPriority,
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
-  // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  isDragging = false,
+  onDragStart,
+  onDragEnd,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -216,7 +210,7 @@ export function ProviderCard({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
+        "relative overflow-hidden rounded-xl border border-border p-4",
         "bg-card text-card-foreground group",
         isAutoFailoverEnabled || isProxyTakeover
           ? "hover:border-emerald-500/50"
@@ -225,8 +219,9 @@ export function ProviderCard({
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
         !isActiveProvider && "hover:shadow-sm",
-        dragHandleProps?.isDragging &&
-          "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+        isDragging
+          ? "cursor-grabbing border-primary shadow-lg z-10"
+          : "transition-[box-shadow,border-color] duration-300",
       )}
     >
       <div
@@ -245,11 +240,17 @@ export function ProviderCard({
             className={cn(
               "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
               "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-              dragHandleProps?.isDragging && "cursor-grabbing",
+              isDragging && "cursor-grabbing",
             )}
             aria-label={t("provider.dragHandle")}
-            {...(dragHandleProps?.attributes ?? {})}
-            {...(dragHandleProps?.listeners ?? {})}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = "move";
+              onDragStart?.();
+            }}
+            onDragEnd={() => {
+              onDragEnd?.();
+            }}
           >
             <GripVertical className="h-4 w-4" />
           </button>
@@ -393,7 +394,11 @@ export function ProviderCard({
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={onTest ? () => onTest(provider) : undefined}
-              onConfigureUsage={() => onConfigureUsage(provider)}
+              onConfigureUsage={
+                onConfigureUsage
+                  ? () => onConfigureUsage(provider)
+                  : undefined
+              }
               onDelete={() => onDelete(provider)}
               onRemoveFromConfig={
                 onRemoveFromConfig

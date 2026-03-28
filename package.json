@@ -9,6 +9,7 @@
     "tauri": "tauri",
     "dev:renderer": "vite",
     "build:renderer": "vite build",
+    "dev:web-test": "vite -c vite.web-test.config.ts --open web-test.html",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
