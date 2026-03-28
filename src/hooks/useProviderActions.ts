@@ -139,11 +139,15 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
+      const isCopilotProvider =
+        activeApp === "claude" &&
+        provider.meta?.providerType === "github_copilot";
       const requiresProxyForSwitch =
         !isProxyRunning &&
         provider.category !== "official" &&
         ((activeApp === "claude" &&
-          (provider.meta?.isFullUrl ||
+          (isCopilotProvider ||
+            provider.meta?.isFullUrl ||
             provider.meta?.apiFormat === "openai_chat" ||
             provider.meta?.apiFormat === "openai_responses")) ||
           (activeApp === "codex" && provider.meta?.isFullUrl));
@@ -178,12 +182,18 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         if (
           activeApp === "claude" &&
           provider.category !== "official" &&
-          (provider.meta?.apiFormat === "openai_chat" ||
+          (isCopilotProvider ||
+            provider.meta?.apiFormat === "openai_chat" ||
             provider.meta?.apiFormat === "openai_responses")
         ) {
           // OpenAI format provider: show proxy hint
           toast.info(
-            t("notifications.openAIFormatHint", {
+            isCopilotProvider
+              ? t("notifications.copilotProxyHint", {
+                  defaultValue:
+                    "GitHub Copilot 作为 Claude 供应商时始终需要本地代理；代理会根据当前模型自动选择 Chat Completions 或 Responses。",
+                })
+              : t("notifications.openAIFormatHint", {
               defaultValue:
                 "此供应商使用 OpenAI 兼容格式，需要开启代理服务才能正常使用",
             }),

@@ -101,6 +101,11 @@ pub async fn handle_messages(
     };
 
     ctx.provider = result.provider;
+    let api_format = result
+        .claude_api_format
+        .as_deref()
+        .unwrap_or_else(|| get_claude_api_format(&ctx.provider))
+        .to_string();
     let response = result.response;
 
     // 检查是否需要格式转换（OpenRouter 等中转服务）
@@ -109,7 +114,8 @@ pub async fn handle_messages(
 
     // Claude 特有：格式转换处理
     if needs_transform {
-        return handle_claude_transform(response, &ctx, &state, &body, is_stream).await;
+        return handle_claude_transform(response, &ctx, &state, &body, is_stream, &api_format)
+            .await;
     }
 
     // 通用响应处理（透传模式）
@@ -125,9 +131,9 @@ async fn handle_claude_transform(
     state: &ProxyState,
     _original_body: &Value,
     is_stream: bool,
+    api_format: &str,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
-    let api_format = get_claude_api_format(&ctx.provider);
 
     if is_stream {
         // 根据 api_format 选择流式转换器
