@@ -8,6 +8,7 @@ use crate::provider::{UsageData, UsageResult, UsageScript};
 use crate::settings;
 use crate::store::AppState;
 use crate::usage_script;
+use regex::Regex;
 
 fn non_empty_trimmed(value: Option<&str>) -> Option<String> {
     value
@@ -89,79 +90,117 @@ pub(crate) async fn execute_and_format_usage_result(
 }
 
 /// Extract API key from provider configuration
-fn extract_api_key_from_provider(provider: &crate::provider::Provider) -> Option<String> {
-    non_empty_trimmed(
-        provider
-            .settings_config
-            .get("apiKey")
-            .and_then(|v| v.as_str())
-            .or_else(|| {
-                provider
-                    .settings_config
-                    .get("options")
-                    .and_then(|v| v.get("apiKey"))
-                    .and_then(|v| v.as_str())
-            }),
-    )
-    .or_else(|| {
-        let env = provider.settings_config.get("env")?;
-        non_empty_trimmed(
-            env.get("ANTHROPIC_AUTH_TOKEN")
-                .or_else(|| env.get("ANTHROPIC_API_KEY"))
-                .or_else(|| env.get("OPENAI_API_KEY"))
-                .or_else(|| env.get("OPENROUTER_API_KEY"))
-                .or_else(|| env.get("GOOGLE_API_KEY"))
-                .or_else(|| env.get("GEMINI_API_KEY"))
-                .or_else(|| env.get("CODEX_API_KEY"))
+fn extract_toml_base_url(config_toml: &str) -> Option<String> {
+    let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).ok()?;
+    re.captures(config_toml)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
+}
+
+fn extract_api_key_from_provider(
+    provider: &crate::provider::Provider,
+    app_type: &AppType,
+) -> Option<String> {
+    let settings = &provider.settings_config;
+
+    let direct = match app_type {
+        AppType::Codex => non_empty_trimmed(
+            settings
+                .get("auth")
+                .and_then(|v| v.get("OPENAI_API_KEY"))
                 .and_then(|v| v.as_str()),
-        )
-    })
+        ),
+        _ => None,
+    };
+
+    direct
+        .or_else(|| {
+            non_empty_trimmed(
+                settings
+                    .get("apiKey")
+                    .or_else(|| settings.get("api_key"))
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        settings
+                            .get("options")
+                            .and_then(|v| v.get("apiKey").or_else(|| v.get("api_key")))
+                            .and_then(|v| v.as_str())
+                    }),
+            )
+        })
+        .or_else(|| {
+            let env = settings.get("env")?;
+            non_empty_trimmed(
+                env.get("ANTHROPIC_AUTH_TOKEN")
+                    .or_else(|| env.get("ANTHROPIC_API_KEY"))
+                    .or_else(|| env.get("OPENAI_API_KEY"))
+                    .or_else(|| env.get("OPENROUTER_API_KEY"))
+                    .or_else(|| env.get("GOOGLE_API_KEY"))
+                    .or_else(|| env.get("GEMINI_API_KEY"))
+                    .or_else(|| env.get("CODEX_API_KEY"))
+                    .and_then(|v| v.as_str()),
+            )
+        })
 }
 
 /// Extract base URL from provider configuration
-fn extract_base_url_from_provider(provider: &crate::provider::Provider) -> Option<String> {
-    non_empty_trimmed(
-        provider
-            .settings_config
-            .get("baseUrl")
+fn extract_base_url_from_provider(
+    provider: &crate::provider::Provider,
+    app_type: &AppType,
+) -> Option<String> {
+    let settings = &provider.settings_config;
+
+    let direct = match app_type {
+        AppType::Codex => settings
+            .get("config")
             .and_then(|v| v.as_str())
-            .or_else(|| {
-                provider
-                    .settings_config
-                    .get("baseURL")
+            .and_then(extract_toml_base_url),
+        _ => None,
+    };
+
+    direct
+        .or_else(|| {
+            non_empty_trimmed(
+                settings
+                    .get("baseUrl")
+                    .or_else(|| settings.get("baseURL"))
+                    .or_else(|| settings.get("base_url"))
                     .and_then(|v| v.as_str())
-            })
-            .or_else(|| {
-                provider
-                    .settings_config
-                    .get("options")
-                    .and_then(|v| v.get("baseURL"))
-                    .and_then(|v| v.as_str())
-            }),
-    )
-    .or_else(|| {
-        let env = provider.settings_config.get("env")?;
-        non_empty_trimmed(
-            env.get("ANTHROPIC_BASE_URL")
-                .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
-                .or_else(|| env.get("OPENAI_BASE_URL"))
-                .and_then(|v| v.as_str()),
-        )
-    })
-    .map(|s| s.trim_end_matches('/').to_string())
+                    .or_else(|| {
+                        settings
+                            .get("options")
+                            .and_then(|v| {
+                                v.get("baseURL")
+                                    .or_else(|| v.get("baseUrl"))
+                                    .or_else(|| v.get("base_url"))
+                            })
+                            .and_then(|v| v.as_str())
+                    }),
+            )
+        })
+        .or_else(|| {
+            let env = settings.get("env")?;
+            non_empty_trimmed(
+                env.get("ANTHROPIC_BASE_URL")
+                    .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
+                    .or_else(|| env.get("OPENAI_BASE_URL"))
+                    .and_then(|v| v.as_str()),
+            )
+        })
 }
 
 fn resolve_usage_credentials(
     provider: &crate::provider::Provider,
+    app_type: &AppType,
     api_key_override: Option<&str>,
     base_url_override: Option<&str>,
 ) -> (String, String) {
     let api_key = non_empty_trimmed(api_key_override)
-        .or_else(|| extract_api_key_from_provider(provider))
+        .or_else(|| extract_api_key_from_provider(provider, app_type))
         .unwrap_or_default();
 
     let base_url = non_empty_trimmed(base_url_override)
-        .or_else(|| extract_base_url_from_provider(provider))
+        .or_else(|| extract_base_url_from_provider(provider, app_type))
         .unwrap_or_default();
 
     (api_key, base_url)
@@ -204,6 +243,7 @@ pub async fn query_usage(
 
         let (api_key, base_url) = resolve_usage_credentials(
             provider,
+            &app_type,
             usage_script.api_key.as_deref(),
             usage_script.base_url.as_deref(),
         );
@@ -245,16 +285,18 @@ pub async fn test_usage_script(
     user_id: Option<&str>,
     template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
-    let providers = state.db.get_all_providers(app_type.as_str())?;
-    let provider = providers.get(provider_id).ok_or_else(|| {
-        AppError::localized(
-            "provider.not_found",
-            format!("供应商不存在: {provider_id}"),
-            format!("Provider not found: {provider_id}"),
-        )
-    })?;
+    let provider = state
+        .db
+        .get_provider_by_id(provider_id, app_type.as_str())?
+        .ok_or_else(|| {
+            AppError::localized(
+                "provider.not_found",
+                format!("供应商不存在: {provider_id}"),
+                format!("Provider not found: {provider_id}"),
+            )
+        })?;
     let (resolved_api_key, resolved_base_url) =
-        resolve_usage_credentials(provider, api_key, base_url);
+        resolve_usage_credentials(&provider, &app_type, api_key, base_url);
 
     execute_and_format_usage_result(
         script_code,
@@ -318,10 +360,11 @@ mod tests {
             }
         }));
 
-        let (api_key, base_url) = resolve_usage_credentials(&provider, Some(""), Some("   "));
+        let (api_key, base_url) =
+            resolve_usage_credentials(&provider, &AppType::Claude, Some(""), Some("   "));
 
         assert_eq!(api_key, "sk-provider");
-        assert_eq!(base_url, "https://api.deepseek.com/anthropic");
+        assert_eq!(base_url, "https://api.deepseek.com/anthropic/");
     }
 
     #[test]
@@ -333,10 +376,11 @@ mod tests {
             }
         }));
 
-        let (api_key, base_url) = resolve_usage_credentials(&provider, None, None);
+        let (api_key, base_url) =
+            resolve_usage_credentials(&provider, &AppType::OpenCode, None, None);
 
         assert_eq!(api_key, "sk-options");
-        assert_eq!(base_url, "https://api.deepseek.com/v1");
+        assert_eq!(base_url, "https://api.deepseek.com/v1/");
     }
 
     #[test]
@@ -352,6 +396,7 @@ mod tests {
 
         let (api_key, base_url) = resolve_usage_credentials(
             &provider,
+            &AppType::OpenClaw,
             Some("sk-override"),
             Some("https://override.example.com/"),
         );
@@ -364,10 +409,11 @@ mod tests {
     fn resolve_usage_credentials_ignores_blank_provider_fields_and_uses_env() {
         let provider = provider_with_settings(json!({
             "apiKey": "   ",
-            "baseUrl": "",
+            "api_key": "",
+            "base_url": "",
             "options": {
-                "apiKey": "",
-                "baseURL": "   "
+                "api_key": "",
+                "base_url": "   "
             },
             "env": {
                 "OPENAI_API_KEY": "sk-env",
@@ -375,9 +421,38 @@ mod tests {
             }
         }));
 
-        let (api_key, base_url) = resolve_usage_credentials(&provider, None, None);
+        let (api_key, base_url) = resolve_usage_credentials(&provider, &AppType::Codex, None, None);
 
         assert_eq!(api_key, "sk-env");
-        assert_eq!(base_url, "https://env.example.com/v1");
+        assert_eq!(base_url, "https://env.example.com/v1/");
+    }
+
+    #[test]
+    fn resolve_usage_credentials_reads_codex_auth_and_config_toml() {
+        let provider = provider_with_settings(json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-codex"
+            },
+            "config": "model = \"gpt-5\"\nbase_url = \"https://api.openai.com/v1\"\n"
+        }));
+
+        let (api_key, base_url) = resolve_usage_credentials(&provider, &AppType::Codex, None, None);
+
+        assert_eq!(api_key, "sk-codex");
+        assert_eq!(base_url, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn resolve_usage_credentials_supports_legacy_alias_fields() {
+        let provider = provider_with_settings(json!({
+            "api_key": "sk-legacy",
+            "base_url": "https://legacy.example.com/v1",
+        }));
+
+        let (api_key, base_url) =
+            resolve_usage_credentials(&provider, &AppType::OpenClaw, None, None);
+
+        assert_eq!(api_key, "sk-legacy");
+        assert_eq!(base_url, "https://legacy.example.com/v1");
     }
 }
