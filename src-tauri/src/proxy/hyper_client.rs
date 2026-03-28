@@ -233,6 +233,10 @@ pub async fn send_request(
         match result {
             Ok(resp) => return Ok(resp),
             Err(e) => {
+                if proxy_url.is_some() {
+                    // Don't bypass configured proxy with direct connect fallback
+                    return Err(e);
+                }
                 log::warn!("[HyperClient] Raw write failed, falling back to hyper-util: {e}");
                 // Fall through to hyper-util Client
             }
@@ -256,6 +260,62 @@ pub async fn send_request(
         .map_err(|e| ProxyError::ForwardFailed(format!("上游请求失败: {e}")))?;
 
     Ok(ProxyResponse::Hyper(resp))
+}
+
+/// TCP or TLS stream returned by `connect_via_proxy`.
+///
+/// When the proxy URL uses `https://`, the connection to the proxy itself is
+/// TLS-wrapped before sending the CONNECT request.  The enum lets
+/// `send_raw_request` work with either variant generically.
+enum ProxyStream {
+    Tcp(tokio::net::TcpStream),
+    Tls(Box<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>),
+}
+
+impl tokio::io::AsyncRead for ProxyStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ProxyStream::Tcp(s) => std::pin::Pin::new(s).poll_read(cx, buf),
+            ProxyStream::Tls(s) => std::pin::Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for ProxyStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            ProxyStream::Tcp(s) => std::pin::Pin::new(s).poll_write(cx, buf),
+            ProxyStream::Tls(s) => std::pin::Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ProxyStream::Tcp(s) => std::pin::Pin::new(s).poll_flush(cx),
+            ProxyStream::Tls(s) => std::pin::Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ProxyStream::Tcp(s) => std::pin::Pin::new(s).poll_shutdown(cx),
+            ProxyStream::Tls(s) => std::pin::Pin::new(s).poll_shutdown(cx),
+        }
+    }
 }
 
 /// Send request via raw TCP/TLS with exact original header casing.
@@ -286,12 +346,14 @@ async fn send_raw_request(
     let raw = build_raw_request(method, path_and_query, headers, original_cases, body);
 
     // Establish TCP connection — either direct or through HTTP CONNECT proxy
-    let tcp = if let Some(proxy) = proxy_url {
+    let stream = if let Some(proxy) = proxy_url {
         connect_via_proxy(proxy, host, port).await?
     } else {
-        tokio::net::TcpStream::connect((host, port))
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("TCP connect failed: {e}")))?
+        ProxyStream::Tcp(
+            tokio::net::TcpStream::connect((host, port))
+                .await
+                .map_err(|e| ProxyError::ForwardFailed(format!("TCP connect failed: {e}")))?,
+        )
     };
 
     if scheme == "https" {
@@ -299,7 +361,7 @@ async fn send_raw_request(
         let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
             .map_err(|e| ProxyError::ForwardFailed(format!("Invalid server name: {e}")))?;
         let mut tls_stream = tls_connector
-            .connect(server_name, tcp)
+            .connect(server_name, stream)
             .await
             .map_err(|e| ProxyError::ForwardFailed(format!("TLS handshake failed: {e}")))?;
 
@@ -311,28 +373,29 @@ async fn send_raw_request(
         let filtered = WriteFilter::new(tls_stream);
         do_hyper_response(filtered, method.clone()).await
     } else {
-        let mut tcp_stream = tcp;
-        tcp_stream
+        let mut stream = stream;
+        stream
             .write_all(&raw)
             .await
             .map_err(|e| ProxyError::ForwardFailed(format!("Write failed: {e}")))?;
 
-        let filtered = WriteFilter::new(tcp_stream);
+        let filtered = WriteFilter::new(stream);
         do_hyper_response(filtered, method.clone()).await
     }
 }
 
-/// Establish a TCP connection through an HTTP CONNECT proxy tunnel.
+/// Establish a connection through an HTTP CONNECT proxy tunnel.
 ///
-/// 1. Connect TCP to the proxy server
-/// 2. Send `CONNECT host:port HTTP/1.1`
-/// 3. Read the proxy's 200 response
-/// 4. Return the tunneled TCP stream (ready for TLS handshake + raw write)
+/// 1. Connect TCP to the proxy server (TLS-wrapped when `https://` proxy)
+/// 2. Send `CONNECT host:port HTTP/1.1` with optional `Proxy-Authorization`
+/// 3. Read the proxy's 200 response (407 → `AuthError`)
+/// 4. Return the tunneled stream (ready for target TLS handshake + raw write)
 async fn connect_via_proxy(
     proxy_url: &str,
     target_host: &str,
     target_port: u16,
-) -> Result<tokio::net::TcpStream, ProxyError> {
+) -> Result<ProxyStream, ProxyError> {
+    use base64::Engine;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let parsed = url::Url::parse(proxy_url)
@@ -345,23 +408,52 @@ async fn connect_via_proxy(
         .port()
         .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
 
+    // Build Proxy-Authorization header if credentials are present
+    let proxy_auth = if !parsed.username().is_empty() {
+        let password = parsed.password().unwrap_or("");
+        let credentials = format!("{}:{}", parsed.username(), password);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
+        Some(format!("Proxy-Authorization: Basic {encoded}\r\n"))
+    } else {
+        None
+    };
+
     // Connect to the proxy
-    let mut tcp = tokio::net::TcpStream::connect((proxy_host, proxy_port))
+    let tcp = tokio::net::TcpStream::connect((proxy_host, proxy_port))
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("Proxy TCP connect failed: {e}")))?;
 
+    // Wrap with TLS if the proxy URL uses https://
+    let mut stream: ProxyStream = if parsed.scheme() == "https" {
+        let tls_connector = global_tls_connector();
+        let server_name = rustls::pki_types::ServerName::try_from(proxy_host.to_string())
+            .map_err(|e| ProxyError::ForwardFailed(format!("Invalid proxy server name: {e}")))?;
+        let tls_stream = tls_connector
+            .connect(server_name, tcp)
+            .await
+            .map_err(|e| ProxyError::ForwardFailed(format!("Proxy TLS handshake failed: {e}")))?;
+        ProxyStream::Tls(Box::new(tls_stream))
+    } else {
+        ProxyStream::Tcp(tcp)
+    };
+
     // Send CONNECT request
-    let connect_req = format!(
+    let mut connect_req = format!(
         "CONNECT {target_host}:{target_port} HTTP/1.1\r\n\
-         Host: {target_host}:{target_port}\r\n\
-         \r\n"
+         Host: {target_host}:{target_port}\r\n"
     );
-    tcp.write_all(connect_req.as_bytes())
+    if let Some(auth) = &proxy_auth {
+        connect_req.push_str(auth);
+    }
+    connect_req.push_str("\r\n");
+
+    stream
+        .write_all(connect_req.as_bytes())
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("CONNECT write failed: {e}")))?;
 
     // Read the proxy's response status line
-    let mut reader = BufReader::new(&mut tcp);
+    let mut reader = BufReader::new(&mut stream);
     let mut status_line = String::new();
     reader
         .read_line(&mut status_line)
@@ -370,6 +462,12 @@ async fn connect_via_proxy(
 
     // Expect "HTTP/1.1 200 ..." or "HTTP/1.0 200 ..."
     if !status_line.contains(" 200 ") {
+        if status_line.contains(" 407 ") {
+            return Err(ProxyError::AuthError(format!(
+                "Proxy authentication required (407): {}",
+                status_line.trim()
+            )));
+        }
         return Err(ProxyError::ForwardFailed(format!(
             "Proxy CONNECT rejected: {}",
             status_line.trim()
@@ -387,7 +485,7 @@ async fn connect_via_proxy(
             break;
         }
     }
-    // BufReader might have buffered data; drop it to get raw tcp back.
+    // BufReader might have buffered data; drop it to get raw stream back.
     // Since CONNECT response is headers-only (no body), and we read until \r\n\r\n,
     // the BufReader buffer should be empty at this point.
     drop(reader);
@@ -396,7 +494,7 @@ async fn connect_via_proxy(
         "[HyperClient] CONNECT tunnel established via {proxy_host}:{proxy_port} -> {target_host}:{target_port}"
     );
 
-    Ok(tcp)
+    Ok(stream)
 }
 
 /// Lazily-initialized TLS connector for raw connections.
