@@ -794,6 +794,12 @@ impl RequestForwarder {
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+        let force_identity_encoding = should_force_identity_encoding(
+            effective_endpoint,
+            &filtered_body,
+            headers,
+            needs_transform,
+        );
 
         // 获取认证头（提前准备，用于内联替换）
         let auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
@@ -866,6 +872,12 @@ impl RequestForwarder {
             &[]
         };
 
+        // 预计算上游 host 值（用于在原位替换 host header）
+        let upstream_host = url
+            .parse::<http::Uri>()
+            .ok()
+            .and_then(|u| u.authority().map(|a| a.to_string()));
+
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if adapter.name() == "Claude" {
             const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
@@ -898,11 +910,20 @@ impl RequestForwarder {
         for (key, value) in headers {
             let key_str = key.as_str();
 
+            // --- host — 原位替换为上游 host（保持客户端原始位置） ---
+            if key_str.eq_ignore_ascii_case("host") {
+                if let Some(ref host_val) = upstream_host {
+                    if let Ok(hv) = http::HeaderValue::from_str(host_val) {
+                        ordered_headers.append(key.clone(), hv);
+                    }
+                }
+                continue;
+            }
+
             // --- 连接 / 追踪 / CDN 类 — 无条件跳过 ---
             if matches!(
                 key_str,
-                "host"
-                    | "content-length"
+                "content-length"
                     | "transfer-encoding"
                     | "x-forwarded-host"
                     | "x-forwarded-port"
@@ -947,14 +968,18 @@ impl RequestForwarder {
                 continue;
             }
 
-            // --- accept-encoding — 替换为与直连 HTTPS 一致的值 ---
+            // --- accept-encoding — transform / SSE 路径强制 identity，其余保留原值 ---
             if key_str.eq_ignore_ascii_case("accept-encoding") {
                 if !saw_accept_encoding {
                     saw_accept_encoding = true;
-                    ordered_headers.append(
-                        http::header::ACCEPT_ENCODING,
-                        http::HeaderValue::from_static("br, gzip, deflate"),
-                    );
+                    if force_identity_encoding {
+                        ordered_headers.append(
+                            http::header::ACCEPT_ENCODING,
+                            http::HeaderValue::from_static("identity"),
+                        );
+                    } else {
+                        ordered_headers.append(key.clone(), value.clone());
+                    }
                 }
                 continue;
             }
@@ -998,11 +1023,11 @@ impl RequestForwarder {
             }
         }
 
-        // 如果原始请求中没有 accept-encoding，追加
-        if !saw_accept_encoding {
+        // transform / SSE 路径在缺失时补 identity；普通透传不主动补 accept-encoding
+        if !saw_accept_encoding && force_identity_encoding {
             ordered_headers.append(
                 http::header::ACCEPT_ENCODING,
-                http::HeaderValue::from_static("br, gzip, deflate"),
+                http::HeaderValue::from_static("identity"),
             );
         }
 
@@ -1057,18 +1082,27 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 检查是否需要通过代理发送（供应商单独代理或全局代理）
+        // 解析上游代理 URL（供应商单独代理 > 全局代理 > 无）
         let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
-        let use_reqwest_proxy = proxy_config.map(|c| c.enabled).unwrap_or(false)
-            || super::http_client::get_current_proxy_url().is_some();
+        let upstream_proxy_url: Option<String> = proxy_config
+            .filter(|c| c.enabled)
+            .and_then(super::http_client::build_proxy_url_from_config)
+            .or_else(super::http_client::get_current_proxy_url);
+
+        // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
+        let is_socks_proxy = upstream_proxy_url
+            .as_deref()
+            .map(|u| u.starts_with("socks5"))
+            .unwrap_or(false);
 
         let uri: http::Uri = url
             .parse()
             .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
 
         // 发送请求
-        let response = if use_reqwest_proxy {
-            // 回退到 reqwest（支持 HTTP/SOCKS5 代理隧道）
+        let response = if is_socks_proxy {
+            // SOCKS5 代理：只能走 reqwest（不支持 header case 保留）
+            log::debug!("[Forwarder] Using reqwest for SOCKS5 proxy");
             let client = super::http_client::get_for_provider(proxy_config);
             let mut request = client.post(&url);
             if !self.non_streaming_timeout.is_zero() {
@@ -1088,14 +1122,23 @@ impl RequestForwarder {
             })?;
             ProxyResponse::Reqwest(reqwest_resp)
         } else {
-            // 主路径：使用 hyper client（保持 header case + order）
+            // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
+            // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
+            let http_proxy = if is_socks_proxy {
+                None
+            } else {
+                upstream_proxy_url.as_deref()
+            };
+            let mut ext = extensions.clone();
+            ext.insert(super::hyper_client::ExtensionDebugMarker);
             super::hyper_client::send_request(
                 uri,
                 http::Method::POST,
                 ordered_headers,
-                extensions.clone(),
+                ext,
                 body_bytes,
                 timeout,
+                http_proxy,
             )
             .await?
         };
@@ -1262,6 +1305,22 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
         .find_map(|value| value.as_str().map(ToString::to_string))
 }
 
+/// Determine whether to force `accept-encoding: identity` on the upstream request.
+///
+/// Only forced for **transform** paths where the proxy must decompress and re-encode
+/// the response body.  For transparent passthrough (including streaming / SSE), the
+/// client's original `accept-encoding` is preserved so the wire behaviour matches a
+/// direct connection.  SSE usage parsing may fail on compressed streams, but the bytes
+/// are still forwarded correctly to the client.
+fn should_force_identity_encoding(
+    _endpoint: &str,
+    _body: &Value,
+    _headers: &axum::http::HeaderMap,
+    needs_transform: bool,
+) -> bool {
+    needs_transform
+}
+
 fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = normalized.trim();
@@ -1278,6 +1337,7 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::{header::ACCEPT, HeaderMap, HeaderValue};
     use serde_json::json;
 
     #[test]
@@ -1343,5 +1403,69 @@ mod tests {
         let summary = summarize_text_for_log("line1\n\n line2   line3", 12);
 
         assert_eq!(summary, "line1 line2...");
+    }
+
+    #[test]
+    fn force_identity_for_transform_requests() {
+        let headers = HeaderMap::new();
+
+        assert!(should_force_identity_encoding(
+            "/v1/messages",
+            &json!({ "model": "gpt-5" }),
+            &headers,
+            true,
+        ));
+    }
+
+    #[test]
+    fn transparent_encoding_for_streaming_passthrough() {
+        let headers = HeaderMap::new();
+
+        // Streaming passthrough should NOT force identity — transparent proxy
+        assert!(!should_force_identity_encoding(
+            "/v1/responses",
+            &json!({ "stream": true }),
+            &headers,
+            false,
+        ));
+    }
+
+    #[test]
+    fn transparent_encoding_for_gemini_stream_endpoints() {
+        let headers = HeaderMap::new();
+
+        // SSE endpoints without transform: transparent
+        assert!(!should_force_identity_encoding(
+            "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+            &json!({ "model": "gemini-2.5-pro" }),
+            &headers,
+            false,
+        ));
+    }
+
+    #[test]
+    fn transparent_encoding_for_sse_accept_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+
+        // SSE accept header without transform: transparent
+        assert!(!should_force_identity_encoding(
+            "/v1/responses",
+            &json!({ "model": "gpt-5" }),
+            &headers,
+            false,
+        ));
+    }
+
+    #[test]
+    fn non_streaming_requests_keep_original_encoding_behavior() {
+        let headers = HeaderMap::new();
+
+        assert!(!should_force_identity_encoding(
+            "/v1/responses",
+            &json!({ "model": "gpt-5" }),
+            &headers,
+            false,
+        ));
     }
 }
