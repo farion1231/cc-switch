@@ -68,6 +68,7 @@ pub async fn handle_messages(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, body) = request.into_parts();
+    let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
     let body_bytes = body
@@ -81,6 +82,11 @@ pub async fn handle_messages(
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
 
+    let endpoint = uri
+        .path_and_query()
+        .map(|path_and_query| path_and_query.as_str())
+        .unwrap_or(uri.path());
+
     let is_stream = body
         .get("stream")
         .and_then(|s| s.as_bool())
@@ -91,7 +97,7 @@ pub async fn handle_messages(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Claude,
-            "/v1/messages",
+            endpoint,
             body.clone(),
             headers,
             extensions,
@@ -287,6 +293,13 @@ async fn handle_claude_transform(
     })
 }
 
+fn endpoint_with_query(uri: &axum::http::Uri, endpoint: &str) -> String {
+    match uri.query() {
+        Some(query) => format!("{endpoint}?{query}"),
+        None => endpoint.to_string(),
+    }
+}
+
 // ============================================================================
 // Codex API 处理器
 // ============================================================================
@@ -297,6 +310,7 @@ pub async fn handle_chat_completions(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
     let body_bytes = req_body
@@ -309,6 +323,7 @@ pub async fn handle_chat_completions(
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
         .get("stream")
@@ -319,7 +334,7 @@ pub async fn handle_chat_completions(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/chat/completions",
+            &endpoint,
             body,
             headers,
             extensions,
@@ -349,6 +364,7 @@ pub async fn handle_responses(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
     let body_bytes = req_body
@@ -361,6 +377,7 @@ pub async fn handle_responses(
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/responses");
 
     let is_stream = body
         .get("stream")
@@ -371,7 +388,7 @@ pub async fn handle_responses(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/responses",
+            &endpoint,
             body,
             headers,
             extensions,
@@ -401,6 +418,7 @@ pub async fn handle_responses_compact(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
     let body_bytes = req_body
@@ -413,6 +431,7 @@ pub async fn handle_responses_compact(
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
         .get("stream")
@@ -423,7 +442,7 @@ pub async fn handle_responses_compact(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/responses/compact",
+            &endpoint,
             body,
             headers,
             extensions,

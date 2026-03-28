@@ -14,6 +14,7 @@ use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
+use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
 /// 健康状态枚举
@@ -225,6 +226,7 @@ impl StreamCheckService {
                     &model_to_test,
                     test_prompt,
                     request_timeout,
+                    provider,
                 )
                 .await
             }
@@ -318,37 +320,26 @@ impl StreamCheckService {
             })
             .unwrap_or("anthropic");
 
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
         let is_openai_chat = is_github_copilot || api_format == "openai_chat";
+        let is_openai_responses = !is_github_copilot && api_format == "openai_responses";
+        let url = Self::resolve_claude_stream_url(base, auth.strategy, api_format, is_full_url);
 
-        // URL:
-        // - GitHub Copilot: /chat/completions (no /v1 prefix)
-        // - OpenAI-compatible: /v1/chat/completions
-        // - Anthropic native: /v1/messages?beta=true
-        let url = if is_github_copilot {
-            format!("{base}/chat/completions")
-        } else if is_openai_chat {
-            if base.ends_with("/v1") {
-                format!("{base}/chat/completions")
-            } else {
-                format!("{base}/v1/chat/completions")
-            }
-        } else {
-            // ?beta=true is required by some relay services to verify request origin
-            if base.ends_with("/v1") {
-                format!("{base}/messages?beta=true")
-            } else {
-                format!("{base}/v1/messages?beta=true")
-            }
-        };
-
-        // Build from Anthropic-native shape first, then convert for OpenAI-compatible targets.
+        // Build from Anthropic-native shape first, then convert for configured targets.
         let anthropic_body = json!({
             "model": model,
             "max_tokens": 1,
             "messages": [{ "role": "user", "content": test_prompt }],
             "stream": true
         });
-        let body = if is_openai_chat {
+        let body = if is_openai_responses {
+            anthropic_to_responses(anthropic_body, Some(&provider.id))
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else if is_openai_chat {
             anthropic_to_openai(anthropic_body, Some(&provider.id))
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else {
@@ -375,8 +366,8 @@ impl StreamCheckService {
                 )
                 .header("x-github-api-version", copilot_auth::COPILOT_API_VERSION)
                 .header("openai-intent", "conversation-panel");
-        } else if is_openai_chat {
-            // OpenAI-compatible: Bearer auth + standard headers only
+        } else if is_openai_chat || is_openai_responses {
+            // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder
                 .header("authorization", format!("Bearer {}", auth.api_key))
                 .header("content-type", "application/json")
@@ -461,18 +452,14 @@ impl StreamCheckService {
         model: &str,
         test_prompt: &str,
         timeout: std::time::Duration,
+        provider: &Provider,
     ) -> Result<(u16, String), AppError> {
-        let base = base_url.trim_end_matches('/');
-        // Codex CLI 的 base_url 语义：base_url 是 API base（可能已包含 /v1 或其他自定义前缀），
-        // Responses 端点为 `/responses`。
-        //
-        // 兼容：如果 base_url 配成纯 origin（如 https://api.openai.com），则需要补 `/v1`。
-        // 优先尝试 `{base}/responses`，若 404 再回退 `{base}/v1/responses`。
-        let urls = if base.ends_with("/v1") {
-            vec![format!("{base}/responses")]
-        } else {
-            vec![format!("{base}/responses"), format!("{base}/v1/responses")]
-        };
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+        let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
 
         // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
         let (actual_model, reasoning_effort) = Self::parse_model_with_effort(model);
@@ -730,28 +717,51 @@ impl StreamCheckService {
         }
     }
 
-    #[cfg(test)]
     fn resolve_claude_stream_url(
         base_url: &str,
         auth_strategy: AuthStrategy,
         api_format: &str,
+        is_full_url: bool,
     ) -> String {
+        if is_full_url {
+            return base_url.to_string();
+        }
+
         let base = base_url.trim_end_matches('/');
         let is_github_copilot = auth_strategy == AuthStrategy::GitHubCopilot;
-        let is_openai_chat = is_github_copilot || api_format == "openai_chat";
 
         if is_github_copilot {
             format!("{base}/chat/completions")
-        } else if is_openai_chat {
+        } else if api_format == "openai_responses" {
+            if base.ends_with("/v1") {
+                format!("{base}/responses")
+            } else {
+                format!("{base}/v1/responses")
+            }
+        } else if api_format == "openai_chat" {
             if base.ends_with("/v1") {
                 format!("{base}/chat/completions")
             } else {
                 format!("{base}/v1/chat/completions")
             }
         } else if base.ends_with("/v1") {
-            format!("{base}/messages?beta=true")
+            format!("{base}/messages")
         } else {
-            format!("{base}/v1/messages?beta=true")
+            format!("{base}/v1/messages")
+        }
+    }
+
+    fn resolve_codex_stream_urls(base_url: &str, is_full_url: bool) -> Vec<String> {
+        if is_full_url {
+            return vec![base_url.to_string()];
+        }
+
+        let base = base_url.trim_end_matches('/');
+
+        if base.ends_with("/v1") {
+            vec![format!("{base}/responses")]
+        } else {
+            vec![format!("{base}/responses"), format!("{base}/v1/responses")]
         }
     }
 }
@@ -858,11 +868,24 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_claude_stream_url_for_full_url_mode() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://relay.example/v1/chat/completions",
+            AuthStrategy::Bearer,
+            "openai_chat",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/v1/chat/completions");
+    }
+
+    #[test]
     fn test_resolve_claude_stream_url_for_github_copilot() {
         let url = StreamCheckService::resolve_claude_stream_url(
             "https://api.githubcopilot.com",
             AuthStrategy::GitHubCopilot,
             "anthropic",
+            false,
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
@@ -874,9 +897,22 @@ mod tests {
             "https://example.com/v1",
             AuthStrategy::Bearer,
             "openai_chat",
+            false,
         );
 
         assert_eq!(url, "https://example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_openai_responses() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://example.com/v1",
+            AuthStrategy::Bearer,
+            "openai_responses",
+            false,
+        );
+
+        assert_eq!(url, "https://example.com/v1/responses");
     }
 
     #[test]
@@ -885,8 +921,40 @@ mod tests {
             "https://api.anthropic.com",
             AuthStrategy::Anthropic,
             "anthropic",
+            false,
         );
 
-        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_for_full_url_mode() {
+        let urls = StreamCheckService::resolve_codex_stream_urls(
+            "https://relay.example/custom/responses",
+            true,
+        );
+
+        assert_eq!(urls, vec!["https://relay.example/custom/responses"]);
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_for_v1_base() {
+        let urls =
+            StreamCheckService::resolve_codex_stream_urls("https://api.openai.com/v1", false);
+
+        assert_eq!(urls, vec!["https://api.openai.com/v1/responses"]);
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_for_origin_base() {
+        let urls = StreamCheckService::resolve_codex_stream_urls("https://api.openai.com", false);
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://api.openai.com/responses",
+                "https://api.openai.com/v1/responses",
+            ]
+        );
     }
 }

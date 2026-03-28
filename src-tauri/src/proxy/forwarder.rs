@@ -748,6 +748,12 @@ impl RequestForwarder {
         // 检查是否需要格式转换
         let needs_transform = adapter.needs_transform(provider);
 
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+
         // 确定有效端点
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = provider
@@ -756,26 +762,24 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
-        let effective_endpoint =
-            if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
-                if is_copilot {
-                    // GitHub Copilot uses /chat/completions without /v1 prefix
-                    "/chat/completions"
-                } else {
-                    // 根据 api_format 选择目标端点
-                    let api_format = super::providers::get_claude_api_format(provider);
-                    if api_format == "openai_responses" {
-                        "/v1/responses"
-                    } else {
-                        "/v1/chat/completions"
-                    }
-                }
+        let (effective_endpoint, passthrough_query) =
+            if needs_transform && adapter.name() == "Claude" {
+                let api_format = super::providers::get_claude_api_format(provider);
+                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot)
             } else {
-                endpoint
+                (
+                    endpoint.to_string(),
+                    split_endpoint_and_query(endpoint)
+                        .1
+                        .map(ToString::to_string),
+                )
             };
 
-        // 使用适配器构建 URL
-        let url = adapter.build_url(&base_url, effective_endpoint);
+        let url = if is_full_url {
+            append_query_to_full_url(&base_url, passthrough_query.as_deref())
+        } else {
+            adapter.build_url(&base_url, &effective_endpoint)
+        };
 
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =
@@ -794,7 +798,8 @@ impl RequestForwarder {
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
-        let force_identity_encoding = needs_transform;
+        let force_identity_encoding = needs_transform
+            || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
         // 获取认证头（提前准备，用于内联替换）
         let auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
@@ -1293,6 +1298,100 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
         .find_map(|value| value.as_str().map(ToString::to_string))
 }
 
+fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
+    endpoint
+        .split_once('?')
+        .map_or((endpoint, None), |(path, query)| (path, Some(query)))
+}
+
+fn strip_beta_query(query: Option<&str>) -> Option<String> {
+    let filtered = query.map(|query| {
+        query
+            .split('&')
+            .filter(|pair| !pair.is_empty() && !pair.starts_with("beta="))
+            .collect::<Vec<_>>()
+            .join("&")
+    });
+
+    match filtered.as_deref() {
+        Some("") | None => None,
+        Some(_) => filtered,
+    }
+}
+
+fn is_claude_messages_path(path: &str) -> bool {
+    matches!(path, "/v1/messages" | "/claude/v1/messages")
+}
+
+fn rewrite_claude_transform_endpoint(
+    endpoint: &str,
+    api_format: &str,
+    is_copilot: bool,
+) -> (String, Option<String>) {
+    let (path, query) = split_endpoint_and_query(endpoint);
+    let passthrough_query = if is_claude_messages_path(path) {
+        strip_beta_query(query)
+    } else {
+        query.map(ToString::to_string)
+    };
+
+    if !is_claude_messages_path(path) {
+        return (endpoint.to_string(), passthrough_query);
+    }
+
+    let target_path = if is_copilot {
+        "/chat/completions"
+    } else if api_format == "openai_responses" {
+        "/v1/responses"
+    } else {
+        "/v1/chat/completions"
+    };
+
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path.to_string(),
+    };
+
+    (rewritten, passthrough_query)
+}
+
+fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
+    match query {
+        Some(query) if !query.is_empty() => {
+            if base_url.contains('?') {
+                format!("{base_url}&{query}")
+            } else {
+                format!("{base_url}?{query}")
+            }
+        }
+        _ => base_url.to_string(),
+    }
+}
+
+fn should_force_identity_encoding(
+    endpoint: &str,
+    body: &Value,
+    headers: &axum::http::HeaderMap,
+) -> bool {
+    if body
+        .get("stream")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    if endpoint.contains("streamGenerateContent") || endpoint.contains("alt=sse") {
+        return true;
+    }
+
+    headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .map(|accept| accept.contains("text/event-stream"))
+        .unwrap_or(false)
+}
+
 fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = normalized.trim();
@@ -1309,6 +1408,8 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::header::{HeaderValue, ACCEPT};
+    use axum::http::HeaderMap;
     use serde_json::json;
 
     #[test]
@@ -1376,4 +1477,88 @@ mod tests {
         assert_eq!(summary, "line1 line2...");
     }
 
+    #[test]
+    fn rewrite_claude_transform_endpoint_strips_beta_for_chat_completions() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&foo=bar",
+            "openai_chat",
+            false,
+        );
+
+        assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
+        assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_strips_beta_for_responses() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/claude/v1/messages?beta=true&x-id=1",
+            "openai_responses",
+            false,
+        );
+
+        assert_eq!(endpoint, "/v1/responses?x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_copilot_path() {
+        let (endpoint, passthrough_query) =
+            rewrite_claude_transform_endpoint("/v1/messages?beta=true&x-id=1", "anthropic", true);
+
+        assert_eq!(endpoint, "/chat/completions?x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn append_query_to_full_url_preserves_existing_query_string() {
+        let url = append_query_to_full_url("https://relay.example/api?foo=bar", Some("x-id=1"));
+
+        assert_eq!(url, "https://relay.example/api?foo=bar&x-id=1");
+    }
+
+    #[test]
+    fn force_identity_for_stream_flag_requests() {
+        let headers = HeaderMap::new();
+
+        assert!(should_force_identity_encoding(
+            "/v1/responses",
+            &json!({ "stream": true }),
+            &headers
+        ));
+    }
+
+    #[test]
+    fn force_identity_for_gemini_stream_endpoints() {
+        let headers = HeaderMap::new();
+
+        assert!(should_force_identity_encoding(
+            "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+            &json!({ "model": "gemini-2.5-pro" }),
+            &headers
+        ));
+    }
+
+    #[test]
+    fn force_identity_for_sse_accept_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+
+        assert!(should_force_identity_encoding(
+            "/v1/responses",
+            &json!({ "model": "gpt-5" }),
+            &headers
+        ));
+    }
+
+    #[test]
+    fn non_streaming_requests_allow_automatic_compression() {
+        let headers = HeaderMap::new();
+
+        assert!(!should_force_identity_encoding(
+            "/v1/responses",
+            &json!({ "model": "gpt-5" }),
+            &headers
+        ));
+    }
 }

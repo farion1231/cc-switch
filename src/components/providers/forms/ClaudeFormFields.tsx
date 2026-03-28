@@ -108,6 +108,10 @@ interface ClaudeFormFieldsProps {
   // Auth Field (ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY)
   apiKeyField: ClaudeApiKeyField;
   onApiKeyFieldChange: (field: ClaudeApiKeyField) => void;
+
+  // Full URL mode
+  isFullUrl: boolean;
+  onFullUrlChange: (value: boolean) => void;
 }
 
 export function ClaudeFormFields({
@@ -149,6 +153,8 @@ export function ClaudeFormFields({
   onApiFormatChange,
   apiKeyField,
   onApiKeyFieldChange,
+  isFullUrl,
+  onFullUrlChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasAnyAdvancedValue = !!(
@@ -378,6 +384,9 @@ export function ClaudeFormFields({
                 : t("providerForm.apiHint")
           }
           onManageClick={() => onEndpointModalToggle(true)}
+          showFullUrlToggle={true}
+          isFullUrl={isFullUrl}
+          onFullUrlChange={onFullUrlChange}
         />
       )}
 
