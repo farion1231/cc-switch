@@ -18,7 +18,10 @@ use super::{
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
         transform_responses,
     },
-    response_processor::{create_logged_passthrough_stream, process_response, SseUsageCollector},
+    response_processor::{
+        create_logged_passthrough_stream, process_response, read_decoded_body,
+        strip_entity_headers_for_rebuilt_body, SseUsageCollector,
+    },
     server::ProxyState,
     types::*,
     usage::parser::TokenUsage,
@@ -27,6 +30,7 @@ use super::{
 use crate::app_config::AppType;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
+use http_body_util::BodyExt;
 use serde_json::{json, Value};
 
 // ============================================================================
@@ -61,10 +65,20 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// - 现在 OpenRouter 已推出 Claude Code 兼容接口，默认不再启用该转换（逻辑保留以备回退）
 pub async fn handle_messages(
     State(state): State<ProxyState>,
-    uri: axum::http::Uri,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<Value>,
+    request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (parts, body) = request.into_parts();
+    let uri = parts.uri;
+    let headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
 
@@ -86,6 +100,7 @@ pub async fn handle_messages(
             endpoint,
             body.clone(),
             headers,
+            extensions,
             ctx.get_providers(),
         )
         .await
@@ -126,7 +141,7 @@ pub async fn handle_messages(
 ///
 /// 支持 OpenAI Chat Completions 和 Responses API 两种格式的转换
 async fn handle_claude_transform(
-    response: reqwest::Response,
+    response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
     _original_body: &Value,
@@ -211,12 +226,14 @@ async fn handle_claude_transform(
     }
 
     // 非流式响应转换 (OpenAI/Responses → Anthropic)
-    let response_headers = response.headers().clone();
-
-    let body_bytes = response.bytes().await.map_err(|e| {
-        log::error!("[Claude] 读取响应体失败: {e}");
-        ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
-    })?;
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, _status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
 
     let body_str = String::from_utf8_lossy(&body_bytes);
 
@@ -269,13 +286,10 @@ async fn handle_claude_transform(
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
 
     for (key, value) in response_headers.iter() {
-        if key.as_str().to_lowercase() != "content-length"
-            && key.as_str().to_lowercase() != "transfer-encoding"
-        {
-            builder = builder.header(key, value);
-        }
+        builder = builder.header(key, value);
     }
 
     builder = builder.header("content-type", "application/json");
@@ -306,10 +320,20 @@ fn endpoint_with_query(uri: &axum::http::Uri, endpoint: &str) -> String {
 /// 处理 /v1/chat/completions 请求（OpenAI Chat Completions API - Codex CLI）
 pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
-    uri: axum::http::Uri,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<Value>,
+    request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (parts, req_body) = request.into_parts();
+    let uri = parts.uri;
+    let headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = req_body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
@@ -326,6 +350,7 @@ pub async fn handle_chat_completions(
             &endpoint,
             body,
             headers,
+            extensions,
             ctx.get_providers(),
         )
         .await
@@ -349,10 +374,20 @@ pub async fn handle_chat_completions(
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
 pub async fn handle_responses(
     State(state): State<ProxyState>,
-    uri: axum::http::Uri,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<Value>,
+    request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (parts, req_body) = request.into_parts();
+    let uri = parts.uri;
+    let headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = req_body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
     let endpoint = endpoint_with_query(&uri, "/responses");
@@ -369,6 +404,7 @@ pub async fn handle_responses(
             &endpoint,
             body,
             headers,
+            extensions,
             ctx.get_providers(),
         )
         .await
@@ -392,10 +428,20 @@ pub async fn handle_responses(
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
 pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
-    uri: axum::http::Uri,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<Value>,
+    request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (parts, req_body) = request.into_parts();
+    let uri = parts.uri;
+    let headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = req_body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
     let endpoint = endpoint_with_query(&uri, "/responses/compact");
@@ -412,6 +458,7 @@ pub async fn handle_responses_compact(
             &endpoint,
             body,
             headers,
+            extensions,
             ctx.get_providers(),
         )
         .await
@@ -440,9 +487,19 @@ pub async fn handle_responses_compact(
 pub async fn handle_gemini(
     State(state): State<ProxyState>,
     uri: axum::http::Uri,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<Value>,
+    request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (parts, req_body) = request.into_parts();
+    let headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = req_body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
     // Gemini 的模型名称在 URI 中
     let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
         .await?
@@ -466,6 +523,7 @@ pub async fn handle_gemini(
             endpoint,
             body,
             headers,
+            extensions,
             ctx.get_providers(),
         )
         .await

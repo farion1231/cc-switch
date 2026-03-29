@@ -68,7 +68,6 @@ pub enum ProxyError {
     StreamIdleTimeout(u64),
 
     /// 认证错误
-    #[allow(dead_code)]
     #[error("认证失败: {0}")]
     AuthError(String),
 

@@ -16,7 +16,6 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
-use reqwest::RequestBuilder;
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -337,32 +336,50 @@ impl ProviderAdapter for ClaudeAdapter {
         base
     }
 
-    fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
+    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        use http::{HeaderName, HeaderValue};
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
-        // 这里不再设置 anthropic-version，避免 header 重复
+        let bearer = format!("Bearer {}", auth.api_key);
         match auth.strategy {
-            // Anthropic 官方: Authorization Bearer + x-api-key
-            AuthStrategy::Anthropic => request
-                .header("Authorization", format!("Bearer {}", auth.api_key))
-                .header("x-api-key", &auth.api_key),
-            // ClaudeAuth 中转服务: 仅 Bearer，无 x-api-key
-            AuthStrategy::ClaudeAuth => {
-                request.header("Authorization", format!("Bearer {}", auth.api_key))
+            AuthStrategy::Anthropic | AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
+                vec![(
+                    HeaderName::from_static("authorization"),
+                    HeaderValue::from_str(&bearer).unwrap(),
+                )]
             }
-            // OpenRouter: Bearer
-            AuthStrategy::Bearer => {
-                request.header("Authorization", format!("Bearer {}", auth.api_key))
+            AuthStrategy::GitHubCopilot => {
+                vec![
+                    (
+                        HeaderName::from_static("authorization"),
+                        HeaderValue::from_str(&bearer).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("editor-version"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_EDITOR_VERSION),
+                    ),
+                    (
+                        HeaderName::from_static("editor-plugin-version"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_PLUGIN_VERSION),
+                    ),
+                    (
+                        HeaderName::from_static("copilot-integration-id"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_INTEGRATION_ID),
+                    ),
+                    (
+                        HeaderName::from_static("user-agent"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_USER_AGENT),
+                    ),
+                    (
+                        HeaderName::from_static("x-github-api-version"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_API_VERSION),
+                    ),
+                    (
+                        HeaderName::from_static("openai-intent"),
+                        HeaderValue::from_static("conversation-panel"),
+                    ),
+                ]
             }
-            // GitHub Copilot: Bearer + 统一指纹头
-            AuthStrategy::GitHubCopilot => request
-                .header("Authorization", format!("Bearer {}", auth.api_key))
-                .header("editor-version", super::copilot_auth::COPILOT_EDITOR_VERSION)
-                .header("editor-plugin-version", super::copilot_auth::COPILOT_PLUGIN_VERSION)
-                .header("copilot-integration-id", super::copilot_auth::COPILOT_INTEGRATION_ID)
-                .header("user-agent", super::copilot_auth::COPILOT_USER_AGENT)
-                .header("x-github-api-version", super::copilot_auth::COPILOT_API_VERSION)
-                .header("openai-intent", "conversation-panel"),
-            _ => request,
+            _ => vec![],
         }
     }
 

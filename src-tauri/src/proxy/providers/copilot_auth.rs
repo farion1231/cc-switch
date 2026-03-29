@@ -341,7 +341,7 @@ impl CopilotAuthManager {
 
         // 尝试从磁盘加载（同步，不发起网络请求）
         if let Err(e) = manager.load_from_disk_sync() {
-            log::warn!("[CopilotAuth] 加载存储失败: {}", e);
+            log::warn!("[CopilotAuth] 加载存储失败: {e}");
         }
 
         manager
@@ -364,7 +364,7 @@ impl CopilotAuthManager {
 
     /// 移除指定账号
     pub async fn remove_account(&self, account_id: &str) -> Result<(), CopilotAuthError> {
-        log::info!("[CopilotAuth] 移除账号: {}", account_id);
+        log::info!("[CopilotAuth] 移除账号: {account_id}");
 
         {
             let mut accounts = self.accounts.write().await;
@@ -482,8 +482,7 @@ impl CopilotAuthManager {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             return Err(CopilotAuthError::NetworkError(format!(
-                "GitHub 设备码请求失败: {} - {}",
-                status, text
+                "GitHub 设备码请求失败: {status} - {text}"
             )));
         }
 
@@ -581,10 +580,7 @@ impl CopilotAuthManager {
         }
 
         // 需要刷新
-        log::info!(
-            "[CopilotAuth] 账号 {} 的 Copilot Token 需要刷新",
-            account_id
-        );
+        log::info!("[CopilotAuth] 账号 {account_id} 的 Copilot Token 需要刷新");
 
         let refresh_lock = self.get_refresh_lock(account_id).await;
         let _refresh_guard = refresh_lock.lock().await;
@@ -660,12 +656,12 @@ impl CopilotAuthManager {
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
         let copilot_token = self.get_valid_token_for_account(account_id).await?;
 
-        log::info!("[CopilotAuth] 获取账号 {} 的 Copilot 可用模型", account_id);
+        log::info!("[CopilotAuth] 获取账号 {account_id} 的 Copilot 可用模型");
 
         let response = self
             .http_client
             .get(COPILOT_MODELS_URL)
-            .header("Authorization", format!("Bearer {}", copilot_token))
+            .header("Authorization", format!("Bearer {copilot_token}"))
             .header("Content-Type", "application/json")
             .header("copilot-integration-id", "vscode-chat")
             .header("editor-version", COPILOT_EDITOR_VERSION)
@@ -679,8 +675,7 @@ impl CopilotAuthManager {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             return Err(CopilotAuthError::CopilotTokenFetchFailed(format!(
-                "获取模型列表失败: {} - {}",
-                status, text
+                "获取模型列表失败: {status} - {text}"
             )));
         }
 
@@ -749,12 +744,12 @@ impl CopilotAuthManager {
                 .ok_or_else(|| CopilotAuthError::AccountNotFound(account_id.to_string()))?
         };
 
-        log::info!("[CopilotAuth] 获取账号 {} 的 Copilot 使用量", account_id);
+        log::info!("[CopilotAuth] 获取账号 {account_id} 的 Copilot 使用量");
 
         let response = self
             .http_client
             .get(COPILOT_USAGE_URL)
-            .header("Authorization", format!("token {}", github_token))
+            .header("Authorization", format!("token {github_token}"))
             .header("Content-Type", "application/json")
             .header("editor-version", COPILOT_EDITOR_VERSION)
             .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
@@ -771,8 +766,7 @@ impl CopilotAuthManager {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             return Err(CopilotAuthError::CopilotTokenFetchFailed(format!(
-                "获取使用量失败: {} - {}",
-                status, text
+                "获取使用量失败: {status} - {text}"
             )));
         }
 
@@ -1000,7 +994,7 @@ impl CopilotAuthManager {
         let response = self
             .http_client
             .get(GITHUB_USER_URL)
-            .header("Authorization", format!("token {}", github_token))
+            .header("Authorization", format!("token {github_token}"))
             .header("User-Agent", COPILOT_USER_AGENT)
             .header("Editor-Version", COPILOT_EDITOR_VERSION)
             .header("Editor-Plugin-Version", COPILOT_PLUGIN_VERSION)
@@ -1027,12 +1021,12 @@ impl CopilotAuthManager {
         github_token: &str,
         account_id: &str,
     ) -> Result<(), CopilotAuthError> {
-        log::debug!("[CopilotAuth] 获取账号 {} 的 Copilot Token", account_id);
+        log::debug!("[CopilotAuth] 获取账号 {account_id} 的 Copilot Token");
 
         let response = self
             .http_client
             .get(COPILOT_TOKEN_URL)
-            .header("Authorization", format!("token {}", github_token))
+            .header("Authorization", format!("token {github_token}"))
             .header("User-Agent", COPILOT_USER_AGENT)
             .header("Editor-Version", COPILOT_EDITOR_VERSION)
             .header("Editor-Plugin-Version", COPILOT_PLUGIN_VERSION)
@@ -1051,8 +1045,7 @@ impl CopilotAuthManager {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             return Err(CopilotAuthError::CopilotTokenFetchFailed(format!(
-                "{}: {}",
-                status, text
+                "{status}: {text}"
             )));
         }
 
@@ -1135,7 +1128,7 @@ impl CopilotAuthManager {
                         .fetch_copilot_token_with_github_token(&legacy_token, &account_id)
                         .await
                     {
-                        log::warn!("[CopilotAuth] 迁移时验证 Copilot 订阅失败: {}", e);
+                        log::warn!("[CopilotAuth] 迁移时验证 Copilot 订阅失败: {e}");
                     }
 
                     // 添加账号
@@ -1149,7 +1142,7 @@ impl CopilotAuthManager {
                         "Legacy Copilot auth migration failed: {e}"
                     )))
                     .await;
-                    log::warn!("[CopilotAuth] 迁移失败，旧 token 可能已失效: {}", e);
+                    log::warn!("[CopilotAuth] 迁移失败，旧 token 可能已失效: {e}");
                 }
             }
 
