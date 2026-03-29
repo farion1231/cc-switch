@@ -69,6 +69,11 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 }
 
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
+    // OpenCode SQLite sessions use a "sqlite:" prefixed source_path
+    if provider_id == "opencode" && source_path.starts_with("sqlite:") {
+        return opencode::load_messages_sqlite(source_path);
+    }
+
     let path = Path::new(source_path);
     match provider_id {
         "codex" => codex::load_messages(path),
@@ -85,6 +90,11 @@ pub fn delete_session(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    // OpenCode SQLite sessions bypass the file-based deletion path
+    if provider_id == "opencode" && source_path.starts_with("sqlite:") {
+        return opencode::delete_session_sqlite(session_id, source_path);
+    }
+
     let root = provider_root(provider_id)?;
     delete_session_with_root(provider_id, session_id, Path::new(source_path), &root)
 }

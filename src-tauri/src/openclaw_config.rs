@@ -294,7 +294,7 @@ impl OpenClawConfigDocument {
 
         if let Some(existing) = key_value_pairs
             .iter_mut()
-            .find(|pair| json5_key_name(&pair.key).as_deref() == Some(key))
+            .find(|pair| json5_key_name(&pair.key) == Some(key))
         {
             existing.value = new_value;
             return Ok(());

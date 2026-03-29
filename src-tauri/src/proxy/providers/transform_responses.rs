@@ -61,6 +61,15 @@ pub fn anthropic_to_responses(body: Value, cache_key: Option<&str>) -> Result<Va
         result["stream"] = v.clone();
     }
 
+    // Map Anthropic thinking → OpenAI Responses reasoning.effort
+    if let Some(model_name) = body.get("model").and_then(|m| m.as_str()) {
+        if super::transform::supports_reasoning_effort(model_name) {
+            if let Some(effort) = super::transform::resolve_reasoning_effort(&body) {
+                result["reasoning"] = json!({ "effort": effort });
+            }
+        }
+    }
+
     // stop_sequences → 丢弃 (Responses API 不支持)
 
     // 转换 tools (过滤 BatchTool)
@@ -909,5 +918,97 @@ mod tests {
         let result = anthropic_to_responses(input, None).unwrap();
         assert_eq!(result["max_output_tokens"], 4096);
         assert!(result.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn test_responses_output_config_max_sets_reasoning_xhigh() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "output_config": {"effort": "max"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_output_config_takes_priority_over_thinking() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "output_config": {"effort": "low"},
+            "thinking": {"type": "adaptive"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn test_responses_thinking_enabled_small_budget_sets_reasoning_low() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "thinking": {"type": "enabled", "budget_tokens": 2048},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn test_responses_thinking_enabled_medium_budget_sets_reasoning_medium() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "thinking": {"type": "enabled", "budget_tokens": 8000},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "medium");
+    }
+
+    #[test]
+    fn test_responses_thinking_enabled_large_budget_sets_reasoning_high() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "thinking": {"type": "enabled", "budget_tokens": 32000},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn test_responses_thinking_adaptive_sets_reasoning_high() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn test_responses_non_reasoning_model_no_reasoning() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "thinking": {"type": "enabled", "budget_tokens": 2048},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None).unwrap();
+        assert!(result.get("reasoning").is_none());
     }
 }

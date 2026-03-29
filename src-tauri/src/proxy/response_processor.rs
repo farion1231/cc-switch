@@ -6,6 +6,7 @@ use super::{
     handler_config::UsageParserConfig,
     handler_context::{RequestContext, StreamingTimeoutConfig},
     server::ProxyState,
+    sse::strip_sse_field,
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -527,7 +528,7 @@ pub fn create_logged_passthrough_stream(
                         if !event_text.trim().is_empty() {
                             // 提取 data 部分并尝试解析为 JSON
                             for line in event_text.lines() {
-                                if let Some(data) = line.strip_prefix("data: ") {
+                                if let Some(data) = strip_sse_field(line, "data") {
                                     if data.trim() != "[DONE]" {
                                         if let Ok(json_value) = serde_json::from_str::<Value>(data) {
                                             if let Some(c) = &collector {
@@ -590,6 +591,27 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    #[test]
+    fn test_strip_sse_field_accepts_optional_space() {
+        assert_eq!(
+            super::strip_sse_field("data: {\"ok\":true}", "data"),
+            Some("{\"ok\":true}")
+        );
+        assert_eq!(
+            super::strip_sse_field("data:{\"ok\":true}", "data"),
+            Some("{\"ok\":true}")
+        );
+        assert_eq!(
+            super::strip_sse_field("event: message_start", "event"),
+            Some("message_start")
+        );
+        assert_eq!(
+            super::strip_sse_field("event:message_start", "event"),
+            Some("message_start")
+        );
+        assert_eq!(super::strip_sse_field("id:1", "data"), None);
+    }
 
     fn build_state(db: Arc<Database>) -> ProxyState {
         ProxyState {

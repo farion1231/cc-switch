@@ -8,7 +8,7 @@ use super::{
     failover_switch::FailoverSwitchManager,
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
-    providers::{get_adapter, ProviderAdapter, ProviderType},
+    providers::{get_adapter, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
@@ -16,10 +16,13 @@ use super::{
     types::{OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
+use crate::commands::CopilotAuthState;
+use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::{app_config::AppType, provider::Provider};
 use reqwest::Response;
 use serde_json::Value;
 use std::sync::Arc;
+use tauri::Manager;
 use tokio::sync::RwLock;
 
 /// Headers 黑名单 - 不透传到上游的 Headers
@@ -78,6 +81,7 @@ const HEADER_BLACKLIST: &[&str] = &[
 pub struct ForwardResult {
     pub response: Response,
     pub provider: Provider,
+    pub claude_api_format: Option<String>,
 }
 
 pub struct ForwardError {
@@ -226,7 +230,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok(response) => {
+                Ok((response, claude_api_format)) => {
                     // 成功：记录成功并更新熔断器
                     let _ = self
                         .router
@@ -280,6 +284,7 @@ impl RequestForwarder {
                     return Ok(ForwardResult {
                         response,
                         provider: provider.clone(),
+                        claude_api_format,
                     });
                 }
                 Err(e) => {
@@ -354,7 +359,7 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok(response) => {
+                                    Ok((response, claude_api_format)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         // 记录成功
                                         let _ = self
@@ -413,6 +418,7 @@ impl RequestForwarder {
                                         return Ok(ForwardResult {
                                             response,
                                             provider: provider.clone(),
+                                            claude_api_format,
                                         });
                                     }
                                     Err(retry_err) => {
@@ -551,7 +557,7 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok(response) => {
+                                Ok((response, claude_api_format)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     let _ = self
                                         .router
@@ -603,6 +609,7 @@ impl RequestForwarder {
                                     return Ok(ForwardResult {
                                         response,
                                         provider: provider.clone(),
+                                        claude_api_format,
                                     });
                                 }
                                 Err(retry_err) => {
@@ -785,28 +792,15 @@ impl RequestForwarder {
         body: &Value,
         headers: &axum::http::HeaderMap,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<Response, ProxyError> {
+    ) -> Result<(Response, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let base_url = adapter.extract_base_url(provider)?;
 
-        // 检查是否需要格式转换
-        let needs_transform = adapter.needs_transform(provider);
-
-        let effective_endpoint =
-            if needs_transform && adapter.name() == "Claude" && endpoint == "/v1/messages" {
-                // 根据 api_format 选择目标端点
-                let api_format = super::providers::get_claude_api_format(provider);
-                if api_format == "openai_responses" {
-                    "/v1/responses"
-                } else {
-                    "/v1/chat/completions"
-                }
-            } else {
-                endpoint
-            };
-
-        // 使用适配器构建 URL
-        let url = adapter.build_url(&base_url, effective_endpoint);
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
 
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =
@@ -815,9 +809,61 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mapped_body = normalize_thinking_type(mapped_body);
 
+        // 确定有效端点
+        // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
+        let is_copilot = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("github_copilot")
+            || base_url.contains("githubcopilot.com");
+        let resolved_claude_api_format = if adapter.name() == "Claude" {
+            Some(
+                self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
+                    .await,
+            )
+        } else {
+            None
+        };
+        let needs_transform = match resolved_claude_api_format.as_deref() {
+            Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
+            None => adapter.needs_transform(provider),
+        };
+        let (effective_endpoint, passthrough_query) =
+            if needs_transform && adapter.name() == "Claude" {
+                let api_format = resolved_claude_api_format
+                    .as_deref()
+                    .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot)
+            } else {
+                (
+                    endpoint.to_string(),
+                    split_endpoint_and_query(endpoint)
+                        .1
+                        .map(ToString::to_string),
+                )
+            };
+
+        let url = if is_full_url {
+            append_query_to_full_url(&base_url, passthrough_query.as_deref())
+        } else {
+            adapter.build_url(&base_url, &effective_endpoint)
+        };
+
         // 转换请求体（如果需要）
         let request_body = if needs_transform {
-            adapter.transform_request(mapped_body, provider)?
+            if adapter.name() == "Claude" {
+                let api_format = resolved_claude_api_format
+                    .as_deref()
+                    .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+                super::providers::transform_claude_request_for_api_format(
+                    mapped_body,
+                    provider,
+                    api_format,
+                )?
+            } else {
+                adapter.transform_request(mapped_body, provider)?
+            }
         } else {
             mapped_body
         };
@@ -840,9 +886,22 @@ impl RequestForwarder {
 
         // 过滤黑名单 Headers，保护隐私并避免冲突
         for (key, value) in headers {
+            let key_str = key.as_str();
             if HEADER_BLACKLIST
                 .iter()
-                .any(|h| key.as_str().eq_ignore_ascii_case(h))
+                .any(|h| key_str.eq_ignore_ascii_case(h))
+            {
+                continue;
+            }
+            // Copilot 请求：过滤会由 add_auth_headers 注入的固定指纹头，
+            // 防止客户端原始头与注入头重复（reqwest header() 是追加语义）
+            if is_copilot
+                && (key_str.eq_ignore_ascii_case("user-agent")
+                    || key_str.eq_ignore_ascii_case("editor-version")
+                    || key_str.eq_ignore_ascii_case("editor-plugin-version")
+                    || key_str.eq_ignore_ascii_case("copilot-integration-id")
+                    || key_str.eq_ignore_ascii_case("x-github-api-version")
+                    || key_str.eq_ignore_ascii_case("openai-intent"))
             {
                 continue;
             }
@@ -887,12 +946,62 @@ impl RequestForwarder {
 
         // 流式请求保守禁用压缩，避免上游压缩 SSE 在连接中断时触发解压错误。
         // 非流式请求不显式设置 Accept-Encoding，让 reqwest 自动协商压缩并透明解压。
-        if should_force_identity_encoding(effective_endpoint, &filtered_body, headers) {
+        if should_force_identity_encoding(&effective_endpoint, &filtered_body, headers) {
             request = request.header("accept-encoding", "identity");
         }
 
         // 使用适配器添加认证头
-        if let Some(auth) = adapter.extract_auth(provider) {
+        if let Some(mut auth) = adapter.extract_auth(provider) {
+            // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
+            if auth.strategy == AuthStrategy::GitHubCopilot {
+                if let Some(app_handle) = &self.app_handle {
+                    let copilot_state = app_handle.state::<CopilotAuthState>();
+                    let copilot_auth: tokio::sync::RwLockReadGuard<'_, CopilotAuthManager> =
+                        copilot_state.0.read().await;
+
+                    // 从 provider.meta 获取关联的 GitHub 账号 ID（多账号支持）
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.managed_account_id_for("github_copilot"));
+
+                    // 根据账号 ID 获取对应 token（向后兼容：无账号 ID 时使用第一个账号）
+                    let token_result = match &account_id {
+                        Some(id) => {
+                            log::debug!("[Copilot] 使用指定账号 {id} 获取 token");
+                            copilot_auth.get_valid_token_for_account(id).await
+                        }
+                        None => {
+                            log::debug!("[Copilot] 使用默认账号获取 token");
+                            copilot_auth.get_valid_token().await
+                        }
+                    };
+
+                    match token_result {
+                        Ok(token) => {
+                            auth = AuthInfo::new(token, AuthStrategy::GitHubCopilot);
+                            log::debug!(
+                                "[Copilot] 成功获取 Copilot token (account={})",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "[Copilot] 获取 Copilot token 失败 (account={}): {e}",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                            return Err(ProxyError::AuthError(format!(
+                                "GitHub Copilot 认证失败: {e}"
+                            )));
+                        }
+                    }
+                } else {
+                    log::error!("[Copilot] AppHandle 不可用");
+                    return Err(ProxyError::AuthError(
+                        "GitHub Copilot 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
             request = adapter.add_auth_headers(request, &auth);
         }
 
@@ -936,7 +1045,7 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
-            Ok(response)
+            Ok((response, resolved_claude_api_format))
         } else {
             let status_code = status.as_u16();
             let body_text = response.text().await.ok();
@@ -945,6 +1054,64 @@ impl RequestForwarder {
                 status: status_code,
                 body: body_text,
             })
+        }
+    }
+
+    async fn resolve_claude_api_format(
+        &self,
+        provider: &Provider,
+        body: &Value,
+        is_copilot: bool,
+    ) -> String {
+        if !is_copilot {
+            return super::providers::get_claude_api_format(provider).to_string();
+        }
+
+        let model = body.get("model").and_then(|value| value.as_str());
+        if let Some(model_id) = model {
+            if self
+                .is_copilot_openai_vendor_model(provider, model_id)
+                .await
+            {
+                return "openai_responses".to_string();
+            }
+        }
+
+        "openai_chat".to_string()
+    }
+
+    async fn is_copilot_openai_vendor_model(&self, provider: &Provider, model_id: &str) -> bool {
+        let Some(app_handle) = &self.app_handle else {
+            log::debug!("[Copilot] AppHandle unavailable, fallback to chat/completions");
+            return false;
+        };
+
+        let copilot_state = app_handle.state::<CopilotAuthState>();
+        let copilot_auth = copilot_state.0.read().await;
+        let account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.managed_account_id_for("github_copilot"));
+
+        let vendor_result = match account_id.as_deref() {
+            Some(id) => copilot_auth.get_model_vendor_for_account(id, model_id).await,
+            None => copilot_auth.get_model_vendor(model_id).await,
+        };
+
+        match vendor_result {
+            Ok(Some(vendor)) => vendor.eq_ignore_ascii_case("openai"),
+            Ok(None) => {
+                log::debug!(
+                    "[Copilot] Model vendor unavailable for {model_id}, fallback to chat/completions"
+                );
+                false
+            }
+            Err(err) => {
+                log::warn!(
+                    "[Copilot] Failed to resolve model vendor for {model_id}, fallback to chat/completions: {err}"
+                );
+                false
+            }
         }
     }
 
@@ -1094,6 +1261,78 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
         .find_map(|value| value.as_str().map(ToString::to_string))
 }
 
+fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
+    endpoint
+        .split_once('?')
+        .map_or((endpoint, None), |(path, query)| (path, Some(query)))
+}
+
+fn strip_beta_query(query: Option<&str>) -> Option<String> {
+    let filtered = query.map(|query| {
+        query
+            .split('&')
+            .filter(|pair| !pair.is_empty() && !pair.starts_with("beta="))
+            .collect::<Vec<_>>()
+            .join("&")
+    });
+
+    match filtered.as_deref() {
+        Some("") | None => None,
+        Some(_) => filtered,
+    }
+}
+
+fn is_claude_messages_path(path: &str) -> bool {
+    matches!(path, "/v1/messages" | "/claude/v1/messages")
+}
+
+fn rewrite_claude_transform_endpoint(
+    endpoint: &str,
+    api_format: &str,
+    is_copilot: bool,
+) -> (String, Option<String>) {
+    let (path, query) = split_endpoint_and_query(endpoint);
+    let passthrough_query = if is_claude_messages_path(path) {
+        strip_beta_query(query)
+    } else {
+        query.map(ToString::to_string)
+    };
+
+    if !is_claude_messages_path(path) {
+        return (endpoint.to_string(), passthrough_query);
+    }
+
+    let target_path = if is_copilot && api_format == "openai_responses" {
+        "/v1/responses"
+    } else if is_copilot {
+        "/chat/completions"
+    } else if api_format == "openai_responses" {
+        "/v1/responses"
+    } else {
+        "/v1/chat/completions"
+    };
+
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path.to_string(),
+    };
+
+    (rewritten, passthrough_query)
+}
+
+fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
+    match query {
+        Some(query) if !query.is_empty() => {
+            if base_url.contains('?') {
+                format!("{base_url}&{query}")
+            } else {
+                format!("{base_url}?{query}")
+            }
+        }
+        _ => base_url.to_string(),
+    }
+}
+
 fn should_force_identity_encoding(
     endpoint: &str,
     body: &Value,
@@ -1200,6 +1439,58 @@ mod tests {
         let summary = summarize_text_for_log("line1\n\n line2   line3", 12);
 
         assert_eq!(summary, "line1 line2...");
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_strips_beta_for_chat_completions() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&foo=bar",
+            "openai_chat",
+            false,
+        );
+
+        assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
+        assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_strips_beta_for_responses() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/claude/v1/messages?beta=true&x-id=1",
+            "openai_responses",
+            false,
+        );
+
+        assert_eq!(endpoint, "/v1/responses?x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_copilot_path() {
+        let (endpoint, passthrough_query) =
+            rewrite_claude_transform_endpoint("/v1/messages?beta=true&x-id=1", "anthropic", true);
+
+        assert_eq!(endpoint, "/chat/completions?x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_copilot_responses_path() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&x-id=1",
+            "openai_responses",
+            true,
+        );
+
+        assert_eq!(endpoint, "/v1/responses?x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn append_query_to_full_url_preserves_existing_query_string() {
+        let url = append_query_to_full_url("https://relay.example/api?foo=bar", Some("x-id=1"));
+
+        assert_eq!(url, "https://relay.example/api?foo=bar&x-id=1");
     }
 
     #[test]

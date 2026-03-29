@@ -199,14 +199,14 @@ export function ProviderCard({
   // - 故障转移模式：代理实际使用的供应商（activeProviderId）
   // - 普通模式：isCurrent
   const isActiveProvider = isAnyOmo
-      ? isCurrent
-      : appId === "openclaw"
-          ? Boolean(isDefaultModel)
-          : appId === "opencode"
-              ? false
-              : isAutoFailoverEnabled
-                  ? activeProviderId === provider.id
-                  : isCurrent;
+    ? isCurrent
+    : appId === "openclaw"
+      ? Boolean(isDefaultModel)
+      : appId === "opencode"
+        ? false
+        : isAutoFailoverEnabled
+          ? activeProviderId === provider.id
+          : isCurrent;
 
   const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
   const shouldUseBlue =

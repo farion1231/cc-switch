@@ -208,12 +208,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
   return (
     <TooltipProvider>
-      <div className="mx-auto px-4 sm:px-6 flex flex-col flex-1 min-h-0">
+      <div
+        className="mx-auto px-4 sm:px-6 flex flex-col h-full min-h-0"
+        onWheel={(e) => e.stopPropagation()}
+      >
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
           {/* 主内容区域 - 左右分栏 */}
           <div className="flex-1 overflow-hidden grid gap-4 md:grid-cols-[320px_1fr]">
             {/* 左侧会话列表 */}
-            <Card className="flex flex-col overflow-hidden">
+            <Card className="flex flex-col flex-1 min-h-0 overflow-hidden">
               <CardHeader className="py-2 px-3 border-b">
                 {isSearchOpen ? (
                   <div className="relative flex-1">
@@ -387,7 +390,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                   </div>
                 )}
               </CardHeader>
-              <CardContent className="flex-1 overflow-hidden p-0">
+              <CardContent className="flex-1 min-h-0 p-0">
                 <ScrollArea className="h-full">
                   <div className="p-2">
                     {isLoading ? (
@@ -605,7 +608,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                   </CardHeader>
 
                   {/* 消息列表区域 */}
-                  <CardContent className="flex-1 overflow-hidden p-0">
+                  <CardContent className="flex-1 min-h-0 p-0">
                     <div className="flex h-full min-w-0">
                       {/* 消息列表 */}
                       <ScrollArea className="flex-1 min-w-0">

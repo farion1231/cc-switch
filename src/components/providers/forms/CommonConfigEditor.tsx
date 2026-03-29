@@ -75,16 +75,24 @@ export function CommonConfigEditor({
       return {
         hideAttribution:
           config?.attribution?.commit === "" && config?.attribution?.pr === "",
-        alwaysThinking: config?.alwaysThinkingEnabled === true,
         teammates:
           config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === "1" ||
           config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 1,
+        enableToolSearch:
+          config?.env?.ENABLE_TOOL_SEARCH === "true" ||
+          config?.env?.ENABLE_TOOL_SEARCH === "1",
+        effortHigh: config?.effortLevel === "high",
+        disableAutoUpgrade:
+          config?.env?.DISABLE_AUTOUPDATER === "1" ||
+          config?.env?.DISABLE_AUTOUPDATER === 1,
       };
     } catch {
       return {
         hideAttribution: false,
-        alwaysThinking: false,
         teammates: false,
+        enableToolSearch: false,
+        effortHigh: false,
+        disableAutoUpgrade: false,
       };
     }
   }, [localValue]);
@@ -102,19 +110,37 @@ export function CommonConfigEditor({
               delete config.attribution;
             }
             break;
-          case "alwaysThinking":
-            if (checked) {
-              config.alwaysThinkingEnabled = true;
-            } else {
-              delete config.alwaysThinkingEnabled;
-            }
-            break;
           case "teammates":
             if (!config.env) config.env = {};
             if (checked) {
               config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
             } else {
               delete config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
+              if (Object.keys(config.env).length === 0) delete config.env;
+            }
+            break;
+          case "enableToolSearch":
+            if (!config.env) config.env = {};
+            if (checked) {
+              config.env.ENABLE_TOOL_SEARCH = "true";
+            } else {
+              delete config.env.ENABLE_TOOL_SEARCH;
+              if (Object.keys(config.env).length === 0) delete config.env;
+            }
+            break;
+          case "effortHigh":
+            if (checked) {
+              config.effortLevel = "high";
+            } else {
+              delete config.effortLevel;
+            }
+            break;
+          case "disableAutoUpgrade":
+            if (!config.env) config.env = {};
+            if (checked) {
+              config.env.DISABLE_AUTOUPDATER = "1";
+            } else {
+              delete config.env.DISABLE_AUTOUPDATER;
               if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
@@ -181,20 +207,42 @@ export function CommonConfigEditor({
           <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <input
               type="checkbox"
-              checked={toggleStates.alwaysThinking}
-              onChange={(e) => handleToggle("alwaysThinking", e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            <span>{t("claudeConfig.alwaysThinking")}</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
               checked={toggleStates.teammates}
               onChange={(e) => handleToggle("teammates", e.target.checked)}
               className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
             />
             <span>{t("claudeConfig.enableTeammates")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.enableToolSearch}
+              onChange={(e) =>
+                handleToggle("enableToolSearch", e.target.checked)
+              }
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.enableToolSearch")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.effortHigh}
+              onChange={(e) => handleToggle("effortHigh", e.target.checked)}
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.effortHigh")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.disableAutoUpgrade}
+              onChange={(e) =>
+                handleToggle("disableAutoUpgrade", e.target.checked)
+              }
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.disableAutoUpgrade")}</span>
           </label>
         </div>
         <JsonEditor
