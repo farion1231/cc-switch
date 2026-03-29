@@ -7,11 +7,15 @@ import type { Provider, UsageScript } from "@/types";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+const toastInfoMock = vi.fn();
+const toastWarningMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
+    info: (...args: unknown[]) => toastInfoMock(...args),
+    warning: (...args: unknown[]) => toastWarningMock(...args),
   },
 }));
 
@@ -116,6 +120,8 @@ beforeEach(() => {
   openclawApiSetDefaultModelMock.mockReset();
   toastSuccessMock.mockReset();
   toastErrorMock.mockReset();
+  toastInfoMock.mockReset();
+  toastWarningMock.mockReset();
 
   addProviderMutation.isPending = false;
   updateProviderMutation.isPending = false;
@@ -183,6 +189,50 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
     expect(settingsApiGetMock).not.toHaveBeenCalled();
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks switching providers that require proxy when proxy is not running", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        apiFormat: "openai_chat",
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("claude", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(settingsApiGetMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks switching Codex full URL providers when proxy is not running", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        isFullUrl: true,
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("codex", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(settingsApiGetMock).not.toHaveBeenCalled();
   });
 
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {

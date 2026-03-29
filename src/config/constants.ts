@@ -11,5 +11,4 @@ export const TEMPLATE_TYPES = {
   GITHUB_COPILOT: "github_copilot",
 } as const;
 
-export type TemplateType =
-  (typeof TEMPLATE_TYPES)[keyof typeof TEMPLATE_TYPES];
+export type TemplateType = (typeof TEMPLATE_TYPES)[keyof typeof TEMPLATE_TYPES];
