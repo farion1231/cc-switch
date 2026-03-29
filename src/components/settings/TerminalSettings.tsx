@@ -16,6 +16,7 @@ const MACOS_TERMINALS = [
   { value: "kitty", labelKey: "settings.terminal.options.macos.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.macos.ghostty" },
   { value: "wezterm", labelKey: "settings.terminal.options.macos.wezterm" },
+  { value: "tabby", labelKey: "settings.terminal.options.macos.tabby" },
 ] as const;
 
 const WINDOWS_TERMINALS = [
@@ -25,6 +26,7 @@ const WINDOWS_TERMINALS = [
     labelKey: "settings.terminal.options.windows.powershell",
   },
   { value: "wt", labelKey: "settings.terminal.options.windows.wt" },
+  { value: "tabby", labelKey: "settings.terminal.options.windows.tabby" },
 ] as const;
 
 const LINUX_TERMINALS = [
@@ -40,6 +42,7 @@ const LINUX_TERMINALS = [
   { value: "alacritty", labelKey: "settings.terminal.options.linux.alacritty" },
   { value: "kitty", labelKey: "settings.terminal.options.linux.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.linux.ghostty" },
+  { value: "tabby", labelKey: "settings.terminal.options.linux.tabby" },
 ] as const;
 
 // Get terminals for the current platform

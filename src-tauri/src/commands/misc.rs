@@ -888,6 +888,7 @@ exec bash --norc --noprofile
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
         "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
+        "tabby" => launch_macos_tabby(&script_file),
         _ => launch_macos_terminal_app(&script_file), // "terminal" or default
     };
 
@@ -1005,6 +1006,39 @@ fn launch_macos_open_app(
     Ok(())
 }
 
+/// macOS: Tabby
+#[cfg(target_os = "macos")]
+fn launch_macos_tabby(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let output = Command::new("open")
+        .args(build_macos_tabby_args(script_file))
+        .output()
+        .map_err(|e| format!("启动 Tabby 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Tabby 启动失败 (exit code: {:?}): {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+fn build_macos_tabby_args(script_file: &std::path::Path) -> Vec<String> {
+    vec![
+        "-na".to_string(),
+        "Tabby".to_string(),
+        "--args".to_string(),
+        "run".to_string(),
+        "bash".to_string(),
+        script_file.to_string_lossy().into_owned(),
+    ]
+}
+
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
 fn launch_linux_terminal(config_file: &std::path::Path) -> Result<(), String> {
@@ -1023,6 +1057,8 @@ fn launch_linux_terminal(config_file: &std::path::Path) -> Result<(), String> {
         ("alacritty", vec!["-e"]),
         ("kitty", vec!["-e"]),
         ("ghostty", vec!["-e"]),
+        ("tabby", vec!["run"]),
+        ("tabby-terminal", vec!["run"]),
     ];
 
     // Create temp script file
@@ -1148,6 +1184,7 @@ del \"%~f0\" >nul 2>&1
             "PowerShell",
         ),
         "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+        "tabby" => run_windows_tabby_command(&bat_path),
         _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
     };
 
@@ -1162,6 +1199,56 @@ del \"%~f0\" >nul 2>&1
     }
 
     result
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_tabby_command(bat_path: &str) -> Result<(), String> {
+    use std::process::Command;
+
+    let mut last_error = String::from("未找到可用的 Tabby 可执行文件");
+
+    for candidate in windows_tabby_executable_candidates() {
+        let result = Command::new(&candidate)
+            .args(["run", "cmd", "/K", bat_path])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+
+        match result {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last_error = format!("执行 {} 失败: {}", candidate.display(), e);
+            }
+        }
+    }
+
+    Err(last_error)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_tabby_executable_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+
+    for candidate in ["tabby", "tabby.exe", "Tabby", "Tabby.exe"] {
+        push_unique_path(&mut candidates, std::path::PathBuf::from(candidate));
+    }
+
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let tabby_dir = std::path::PathBuf::from(local_app_data)
+            .join("Programs")
+            .join("Tabby");
+        push_unique_path(&mut candidates, tabby_dir.join("Tabby.exe"));
+        push_unique_path(&mut candidates, tabby_dir.join("tabby.exe"));
+    }
+
+    for env_key in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(base_dir) = std::env::var_os(env_key) {
+            let tabby_dir = std::path::PathBuf::from(base_dir).join("Tabby");
+            push_unique_path(&mut candidates, tabby_dir.join("Tabby.exe"));
+            push_unique_path(&mut candidates, tabby_dir.join("tabby.exe"));
+        }
+    }
+
+    candidates
 }
 
 /// Windows: Run a start command with common error handling

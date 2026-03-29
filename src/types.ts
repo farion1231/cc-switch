@@ -303,9 +303,9 @@ export interface Settings {
 
   // ===== 终端设置 =====
   // 首选终端应用（可选，默认使用系统默认终端）
-  // macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty"
-  // Windows: "cmd" | "powershell" | "wt"
-  // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
+  // macOS: "terminal" | "iterm2" | "alacritty" | "kitty" | "ghostty" | "wezterm" | "tabby"
+  // Windows: "cmd" | "powershell" | "wt" | "tabby"
+  // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty" | "tabby"
   preferredTerminal?: string;
 }
 

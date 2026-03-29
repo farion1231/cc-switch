@@ -496,12 +496,14 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
-          "wezterm": "WezTerm"
+          "wezterm": "WezTerm",
+          "tabby": "Tabby"
         },
         "windows": {
           "cmd": "Command Prompt",
           "powershell": "PowerShell",
-          "wt": "Windows Terminal"
+          "wt": "Windows Terminal",
+          "tabby": "Tabby"
         },
         "linux": {
           "gnomeTerminal": "GNOME Terminal",
@@ -509,7 +511,8 @@
           "xfce4Terminal": "Xfce4 Terminal",
           "alacritty": "Alacritty",
           "kitty": "Kitty",
-          "ghostty": "Ghostty"
+          "ghostty": "Ghostty",
+          "tabby": "Tabby"
         }
       }
     },

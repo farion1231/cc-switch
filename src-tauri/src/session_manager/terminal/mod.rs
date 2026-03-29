@@ -21,6 +21,7 @@ pub fn launch_terminal(
         "kitty" => launch_kitty(command, cwd),
         "wezterm" => launch_wezterm(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        "tabby" => launch_tabby(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
         _ => Err(format!("Unsupported terminal target: {target}")),
     }
@@ -211,6 +212,35 @@ fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+fn launch_tabby(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let status = Command::new("open")
+        .args(build_tabby_args(command, cwd))
+        .status()
+        .map_err(|e| format!("Failed to launch Tabby: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Tabby.".to_string())
+    }
+}
+
+fn build_tabby_args(command: &str, cwd: Option<&str>) -> Vec<String> {
+    let full_command = build_shell_command(command, cwd);
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+
+    vec![
+        "-na".to_string(),
+        "Tabby".to_string(),
+        "--args".to_string(),
+        "run".to_string(),
+        shell,
+        "-l".to_string(),
+        "-c".to_string(),
+        full_command,
+    ]
+}
+
 fn launch_custom(
     command: &str,
     cwd: Option<&str>,
@@ -303,6 +333,46 @@ mod tests {
         assert_eq!(
             ghostty_raw_input("echo foo\\\\bar\npwd"),
             "raw:echo foo\\\\\\\\bar\\npwd\\n"
+        );
+    }
+
+    #[test]
+    fn tabby_uses_login_shell_for_resume_commands() {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let args = build_tabby_args("claude --resume abc-123", Some("/tmp/project dir"));
+
+        assert_eq!(
+            args,
+            vec![
+                "-na",
+                "Tabby",
+                "--args",
+                "run",
+                &shell,
+                "-l",
+                "-c",
+                "cd \"/tmp/project dir\" && claude --resume abc-123",
+            ]
+        );
+    }
+
+    #[test]
+    fn tabby_keeps_command_when_no_cwd_is_provided() {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let args = build_tabby_args("claude --resume abc-123", None);
+
+        assert_eq!(
+            args,
+            vec![
+                "-na",
+                "Tabby",
+                "--args",
+                "run",
+                &shell,
+                "-l",
+                "-c",
+                "claude --resume abc-123",
+            ]
         );
     }
 }
