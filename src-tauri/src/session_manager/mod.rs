@@ -101,6 +101,30 @@ pub fn rename_session(
         .map_err(|e| format!("Failed to save session title override: {e}"))
 }
 
+fn original_session_title(session: &SessionMeta) -> String {
+    session
+        .title
+        .clone()
+        .or_else(|| {
+            session.project_dir.as_deref().and_then(|project_dir| {
+                let trimmed = project_dir.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let normalized = trimmed.trim_end_matches(['/', '\\']);
+                if normalized.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+                normalized
+                    .split(['/', '\\'])
+                    .next_back()
+                    .filter(|segment| !segment.is_empty())
+                    .map(|segment| segment.to_string())
+            })
+        })
+        .unwrap_or_else(|| session.session_id.chars().take(8).collect())
+}
+
 fn apply_title_overrides(
     sessions: &mut [SessionMeta],
     overrides: Vec<crate::database::SessionTitleOverride>,
@@ -127,9 +151,9 @@ fn apply_title_overrides(
             continue;
         };
 
-        let original_title = session.title.clone();
+        let original_title = original_session_title(session);
         session.title = Some(custom_title.clone());
-        session.original_title = original_title;
+        session.original_title = Some(original_title);
         session.has_custom_title = Some(true);
     }
 }
@@ -300,6 +324,73 @@ mod tests {
         assert_eq!(sessions[0].title.as_deref(), Some("Pinned session"));
         assert_eq!(sessions[0].original_title.as_deref(), Some("Original title"));
         assert_eq!(sessions[0].has_custom_title, Some(true));
+    }
+
+    #[test]
+    fn applies_custom_title_and_preserves_fallback_display_title() {
+        let mut sessions = vec![SessionMeta {
+            provider_id: "codex".to_string(),
+            session_id: "session-1".to_string(),
+            title: None,
+            original_title: None,
+            has_custom_title: None,
+            summary: None,
+            project_dir: Some("C:\\workspace\\fallback-project".to_string()),
+            created_at: None,
+            last_active_at: None,
+            source_path: Some("C:\\sessions\\session-1.jsonl".to_string()),
+            resume_command: None,
+        }];
+
+        apply_title_overrides(
+            &mut sessions,
+            vec![SessionTitleOverride {
+                key: SessionOverrideKey {
+                    provider_id: "codex".to_string(),
+                    session_id: "session-1".to_string(),
+                    source_path: "C:\\sessions\\session-1.jsonl".to_string(),
+                },
+                custom_title: "Pinned session".to_string(),
+            }],
+        );
+
+        assert_eq!(sessions[0].title.as_deref(), Some("Pinned session"));
+        assert_eq!(
+            sessions[0].original_title.as_deref(),
+            Some("fallback-project")
+        );
+        assert_eq!(sessions[0].has_custom_title, Some(true));
+    }
+
+    #[test]
+    fn preserves_root_project_dir_as_original_title() {
+        let mut sessions = vec![SessionMeta {
+            provider_id: "codex".to_string(),
+            session_id: "session-1".to_string(),
+            title: None,
+            original_title: None,
+            has_custom_title: None,
+            summary: None,
+            project_dir: Some("/".to_string()),
+            created_at: None,
+            last_active_at: None,
+            source_path: Some("C:\\sessions\\session-1.jsonl".to_string()),
+            resume_command: None,
+        }];
+
+        apply_title_overrides(
+            &mut sessions,
+            vec![SessionTitleOverride {
+                key: SessionOverrideKey {
+                    provider_id: "codex".to_string(),
+                    session_id: "session-1".to_string(),
+                    source_path: "C:\\sessions\\session-1.jsonl".to_string(),
+                },
+                custom_title: "Pinned session".to_string(),
+            }],
+        );
+
+        assert_eq!(sessions[0].original_title.as_deref(), Some("/"));
     }
 
     #[test]
