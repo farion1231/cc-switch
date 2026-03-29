@@ -13,7 +13,7 @@ use super::{
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderName};
 use serde_json::Value;
 use std::{
     sync::{
@@ -27,6 +27,50 @@ use tokio::sync::Mutex;
 // ============================================================================
 // 公共接口
 // ============================================================================
+
+/// RFC 2616 § 13.5.1 定义的 hop-by-hop 响应头列表
+///
+/// 这些头只在单个传输跳点有意义，不应被代理转发给下游。
+/// 若透传给 axum/hyper，会触发 "user sent unexpected header" 错误。
+const HOP_BY_HOP_HEADERS: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+];
+
+/// 从响应头中剥离所有 hop-by-hop 头
+///
+/// 同时处理 `Connection` 头中动态列出的额外头名（RFC 2616 § 14.10）。
+fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
+    // 先读取 Connection 头中动态列出的额外头名
+    let extra_headers: Vec<String> = headers
+        .get("connection")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.split(',')
+                .map(|part| part.trim().to_lowercase())
+                .filter(|name| !name.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // 剥离静态 hop-by-hop 头
+    for name in HOP_BY_HOP_HEADERS {
+        headers.remove(*name);
+    }
+
+    // 剥离 Connection 头中动态列出的额外头
+    for name in &extra_headers {
+        if let Ok(header_name) = HeaderName::from_bytes(name.as_bytes()) {
+            headers.remove(header_name);
+        }
+    }
+}
 
 /// 检测响应是否为 SSE 流式响应
 #[inline]
@@ -55,8 +99,10 @@ pub async fn handle_streaming(
     );
     let mut builder = axum::response::Response::builder().status(status);
 
-    // 复制响应头
-    for (key, value) in response.headers() {
+    // 复制响应头（剥离 hop-by-hop 头，避免 axum/hyper 报错）
+    let mut headers = response.headers().clone();
+    strip_hop_by_hop_headers(&mut headers);
+    for (key, value) in &headers {
         builder = builder.header(key, value);
     }
 
@@ -173,9 +219,11 @@ pub async fn handle_non_streaming(
         );
     }
 
-    // 构建响应
+    // 构建响应（剥离 hop-by-hop 头，避免 axum/hyper 报错）
     let mut builder = axum::response::Response::builder().status(status);
-    for (key, value) in response_headers.iter() {
+    let mut filtered_headers = response_headers.clone();
+    strip_hop_by_hop_headers(&mut filtered_headers);
+    for (key, value) in filtered_headers.iter() {
         builder = builder.header(key, value);
     }
 
