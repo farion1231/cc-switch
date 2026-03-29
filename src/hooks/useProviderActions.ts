@@ -139,18 +139,20 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
+      const isCopilotProvider =
+        activeApp === "claude" &&
+        provider.meta?.providerType === "github_copilot";
       const requiresProxyForSwitch =
         !isProxyRunning &&
         provider.category !== "official" &&
         ((activeApp === "claude" &&
-          (provider.meta?.isFullUrl ||
+          (isCopilotProvider ||
+            provider.meta?.isFullUrl ||
             provider.meta?.apiFormat === "openai_chat" ||
             provider.meta?.apiFormat === "openai_responses")) ||
           (activeApp === "codex" && provider.meta?.isFullUrl));
 
-      if (
-        requiresProxyForSwitch
-      ) {
+      if (requiresProxyForSwitch) {
         toast.warning(
           t("notifications.proxyRequiredForSwitch", {
             defaultValue: "此供应商需要代理服务，请先启动代理",
@@ -178,15 +180,15 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         if (
           activeApp === "claude" &&
           provider.category !== "official" &&
-          (provider.meta?.apiFormat === "openai_chat" ||
+          (isCopilotProvider ||
+            provider.meta?.apiFormat === "openai_chat" ||
             provider.meta?.apiFormat === "openai_responses")
         ) {
           // OpenAI format provider: show proxy hint
           toast.info(
-            t("notifications.openAIFormatHint", {
-              defaultValue:
-                "此供应商使用 OpenAI 兼容格式，需要开启代理服务才能正常使用",
-            }),
+            isCopilotProvider
+              ? t("notifications.copilotProxyHint")
+              : t("notifications.openAIFormatHint"),
             {
               duration: 5000,
               closeButton: true,

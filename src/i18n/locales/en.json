@@ -176,6 +176,7 @@
     "settingsSaveFailed": "Failed to save settings: {{error}}",
     "openAIChatFormatHint": "This provider uses OpenAI Chat format and requires the proxy service to be enabled",
     "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the proxy service to be enabled",
+    "copilotProxyHint": "GitHub Copilot as a Claude provider always requires the local proxy; the proxy automatically selects Chat Completions or Responses based on the current model.",
     "proxyRequiredForSwitch": "This provider requires the proxy service. Start the proxy first.",
     "openLinkFailed": "Failed to open link",
     "openclawModelsRegistered": "Models have been registered to /model list",

@@ -176,6 +176,7 @@
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "openAIChatFormatHint": "此供应商使用 OpenAI Chat 格式，需要开启代理服务才能正常使用",
     "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启代理服务才能正常使用",
+    "copilotProxyHint": "GitHub Copilot 作为 Claude 供应商时始终需要本地代理；代理会根据当前模型自动选择 Chat Completions 或 Responses。",
     "proxyRequiredForSwitch": "此供应商需要代理服务，请先启动代理",
     "openLinkFailed": "链接打开失败",
     "openclawModelsRegistered": "模型已注册到 /model 列表",
