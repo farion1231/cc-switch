@@ -226,7 +226,14 @@ async fn handle_claude_transform(
     }
 
     // 非流式响应转换 (OpenAI/Responses → Anthropic)
-    let (mut response_headers, _status, body_bytes) = read_decoded_body(response, ctx.tag).await?;
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, _status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
 
     let body_str = String::from_utf8_lossy(&body_bytes);
 

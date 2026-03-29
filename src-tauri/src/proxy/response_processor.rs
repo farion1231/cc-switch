@@ -76,13 +76,29 @@ pub(crate) fn strip_entity_headers_for_rebuilt_body(headers: &mut HeaderMap) {
 }
 
 /// 读取响应体并在需要时解压，确保 headers 与返回 body 一致。
+///
+/// `body_timeout`: 整包超时。当非零时用 `tokio::time::timeout` 包住 `.bytes()` 调用，
+/// 防止上游发完响应头后卡住 body 导致请求永远挂住。
+/// 传入 `Duration::ZERO` 表示不启用超时（故障转移关闭时）。
 pub(crate) async fn read_decoded_body(
     response: ProxyResponse,
     tag: &str,
+    body_timeout: Duration,
 ) -> Result<(HeaderMap, http::StatusCode, Bytes), ProxyError> {
     let mut headers = response.headers().clone();
     let status = response.status();
-    let raw_bytes = response.bytes().await?;
+    let raw_bytes = if body_timeout.is_zero() {
+        response.bytes().await?
+    } else {
+        tokio::time::timeout(body_timeout, response.bytes())
+            .await
+            .map_err(|_| {
+                ProxyError::Timeout(format!(
+                    "响应体读取超时: {}s（上游发完响应头后 body 未到达）",
+                    body_timeout.as_secs()
+                ))
+            })??
+    };
 
     log::debug!(
         "[{tag}] 已接收上游响应体: status={}, bytes={}, headers={}",
@@ -184,7 +200,15 @@ pub async fn handle_non_streaming(
     state: &ProxyState,
     parser_config: &UsageParserConfig,
 ) -> Result<Response, ProxyError> {
-    let (response_headers, status, body_bytes) = read_decoded_body(response, ctx.tag).await?;
+    // 整包超时：仅在故障转移开启且配置值非零时生效
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            Duration::ZERO
+        };
+    let (response_headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
 
     log::debug!(
         "[{}] 上游响应体内容: {}",

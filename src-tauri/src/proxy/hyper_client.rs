@@ -48,16 +48,6 @@ impl OriginalHeaderCases {
 
         Self { cases }
     }
-
-    /// Look up the original casing for a header name (case-insensitive).
-    /// Returns an iterator over all original casings for that name.
-    pub fn get_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a [u8]> + 'a {
-        let lower = name.to_ascii_lowercase();
-        self.cases
-            .iter()
-            .filter(move |(k, _)| *k == lower)
-            .map(|(_, v)| v.as_slice())
-    }
 }
 
 type HyperClient = Client<
@@ -535,20 +525,53 @@ fn build_raw_request(
     raw.extend_from_slice(path_and_query.as_bytes());
     raw.extend_from_slice(b" HTTP/1.1\r\n");
 
-    // Headers with original casing
-    for name in headers.keys() {
-        let name_str = name.as_str();
-        let mut case_iter = original_cases.get_all(name_str);
-        for value in headers.get_all(name) {
-            if let Some(orig_name_bytes) = case_iter.next() {
+    // Headers with original casing, emitted in original wire order.
+    //
+    // Strategy:
+    // 1. Walk `original_cases.cases` in order — this preserves the exact
+    //    header sequence the client sent.  For each entry, emit the stored
+    //    original-casing name plus the current value from `headers` (the
+    //    proxy may have rewritten the value, e.g. Authorization).
+    //    Repeated headers with the same name are handled by tracking a
+    //    per-name value cursor so we step through `get_all()` in order.
+    // 2. After the original headers, append any headers that exist in
+    //    `headers` but were not present in the original request (i.e. added
+    //    by the proxy).  These are emitted in lowercase.
+    //
+    // This replaces the old `for name in headers.keys()` loop which iterated
+    // in hash-map order, destroying the original header sequence.
+    let mut emitted: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(original_cases.cases.len());
+    // Per-name cursor: how many values we have already emitted for each name.
+    let mut value_cursor: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::with_capacity(original_cases.cases.len());
+
+    for (lower_name, orig_name_bytes) in &original_cases.cases {
+        if let Ok(header_name) = http::header::HeaderName::from_bytes(lower_name.as_bytes()) {
+            let all_values: Vec<_> = headers.get_all(&header_name).iter().collect();
+            let cursor = value_cursor.entry(lower_name.clone()).or_insert(0);
+            if let Some(value) = all_values.get(*cursor) {
                 raw.extend_from_slice(orig_name_bytes);
-            } else {
-                // Header not in original request (added by proxy) — use lowercase
-                raw.extend_from_slice(name_str.as_bytes());
+                raw.extend_from_slice(b": ");
+                raw.extend_from_slice(value.as_bytes());
+                raw.extend_from_slice(b"\r\n");
+                *cursor += 1;
+                emitted.insert(lower_name.clone());
             }
-            raw.extend_from_slice(b": ");
-            raw.extend_from_slice(value.as_bytes());
-            raw.extend_from_slice(b"\r\n");
+        }
+    }
+
+    // Append proxy-added headers (not present in the original request).
+    for name in headers.keys() {
+        let lower = name.as_str().to_ascii_lowercase();
+        if !emitted.contains(&lower) {
+            for value in headers.get_all(name) {
+                raw.extend_from_slice(name.as_str().as_bytes());
+                raw.extend_from_slice(b": ");
+                raw.extend_from_slice(value.as_bytes());
+                raw.extend_from_slice(b"\r\n");
+            }
+            emitted.insert(lower);
         }
     }
 
