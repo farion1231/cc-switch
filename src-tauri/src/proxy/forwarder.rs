@@ -745,7 +745,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<ProxyResponse, ProxyError> {
+    ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let base_url = adapter.extract_base_url(provider)?;
 
@@ -1215,7 +1215,11 @@ impl RequestForwarder {
             .and_then(|m| m.managed_account_id_for("github_copilot"));
 
         let vendor_result = match account_id.as_deref() {
-            Some(id) => copilot_auth.get_model_vendor_for_account(id, model_id).await,
+            Some(id) => {
+                copilot_auth
+                    .get_model_vendor_for_account(id, model_id)
+                    .await
+            }
             None => copilot_auth.get_model_vendor(model_id).await,
         };
 

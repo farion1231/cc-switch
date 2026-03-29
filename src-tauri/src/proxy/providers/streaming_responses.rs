@@ -997,12 +997,17 @@ mod tests {
             .iter()
             .filter(|event| {
                 event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
-                    && event.pointer("/content_block/type").and_then(|v| v.as_str()) == Some("text")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("text")
             })
             .count();
         let text_stops = events
             .iter()
-            .filter(|event| event.get("type").and_then(|v| v.as_str()) == Some("content_block_stop"))
+            .filter(|event| {
+                event.get("type").and_then(|v| v.as_str()) == Some("content_block_stop")
+            })
             .count();
         let text_deltas: Vec<String> = events
             .iter()
@@ -1011,7 +1016,8 @@ mod tests {
                     && event.pointer("/delta/type").and_then(|v| v.as_str()) == Some("text_delta")
             })
             .filter_map(|event| {
-                event.pointer("/delta/text")
+                event
+                    .pointer("/delta/text")
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
             })

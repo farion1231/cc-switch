@@ -95,15 +95,14 @@ impl StreamCheckService {
         let mut last_result = None;
 
         for attempt in 0..=effective_config.max_retries {
-            let result =
-                Self::check_once(
-                    app_type,
-                    provider,
-                    &effective_config,
-                    auth_override.clone(),
-                    claude_api_format_override.clone(),
-                )
-                .await;
+            let result = Self::check_once(
+                app_type,
+                provider,
+                &effective_config,
+                auth_override.clone(),
+                claude_api_format_override.clone(),
+            )
+            .await;
 
             match &result {
                 Ok(r) if r.success => {
@@ -304,6 +303,7 @@ impl StreamCheckService {
     /// 根据供应商的 api_format 选择请求格式：
     /// - "anthropic" (默认): Anthropic Messages API (/v1/messages)
     /// - "openai_chat": OpenAI Chat Completions API (/v1/chat/completions)
+    #[allow(clippy::too_many_arguments)]
     async fn check_claude_stream(
         client: &Client,
         base_url: &str,
@@ -339,12 +339,8 @@ impl StreamCheckService {
             .unwrap_or(false);
         let is_openai_chat = effective_api_format == "openai_chat";
         let is_openai_responses = effective_api_format == "openai_responses";
-        let url = Self::resolve_claude_stream_url(
-            base,
-            auth.strategy,
-            effective_api_format,
-            is_full_url,
-        );
+        let url =
+            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
 
         let max_tokens = if is_openai_responses { 16 } else { 1 };
 
