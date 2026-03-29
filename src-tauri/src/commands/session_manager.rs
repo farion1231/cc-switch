@@ -3,10 +3,15 @@
 use crate::session_manager;
 
 #[tauri::command]
-pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
-    let sessions = tauri::async_runtime::spawn_blocking(session_manager::scan_sessions)
-        .await
-        .map_err(|e| format!("Failed to scan sessions: {e}"))?;
+pub async fn list_sessions(
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<Vec<session_manager::SessionMeta>, String> {
+    let db = state.db.clone();
+    let sessions = tauri::async_runtime::spawn_blocking(move || {
+        session_manager::scan_sessions_with_overrides(db.as_ref())
+    })
+    .await
+    .map_err(|e| format!("Failed to scan sessions: {e}"))??;
     Ok(sessions)
 }
 
@@ -60,17 +65,43 @@ pub async fn launch_session_terminal(
 
 #[tauri::command]
 pub async fn delete_session(
+    state: tauri::State<'_, crate::store::AppState>,
     providerId: String,
     sessionId: String,
     sourcePath: String,
 ) -> Result<bool, String> {
+    let db = state.db.clone();
     let provider_id = providerId.clone();
     let session_id = sessionId.clone();
     let source_path = sourcePath.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        session_manager::delete_session(&provider_id, &session_id, &source_path)
+        session_manager::delete_session(Some(db.as_ref()), &provider_id, &session_id, &source_path)
     })
     .await
     .map_err(|e| format!("Failed to delete session: {e}"))?
+}
+
+#[tauri::command]
+pub async fn rename_session(
+    state: tauri::State<'_, crate::store::AppState>,
+    providerId: String,
+    sessionId: String,
+    sourcePath: String,
+    customTitle: Option<String>,
+) -> Result<bool, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::rename_session(
+            db.as_ref(),
+            &providerId,
+            &sessionId,
+            &sourcePath,
+            customTitle.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Failed to rename session: {e}"))??;
+
+    Ok(true)
 }

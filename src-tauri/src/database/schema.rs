@@ -116,6 +116,19 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_overrides (
+                provider_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                custom_title TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (provider_id, session_id, source_path)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),

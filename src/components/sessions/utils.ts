@@ -78,3 +78,11 @@ export const formatSessionTitle = (session: SessionMeta) => {
     session.sessionId.slice(0, 8)
   );
 };
+
+export const getOriginalSessionTitle = (session: SessionMeta) => {
+  return (
+    session.originalTitle ||
+    getBaseName(session.projectDir) ||
+    session.sessionId.slice(0, 8)
+  );
+};

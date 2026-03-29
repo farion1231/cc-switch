@@ -59,34 +59,24 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             None => continue,
         };
 
-        let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
-
-        // Codex uses separate payload types for tool interactions
-        let (role, content) = match payload_type {
-            "message" => {
-                let role = payload
+        let item_type = payload.get("type").and_then(Value::as_str);
+        let (role, content) = match item_type {
+            Some("message") => (
+                payload
                     .get("role")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown")
-                    .to_string();
-                let content = payload.get("content").map(extract_text).unwrap_or_default();
-                (role, content)
-            }
-            "function_call" => {
-                let name = payload
+                    .to_string(),
+                payload.get("content").map(extract_text).unwrap_or_default(),
+            ),
+            Some("function_call") => (
+                "tool".to_string(),
+                payload
                     .get("name")
                     .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                ("assistant".to_string(), format!("[Tool: {name}]"))
-            }
-            "function_call_output" => {
-                let output = payload
-                    .get("output")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                ("tool".to_string(), output)
-            }
+                    .unwrap_or("tool")
+                    .to_string(),
+            ),
             _ => continue,
         };
 
@@ -201,6 +191,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
         title,
+        original_title: None,
+        has_custom_title: None,
         summary,
         project_dir,
         created_at,
@@ -262,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn load_messages_includes_function_call_and_output() {
+    fn load_messages_keeps_function_call_name_but_skips_output() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session.jsonl");
         std::fs::write(
@@ -278,18 +270,15 @@ mod tests {
         .expect("write");
 
         let msgs = load_messages(&path).expect("load");
-        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs.len(), 3);
 
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].content, "list files");
 
-        assert_eq!(msgs[1].role, "assistant");
-        assert!(msgs[1].content.contains("[Tool: shell]"));
+        assert_eq!(msgs[1].role, "tool");
+        assert_eq!(msgs[1].content, "shell");
 
-        assert_eq!(msgs[2].role, "tool");
-        assert!(msgs[2].content.contains("file1.txt"));
-
-        assert_eq!(msgs[3].role, "assistant");
-        assert_eq!(msgs[3].content, "Done.");
+        assert_eq!(msgs[2].role, "assistant");
+        assert_eq!(msgs[2].content, "Done.");
     }
 }

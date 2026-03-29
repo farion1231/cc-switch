@@ -313,6 +313,8 @@ export interface SessionMeta {
   providerId: string;
   sessionId: string;
   title?: string;
+  originalTitle?: string;
+  hasCustomTitle?: boolean;
   summary?: string;
   projectDir?: string | null;
   createdAt?: number;

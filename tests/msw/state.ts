@@ -89,6 +89,21 @@ let appConfigDirOverride: string | null = null;
 const sessionMessageKey = (providerId: string, sourcePath: string) =>
   `${providerId}:${sourcePath}`;
 
+const getBaseName = (value?: string | null) => {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const normalized = trimmed.replace(/[\\/]+$/, "");
+  const parts = normalized.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || trimmed;
+};
+
+const getOriginalSessionTitle = (session: SessionMeta) =>
+  session.originalTitle ||
+  (!session.hasCustomTitle ? session.title : undefined) ||
+  getBaseName(session.projectDir) ||
+  session.sessionId.slice(0, 8);
+
 const createDefaultSessions = (): SessionMeta[] => {
   const now = Date.now();
   return [
@@ -392,6 +407,44 @@ export const deleteSession = (
       ),
   );
   delete sessionMessagesState[sessionMessageKey(providerId, sourcePath)];
+  return true;
+};
+
+export const renameSession = (
+  providerId: string,
+  sessionId: string,
+  sourcePath: string,
+  customTitle?: string | null,
+) => {
+  sessionsState = sessionsState.map((session) => {
+    if (
+      session.providerId !== providerId ||
+      session.sessionId !== sessionId ||
+      session.sourcePath !== sourcePath
+    ) {
+      return session;
+    }
+
+    const originalTitle = getOriginalSessionTitle(session);
+    const nextTitle = customTitle?.trim();
+
+    if (!nextTitle) {
+      return {
+        ...session,
+        title: originalTitle,
+        originalTitle: undefined,
+        hasCustomTitle: false,
+      };
+    }
+
+    return {
+      ...session,
+      title: nextTitle,
+      originalTitle,
+      hasCustomTitle: true,
+    };
+  });
+
   return true;
 };
 

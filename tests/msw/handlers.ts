@@ -4,6 +4,7 @@ import type { McpServer, Provider, Settings } from "@/types";
 import {
   addProvider,
   deleteProvider,
+  renameSession,
   deleteSession,
   getCurrentProviderId,
   getSessionMessages,
@@ -127,6 +128,18 @@ export const handlers = [
       sourcePath: string;
     }>(request);
     return success(deleteSession(providerId, sessionId, sourcePath));
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/rename_session`, async ({ request }) => {
+    const { providerId, sessionId, sourcePath, customTitle } = await withJson<{
+      providerId: string;
+      sessionId: string;
+      sourcePath: string;
+      customTitle?: string | null;
+    }>(request);
+    return success(
+      renameSession(providerId, sessionId, sourcePath, customTitle ?? null),
+    );
   }),
 
   // MCP APIs
