@@ -228,4 +228,57 @@ describe("SessionManagerPage", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   });
+
+  it("restores the fallback project name after clearing a custom title", async () => {
+    const sessions: SessionMeta[] = [
+      {
+        providerId: "codex",
+        sessionId: "codex-session-fallback",
+        title: undefined,
+        summary: "Fallback summary",
+        projectDir: "/mock/projects/fallback-project",
+        createdAt: 3,
+        lastActiveAt: 30,
+        sourcePath: "/mock/codex/session-fallback.jsonl",
+        resumeCommand: "codex resume codex-session-fallback",
+      },
+    ];
+    const messages: Record<string, SessionMessage[]> = {
+      "codex:/mock/codex/session-fallback.jsonl": [
+        { role: "user", content: "fallback", ts: 30 },
+      ],
+    };
+    setSessionFixtures(sessions, messages);
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "fallback-project" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Rename session/i }));
+    fireEvent.change(screen.getByRole("textbox", { name: /Session name/i }), {
+      target: { value: "Pinned Name" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Save/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Pinned Name" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Rename session/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Restore original/i }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "fallback-project" }),
+      ).toBeInTheDocument(),
+    );
+  });
 });

@@ -89,6 +89,21 @@ let appConfigDirOverride: string | null = null;
 const sessionMessageKey = (providerId: string, sourcePath: string) =>
   `${providerId}:${sourcePath}`;
 
+const getBaseName = (value?: string | null) => {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const normalized = trimmed.replace(/[\\/]+$/, "");
+  const parts = normalized.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || trimmed;
+};
+
+const getOriginalSessionTitle = (session: SessionMeta) =>
+  session.originalTitle ||
+  (!session.hasCustomTitle ? session.title : undefined) ||
+  getBaseName(session.projectDir) ||
+  session.sessionId.slice(0, 8);
+
 const createDefaultSessions = (): SessionMeta[] => {
   const now = Date.now();
   return [
@@ -410,7 +425,7 @@ export const renameSession = (
       return session;
     }
 
-    const originalTitle = session.originalTitle ?? session.title;
+    const originalTitle = getOriginalSessionTitle(session);
     const nextTitle = customTitle?.trim();
 
     if (!nextTitle) {

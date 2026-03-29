@@ -59,16 +59,26 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             None => continue,
         };
 
-        if payload.get("type").and_then(Value::as_str) != Some("message") {
-            continue;
-        }
-
-        let role = payload
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
-        let content = payload.get("content").map(extract_text).unwrap_or_default();
+        let item_type = payload.get("type").and_then(Value::as_str);
+        let (role, content) = match item_type {
+            Some("message") => (
+                payload
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                payload.get("content").map(extract_text).unwrap_or_default(),
+            ),
+            Some("function_call") => (
+                "tool".to_string(),
+                payload
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("tool")
+                    .to_string(),
+            ),
+            _ => continue,
+        };
 
         if content.trim().is_empty() {
             continue;
@@ -244,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn load_messages_ignores_function_call_and_output() {
+    fn load_messages_keeps_function_call_name_but_skips_output() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session.jsonl");
         std::fs::write(
@@ -260,12 +270,15 @@ mod tests {
         .expect("write");
 
         let msgs = load_messages(&path).expect("load");
-        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs.len(), 3);
 
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].content, "list files");
 
-        assert_eq!(msgs[1].role, "assistant");
-        assert_eq!(msgs[1].content, "Done.");
+        assert_eq!(msgs[1].role, "tool");
+        assert_eq!(msgs[1].content, "shell");
+
+        assert_eq!(msgs[2].role, "assistant");
+        assert_eq!(msgs[2].content, "Done.");
     }
 }

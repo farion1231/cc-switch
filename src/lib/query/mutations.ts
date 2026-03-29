@@ -12,6 +12,21 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 
+const getBaseName = (value?: string | null) => {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const normalized = trimmed.replace(/[\\/]+$/, "");
+  const parts = normalized.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || trimmed;
+};
+
+const getOriginalSessionTitle = (session: SessionMeta) =>
+  session.originalTitle ||
+  (!session.hasCustomTitle ? session.title : undefined) ||
+  getBaseName(session.projectDir) ||
+  session.sessionId.slice(0, 8);
+
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -335,7 +350,7 @@ export const useRenameSessionMutation = () => {
             return session;
           }
 
-          const originalTitle = session.originalTitle ?? session.title;
+          const originalTitle = getOriginalSessionTitle(session);
           const nextTitle = input.customTitle?.trim();
 
           if (!nextTitle) {
