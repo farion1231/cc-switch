@@ -65,6 +65,30 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
     }
 }
 
+pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
+    matches!(api_format, "openai_chat" | "openai_responses")
+}
+
+pub fn transform_claude_request_for_api_format(
+    body: serde_json::Value,
+    provider: &Provider,
+    api_format: &str,
+) -> Result<serde_json::Value, ProxyError> {
+    let cache_key = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.prompt_cache_key.as_deref())
+        .unwrap_or(&provider.id);
+
+    match api_format {
+        "openai_responses" => {
+            super::transform_responses::anthropic_to_responses(body, Some(cache_key))
+        }
+        "openai_chat" => super::transform::anthropic_to_openai(body, Some(cache_key)),
+        _ => Ok(body),
+    }
+}
+
 /// Claude 适配器
 pub struct ClaudeAdapter;
 
@@ -380,19 +404,7 @@ impl ProviderAdapter for ClaudeAdapter {
         body: serde_json::Value,
         provider: &Provider,
     ) -> Result<serde_json::Value, ProxyError> {
-        // Use meta.prompt_cache_key if set by user, otherwise fall back to provider.id
-        let cache_key = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.prompt_cache_key.as_deref())
-            .unwrap_or(&provider.id);
-
-        match self.get_api_format(provider) {
-            "openai_responses" => {
-                super::transform_responses::anthropic_to_responses(body, Some(cache_key))
-            }
-            _ => super::transform::anthropic_to_openai(body, Some(cache_key)),
-        }
+        transform_claude_request_for_api_format(body, provider, self.get_api_format(provider))
     }
 
     fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
@@ -797,5 +809,26 @@ mod tests {
 
         // GitHub Copilot always needs transform
         assert!(adapter.needs_transform(&copilot));
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_responses() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+            }
+        }));
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_responses").unwrap();
+
+        assert_eq!(transformed["model"], "gpt-5.4");
+        assert!(transformed.get("input").is_some());
+        assert!(transformed.get("max_output_tokens").is_some());
     }
 }

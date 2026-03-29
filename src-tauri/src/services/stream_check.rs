@@ -88,6 +88,7 @@ impl StreamCheckService {
         provider: &Provider,
         config: &StreamCheckConfig,
         auth_override: Option<AuthInfo>,
+        claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         // 合并供应商单独配置和全局配置
         let effective_config = Self::merge_provider_config(provider, config);
@@ -95,8 +96,14 @@ impl StreamCheckService {
 
         for attempt in 0..=effective_config.max_retries {
             let result =
-                Self::check_once(app_type, provider, &effective_config, auth_override.clone())
-                    .await;
+                Self::check_once(
+                    app_type,
+                    provider,
+                    &effective_config,
+                    auth_override.clone(),
+                    claude_api_format_override.clone(),
+                )
+                .await;
 
             match &result {
                 Ok(r) if r.success => {
@@ -185,6 +192,7 @@ impl StreamCheckService {
         provider: &Provider,
         config: &StreamCheckConfig,
         auth_override: Option<AuthInfo>,
+        claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
         let adapter = get_adapter(app_type);
@@ -215,6 +223,7 @@ impl StreamCheckService {
                     test_prompt,
                     request_timeout,
                     provider,
+                    claude_api_format_override.as_deref(),
                 )
                 .await
             }
@@ -303,6 +312,7 @@ impl StreamCheckService {
         test_prompt: &str,
         timeout: std::time::Duration,
         provider: &Provider,
+        claude_api_format_override: Option<&str>,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
         let is_github_copilot = auth.strategy == AuthStrategy::GitHubCopilot;
@@ -320,19 +330,28 @@ impl StreamCheckService {
             })
             .unwrap_or("anthropic");
 
+        let effective_api_format = claude_api_format_override.unwrap_or(api_format);
+
         let is_full_url = provider
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
-        let is_openai_chat = is_github_copilot || api_format == "openai_chat";
-        let is_openai_responses = !is_github_copilot && api_format == "openai_responses";
-        let url = Self::resolve_claude_stream_url(base, auth.strategy, api_format, is_full_url);
+        let is_openai_chat = effective_api_format == "openai_chat";
+        let is_openai_responses = effective_api_format == "openai_responses";
+        let url = Self::resolve_claude_stream_url(
+            base,
+            auth.strategy,
+            effective_api_format,
+            is_full_url,
+        );
+
+        let max_tokens = if is_openai_responses { 16 } else { 1 };
 
         // Build from Anthropic-native shape first, then convert for configured targets.
         let anthropic_body = json!({
             "model": model,
-            "max_tokens": 1,
+            "max_tokens": max_tokens,
             "messages": [{ "role": "user", "content": test_prompt }],
             "stream": true
         });
@@ -730,7 +749,9 @@ impl StreamCheckService {
         let base = base_url.trim_end_matches('/');
         let is_github_copilot = auth_strategy == AuthStrategy::GitHubCopilot;
 
-        if is_github_copilot {
+        if is_github_copilot && api_format == "openai_responses" {
+            format!("{base}/v1/responses")
+        } else if is_github_copilot {
             format!("{base}/chat/completions")
         } else if api_format == "openai_responses" {
             if base.ends_with("/v1") {
@@ -763,6 +784,15 @@ impl StreamCheckService {
         } else {
             vec![format!("{base}/responses"), format!("{base}/v1/responses")]
         }
+    }
+
+    pub(crate) fn resolve_effective_test_model(
+        app_type: &AppType,
+        provider: &Provider,
+        config: &StreamCheckConfig,
+    ) -> String {
+        let effective_config = Self::merge_provider_config(provider, config);
+        Self::resolve_test_model(app_type, provider, &effective_config)
     }
 }
 
@@ -884,11 +914,23 @@ mod tests {
         let url = StreamCheckService::resolve_claude_stream_url(
             "https://api.githubcopilot.com",
             AuthStrategy::GitHubCopilot,
-            "anthropic",
+            "openai_chat",
             false,
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_github_copilot_responses() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.githubcopilot.com",
+            AuthStrategy::GitHubCopilot,
+            "openai_responses",
+            false,
+        );
+
+        assert_eq!(url, "https://api.githubcopilot.com/v1/responses");
     }
 
     #[test]

@@ -29,6 +29,7 @@ use tokio::sync::RwLock;
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
+    pub claude_api_format: Option<String>,
 }
 
 pub struct ForwardError {
@@ -179,7 +180,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok(response) => {
+                Ok((response, claude_api_format)) => {
                     // 成功：记录成功并更新熔断器
                     let _ = self
                         .router
@@ -233,6 +234,7 @@ impl RequestForwarder {
                     return Ok(ForwardResult {
                         response,
                         provider: provider.clone(),
+                        claude_api_format,
                     });
                 }
                 Err(e) => {
@@ -308,7 +310,7 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok(response) => {
+                                    Ok((response, claude_api_format)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         // 记录成功
                                         let _ = self
@@ -367,6 +369,7 @@ impl RequestForwarder {
                                         return Ok(ForwardResult {
                                             response,
                                             provider: provider.clone(),
+                                            claude_api_format,
                                         });
                                     }
                                     Err(retry_err) => {
@@ -506,7 +509,7 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok(response) => {
+                                Ok((response, claude_api_format)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     let _ = self
                                         .router
@@ -558,6 +561,7 @@ impl RequestForwarder {
                                     return Ok(ForwardResult {
                                         response,
                                         provider: provider.clone(),
+                                        claude_api_format,
                                     });
                                 }
                                 Err(retry_err) => {
@@ -745,14 +749,18 @@ impl RequestForwarder {
         // 使用适配器提取 base_url
         let base_url = adapter.extract_base_url(provider)?;
 
-        // 检查是否需要格式转换
-        let needs_transform = adapter.needs_transform(provider);
-
         let is_full_url = provider
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
+
+        // 应用模型映射（独立于格式转换）
+        let (mapped_body, _original_model, _mapped_model) =
+            super::model_mapper::apply_model_mapping(body.clone(), provider);
+
+        // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
+        let mapped_body = normalize_thinking_type(mapped_body);
 
         // 确定有效端点
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
@@ -762,9 +770,23 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
+        let resolved_claude_api_format = if adapter.name() == "Claude" {
+            Some(
+                self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
+                    .await,
+            )
+        } else {
+            None
+        };
+        let needs_transform = match resolved_claude_api_format.as_deref() {
+            Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
+            None => adapter.needs_transform(provider),
+        };
         let (effective_endpoint, passthrough_query) =
             if needs_transform && adapter.name() == "Claude" {
-                let api_format = super::providers::get_claude_api_format(provider);
+                let api_format = resolved_claude_api_format
+                    .as_deref()
+                    .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
                 rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot)
             } else {
                 (
@@ -781,16 +803,20 @@ impl RequestForwarder {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
-        // 应用模型映射（独立于格式转换）
-        let (mapped_body, _original_model, _mapped_model) =
-            super::model_mapper::apply_model_mapping(body.clone(), provider);
-
-        // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
-        let mapped_body = normalize_thinking_type(mapped_body);
-
         // 转换请求体（如果需要）
         let request_body = if needs_transform {
-            adapter.transform_request(mapped_body, provider)?
+            if adapter.name() == "Claude" {
+                let api_format = resolved_claude_api_format
+                    .as_deref()
+                    .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+                super::providers::transform_claude_request_for_api_format(
+                    mapped_body,
+                    provider,
+                    api_format,
+                )?
+            } else {
+                adapter.transform_request(mapped_body, provider)?
+            }
         } else {
             mapped_body
         };
@@ -1140,7 +1166,7 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
-            Ok(response)
+            Ok((response, resolved_claude_api_format))
         } else {
             let status_code = status.as_u16();
             let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
@@ -1149,6 +1175,64 @@ impl RequestForwarder {
                 status: status_code,
                 body: body_text,
             })
+        }
+    }
+
+    async fn resolve_claude_api_format(
+        &self,
+        provider: &Provider,
+        body: &Value,
+        is_copilot: bool,
+    ) -> String {
+        if !is_copilot {
+            return super::providers::get_claude_api_format(provider).to_string();
+        }
+
+        let model = body.get("model").and_then(|value| value.as_str());
+        if let Some(model_id) = model {
+            if self
+                .is_copilot_openai_vendor_model(provider, model_id)
+                .await
+            {
+                return "openai_responses".to_string();
+            }
+        }
+
+        "openai_chat".to_string()
+    }
+
+    async fn is_copilot_openai_vendor_model(&self, provider: &Provider, model_id: &str) -> bool {
+        let Some(app_handle) = &self.app_handle else {
+            log::debug!("[Copilot] AppHandle unavailable, fallback to chat/completions");
+            return false;
+        };
+
+        let copilot_state = app_handle.state::<CopilotAuthState>();
+        let copilot_auth = copilot_state.0.read().await;
+        let account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.managed_account_id_for("github_copilot"));
+
+        let vendor_result = match account_id.as_deref() {
+            Some(id) => copilot_auth.get_model_vendor_for_account(id, model_id).await,
+            None => copilot_auth.get_model_vendor(model_id).await,
+        };
+
+        match vendor_result {
+            Ok(Some(vendor)) => vendor.eq_ignore_ascii_case("openai"),
+            Ok(None) => {
+                log::debug!(
+                    "[Copilot] Model vendor unavailable for {model_id}, fallback to chat/completions"
+                );
+                false
+            }
+            Err(err) => {
+                log::warn!(
+                    "[Copilot] Failed to resolve model vendor for {model_id}, fallback to chat/completions: {err}"
+                );
+                false
+            }
         }
     }
 
@@ -1339,7 +1423,9 @@ fn rewrite_claude_transform_endpoint(
         return (endpoint.to_string(), passthrough_query);
     }
 
-    let target_path = if is_copilot {
+    let target_path = if is_copilot && api_format == "openai_responses" {
+        "/v1/responses"
+    } else if is_copilot {
         "/chat/completions"
     } else if api_format == "openai_responses" {
         "/v1/responses"
@@ -1507,6 +1593,18 @@ mod tests {
             rewrite_claude_transform_endpoint("/v1/messages?beta=true&x-id=1", "anthropic", true);
 
         assert_eq!(endpoint, "/chat/completions?x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_copilot_responses_path() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&x-id=1",
+            "openai_responses",
+            true,
+        );
+
+        assert_eq!(endpoint, "/v1/responses?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
     }
 

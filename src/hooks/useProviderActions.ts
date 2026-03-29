@@ -139,10 +139,18 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
+      const isCopilotProvider =
+        activeApp === "claude" &&
+        provider.meta?.providerType === "github_copilot";
+
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
       if (!isProxyRunning && provider.category !== "official") {
-        if (
+        if (isCopilotProvider) {
+          proxyRequiredReason = t("notifications.proxyReasonCopilot", {
+            defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
+          });
+        } else if (
           provider.meta?.apiFormat === "openai_chat" &&
           activeApp === "claude"
         ) {
@@ -192,8 +200,27 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
           );
         }
 
-        // OpenCode/OpenClaw: show "added to config" message instead of "switched"
-        {
+        // 根据供应商类型显示不同的成功提示
+        if (
+          activeApp === "claude" &&
+          provider.category !== "official" &&
+          (isCopilotProvider ||
+            provider.meta?.apiFormat === "openai_chat" ||
+            provider.meta?.apiFormat === "openai_responses")
+        ) {
+          // OpenAI format provider: show proxy hint
+          toast.info(
+            isCopilotProvider
+              ? t("notifications.copilotProxyHint")
+              : t("notifications.openAIFormatHint"),
+            {
+              duration: 5000,
+              closeButton: true,
+            },
+          );
+        } else {
+          // 普通供应商：显示切换成功
+          // OpenCode/OpenClaw: show "added to config" message instead of "switched"
           const isMultiProviderApp =
             activeApp === "opencode" || activeApp === "openclaw";
           const messageKey = isMultiProviderApp
