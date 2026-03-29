@@ -62,11 +62,17 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// - 现在 OpenRouter 已推出 Claude Code 兼容接口，默认不再启用该转换（逻辑保留以备回退）
 pub async fn handle_messages(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
+
+    let endpoint = uri
+        .path_and_query()
+        .map(|path_and_query| path_and_query.as_str())
+        .unwrap_or(uri.path());
 
     let is_stream = body
         .get("stream")
@@ -78,7 +84,7 @@ pub async fn handle_messages(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Claude,
-            "/v1/messages",
+            endpoint,
             body.clone(),
             headers,
             ctx.get_providers(),
@@ -96,6 +102,11 @@ pub async fn handle_messages(
     };
 
     ctx.provider = result.provider;
+    let api_format = result
+        .claude_api_format
+        .as_deref()
+        .unwrap_or_else(|| get_claude_api_format(&ctx.provider))
+        .to_string();
     let response = result.response;
 
     // 检查是否需要格式转换（OpenRouter 等中转服务）
@@ -104,7 +115,8 @@ pub async fn handle_messages(
 
     // Claude 特有：格式转换处理
     if needs_transform {
-        return handle_claude_transform(response, &ctx, &state, &body, is_stream).await;
+        return handle_claude_transform(response, &ctx, &state, &body, is_stream, &api_format)
+            .await;
     }
 
     // 通用响应处理（透传模式）
@@ -120,9 +132,9 @@ async fn handle_claude_transform(
     state: &ProxyState,
     _original_body: &Value,
     is_stream: bool,
+    api_format: &str,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
-    let api_format = get_claude_api_format(&ctx.provider);
 
     if is_stream {
         // 根据 api_format 选择流式转换器
@@ -281,6 +293,13 @@ async fn handle_claude_transform(
     })
 }
 
+fn endpoint_with_query(uri: &axum::http::Uri, endpoint: &str) -> String {
+    match uri.query() {
+        Some(query) => format!("{endpoint}?{query}"),
+        None => endpoint.to_string(),
+    }
+}
+
 // ============================================================================
 // Codex API 处理器
 // ============================================================================
@@ -288,11 +307,13 @@ async fn handle_claude_transform(
 /// 处理 /v1/chat/completions 请求（OpenAI Chat Completions API - Codex CLI）
 pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
         .get("stream")
@@ -303,7 +324,7 @@ pub async fn handle_chat_completions(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            "/chat/completions",
+            &endpoint,
             body,
             headers,
             ctx.get_providers(),
@@ -332,11 +353,13 @@ pub async fn handle_chat_completions(
 /// Chat Completions 格式，并将响应转换回 Responses API 格式返回给客户端。
 pub async fn handle_responses(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/responses");
 
     let is_stream = body
         .get("stream")
@@ -452,11 +475,13 @@ pub async fn handle_responses(
 /// 与 `handle_responses` 相同的转换逻辑，但针对 `/responses/compact` 端点。
 pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
+    uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
         .get("stream")

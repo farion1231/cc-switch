@@ -275,7 +275,9 @@ pub struct ProviderMeta {
     /// Claude 认证字段名（"ANTHROPIC_AUTH_TOKEN" 或 "ANTHROPIC_API_KEY"）
     #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
     pub api_key_field: Option<String>,
-
+    /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
+    #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
+    pub is_full_url: Option<bool>,
     /// Prompt cache key for OpenAI-compatible endpoints.
     /// When set, injected into converted requests to improve cache hit rate.
     /// If not set, provider ID is used automatically during format conversion.

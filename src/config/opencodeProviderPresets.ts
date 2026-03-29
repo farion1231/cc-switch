@@ -453,10 +453,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     websiteUrl: "https://www.kimi.com/coding/docs/",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
+      npm: "@ai-sdk/anthropic",
       name: "Kimi For Coding",
       options: {
-        baseURL: "https://api.kimi.com/v1",
+        baseURL: "https://api.kimi.com/coding/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -470,8 +470,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://api.kimi.com/v1",
-        defaultValue: "https://api.kimi.com/v1",
+        placeholder: "https://api.kimi.com/coding/v1",
+        defaultValue: "https://api.kimi.com/coding/v1",
         editorValue: "",
       },
       apiKey: {
