@@ -817,6 +817,20 @@ impl RequestForwarder {
                         "/v1/chat/completions"
                     }
                 }
+            } else if needs_transform
+                && adapter.name() == "Codex"
+                && (endpoint == "/responses"
+                    || endpoint.ends_with("/responses")
+                    || endpoint == "/responses/compact"
+                    || endpoint.ends_with("/responses/compact"))
+            {
+                // Codex transform mode: route based on api_format
+                let codex_format = super::providers::get_codex_api_format(provider);
+                if codex_format == "anthropic" {
+                    "/v1/messages"
+                } else {
+                    "/v1/chat/completions"
+                }
             } else {
                 endpoint
             };
@@ -975,9 +989,12 @@ impl RequestForwarder {
             request = adapter.add_auth_headers(request, &auth);
         }
 
-        // anthropic-version 统一处理（仅 Claude）：优先使用客户端的版本号，否则使用默认值
+        // anthropic-version 统一处理（Claude 或 Codex anthropic 模式）
         // 注意：只设置一次，避免重复
-        if adapter.name() == "Claude" {
+        let needs_anthropic_version = adapter.name() == "Claude"
+            || (adapter.name() == "Codex"
+                && super::providers::get_codex_api_format(provider) == "anthropic");
+        if needs_anthropic_version {
             let version_str = headers
                 .get("anthropic-version")
                 .and_then(|v| v.to_str().ok())

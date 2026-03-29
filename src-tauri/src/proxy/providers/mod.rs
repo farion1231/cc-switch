@@ -19,8 +19,10 @@ pub mod copilot_auth;
 mod gemini;
 pub mod models;
 pub mod streaming;
+pub mod streaming_compat;
 pub mod streaming_responses;
 pub mod transform;
+pub mod transform_compat;
 pub mod transform_responses;
 
 use crate::app_config::AppType;
@@ -31,7 +33,7 @@ use serde::{Deserialize, Serialize};
 pub use adapter::ProviderAdapter;
 pub use auth::{AuthInfo, AuthStrategy};
 pub use claude::{get_claude_api_format, ClaudeAdapter};
-pub use codex::CodexAdapter;
+pub use codex::{get_codex_api_format, CodexAdapter};
 pub use gemini::GeminiAdapter;
 
 /// 供应商类型枚举
