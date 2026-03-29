@@ -766,9 +766,7 @@ export function ProviderForm({
       }
       if (
         !isProviderKeyLocked &&
-        additiveExistingProviderKeys.includes(
-          openclawForm.openclawProviderKey,
-        )
+        additiveExistingProviderKeys.includes(openclawForm.openclawProviderKey)
       ) {
         toast.error(t("openclaw.providerKeyDuplicate"));
         return;
@@ -1352,7 +1350,9 @@ export function ProviderForm({
                     )
                   }
                   placeholder={t("opencode.providerKeyPlaceholder")}
-                  disabled={isProviderKeyLocked || isProviderKeyLockStateLoading}
+                  disabled={
+                    isProviderKeyLocked || isProviderKeyLockStateLoading
+                  }
                   className={
                     (additiveExistingProviderKeys.includes(
                       opencodeForm.opencodeProviderKey,
@@ -1416,7 +1416,9 @@ export function ProviderForm({
                     )
                   }
                   placeholder={t("openclaw.providerKeyPlaceholder")}
-                  disabled={isProviderKeyLocked || isProviderKeyLockStateLoading}
+                  disabled={
+                    isProviderKeyLocked || isProviderKeyLockStateLoading
+                  }
                   className={
                     (additiveExistingProviderKeys.includes(
                       openclawForm.openclawProviderKey,

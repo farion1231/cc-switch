@@ -43,7 +43,11 @@ export const providersApi = {
     appId: AppId,
     originalId?: string,
   ): Promise<boolean> {
-    return await invoke("update_provider", { provider, app: appId, originalId });
+    return await invoke("update_provider", {
+      provider,
+      app: appId,
+      originalId,
+    });
   },
 
   async delete(id: string, appId: AppId): Promise<boolean> {

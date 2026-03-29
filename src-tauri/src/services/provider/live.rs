@@ -39,11 +39,9 @@ pub(crate) fn provider_exists_in_live_config(
 ) -> Result<bool, AppError> {
     match app_type {
         AppType::OpenCode => crate::opencode_config::get_providers()
-            .map(|providers| providers.contains_key(provider_id))
-            .map_err(Into::into),
+            .map(|providers| providers.contains_key(provider_id)),
         AppType::OpenClaw => crate::openclaw_config::get_providers()
-            .map(|providers| providers.contains_key(provider_id))
-            .map_err(Into::into),
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }

@@ -22,10 +22,10 @@ pub mod skill;
 mod stream_check;
 mod sync_support;
 
+mod lightweight;
 mod usage;
 mod webdav_sync;
 mod workspace;
-mod lightweight;
 
 pub use auth::*;
 pub use config::*;
@@ -48,7 +48,7 @@ pub use settings::*;
 pub use skill::*;
 pub use stream_check::*;
 
+pub use lightweight::*;
 pub use usage::*;
 pub use webdav_sync::*;
 pub use workspace::*;
-pub use lightweight::*;
