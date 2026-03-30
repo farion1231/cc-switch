@@ -615,7 +615,19 @@ function App() {
     };
 
     if (activeApp === "opencode" || activeApp === "openclaw") {
-      const existingKeys = Object.keys(providers);
+      const liveProviderIds =
+        activeApp === "opencode"
+          ? await queryClient.ensureQueryData({
+              queryKey: ["opencodeLiveProviderIds"],
+              queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
+            })
+          : await queryClient.ensureQueryData({
+              queryKey: openclawKeys.liveProviderIds,
+              queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+            });
+      const existingKeys = Array.from(
+        new Set([...Object.keys(providers), ...liveProviderIds]),
+      );
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
         provider.id,
         existingKeys,

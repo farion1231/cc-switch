@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   resetProviderState,
   setCurrentProviderId,
+  setLiveProviderIds,
   setProviders,
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
@@ -239,7 +240,7 @@ describe("App integration with MSW", () => {
     });
   });
 
-  it("duplicates openclaw providers with a generated provider key", async () => {
+  it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
     setProviders("openclaw", {
       deepseek: {
         id: "deepseek",
@@ -256,6 +257,7 @@ describe("App integration with MSW", () => {
       },
     });
     setCurrentProviderId("openclaw", "deepseek");
+    setLiveProviderIds("openclaw", ["deepseek-copy"]);
 
     const { default: App } = await import("@/App");
     renderApp(App);
@@ -272,7 +274,7 @@ describe("App integration with MSW", () => {
 
     await waitFor(() => {
       const providerList = screen.getByTestId("provider-list").textContent;
-      expect(providerList).toContain("deepseek-copy");
+      expect(providerList).toContain("deepseek-copy-2");
       expect(providerList).toContain("DeepSeek copy");
     });
 

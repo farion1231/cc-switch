@@ -974,7 +974,9 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream_from_responses(upstream);
         let chunks: Vec<_> = converted.collect().await;
         let events: Vec<Value> = chunks
