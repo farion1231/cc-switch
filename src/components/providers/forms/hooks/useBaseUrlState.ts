@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
+  extractClaudeBaseUrlFromConfig,
   extractCodexBaseUrl,
+  setClaudeBaseUrlInConfig,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
 } from "@/utils/providerConfigUtils";
 import type { ProviderCategory } from "@/types";
@@ -40,9 +42,7 @@ export function useBaseUrlState({
     if (isUpdatingRef.current) return;
 
     try {
-      const config = JSON.parse(settingsConfig || "{}");
-      const envUrl: unknown = config?.env?.ANTHROPIC_BASE_URL;
-      const nextUrl = typeof envUrl === "string" ? envUrl.trim() : "";
+      const nextUrl = extractClaudeBaseUrlFromConfig(settingsConfig) ?? "";
       if (nextUrl !== baseUrl) {
         setBaseUrl(nextUrl);
       }
@@ -91,12 +91,9 @@ export function useBaseUrlState({
       isUpdatingRef.current = true;
 
       try {
-        const config = JSON.parse(settingsConfig || "{}");
-        if (!config.env) {
-          config.env = {};
-        }
-        config.env.ANTHROPIC_BASE_URL = sanitized;
-        onSettingsConfigChange(JSON.stringify(config, null, 2));
+        onSettingsConfigChange(
+          setClaudeBaseUrlInConfig(settingsConfig || "{}", sanitized),
+        );
       } catch {
         // ignore
       } finally {

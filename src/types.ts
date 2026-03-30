@@ -183,7 +183,11 @@ export type SkillSyncMethod = "auto" | "symlink" | "copy";
 export type ClaudeApiFormat = "anthropic" | "openai_chat" | "openai_responses";
 
 // Claude 认证字段类型
-export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+export type ClaudeApiKeyField =
+  | "ANTHROPIC_AUTH_TOKEN"
+  | "ANTHROPIC_API_KEY"
+  | "ANTHROPIC_FOUNDRY_API_KEY"
+  | "AWS_BEARER_TOKEN_BEDROCK";
 
 // 主页面显示的应用配置
 export interface VisibleApps {

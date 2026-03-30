@@ -8,6 +8,25 @@ const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
 };
 
+const CLAUDE_API_KEY_ENV_FIELDS = [
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_FOUNDRY_API_KEY",
+  "AWS_BEARER_TOKEN_BEDROCK",
+] as const;
+
+const CLAUDE_BASE_URL_ENV_FIELDS = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_FOUNDRY_BASE_URL",
+  "BEDROCK_BASE_URL",
+] as const;
+
+const CODEX_AUTH_KEY_FIELDS = [
+  "OPENAI_API_KEY",
+  "AZURE_API_KEY",
+  "CODEX_API_KEY",
+] as const;
+
 const deepMerge = (
   target: Record<string, any>,
   source: Record<string, any>,
@@ -183,9 +202,7 @@ export const getApiKeyFromConfig = (
       return config.apiKey;
     }
 
-    const env = config?.env;
-
-    if (!env) return "";
+    const env = config?.env ?? {};
 
     // Gemini API Key
     if (appType === "gemini") {
@@ -195,22 +212,102 @@ export const getApiKeyFromConfig = (
 
     // Codex API Key
     if (appType === "codex") {
+      const auth = isPlainObject(config?.auth) ? config.auth : undefined;
+      const authKeyField =
+        extractCodexAuthEnvKey(
+          typeof config?.config === "string" ? config.config : "",
+        ) ?? "OPENAI_API_KEY";
+
+      const authCandidates = [
+        authKeyField,
+        ...CODEX_AUTH_KEY_FIELDS.filter((key) => key !== authKeyField),
+      ];
+
+      for (const key of authCandidates) {
+        const value = auth?.[key];
+        if (typeof value === "string") {
+          return value;
+        }
+      }
+
       const codexKey = env.CODEX_API_KEY;
       return typeof codexKey === "string" ? codexKey : "";
     }
 
-    // Claude API Key (优先 ANTHROPIC_AUTH_TOKEN，其次 ANTHROPIC_API_KEY)
-    const token = env.ANTHROPIC_AUTH_TOKEN;
-    const apiKey = env.ANTHROPIC_API_KEY;
-    const value =
-      typeof token === "string"
-        ? token
-        : typeof apiKey === "string"
-          ? apiKey
-          : "";
-    return value;
+    for (const key of CLAUDE_API_KEY_ENV_FIELDS) {
+      const value = env[key];
+      if (typeof value === "string") {
+        return value;
+      }
+    }
+
+    return "";
   } catch (err) {
     return "";
+  }
+};
+
+export const extractClaudeBaseUrlFromConfig = (
+  jsonString: string,
+): string | undefined => {
+  try {
+    const config = JSON.parse(jsonString || "{}");
+    const env = isPlainObject(config?.env) ? config.env : {};
+
+    for (const key of CLAUDE_BASE_URL_ENV_FIELDS) {
+      const value = env[key];
+      if (typeof value === "string" && value.trim()) {
+        return value.trim();
+      }
+    }
+
+    const resource = env.ANTHROPIC_FOUNDRY_RESOURCE;
+    if (typeof resource === "string" && resource.trim()) {
+      return `https://${resource.trim()}.services.ai.azure.com/anthropic`;
+    }
+  } catch {
+    // ignore
+  }
+
+  return undefined;
+};
+
+export const setClaudeBaseUrlInConfig = (
+  jsonString: string,
+  baseUrl: string,
+): string => {
+  try {
+    const config = JSON.parse(jsonString || "{}");
+    if (!isPlainObject(config.env)) {
+      config.env = {};
+    }
+
+    const sanitized = baseUrl.trim();
+    const env = config.env as Record<string, any>;
+    const isFoundry =
+      env.CLAUDE_CODE_USE_FOUNDRY === "1" ||
+      "ANTHROPIC_FOUNDRY_RESOURCE" in env ||
+      "ANTHROPIC_FOUNDRY_API_KEY" in env;
+
+    if (isFoundry) {
+      const match = sanitized.match(
+        /^https:\/\/([^.]+)\.services\.ai\.azure\.com\/anthropic\/?$/i,
+      );
+      if (match?.[1]) {
+        env.ANTHROPIC_FOUNDRY_RESOURCE = match[1];
+        delete env.ANTHROPIC_FOUNDRY_BASE_URL;
+      } else {
+        env.ANTHROPIC_FOUNDRY_BASE_URL = sanitized;
+      }
+    } else if ("BEDROCK_BASE_URL" in env) {
+      env.BEDROCK_BASE_URL = sanitized;
+    } else {
+      env.ANTHROPIC_BASE_URL = sanitized;
+    }
+
+    return JSON.stringify(config, null, 2);
+  } catch {
+    return jsonString;
   }
 };
 
@@ -279,12 +376,23 @@ export const hasApiKeyField = (
     }
 
     if (appType === "codex") {
-      return Object.prototype.hasOwnProperty.call(env, "CODEX_API_KEY");
+      const auth = config?.auth ?? {};
+      const authKeyField =
+        extractCodexAuthEnvKey(
+          typeof config?.config === "string" ? config.config : "",
+        ) ?? "OPENAI_API_KEY";
+
+      return (
+        Object.prototype.hasOwnProperty.call(env, "CODEX_API_KEY") ||
+        Object.prototype.hasOwnProperty.call(auth, authKeyField) ||
+        CODEX_AUTH_KEY_FIELDS.some((key) =>
+          Object.prototype.hasOwnProperty.call(auth, key),
+        )
+      );
     }
 
-    return (
-      Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_AUTH_TOKEN") ||
-      Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_API_KEY")
+    return CLAUDE_API_KEY_ENV_FIELDS.some((key) =>
+      Object.prototype.hasOwnProperty.call(env, key),
     );
   } catch (err) {
     return false;
@@ -311,13 +419,13 @@ export const setApiKeyInConfig = (
       return JSON.stringify(config, null, 2);
     }
 
+    // Gemini API Key
     if (!config.env) {
-      if (!createIfMissing) return jsonString;
+      if (appType !== "codex" && !createIfMissing) return jsonString;
       config.env = {};
     }
     const env = config.env as Record<string, any>;
 
-    // Gemini API Key
     if (appType === "gemini") {
       if ("GEMINI_API_KEY" in env) {
         env.GEMINI_API_KEY = apiKey;
@@ -331,21 +439,38 @@ export const setApiKeyInConfig = (
 
     // Codex API Key
     if (appType === "codex") {
+      const authKeyField =
+        extractCodexAuthEnvKey(
+          typeof config?.config === "string" ? config.config : "",
+        ) ?? "OPENAI_API_KEY";
+      if (!isPlainObject(config.auth)) {
+        if (!createIfMissing) return jsonString;
+        config.auth = {};
+      }
+      const auth = config.auth as Record<string, any>;
+
       if ("CODEX_API_KEY" in env) {
         env.CODEX_API_KEY = apiKey;
+      } else if (authKeyField in auth) {
+        auth[authKeyField] = apiKey;
+      } else if (CODEX_AUTH_KEY_FIELDS.some((key) => key in auth)) {
+        const existingKey =
+          CODEX_AUTH_KEY_FIELDS.find((key) => key in auth) ?? authKeyField;
+        auth[existingKey] = apiKey;
       } else if (createIfMissing) {
-        env.CODEX_API_KEY = apiKey;
+        auth[authKeyField] = apiKey;
       } else {
         return jsonString;
       }
       return JSON.stringify(config, null, 2);
     }
 
-    // Claude API Key (优先写入已存在的字段；若两者均不存在且允许创建，则使用 apiKeyField 或默认 AUTH_TOKEN 字段)
-    if ("ANTHROPIC_AUTH_TOKEN" in env) {
-      env.ANTHROPIC_AUTH_TOKEN = apiKey;
-    } else if ("ANTHROPIC_API_KEY" in env) {
-      env.ANTHROPIC_API_KEY = apiKey;
+    const existingClaudeField = CLAUDE_API_KEY_ENV_FIELDS.find(
+      (key) => key in env,
+    );
+
+    if (existingClaudeField) {
+      env[existingClaudeField] = apiKey;
     } else if (createIfMissing) {
       env[apiKeyField ?? "ANTHROPIC_AUTH_TOKEN"] = apiKey;
     } else {
@@ -355,6 +480,16 @@ export const setApiKeyInConfig = (
   } catch (err) {
     return jsonString;
   }
+};
+
+export const extractCodexAuthEnvKey = (
+  configToml: string,
+): string | undefined => {
+  if (!configToml.trim()) return undefined;
+
+  const match = configToml.match(/^\s*env_key\s*=\s*["']([^"']+)["']/m);
+  const value = match?.[1]?.trim();
+  return value || undefined;
 };
 
 // ========== TOML Config Utilities ==========
