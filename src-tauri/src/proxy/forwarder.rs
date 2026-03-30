@@ -788,6 +788,20 @@ impl RequestForwarder {
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
                 rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot)
+            } else if needs_transform
+                && adapter.name() == "Codex"
+                && (endpoint == "/responses"
+                    || endpoint.ends_with("/responses")
+                    || endpoint == "/responses/compact"
+                    || endpoint.ends_with("/responses/compact"))
+            {
+                // Codex transform mode: route based on api_format
+                let codex_format = super::providers::get_codex_api_format(provider);
+                if codex_format == "anthropic" {
+                    ("/v1/messages".to_string(), None)
+                } else {
+                    ("/v1/chat/completions".to_string(), None)
+                }
             } else {
                 (
                     endpoint.to_string(),
@@ -1066,8 +1080,11 @@ impl RequestForwarder {
             }
         }
 
-        // anthropic-version：仅在缺失时补充默认值
-        if adapter.name() == "Claude" && !saw_anthropic_version {
+        // anthropic-version：仅在缺失时补充默认值（Claude 或 Codex anthropic 模式）
+        let needs_anthropic_version = adapter.name() == "Claude"
+            || (adapter.name() == "Codex"
+                && super::providers::get_codex_api_format(provider) == "anthropic");
+        if needs_anthropic_version && !saw_anthropic_version {
             ordered_headers.append(
                 "anthropic-version",
                 http::HeaderValue::from_static("2023-06-01"),

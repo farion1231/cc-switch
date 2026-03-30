@@ -79,9 +79,31 @@ impl Default for CodexAdapter {
     }
 }
 
+/// Get the API format for a Codex provider from its meta.
+///
+/// Returns `"openai_chat"` when `meta.api_format == "openai_chat"`,
+/// `"anthropic"` when `meta.api_format == "anthropic"`,
+/// otherwise defaults to `"openai_responses"` (native Responses API).
+pub fn get_codex_api_format(provider: &Provider) -> &'static str {
+    if let Some(meta) = provider.meta.as_ref() {
+        if let Some(api_format) = meta.api_format.as_deref() {
+            match api_format {
+                "openai_chat" => return "openai_chat",
+                "anthropic" => return "anthropic",
+                _ => {}
+            }
+        }
+    }
+    "openai_responses"
+}
+
 impl ProviderAdapter for CodexAdapter {
     fn name(&self) -> &'static str {
         "Codex"
+    }
+
+    fn needs_transform(&self, provider: &Provider) -> bool {
+        matches!(get_codex_api_format(provider), "openai_chat" | "anthropic")
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {

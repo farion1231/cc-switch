@@ -14,9 +14,10 @@ use super::{
     },
     handler_context::RequestContext,
     providers::{
-        get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
+        get_adapter, get_claude_api_format, get_codex_api_format,
+        streaming::create_anthropic_sse_stream,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
-        transform_responses,
+        transform_compat, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
@@ -371,7 +372,10 @@ pub async fn handle_chat_completions(
     process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG).await
 }
 
-/// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
+/// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI）
+///
+/// 当供应商的 `meta.api_format == "openai_chat"` 时，将 Responses API 请求转换为
+/// Chat Completions 格式，并将响应转换回 Responses API 格式返回给客户端。
 pub async fn handle_responses(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
@@ -397,12 +401,56 @@ pub async fn handle_responses(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // Check api_format to determine transform mode
+    let codex_format = get_codex_api_format(&ctx.provider);
+
+    // Route based on api_format
+    let (forward_endpoint, forward_body) = if codex_format == "anthropic" {
+        let mut transformed = transform_compat::responses_to_anthropic_messages(body.clone())?;
+        if let Some(upstream_model) = ctx
+            .provider
+            .settings_config
+            .get("upstream_model")
+            .and_then(|v| v.as_str())
+        {
+            transformed["model"] = json!(upstream_model);
+        }
+        ("/v1/messages", transformed)
+    } else if codex_format == "openai_chat" {
+        let mut transformed = transform_compat::responses_to_chat_completions(body.clone())?;
+        if is_stream {
+            transformed["stream"] = json!(false);
+        }
+        if let Some(upstream_model) = ctx
+            .provider
+            .settings_config
+            .get("upstream_model")
+            .and_then(|v| v.as_str())
+        {
+            transformed["model"] = json!(upstream_model);
+        }
+        ("/chat/completions", transformed)
+    } else {
+        ("/responses", body)
+    };
+
+    // Extract tools before forward_body is moved (needed for streaming converter)
+    let anthropic_tools: Vec<serde_json::Value> = if codex_format == "anthropic" {
+        forward_body
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            &endpoint,
-            body,
+            forward_endpoint,
+            forward_body,
             headers,
             extensions,
             ctx.get_providers(),
@@ -422,10 +470,45 @@ pub async fn handle_responses(
     ctx.provider = result.provider;
     let response = result.response;
 
+    if codex_format == "anthropic" {
+        if is_stream {
+            // Real-time streaming: Anthropic SSE → Responses API SSE
+            let stream = response.bytes_stream();
+            let converted =
+                super::providers::streaming_compat::create_responses_sse_stream_from_anthropic(
+                    stream,
+                    anthropic_tools,
+                );
+
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                "Content-Type",
+                axum::http::HeaderValue::from_static("text/event-stream"),
+            );
+            headers.insert(
+                "Cache-Control",
+                axum::http::HeaderValue::from_static("no-cache"),
+            );
+            headers.insert(
+                "Connection",
+                axum::http::HeaderValue::from_static("keep-alive"),
+            );
+
+            let body = axum::body::Body::from_stream(converted);
+            return Ok((headers, body).into_response());
+        }
+        return handle_codex_anthropic_transform(response, false).await;
+    }
+    if codex_format == "openai_chat" {
+        return handle_codex_transform(response, is_stream).await;
+    }
+
     process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
 }
 
-/// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
+/// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI）
+///
+/// 与 `handle_responses` 相同的转换逻辑，但针对 `/responses/compact` 端点。
 pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
@@ -444,19 +527,64 @@ pub async fn handle_responses_compact(
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-    let endpoint = endpoint_with_query(&uri, "/responses/compact");
+    let _endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // Check api_format to determine transform mode
+    let codex_format = get_codex_api_format(&ctx.provider);
+
+    // Route based on api_format
+    let (forward_endpoint, forward_body) = if codex_format == "anthropic" {
+        let mut transformed = transform_compat::responses_to_anthropic_messages(body.clone())?;
+        if let Some(upstream_model) = ctx
+            .provider
+            .settings_config
+            .get("upstream_model")
+            .and_then(|v| v.as_str())
+        {
+            transformed["model"] = json!(upstream_model);
+        }
+        // Keep stream flag as-is — use real Anthropic streaming
+        ("/v1/messages", transformed)
+    } else if codex_format == "openai_chat" {
+        let mut transformed = transform_compat::responses_to_chat_completions(body.clone())?;
+        if is_stream {
+            transformed["stream"] = json!(false);
+        }
+        if let Some(upstream_model) = ctx
+            .provider
+            .settings_config
+            .get("upstream_model")
+            .and_then(|v| v.as_str())
+        {
+            transformed["model"] = json!(upstream_model);
+        }
+        ("/chat/completions", transformed)
+    } else {
+        ("/responses/compact", body)
+    };
+
+    // Extract tools before forward_body is moved
+    let anthropic_tools_compact: Vec<serde_json::Value> = if codex_format == "anthropic" {
+        forward_body
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            &endpoint,
-            body,
+            forward_endpoint,
+            forward_body,
             headers,
             extensions,
             ctx.get_providers(),
@@ -476,7 +604,368 @@ pub async fn handle_responses_compact(
     ctx.provider = result.provider;
     let response = result.response;
 
+    if codex_format == "anthropic" {
+        if is_stream {
+            let stream = response.bytes_stream();
+            let converted =
+                super::providers::streaming_compat::create_responses_sse_stream_from_anthropic(
+                    stream,
+                    anthropic_tools_compact,
+                );
+
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                "Content-Type",
+                axum::http::HeaderValue::from_static("text/event-stream"),
+            );
+            headers.insert(
+                "Cache-Control",
+                axum::http::HeaderValue::from_static("no-cache"),
+            );
+            headers.insert(
+                "Connection",
+                axum::http::HeaderValue::from_static("keep-alive"),
+            );
+
+            let body = axum::body::Body::from_stream(converted);
+            return Ok((headers, body).into_response());
+        }
+        return handle_codex_anthropic_transform(response, false).await;
+    }
+    if codex_format == "openai_chat" {
+        return handle_codex_transform(response, is_stream).await;
+    }
+
     process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+}
+
+/// Codex 格式转换处理（openai_chat 模式）
+///
+/// 读取 Chat Completions 完整响应，转换为 Responses API 格式。
+/// 当客户端请求流式时，模拟 SSE 事件流输出。
+async fn handle_codex_transform(
+    response: super::hyper_client::ProxyResponse,
+    is_stream: bool,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+    let response_headers = response.headers().clone();
+
+    let body_bytes = response.bytes().await?;
+
+    // If upstream returned an error, pass it through unchanged
+    if !status.is_success() {
+        let mut builder = axum::response::Response::builder().status(status);
+        for (key, value) in response_headers.iter() {
+            let k = key.as_str().to_lowercase();
+            if k != "content-length" && k != "transfer-encoding" {
+                builder = builder.header(key, value);
+            }
+        }
+        builder = builder.header("content-type", "application/json");
+        let body = axum::body::Body::from(body_bytes.to_vec());
+        return builder
+            .body(body)
+            .map_err(|e| ProxyError::Internal(format!("{e}")));
+    }
+
+    let upstream_response: Value = serde_json::from_slice(&body_bytes).map_err(|e| {
+        let body_str = String::from_utf8_lossy(&body_bytes);
+        log::error!("[Codex] Failed to parse upstream response: {e}, body: {body_str}");
+        ProxyError::TransformError(format!("Failed to parse upstream response: {e}"))
+    })?;
+
+    let responses_api_response = transform_compat::chat_completions_to_responses(upstream_response)
+        .map_err(|e| {
+            log::error!("[Codex] Transform failed: {e}");
+            e
+        })?;
+
+    if is_stream {
+        // Simulate streaming by emitting SSE events from the complete response
+        let events = build_responses_sse_events(&responses_api_response);
+        let event_bytes: Vec<u8> = events.into_iter().flat_map(|e| e.into_bytes()).collect();
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "Content-Type",
+            axum::http::HeaderValue::from_static("text/event-stream"),
+        );
+        headers.insert(
+            "Cache-Control",
+            axum::http::HeaderValue::from_static("no-cache"),
+        );
+        headers.insert(
+            "Connection",
+            axum::http::HeaderValue::from_static("keep-alive"),
+        );
+
+        let body = axum::body::Body::from(event_bytes);
+        return Ok((headers, body).into_response());
+    }
+
+    // Non-streaming: return JSON response
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        let k = key.as_str().to_lowercase();
+        if k != "content-length" && k != "transfer-encoding" {
+            builder = builder.header(key, value);
+        }
+    }
+    builder = builder.header("content-type", "application/json");
+
+    let response_body = serde_json::to_vec(&responses_api_response)
+        .map_err(|e| ProxyError::TransformError(format!("Failed to serialize response: {e}")))?;
+    let body = axum::body::Body::from(response_body);
+    builder
+        .body(body)
+        .map_err(|e| ProxyError::Internal(format!("{e}")))
+}
+
+/// Codex 格式转换处理（anthropic 模式）
+///
+/// 读取 Anthropic Messages API 完整响应，转换为 Responses API 格式。
+/// 当客户端请求流式时，模拟 SSE 事件流输出。
+async fn handle_codex_anthropic_transform(
+    response: super::hyper_client::ProxyResponse,
+    is_stream: bool,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+    let response_headers = response.headers().clone();
+
+    let body_bytes = response.bytes().await?;
+
+    // If upstream returned an error, pass it through unchanged
+    if !status.is_success() {
+        let mut builder = axum::response::Response::builder().status(status);
+        for (key, value) in response_headers.iter() {
+            let k = key.as_str().to_lowercase();
+            if k != "content-length" && k != "transfer-encoding" {
+                builder = builder.header(key, value);
+            }
+        }
+        builder = builder.header("content-type", "application/json");
+        let body = axum::body::Body::from(body_bytes.to_vec());
+        return builder
+            .body(body)
+            .map_err(|e| ProxyError::Internal(format!("{e}")));
+    }
+
+    let upstream_response: Value = serde_json::from_slice(&body_bytes).map_err(|e| {
+        let body_str = String::from_utf8_lossy(&body_bytes);
+        log::error!("[Codex/Anthropic] Failed to parse upstream response: {e}, body: {body_str}");
+        ProxyError::TransformError(format!("Failed to parse upstream response: {e}"))
+    })?;
+
+    let responses_api_response =
+        transform_compat::anthropic_messages_to_responses(upstream_response).map_err(|e| {
+            log::error!("[Codex/Anthropic] Transform failed: {e}");
+            e
+        })?;
+
+    if is_stream {
+        // Simulate streaming by emitting SSE events from the complete response
+        let events = build_responses_sse_events(&responses_api_response);
+        let event_bytes: Vec<u8> = events.into_iter().flat_map(|e| e.into_bytes()).collect();
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "Content-Type",
+            axum::http::HeaderValue::from_static("text/event-stream"),
+        );
+        headers.insert(
+            "Cache-Control",
+            axum::http::HeaderValue::from_static("no-cache"),
+        );
+        headers.insert(
+            "Connection",
+            axum::http::HeaderValue::from_static("keep-alive"),
+        );
+
+        let body = axum::body::Body::from(event_bytes);
+        return Ok((headers, body).into_response());
+    }
+
+    // Non-streaming: return JSON response
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        let k = key.as_str().to_lowercase();
+        if k != "content-length" && k != "transfer-encoding" {
+            builder = builder.header(key, value);
+        }
+    }
+    builder = builder.header("content-type", "application/json");
+
+    let response_body = serde_json::to_vec(&responses_api_response)
+        .map_err(|e| ProxyError::TransformError(format!("Failed to serialize response: {e}")))?;
+    let body = axum::body::Body::from(response_body);
+    builder
+        .body(body)
+        .map_err(|e| ProxyError::Internal(format!("{e}")))
+}
+
+/// Build SSE events from a complete Responses API response object.
+///
+/// Emits the standard event sequence that Codex CLI expects:
+/// `response.created` → output item events → `response.completed`
+fn build_responses_sse_events(response: &Value) -> Vec<String> {
+    let mut events = Vec::new();
+    let id = response
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("resp_unknown");
+
+    // response.created
+    events.push(format!(
+        "event: response.created\ndata: {}\n\n",
+        serde_json::to_string(&json!({
+            "id": id,
+            "object": "response",
+            "status": "in_progress",
+            "model": response.get("model").cloned().unwrap_or(json!("unknown")),
+            "output": [],
+            "usage": null
+        }))
+        .unwrap_or_default()
+    ));
+
+    // Emit output items
+    if let Some(output) = response.get("output").and_then(|o| o.as_array()) {
+        for (idx, item) in output.iter().enumerate() {
+            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+            match item_type {
+                "message" => {
+                    // response.output_item.added
+                    events.push(format!(
+                        "event: response.output_item.added\ndata: {}\n\n",
+                        serde_json::to_string(&json!({
+                            "output_index": idx,
+                            "item": {
+                                "type": "message",
+                                "id": item.get("id").cloned().unwrap_or(json!("")),
+                                "role": "assistant",
+                                "status": "in_progress",
+                                "content": []
+                            }
+                        }))
+                        .unwrap_or_default()
+                    ));
+
+                    if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
+                        for (cidx, part) in content.iter().enumerate() {
+                            let text = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
+
+                            // response.content_part.added
+                            events.push(format!(
+                                "event: response.content_part.added\ndata: {}\n\n",
+                                serde_json::to_string(&json!({
+                                    "output_index": idx,
+                                    "content_index": cidx,
+                                    "part": {"type": "output_text", "text": "", "annotations": []}
+                                }))
+                                .unwrap_or_default()
+                            ));
+
+                            // response.output_text.delta (send full text as single delta)
+                            if !text.is_empty() {
+                                events.push(format!(
+                                    "event: response.output_text.delta\ndata: {}\n\n",
+                                    serde_json::to_string(&json!({
+                                        "output_index": idx,
+                                        "content_index": cidx,
+                                        "delta": text
+                                    }))
+                                    .unwrap_or_default()
+                                ));
+                            }
+
+                            // response.content_part.done
+                            events.push(format!(
+                                "event: response.content_part.done\ndata: {}\n\n",
+                                serde_json::to_string(&json!({
+                                    "output_index": idx,
+                                    "content_index": cidx,
+                                    "part": part
+                                }))
+                                .unwrap_or_default()
+                            ));
+                        }
+                    }
+
+                    // response.output_item.done
+                    events.push(format!(
+                        "event: response.output_item.done\ndata: {}\n\n",
+                        serde_json::to_string(&json!({
+                            "output_index": idx,
+                            "item": item
+                        }))
+                        .unwrap_or_default()
+                    ));
+                }
+                "function_call" => {
+                    // response.output_item.added
+                    events.push(format!(
+                        "event: response.output_item.added\ndata: {}\n\n",
+                        serde_json::to_string(&json!({
+                            "output_index": idx,
+                            "item": {
+                                "type": "function_call",
+                                "id": item.get("id").cloned().unwrap_or(json!("")),
+                                "call_id": item.get("call_id").cloned().unwrap_or(json!("")),
+                                "name": item.get("name").cloned().unwrap_or(json!("")),
+                                "arguments": "",
+                                "status": "in_progress"
+                            }
+                        }))
+                        .unwrap_or_default()
+                    ));
+
+                    // function_call arguments delta
+                    let args = item
+                        .get("arguments")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("{}");
+                    events.push(format!(
+                        "event: response.function_call_arguments.delta\ndata: {}\n\n",
+                        serde_json::to_string(&json!({
+                            "output_index": idx,
+                            "delta": args
+                        }))
+                        .unwrap_or_default()
+                    ));
+
+                    // response.function_call_arguments.done
+                    events.push(format!(
+                        "event: response.function_call_arguments.done\ndata: {}\n\n",
+                        serde_json::to_string(&json!({
+                            "output_index": idx,
+                            "arguments": args
+                        }))
+                        .unwrap_or_default()
+                    ));
+
+                    // response.output_item.done
+                    events.push(format!(
+                        "event: response.output_item.done\ndata: {}\n\n",
+                        serde_json::to_string(&json!({
+                            "output_index": idx,
+                            "item": item
+                        }))
+                        .unwrap_or_default()
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // response.completed
+    events.push(format!(
+        "event: response.completed\ndata: {}\n\n",
+        serde_json::to_string(response).unwrap_or_default()
+    ));
+
+    events
 }
 
 // ============================================================================
