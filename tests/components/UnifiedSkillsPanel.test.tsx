@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
@@ -146,5 +146,41 @@ describe("UnifiedSkillsPanel", () => {
     expect(
       screen.getByText("superpowers/using-superpowers"),
     ).toBeInTheDocument();
+  });
+
+  it("uninstalls nested skills using the full directory identity key", async () => {
+    uninstallSkillMock.mockResolvedValue({});
+    installedSkillsData = [
+      {
+        id: "local:superpowers/using-superpowers",
+        name: "using-superpowers",
+        description: "Imported from Claude",
+        directory: "superpowers/using-superpowers",
+        repoOwner: "owner",
+        repoName: "repo",
+        apps: {
+          claude: true,
+          codex: false,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+        },
+        installedAt: 1,
+      },
+    ];
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    fireEvent.click(screen.getByTitle("skills.uninstall"));
+    fireEvent.click(screen.getByRole("button", { name: "common.confirm" }));
+
+    await waitFor(() => {
+      expect(uninstallSkillMock).toHaveBeenCalledWith({
+        id: "local:superpowers/using-superpowers",
+        skillKey: "superpowers/using-superpowers:owner:repo",
+      });
+    });
   });
 });

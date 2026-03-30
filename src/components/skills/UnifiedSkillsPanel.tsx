@@ -30,6 +30,7 @@ import {
 import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
+import { buildSkillIdentityKey } from "@/lib/api/skills";
 import { toast } from "sonner";
 import { MCP_SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
@@ -138,11 +139,11 @@ const UnifiedSkillsPanel = React.forwardRef<
       message: t("skills.uninstallConfirm", { name: skill.name }),
       onConfirm: async () => {
         try {
-          // 构建 skillKey 用于更新 discoverable 缓存
-          const installName =
-            skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
-            skill.directory.toLowerCase();
-          const skillKey = `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
+          const skillKey = buildSkillIdentityKey(
+            skill.directory,
+            skill.repoOwner,
+            skill.repoName,
+          );
 
           const result = await uninstallMutation.mutateAsync({
             id: skill.id,

@@ -1439,12 +1439,14 @@ impl SkillService {
                         .map(|relative| Self::normalize_skill_path(&relative));
 
                     // 对Claude这类会改写live目录结构的app，除了完整目录外
-                    // 按实际映射后的路径判断是否已被CC Switch管理，避免重复扫成unmanaged。
+                    // 还要按实际映射后的叶子路径判断是否已被CC Switch管理，避免同步出的leaf目录
+                    // 再次被扫成unmanaged；但外部嵌套目录仍应保留为可见的unmanaged skill。
                     if managed_dirs.contains(&normalized_directory)
                         || normalized_app_path.as_ref().is_some_and(|path| {
-                            managed_app_paths
-                                .get(app.as_str())
-                                .is_some_and(|paths| paths.contains(path))
+                            normalized_directory == *path
+                                && managed_app_paths
+                                    .get(app.as_str())
+                                    .is_some_and(|paths| paths.contains(path))
                         })
                     {
                         continue;
@@ -1804,12 +1806,16 @@ impl SkillService {
         let managed_app_paths: HashSet<String> = skills
             .values()
             .filter_map(|skill| {
+                if !skill.apps.is_enabled_for(app) {
+                    return None;
+                }
                 Self::app_relative_skill_path(app, &skill.directory)
                     .map(|relative| Self::normalize_skill_path(&relative))
             })
             .collect();
         let managed_original_paths: HashSet<String> = skills
             .values()
+            .filter(|skill| skill.apps.is_enabled_for(app))
             .map(|skill| Self::normalize_skill_key(&skill.directory))
             .collect();
 
@@ -1987,6 +1993,9 @@ impl SkillService {
                 let paths = skills
                     .iter()
                     .filter_map(|skill| {
+                        if !skill.apps.is_enabled_for(&app) {
+                            return None;
+                        }
                         Self::app_relative_skill_path(&app, &skill.directory)
                             .map(|relative| Self::normalize_skill_path(&relative))
                     })

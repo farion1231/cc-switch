@@ -122,6 +122,18 @@ export interface SkillRepo {
   enabled: boolean;
 }
 
+function normalizeSkillKeyPart(value?: string): string {
+  return (value ?? "").replace(/\\/g, "/").toLowerCase();
+}
+
+export function buildSkillIdentityKey(
+  directory: string,
+  repoOwner?: string,
+  repoName?: string,
+): string {
+  return `${normalizeSkillKeyPart(directory)}:${normalizeSkillKeyPart(repoOwner)}:${normalizeSkillKeyPart(repoName)}`;
+}
+
 // ========== API ==========
 
 export const skillsApi = {

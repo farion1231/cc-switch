@@ -531,6 +531,116 @@ fn sync_to_claude_cleans_legacy_nested_dir_and_scan_unmanaged_does_not_repeat() 
 }
 
 #[test]
+fn codex_only_nested_skill_does_not_block_real_claude_leaf_skill() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    write_skill(
+        &home.join(".claude").join("skills").join("brainstorming"),
+        "Claude Brainstorming",
+    );
+
+    let ssot_skill_dir = home
+        .join(".cc-switch")
+        .join("skills")
+        .join("superpowers")
+        .join("brainstorming");
+    write_skill(&ssot_skill_dir, "Codex Brainstorming");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:superpowers/brainstorming".to_string(),
+            name: "Codex Brainstorming".to_string(),
+            description: Some("Only enabled for Codex".to_string()),
+            directory: "superpowers/brainstorming".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+            },
+            installed_at: 1,
+        })
+        .expect("save codex-only skill");
+
+    let unmanaged = SkillService::scan_unmanaged(&state.db).expect("scan unmanaged skills");
+    assert!(
+        unmanaged.iter().any(|skill| skill.directory == "brainstorming"),
+        "real Claude leaf skill should still appear as unmanaged when only a Codex skill shares its leaf name"
+    );
+
+    SkillService::sync_to_app(&state.db, &AppType::Claude).expect("sync Claude skills");
+    assert!(
+        home.join(".claude")
+            .join("skills")
+            .join("brainstorming")
+            .join("SKILL.md")
+            .exists(),
+        "sync_to_app(Claude) should not delete a real Claude skill just because a Codex-only skill shares its leaf name"
+    );
+}
+
+#[test]
+fn external_nested_claude_skill_with_conflicting_leaf_still_appears_as_unmanaged() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_skill_dir = home
+        .join(".cc-switch")
+        .join("skills")
+        .join("superpowers")
+        .join("brainstorming");
+    write_skill(&ssot_skill_dir, "Managed Brainstorming");
+
+    write_skill(
+        &home
+            .join(".claude")
+            .join("skills")
+            .join("tools")
+            .join("brainstorming"),
+        "External Brainstorming",
+    );
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:superpowers/brainstorming".to_string(),
+            name: "Managed Brainstorming".to_string(),
+            description: Some("Enabled for Claude".to_string()),
+            directory: "superpowers/brainstorming".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            installed_at: 1,
+        })
+        .expect("save managed claude skill");
+
+    let unmanaged = SkillService::scan_unmanaged(&state.db).expect("scan unmanaged skills");
+    assert!(
+        unmanaged
+            .iter()
+            .any(|skill| skill.directory == "tools/brainstorming"),
+        "external nested Claude skill should remain visible as unmanaged even if its leaf path conflicts with a managed Claude skill"
+    );
+}
+
+#[test]
 fn delete_skill_backup_removes_backup_directory() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import {
   skillsApi,
+  buildSkillIdentityKey,
   type SkillBackupEntry,
   type DiscoverableSkill,
   type ImportSkillSelection,
@@ -87,17 +88,21 @@ export function useInstallSkill() {
       );
 
       // 更新 discoverable 缓存中对应技能的 installed 状态
-      const installName =
-        skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
-        skill.directory.toLowerCase();
-      const skillKey = `${installName}:${skill.repoOwner.toLowerCase()}:${skill.repoName.toLowerCase()}`;
+      const skillKey = buildSkillIdentityKey(
+        skill.directory,
+        skill.repoOwner,
+        skill.repoName,
+      );
 
       queryClient.setQueryData<DiscoverableSkill[]>(
         ["skills", "discoverable"],
         (oldData) => {
           if (!oldData) return oldData;
           return oldData.map((s) => {
-            if (s.key === skillKey) {
+            if (
+              buildSkillIdentityKey(s.directory, s.repoOwner, s.repoName) ===
+              skillKey
+            ) {
               return { ...s, installed: true };
             }
             return s;
@@ -135,7 +140,10 @@ export function useUninstallSkill() {
         (oldData) => {
           if (!oldData) return oldData;
           return oldData.map((s) => {
-            if (s.key === skillKey) {
+            if (
+              buildSkillIdentityKey(s.directory, s.repoOwner, s.repoName) ===
+              skillKey
+            ) {
               return { ...s, installed: false };
             }
             return s;

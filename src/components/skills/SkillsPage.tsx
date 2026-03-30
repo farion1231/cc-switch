@@ -28,6 +28,7 @@ import {
   useRemoveSkillRepo,
   useSearchSkillsSh,
 } from "@/hooks/useSkills";
+import { buildSkillIdentityKey } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import type {
   DiscoverableSkill,
@@ -121,12 +122,9 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const installedKeys = useMemo(() => {
       if (!installedSkills) return new Set<string>();
       return new Set(
-        installedSkills.map((s) => {
-          // 构建唯一 key：directory + repoOwner + repoName
-          const owner = s.repoOwner?.toLowerCase() || "";
-          const name = s.repoName?.toLowerCase() || "";
-          return `${s.directory.toLowerCase()}:${owner}:${name}`;
-        }),
+        installedSkills.map((s) =>
+          buildSkillIdentityKey(s.directory, s.repoOwner, s.repoName),
+        ),
       );
     }, [installedSkills]);
 
@@ -148,15 +146,11 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const skills: DiscoverableSkillItem[] = useMemo(() => {
       if (!discoverableSkills) return [];
       return discoverableSkills.map((d) => {
-        // 同时处理 / 和 \ 路径分隔符（兼容 Windows 和 Unix）
-        const installName =
-          d.directory.split(/[/\\]/).pop()?.toLowerCase() ||
-          d.directory.toLowerCase();
-        // 使用 directory + repoOwner + repoName 组合判断是否已安装
-        const key = `${installName}:${d.repoOwner.toLowerCase()}:${d.repoName.toLowerCase()}`;
         return {
           ...d,
-          installed: installedKeys.has(key),
+          installed: installedKeys.has(
+            buildSkillIdentityKey(d.directory, d.repoOwner, d.repoName),
+          ),
         };
       });
     }, [discoverableSkills, installedKeys]);
@@ -194,27 +188,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       readmeUrl: s.readmeUrl,
     });
 
-    const handleInstall = async (directory: string) => {
-      let skill: DiscoverableSkill | undefined;
-
-      if (searchSource === "skillssh") {
-        const found = accumulatedResults.find((s) => s.directory === directory);
-        if (found) {
-          skill = toDiscoverableSkill(found);
-        }
-      } else {
-        skill = discoverableSkills?.find(
-          (s) =>
-            s.directory === directory ||
-            s.directory.split("/").pop() === directory,
-        );
-      }
-
-      if (!skill) {
-        toast.error(t("skills.notFound"));
-        return;
-      }
-
+    const handleInstall = async (skill: DiscoverableSkill) => {
       try {
         await installMutation.mutateAsync({
           skill,
