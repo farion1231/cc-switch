@@ -32,18 +32,44 @@ impl CodexAdapter {
         CODEX_CLIENT_REGEX.is_match(user_agent)
     }
 
+    fn extract_auth_key_name(&self, provider: &Provider) -> Option<String> {
+        let config_str = provider.settings_config.get("config").and_then(|v| v.as_str())?;
+        let re = Regex::new(r#"(?m)^\s*env_key\s*=\s*["']([^"']+)["']"#).ok()?;
+        re.captures(config_str)
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().trim().to_string())
+    }
+
     /// 从 Provider 配置中提取 API Key
     fn extract_key(&self, provider: &Provider) -> Option<String> {
+        let dynamic_auth_key = self.extract_auth_key_name(provider);
+
         // 1. 尝试从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
+            if let Some(ref key_name) = dynamic_auth_key {
+                if let Some(key) = env.get(key_name).and_then(|v| v.as_str()) {
+                    return Some(key.to_string());
+                }
+            }
             if let Some(key) = env.get("OPENAI_API_KEY").and_then(|v| v.as_str()) {
+                return Some(key.to_string());
+            }
+            if let Some(key) = env.get("AZURE_API_KEY").and_then(|v| v.as_str()) {
                 return Some(key.to_string());
             }
         }
 
         // 2. 尝试从 auth 中获取 (Codex CLI 格式)
         if let Some(auth) = provider.settings_config.get("auth") {
+            if let Some(ref key_name) = dynamic_auth_key {
+                if let Some(key) = auth.get(key_name).and_then(|v| v.as_str()) {
+                    return Some(key.to_string());
+                }
+            }
             if let Some(key) = auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) {
+                return Some(key.to_string());
+            }
+            if let Some(key) = auth.get("AZURE_API_KEY").and_then(|v| v.as_str()) {
                 return Some(key.to_string());
             }
         }
