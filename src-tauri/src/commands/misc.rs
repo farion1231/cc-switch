@@ -795,10 +795,7 @@ fn extract_env_vars_from_config(
 }
 
 fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
-    let Some(raw_path) = cwd
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(raw_path) = cwd.filter(|value| !value.trim().is_empty()) else {
         return Ok(None);
     };
 
@@ -815,6 +812,18 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     if !resolved.is_dir() {
         return Err(format!("选择的路径不是文件夹: {}", resolved.display()));
     }
+
+    // Strip Windows extended-length prefix (\\?\) that canonicalize produces,
+    // as it can break batch scripts and other shell commands.
+    #[cfg(target_os = "windows")]
+    let resolved = {
+        let s = resolved.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            PathBuf::from(stripped)
+        } else {
+            resolved
+        }
+    };
 
     Ok(Some(resolved))
 }
