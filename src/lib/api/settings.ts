@@ -47,6 +47,10 @@ export const settingsApi = {
     await invoke("open_config_folder", { app: appId });
   },
 
+  async pickDirectory(defaultPath?: string): Promise<string | null> {
+    return await invoke("pick_directory", { defaultPath });
+  },
+
   async selectConfigDirectory(defaultPath?: string): Promise<string | null> {
     return await invoke("pick_directory", { defaultPath });
   },
