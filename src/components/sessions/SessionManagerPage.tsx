@@ -270,6 +270,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         .filter((result) => !result.success)
         .map((result) => result.error || t("common.unknown"));
 
+      if (deletedKeys.length > 0) {
+        const deletedKeySet = new Set(deletedKeys);
+        queryClient.setQueryData<SessionMeta[]>(["sessions"], (current) =>
+          (current ?? []).filter(
+            (session) => !deletedKeySet.has(getSessionKey(session)),
+          ),
+        );
+      }
+
       results
         .filter((result) => result.success)
         .forEach((result) => {

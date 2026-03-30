@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -288,6 +289,43 @@ describe("SessionManagerPage", () => {
     await waitFor(() =>
       expect(screen.getByText("已选 1 项")).toBeInTheDocument(),
     );
+  });
 
+  it("removes successfully deleted sessions from the UI before refetch completes", async () => {
+    const view = renderPage();
+    let resolveInvalidate!: () => void;
+    const invalidateSpy = vi
+      .spyOn(view.client, "invalidateQueries")
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveInvalidate = () => resolve(undefined);
+          }),
+      );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /批量管理/i }));
+    fireEvent.click(screen.getByRole("button", { name: /全选当前/i }));
+    fireEvent.click(screen.getByRole("button", { name: /批量删除/i }));
+
+    const dialog = screen.getByTestId("confirm-dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /删除所选会话/i }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+      expect(screen.queryByText("Beta Session")).not.toBeInTheDocument();
+    });
+
+    await act(async () => {
+      resolveInvalidate();
+    });
+    invalidateSpy.mockRestore();
   });
 });
