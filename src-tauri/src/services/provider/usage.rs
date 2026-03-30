@@ -5,17 +5,12 @@
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::{UsageData, UsageResult, UsageScript};
+use crate::services::provider::{
+    extract_provider_api_key, extract_provider_base_url, non_empty_trimmed,
+};
 use crate::settings;
 use crate::store::AppState;
 use crate::usage_script;
-use regex::Regex;
-
-fn non_empty_trimmed(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(ToOwned::to_owned)
-}
 
 /// Execute usage script and format result (private helper method)
 pub(crate) async fn execute_and_format_usage_result(
@@ -89,106 +84,6 @@ pub(crate) async fn execute_and_format_usage_result(
     }
 }
 
-/// Extract API key from provider configuration
-fn extract_toml_base_url(config_toml: &str) -> Option<String> {
-    let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).ok()?;
-    re.captures(config_toml)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
-}
-
-fn extract_api_key_from_provider(
-    provider: &crate::provider::Provider,
-    app_type: &AppType,
-) -> Option<String> {
-    let settings = &provider.settings_config;
-
-    let direct = match app_type {
-        AppType::Codex => non_empty_trimmed(
-            settings
-                .get("auth")
-                .and_then(|v| v.get("OPENAI_API_KEY"))
-                .and_then(|v| v.as_str()),
-        ),
-        _ => None,
-    };
-
-    direct
-        .or_else(|| {
-            non_empty_trimmed(
-                settings
-                    .get("apiKey")
-                    .or_else(|| settings.get("api_key"))
-                    .and_then(|v| v.as_str())
-                    .or_else(|| {
-                        settings
-                            .get("options")
-                            .and_then(|v| v.get("apiKey").or_else(|| v.get("api_key")))
-                            .and_then(|v| v.as_str())
-                    }),
-            )
-        })
-        .or_else(|| {
-            let env = settings.get("env")?;
-            non_empty_trimmed(
-                env.get("ANTHROPIC_AUTH_TOKEN")
-                    .or_else(|| env.get("ANTHROPIC_API_KEY"))
-                    .or_else(|| env.get("OPENAI_API_KEY"))
-                    .or_else(|| env.get("OPENROUTER_API_KEY"))
-                    .or_else(|| env.get("GOOGLE_API_KEY"))
-                    .or_else(|| env.get("GEMINI_API_KEY"))
-                    .or_else(|| env.get("CODEX_API_KEY"))
-                    .and_then(|v| v.as_str()),
-            )
-        })
-}
-
-/// Extract base URL from provider configuration
-fn extract_base_url_from_provider(
-    provider: &crate::provider::Provider,
-    app_type: &AppType,
-) -> Option<String> {
-    let settings = &provider.settings_config;
-
-    let direct = match app_type {
-        AppType::Codex => settings
-            .get("config")
-            .and_then(|v| v.as_str())
-            .and_then(extract_toml_base_url),
-        _ => None,
-    };
-
-    direct
-        .or_else(|| {
-            non_empty_trimmed(
-                settings
-                    .get("baseUrl")
-                    .or_else(|| settings.get("baseURL"))
-                    .or_else(|| settings.get("base_url"))
-                    .and_then(|v| v.as_str())
-                    .or_else(|| {
-                        settings
-                            .get("options")
-                            .and_then(|v| {
-                                v.get("baseURL")
-                                    .or_else(|| v.get("baseUrl"))
-                                    .or_else(|| v.get("base_url"))
-                            })
-                            .and_then(|v| v.as_str())
-                    }),
-            )
-        })
-        .or_else(|| {
-            let env = settings.get("env")?;
-            non_empty_trimmed(
-                env.get("ANTHROPIC_BASE_URL")
-                    .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
-                    .or_else(|| env.get("OPENAI_BASE_URL"))
-                    .and_then(|v| v.as_str()),
-            )
-        })
-}
-
 fn resolve_usage_credentials(
     provider: &crate::provider::Provider,
     app_type: &AppType,
@@ -196,11 +91,11 @@ fn resolve_usage_credentials(
     base_url_override: Option<&str>,
 ) -> (String, String) {
     let api_key = non_empty_trimmed(api_key_override)
-        .or_else(|| extract_api_key_from_provider(provider, app_type))
+        .or_else(|| extract_provider_api_key(provider, app_type))
         .unwrap_or_default();
 
     let base_url = non_empty_trimmed(base_url_override)
-        .or_else(|| extract_base_url_from_provider(provider, app_type))
+        .or_else(|| extract_provider_base_url(provider, app_type))
         .unwrap_or_default();
 
     (api_key, base_url)
