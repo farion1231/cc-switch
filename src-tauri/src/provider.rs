@@ -284,13 +284,9 @@ pub struct ProviderMeta {
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
-    /// 用于区分仅保存在数据库中的 provider，避免其更新被 live config 解析错误误伤。
-    #[serde(
-        rename = "liveConfigManaged",
-        default,
-        skip_serializing_if = "std::ops::Not::not"
-    )]
-    pub live_config_managed: bool,
+    /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
+    #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
+    pub live_config_managed: Option<bool>,
     /// 供应商类型标识（用于特殊供应商检测）
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]

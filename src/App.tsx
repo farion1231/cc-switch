@@ -615,16 +615,31 @@ function App() {
     };
 
     if (activeApp === "opencode" || activeApp === "openclaw") {
-      const liveProviderIds =
-        activeApp === "opencode"
-          ? await queryClient.ensureQueryData({
-              queryKey: ["opencodeLiveProviderIds"],
-              queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
-            })
-          : await queryClient.ensureQueryData({
-              queryKey: openclawKeys.liveProviderIds,
-              queryFn: () => providersApi.getOpenClawLiveProviderIds(),
-            });
+      let liveProviderIds: string[] = [];
+      try {
+        liveProviderIds =
+          activeApp === "opencode"
+            ? await queryClient.ensureQueryData({
+                queryKey: ["opencodeLiveProviderIds"],
+                queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
+              })
+            : await queryClient.ensureQueryData({
+                queryKey: openclawKeys.liveProviderIds,
+                queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+              });
+      } catch (error) {
+        console.error(
+          "[App] Failed to load live provider IDs for duplication",
+          error,
+        );
+        const errorMessage = extractErrorMessage(error);
+        toast.error(
+          t("provider.duplicateLiveIdsLoadFailed", {
+            defaultValue: "读取配置中的供应商标识失败，请先修复配置后再试",
+          }) + (errorMessage ? `: ${errorMessage}` : ""),
+        );
+        return;
+      }
       const existingKeys = Array.from(
         new Set([...Object.keys(providers), ...liveProviderIds]),
       );

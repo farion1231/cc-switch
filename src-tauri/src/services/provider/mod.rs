@@ -235,7 +235,10 @@ base_url = "http://localhost:8080"
                 .expect("query stored provider")
                 .expect("provider should exist");
             assert_eq!(
-                stored.meta.as_ref().map(|meta| meta.live_config_managed),
+                stored
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.live_config_managed),
                 Some(false),
                 "db-only provider should be marked as not live-managed"
             );
@@ -260,6 +263,32 @@ base_url = "http://localhost:8080"
             assert_eq!(saved.name, "DeepSeek Edited");
         });
     }
+
+    #[test]
+    fn legacy_additive_provider_still_errors_on_live_config_parse_failure() {
+        with_test_home(|state, home| {
+            let provider = openclaw_provider("legacy-provider");
+            state
+                .db
+                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .expect("seed legacy provider without live_config_managed marker");
+
+            let openclaw_dir = home.join(".openclaw");
+            fs::create_dir_all(&openclaw_dir).expect("create openclaw dir");
+            fs::write(openclaw_dir.join("openclaw.json"), "{ invalid json5")
+                .expect("write malformed config");
+
+            let mut updated = provider.clone();
+            updated.name = "Legacy Edited".to_string();
+
+            let err = ProviderService::update(state, AppType::OpenClaw, None, updated)
+                .expect_err("legacy providers should still surface live parse errors");
+            assert!(
+                err.to_string().contains("Failed to parse OpenClaw config"),
+                "expected parse error, got {err:?}"
+            );
+        });
+    }
 }
 
 impl ProviderService {
@@ -273,17 +302,31 @@ impl ProviderService {
     }
 
     /// Check whether a provider exists in live config, tolerating parse errors
-    /// for providers that have never been written to live (`live_config_managed == false`).
+    /// only for providers that are explicitly marked as DB-only.
     fn check_live_config_exists(
         app_type: &AppType,
         provider_id: &str,
-        is_db_only: bool,
+        live_config_managed: Option<bool>,
     ) -> Result<bool, AppError> {
-        if is_db_only {
+        if live_config_managed == Some(false) {
             Ok(provider_exists_in_live_config(app_type, provider_id).unwrap_or(false))
         } else {
             provider_exists_in_live_config(app_type, provider_id)
         }
+    }
+
+    fn provider_live_config_managed(provider: &Provider) -> Option<bool> {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.live_config_managed)
+    }
+
+    fn set_provider_live_config_managed(provider: &mut Provider, managed: bool) {
+        provider
+            .meta
+            .get_or_insert_with(Default::default)
+            .live_config_managed = Some(managed);
     }
 
     /// List all providers for an app type
@@ -323,10 +366,7 @@ impl ProviderService {
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         if app_type.is_additive_mode() {
-            provider
-                .meta
-                .get_or_insert_with(Default::default)
-                .live_config_managed = add_to_live;
+            Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
 
         // Save to database
@@ -394,12 +434,11 @@ impl ProviderService {
                     app_type.as_str()
                 )));
             };
-            let is_db_only = !existing_provider
-                .meta
-                .as_ref()
-                .is_some_and(|m| m.live_config_managed);
-            let original_in_live =
-                Self::check_live_config_exists(&app_type, &original_id, is_db_only)?;
+            let original_in_live = Self::check_live_config_exists(
+                &app_type,
+                &original_id,
+                Self::provider_live_config_managed(&existing_provider),
+            )?;
             if original_in_live {
                 return Err(AppError::Message(
                     "Provider key cannot be changed after the provider has been added to the app config"
@@ -407,8 +446,11 @@ impl ProviderService {
                 ));
             }
 
-            let next_id_in_live =
-                Self::check_live_config_exists(&app_type, &provider.id, is_db_only)?;
+            let next_id_in_live = Self::check_live_config_exists(
+                &app_type,
+                &provider.id,
+                Self::provider_live_config_managed(&existing_provider),
+            )?;
             if state
                 .db
                 .get_provider_by_id(&provider.id, app_type.as_str())?
@@ -422,10 +464,7 @@ impl ProviderService {
                 )));
             }
 
-            provider
-                .meta
-                .get_or_insert_with(Default::default)
-                .live_config_managed = false;
+            Self::set_provider_live_config_managed(&mut provider, false);
             state.db.save_provider(app_type.as_str(), &provider)?;
             state.db.delete_provider(app_type.as_str(), &original_id)?;
 
@@ -469,16 +508,16 @@ impl ProviderService {
                 }
                 return Ok(true);
             }
-            let is_db_only = !provider
-                .meta
-                .as_ref()
-                .is_some_and(|m| m.live_config_managed);
-            let live_config_managed =
-                Self::check_live_config_exists(&app_type, &provider.id, is_db_only)?;
-            provider
-                .meta
-                .get_or_insert_with(Default::default)
-                .live_config_managed = live_config_managed;
+            let live_config_managed = Self::check_live_config_exists(
+                &app_type,
+                &provider.id,
+                Self::provider_live_config_managed(&provider).or_else(|| {
+                    existing_provider
+                        .as_ref()
+                        .and_then(Self::provider_live_config_managed)
+                }),
+            )?;
+            Self::set_provider_live_config_managed(&mut provider, live_config_managed);
 
             // Save to database after live-config presence is resolved so parse errors
             // do not report failure after already mutating DB state.
@@ -664,10 +703,7 @@ impl ProviderService {
         }
 
         if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
-            provider
-                .meta
-                .get_or_insert_with(Default::default)
-                .live_config_managed = false;
+            Self::set_provider_live_config_managed(&mut provider, false);
             state.db.save_provider(app_type.as_str(), &provider)?;
         }
 
