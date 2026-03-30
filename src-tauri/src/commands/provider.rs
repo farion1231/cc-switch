@@ -159,7 +159,7 @@ pub async fn queryProviderUsage(
         let providers = state
             .db
             .get_all_providers(app_type.as_str())
-            .map_err(|e| format!("Failed to get providers: {}", e))?;
+            .map_err(|e| format!("Failed to get providers: {e}"))?;
 
         let provider = providers.get(&providerId);
         let is_copilot = provider
@@ -182,11 +182,11 @@ pub async fn queryProviderUsage(
             Some(account_id) => auth_manager
                 .fetch_usage_for_account(account_id)
                 .await
-                .map_err(|e| format!("Failed to fetch Copilot usage: {}", e))?,
+                .map_err(|e| format!("Failed to fetch Copilot usage: {e}"))?,
             None => auth_manager
                 .fetch_usage()
                 .await
-                .map_err(|e| format!("Failed to fetch Copilot usage: {}", e))?,
+                .map_err(|e| format!("Failed to fetch Copilot usage: {e}"))?,
         };
         let premium = &usage.quota_snapshots.premium_interactions;
         let used = premium.entitlement - premium.remaining;

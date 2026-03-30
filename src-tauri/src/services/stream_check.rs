@@ -12,8 +12,8 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::copilot_auth;
+use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
@@ -95,15 +95,14 @@ impl StreamCheckService {
         let mut last_result = None;
 
         for attempt in 0..=effective_config.max_retries {
-            let result =
-                Self::check_once(
-                    app_type,
-                    provider,
-                    &effective_config,
-                    auth_override.clone(),
-                    claude_api_format_override.clone(),
-                )
-                .await;
+            let result = Self::check_once(
+                app_type,
+                provider,
+                &effective_config,
+                auth_override.clone(),
+                claude_api_format_override.clone(),
+            )
+            .await;
 
             match &result {
                 Ok(r) if r.success => {
@@ -304,6 +303,7 @@ impl StreamCheckService {
     /// 根据供应商的 api_format 选择请求格式：
     /// - "anthropic" (默认): Anthropic Messages API (/v1/messages)
     /// - "openai_chat": OpenAI Chat Completions API (/v1/chat/completions)
+    #[allow(clippy::too_many_arguments)]
     async fn check_claude_stream(
         client: &Client,
         base_url: &str,
@@ -339,12 +339,8 @@ impl StreamCheckService {
             .unwrap_or(false);
         let is_openai_chat = effective_api_format == "openai_chat";
         let is_openai_responses = effective_api_format == "openai_responses";
-        let url = Self::resolve_claude_stream_url(
-            base,
-            auth.strategy,
-            effective_api_format,
-            is_full_url,
-        );
+        let url =
+            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
 
         let max_tokens = if is_openai_responses { 16 } else { 1 };
 
@@ -375,8 +371,14 @@ impl StreamCheckService {
                 .header("accept-encoding", "identity")
                 .header("user-agent", copilot_auth::COPILOT_USER_AGENT)
                 .header("editor-version", copilot_auth::COPILOT_EDITOR_VERSION)
-                .header("editor-plugin-version", copilot_auth::COPILOT_PLUGIN_VERSION)
-                .header("copilot-integration-id", copilot_auth::COPILOT_INTEGRATION_ID)
+                .header(
+                    "editor-plugin-version",
+                    copilot_auth::COPILOT_PLUGIN_VERSION,
+                )
+                .header(
+                    "copilot-integration-id",
+                    copilot_auth::COPILOT_INTEGRATION_ID,
+                )
                 .header("x-github-api-version", copilot_auth::COPILOT_API_VERSION)
                 .header("openai-intent", "conversation-panel");
         } else if is_openai_chat || is_openai_responses {

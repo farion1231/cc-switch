@@ -142,20 +142,44 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
-      const requiresProxyForSwitch =
-        !isProxyRunning &&
-        provider.category !== "official" &&
-        ((activeApp === "claude" &&
-          (isCopilotProvider ||
-            provider.meta?.isFullUrl ||
-            provider.meta?.apiFormat === "openai_chat" ||
-            provider.meta?.apiFormat === "openai_responses")) ||
-          (activeApp === "codex" && provider.meta?.isFullUrl));
 
-      if (requiresProxyForSwitch) {
+      // Determine why this provider requires the proxy
+      let proxyRequiredReason: string | null = null;
+      if (!isProxyRunning && provider.category !== "official") {
+        if (isCopilotProvider) {
+          proxyRequiredReason = t("notifications.proxyReasonCopilot", {
+            defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
+          });
+        } else if (
+          provider.meta?.apiFormat === "openai_chat" &&
+          activeApp === "claude"
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
+            defaultValue: "使用 OpenAI Chat 接口格式",
+          });
+        } else if (
+          provider.meta?.apiFormat === "openai_responses" &&
+          activeApp === "claude"
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonOpenAIResponses", {
+            defaultValue: "使用 OpenAI Responses 接口格式",
+          });
+        } else if (
+          provider.meta?.isFullUrl &&
+          (activeApp === "claude" || activeApp === "codex")
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
+            defaultValue: "开启了完整 URL 连接模式",
+          });
+        }
+      }
+
+      if (proxyRequiredReason) {
         toast.warning(
           t("notifications.proxyRequiredForSwitch", {
-            defaultValue: "此供应商需要代理服务，请先启动代理",
+            reason: proxyRequiredReason,
+            defaultValue:
+              "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
           }),
         );
         return;

@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  keepPreviousData,
+} from "@tanstack/react-query";
 import {
   skillsApi,
   type SkillBackupEntry,
@@ -108,13 +113,10 @@ export function useInstallSkill() {
 export function useUninstallSkill() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      id,
-      skillKey,
-    }: {
-      id: string;
-      skillKey: string;
-    }) => skillsApi.uninstallUnified(id).then((result) => ({ ...result, skillKey })),
+    mutationFn: ({ id, skillKey }: { id: string; skillKey: string }) =>
+      skillsApi
+        .uninstallUnified(id)
+        .then((result) => ({ ...result, skillKey })),
     onSuccess: ({ skillKey }, _vars) => {
       // 直接更新 installed 缓存，移除该 skill
       queryClient.setQueryData<InstalledSkill[]>(

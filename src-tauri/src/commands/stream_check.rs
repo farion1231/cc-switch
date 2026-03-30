@@ -216,7 +216,11 @@ async fn resolve_claude_api_format_override(
         .and_then(|meta| meta.managed_account_id_for("github_copilot"));
 
     let vendor_result = match account_id.as_deref() {
-        Some(id) => auth_manager.get_model_vendor_for_account(id, &model_id).await,
+        Some(id) => {
+            auth_manager
+                .get_model_vendor_for_account(id, &model_id)
+                .await
+        }
         None => auth_manager.get_model_vendor(&model_id).await,
     };
 
@@ -225,9 +229,7 @@ async fn resolve_claude_api_format_override(
         Ok(Some(_)) | Ok(None) => "openai_chat",
         Err(err) => {
             log::warn!(
-                "[StreamCheck] Failed to resolve Copilot model vendor for {}: {}. Falling back to chat/completions",
-                model_id,
-                err
+                "[StreamCheck] Failed to resolve Copilot model vendor for {model_id}: {err}. Falling back to chat/completions"
             );
             "openai_chat"
         }

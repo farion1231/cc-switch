@@ -77,7 +77,7 @@ fn infer_tool_name(input: &Value, tools: &[Value]) -> String {
 }
 
 pub fn create_responses_sse_stream_from_anthropic(
-    stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tools: Vec<Value>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {

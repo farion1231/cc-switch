@@ -9,7 +9,6 @@ use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use regex::Regex;
-use reqwest::RequestBuilder;
 use std::sync::LazyLock;
 
 /// 官方 Codex 客户端 User-Agent 正则
@@ -196,8 +195,12 @@ impl ProviderAdapter for CodexAdapter {
         url
     }
 
-    fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
-        request.header("Authorization", format!("Bearer {}", auth.api_key))
+    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        let bearer = format!("Bearer {}", auth.api_key);
+        vec![(
+            http::HeaderName::from_static("authorization"),
+            http::HeaderValue::from_str(&bearer).unwrap(),
+        )]
     }
 }
 

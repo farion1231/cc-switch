@@ -50,7 +50,7 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             "medium" => Some("medium"),
             "high" => Some("high"),
             "max" => Some("xhigh"), // OpenAI xhigh = maximum reasoning effort
-            _ => None,             // unknown value — do not inject
+            _ => None,              // unknown value — do not inject
         };
     }
 
