@@ -134,6 +134,21 @@ pub async fn discover_available_skills(
         .map_err(|e| e.to_string())
 }
 
+/// 强制从远程仓库刷新发现缓存（写入本地缓存文件）
+#[tauri::command]
+pub async fn refresh_discoverable_skills_cache(
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<DiscoverableSkill>, String> {
+    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let enabled_repos: Vec<SkillRepo> = repos.into_iter().filter(|repo| repo.enabled).collect();
+    service
+        .0
+        .refresh_discover_cache(enabled_repos)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ========== 兼容旧 API 的命令 ==========
 
 /// 获取技能列表（兼容旧 API）

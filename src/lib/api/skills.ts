@@ -149,6 +149,11 @@ export const skillsApi = {
     return await invoke("discover_available_skills");
   },
 
+  /** 强制从远程仓库刷新发现缓存 */
+  async refreshDiscoverableCache(): Promise<DiscoverableSkill[]> {
+    return await invoke("refresh_discoverable_skills_cache");
+  },
+
   // ========== 兼容旧 API ==========
 
   /** 获取技能列表（兼容旧 API） */

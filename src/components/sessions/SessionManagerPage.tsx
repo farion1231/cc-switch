@@ -90,7 +90,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
   const filteredSessions = useMemo(() => {
     return searchSessions(search);
-  }, [searchSessions, search]);
+  }, [searchSessions, search, sessions]);
 
   useEffect(() => {
     if (filteredSessions.length === 0) {

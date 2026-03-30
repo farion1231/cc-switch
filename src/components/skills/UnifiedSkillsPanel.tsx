@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Sparkles, Trash2, ExternalLink } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
@@ -58,6 +60,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   UnifiedSkillsPanelProps
 >(({ onOpenDiscovery, currentApp }, ref) => {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
@@ -68,6 +71,8 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [isBatchRestoring, setIsBatchRestoring] = useState(false);
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
 
   const { data: skills, isLoading } = useInstalledSkills();
   const {
@@ -220,6 +225,63 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
+  const handleRestoreFromBackups = async (backupIds: string[]) => {
+    if (backupIds.length === 0) return;
+
+    const backupsById = new Map(
+      skillBackups.map((backup) => [backup.backupId, backup]),
+    );
+
+    setIsBatchRestoring(true);
+    let successCount = 0;
+    let failedCount = 0;
+    let firstError: string | null = null;
+
+    for (const backupId of backupIds) {
+      try {
+        await skillsApi.restoreBackup(backupId, currentApp);
+        successCount += 1;
+      } catch (error) {
+        failedCount += 1;
+        if (!firstError) {
+          const name = backupsById.get(backupId)?.skill.name;
+          firstError = name ? `${name}: ${String(error)}` : String(error);
+        }
+      }
+    }
+
+    setIsBatchRestoring(false);
+    await queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    await queryClient.invalidateQueries({ queryKey: ["skills", "backups"] });
+
+    if (successCount > 0 && failedCount === 0) {
+      toast.success(
+        t("skills.restoreFromBackup.batchRestoreSuccess", { count: successCount }),
+        { closeButton: true },
+      );
+      return;
+    }
+
+    if (successCount > 0) {
+      toast.info(
+        t("skills.restoreFromBackup.batchRestorePartial", {
+          success: successCount,
+          failed: failedCount,
+        }),
+        {
+          closeButton: true,
+          description: firstError || undefined,
+        },
+      );
+      return;
+    }
+
+    toast.error(t("skills.restoreFromBackup.batchRestoreFailed"), {
+      closeButton: true,
+      description: firstError || undefined,
+    });
+  };
+
   const handleDeleteBackup = (backup: SkillBackupEntry) => {
     setConfirmDialog({
       isOpen: true,
@@ -247,6 +309,72 @@ const UnifiedSkillsPanel = React.forwardRef<
             description: String(error),
           });
         }
+      },
+    });
+  };
+
+  const handleDeleteBackups = (backups: SkillBackupEntry[]) => {
+    if (backups.length === 0) return;
+
+    setConfirmDialog({
+      isOpen: true,
+      title: t("skills.restoreFromBackup.batchDeleteConfirmTitle"),
+      message: t("skills.restoreFromBackup.batchDeleteConfirmMessage", {
+        count: backups.length,
+      }),
+      confirmText: t("skills.restoreFromBackup.delete"),
+      variant: "destructive",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setIsBatchDeleting(true);
+
+        let successCount = 0;
+        let failedCount = 0;
+        let firstError: string | null = null;
+
+        for (const backup of backups) {
+          try {
+            await skillsApi.deleteBackup(backup.backupId);
+            successCount += 1;
+          } catch (error) {
+            failedCount += 1;
+            if (!firstError) {
+              firstError = `${backup.skill.name}: ${String(error)}`;
+            }
+          }
+        }
+
+        setIsBatchDeleting(false);
+        await refetchSkillBackups();
+
+        if (successCount > 0 && failedCount === 0) {
+          toast.success(
+            t("skills.restoreFromBackup.batchDeleteSuccess", {
+              count: successCount,
+            }),
+            { closeButton: true },
+          );
+          return;
+        }
+
+        if (successCount > 0) {
+          toast.info(
+            t("skills.restoreFromBackup.batchDeletePartial", {
+              success: successCount,
+              failed: failedCount,
+            }),
+            {
+              closeButton: true,
+              description: firstError || undefined,
+            },
+          );
+          return;
+        }
+
+        toast.error(t("skills.restoreFromBackup.batchDeleteFailed"), {
+          closeButton: true,
+          description: firstError || undefined,
+        });
       },
     });
   };
@@ -323,11 +451,13 @@ const UnifiedSkillsPanel = React.forwardRef<
 
       <RestoreSkillsDialog
         backups={skillBackups}
-        isDeleting={deleteBackupMutation.isPending}
+        isDeleting={deleteBackupMutation.isPending || isBatchDeleting}
         isLoading={isFetchingSkillBackups}
         onDelete={handleDeleteBackup}
-        isRestoring={restoreBackupMutation.isPending}
+        onDeleteMany={handleDeleteBackups}
+        isRestoring={restoreBackupMutation.isPending || isBatchRestoring}
         onRestore={handleRestoreFromBackup}
+        onRestoreMany={handleRestoreFromBackups}
         onClose={() => setRestoreDialogOpen(false)}
         open={restoreDialogOpen}
       />
@@ -438,7 +568,9 @@ interface RestoreSkillsDialogProps {
   isLoading: boolean;
   isRestoring: boolean;
   onDelete: (backup: SkillBackupEntry) => void;
+  onDeleteMany: (backups: SkillBackupEntry[]) => void;
   onRestore: (backupId: string) => void;
+  onRestoreMany: (backupIds: string[]) => void;
   onClose: () => void;
   open: boolean;
 }
@@ -449,11 +581,69 @@ const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
   isLoading,
   isRestoring,
   onDelete,
+  onDeleteMany,
   onRestore,
+  onRestoreMany,
   onClose,
   open,
 }) => {
   const { t } = useTranslation();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const allBackupIds = useMemo(
+    () => backups.map((backup) => backup.backupId),
+    [backups],
+  );
+
+  React.useEffect(() => {
+    if (!open) return;
+    setSelected(new Set());
+  }, [open]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const available = new Set(allBackupIds);
+    setSelected((prev) => {
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (available.has(id)) next.add(id);
+      });
+      return next;
+    });
+  }, [allBackupIds, open]);
+
+  const selectedCount = selected.size;
+  const selectedBackups = useMemo(
+    () => backups.filter((backup) => selected.has(backup.backupId)),
+    [backups, selected],
+  );
+
+  const allSelected = backups.length > 0 && selectedCount === backups.length;
+  const selectAllState: boolean | "indeterminate" =
+    selectedCount === 0 ? false : allSelected ? true : "indeterminate";
+
+  const handleToggleAll = (next: boolean | "indeterminate") => {
+    if (next === true) {
+      setSelected(new Set(allBackupIds));
+    } else {
+      setSelected(new Set());
+    }
+  };
+
+  const handleToggleOne = (
+    backupId: string,
+    next: boolean | "indeterminate",
+  ) => {
+    setSelected((prev) => {
+      const updated = new Set(prev);
+      if (next === true) {
+        updated.add(backupId);
+      } else {
+        updated.delete(backupId);
+      }
+      return updated;
+    });
+  };
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
@@ -479,59 +669,89 @@ const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
             </div>
           ) : (
             <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    checked={selectAllState}
+                    onCheckedChange={handleToggleAll}
+                    disabled={isRestoring || isDeleting}
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    {t("skills.restoreFromBackup.selectAll")}
+                  </span>
+                </div>
+                {selectedCount > 0 ? (
+                  <div className="text-xs text-muted-foreground">
+                    {t("skills.restoreFromBackup.selectedCount", {
+                      count: selectedCount,
+                    })}
+                  </div>
+                ) : null}
+              </div>
               {backups.map((backup) => (
                 <div
                   key={backup.backupId}
                   className="rounded-xl border border-border-default bg-background/70 p-4 shadow-sm"
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <div className="font-medium text-sm text-foreground">
-                          {backup.skill.name}
-                        </div>
-                        <div className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                          {backup.skill.directory}
-                        </div>
-                      </div>
-                      {backup.skill.description && (
-                        <div className="mt-2 text-sm text-muted-foreground">
-                          {backup.skill.description}
-                        </div>
-                      )}
-                      <div className="mt-3 space-y-1.5 text-xs text-muted-foreground">
-                        <div>
-                          {t("skills.restoreFromBackup.createdAt")}:{" "}
-                          {formatSkillBackupDate(backup.createdAt)}
-                        </div>
-                        <div className="break-all" title={backup.backupPath}>
-                          {t("skills.restoreFromBackup.path")}:{" "}
-                          {backup.backupPath}
-                        </div>
-                      </div>
+                  <div className="flex items-start gap-4">
+                    <div className="pt-0.5">
+                      <Checkbox
+                        checked={selected.has(backup.backupId)}
+                        onCheckedChange={(next) =>
+                          handleToggleOne(backup.backupId, next)
+                        }
+                        disabled={isRestoring || isDeleting}
+                      />
                     </div>
+                    <div className="flex items-start justify-between gap-4 flex-1">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="font-medium text-sm text-foreground">
+                            {backup.skill.name}
+                          </div>
+                          <div className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                            {backup.skill.directory}
+                          </div>
+                        </div>
+                        {backup.skill.description && (
+                          <div className="mt-2 text-sm text-muted-foreground">
+                            {backup.skill.description}
+                          </div>
+                        )}
+                        <div className="mt-3 space-y-1.5 text-xs text-muted-foreground">
+                          <div>
+                            {t("skills.restoreFromBackup.createdAt")}:{" "}
+                            {formatSkillBackupDate(backup.createdAt)}
+                          </div>
+                          <div className="break-all" title={backup.backupPath}>
+                            {t("skills.restoreFromBackup.path")}:{" "}
+                            {backup.backupPath}
+                          </div>
+                        </div>
+                      </div>
 
-                    <div className="flex flex-col gap-2 sm:min-w-28">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => onRestore(backup.backupId)}
-                        disabled={isRestoring || isDeleting}
-                      >
-                        {isRestoring
-                          ? t("skills.restoreFromBackup.restoring")
-                          : t("skills.restoreFromBackup.restore")}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        onClick={() => onDelete(backup)}
-                        disabled={isRestoring || isDeleting}
-                      >
-                        {isDeleting
-                          ? t("skills.restoreFromBackup.deleting")
-                          : t("skills.restoreFromBackup.delete")}
-                      </Button>
+                      <div className="flex flex-col gap-2 sm:min-w-28">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => onRestore(backup.backupId)}
+                          disabled={isRestoring || isDeleting}
+                        >
+                          {isRestoring
+                            ? t("skills.restoreFromBackup.restoring")
+                            : t("skills.restoreFromBackup.restore")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => onDelete(backup)}
+                          disabled={isRestoring || isDeleting}
+                        >
+                          {isDeleting
+                            ? t("skills.restoreFromBackup.deleting")
+                            : t("skills.restoreFromBackup.delete")}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -540,10 +760,39 @@ const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
           )}
         </div>
 
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose}>
-            {t("common.close")}
-          </Button>
+        <DialogFooter className="sm:justify-between">
+          <div className="flex items-center text-sm text-muted-foreground">
+            {selectedCount > 0
+              ? t("skills.restoreFromBackup.selectedCount", {
+                  count: selectedCount,
+                })
+              : null}
+          </div>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
+            <Button type="button" variant="outline" onClick={onClose}>
+              {t("common.close")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onRestoreMany(Array.from(selected))}
+              disabled={selectedCount === 0 || isRestoring || isDeleting}
+            >
+              {t("skills.restoreFromBackup.restoreSelected", {
+                count: selectedCount,
+              })}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => onDeleteMany(selectedBackups)}
+              disabled={selectedCount === 0 || isRestoring || isDeleting}
+            >
+              {t("skills.restoreFromBackup.deleteSelected", {
+                count: selectedCount,
+              })}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -7,6 +7,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use futures::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -116,6 +117,13 @@ pub struct SkillStore {
     pub skills: HashMap<String, SkillState>,
     /// 仓库列表
     pub repos: Vec<SkillRepo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DiscoverableSkillsCache {
+    #[serde(rename = "updatedAt")]
+    updated_at: i64,
+    skills: Vec<DiscoverableSkill>,
 }
 
 impl Default for SkillStore {
@@ -401,6 +409,52 @@ impl SkillService {
         let dir = get_app_config_dir().join("skill-backups");
         fs::create_dir_all(&dir)?;
         Ok(dir)
+    }
+
+    fn get_discover_cache_dir() -> Result<PathBuf> {
+        let dir = get_app_config_dir().join("cache").join("skills");
+        fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    fn get_discover_cache_path() -> Result<PathBuf> {
+        Ok(Self::get_discover_cache_dir()?.join("discoverable-skills.json"))
+    }
+
+    fn load_discover_cache() -> Result<Option<DiscoverableSkillsCache>> {
+        let path = Self::get_discover_cache_path()?;
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(_) => return Ok(None),
+        };
+
+        match serde_json::from_str::<DiscoverableSkillsCache>(&content) {
+            Ok(cache) => Ok(Some(cache)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn save_discover_cache(skills: Vec<DiscoverableSkill>) -> Result<()> {
+        let path = Self::get_discover_cache_path()?;
+        let tmp_path = path.with_extension("json.tmp");
+
+        let cache = DiscoverableSkillsCache {
+            updated_at: Utc::now().timestamp(),
+            skills,
+        };
+
+        let content = serde_json::to_string_pretty(&cache)?;
+        fs::write(&tmp_path, content)?;
+
+        if path.exists() {
+            let _ = fs::remove_file(&path);
+        }
+        fs::rename(&tmp_path, &path)?;
+        Ok(())
     }
 
     /// 获取应用的 skills 目录
@@ -1218,22 +1272,84 @@ impl SkillService {
         &self,
         repos: Vec<SkillRepo>,
     ) -> Result<Vec<DiscoverableSkill>> {
-        let mut skills = Vec::new();
-
         // 仅使用启用的仓库
         let enabled_repos: Vec<SkillRepo> = repos.into_iter().filter(|repo| repo.enabled).collect();
+        if enabled_repos.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let fetch_tasks = enabled_repos
-            .iter()
-            .map(|repo| self.fetch_repo_skills(repo));
+        if let Ok(Some(cache)) = Self::load_discover_cache() {
+            let enabled_keys: HashSet<String> = enabled_repos
+                .iter()
+                .map(|repo| {
+                    let branch = if repo.branch.trim().is_empty() {
+                        "main"
+                    } else {
+                        repo.branch.trim()
+                    };
+                    format!(
+                        "{}|{}|{}",
+                        repo.owner.to_lowercase(),
+                        repo.name.to_lowercase(),
+                        branch.to_lowercase()
+                    )
+                })
+                .collect();
 
-        let results: Vec<Result<Vec<DiscoverableSkill>>> =
-            futures::future::join_all(fetch_tasks).await;
+            let mut cached_skills: Vec<DiscoverableSkill> = cache
+                .skills
+                .into_iter()
+                .filter(|skill| {
+                    let branch = if skill.repo_branch.trim().is_empty() {
+                        "main"
+                    } else {
+                        skill.repo_branch.trim()
+                    };
+                    enabled_keys.contains(&format!(
+                        "{}|{}|{}",
+                        skill.repo_owner.to_lowercase(),
+                        skill.repo_name.to_lowercase(),
+                        branch.to_lowercase()
+                    ))
+                })
+                .collect();
 
-        for (repo, result) in enabled_repos.into_iter().zip(results.into_iter()) {
+            Self::deduplicate_discoverable_skills(&mut cached_skills);
+            cached_skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            return Ok(cached_skills);
+        }
+
+        let skills = match self.refresh_discover_cache(enabled_repos).await {
+            Ok(skills) => skills,
+            Err(e) => {
+                log::warn!("Skills discover failed and cache is empty: {e}");
+                Vec::new()
+            }
+        };
+
+        Ok(skills)
+    }
+
+    pub async fn refresh_discover_cache(&self, enabled_repos: Vec<SkillRepo>) -> Result<Vec<DiscoverableSkill>> {
+        let mut skills = Vec::new();
+        let mut failures: Vec<(String, String)> = Vec::new();
+
+        let total_repos = enabled_repos.len();
+        let concurrency = std::cmp::min(4usize, std::cmp::max(1usize, total_repos));
+
+        let results: Vec<(SkillRepo, Result<Vec<DiscoverableSkill>>)> = stream::iter(enabled_repos)
+            .map(|repo| async move {
+                let result = self.fetch_repo_skills(&repo).await;
+                (repo, result)
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        for (repo, result) in results {
             match result {
                 Ok(repo_skills) => skills.extend(repo_skills),
-                Err(e) => log::warn!("获取仓库 {}/{} 技能失败: {}", repo.owner, repo.name, e),
+                Err(e) => failures.push((format!("{}/{}", repo.owner, repo.name), e.to_string())),
             }
         }
 
@@ -1241,6 +1357,37 @@ impl SkillService {
         Self::deduplicate_discoverable_skills(&mut skills);
         skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
+        if skills.is_empty() && !failures.is_empty() {
+            let preview = failures
+                .iter()
+                .take(3)
+                .map(|(repo, err)| format!("{repo}: {err}"))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            return Err(anyhow!(
+                "All repos failed ({}/{}): {}",
+                failures.len(),
+                total_repos,
+                preview
+            ));
+        }
+
+        if !failures.is_empty() {
+            let preview = failures
+                .iter()
+                .take(3)
+                .map(|(repo, err)| format!("{repo}: {err}"))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            log::warn!(
+                "Skills discover partial failure: {}/{} repos failed: {}",
+                failures.len(),
+                total_repos,
+                preview
+            );
+        }
+
+        let _ = Self::save_discover_cache(skills.clone());
         Ok(skills)
     }
 
