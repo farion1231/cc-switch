@@ -1172,11 +1172,11 @@ fn launch_windows_terminal(
 
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
-    let cd_command = build_windows_cd_command(cwd);
+    let cwd_command = build_windows_cwd_command(cwd);
 
     let content = format!(
         "@echo off
-{cd_command}
+{cwd_command}
 echo Using provider-specific claude config:
 echo {}
 claude --settings \"{}\"
@@ -1186,7 +1186,7 @@ del \"%~f0\" >nul 2>&1
         config_path_for_batch,
         config_path_for_batch,
         config_path_for_batch,
-        cd_command = cd_command,
+        cwd_command = cwd_command,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -1231,18 +1231,30 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-#[cfg(target_os = "windows")]
-fn build_windows_cd_command(cwd: Option<&Path>) -> String {
-    cwd.map(|dir| {
-        format!(
-            "cd /d \"{}\" || exit /b 1\r\n",
-            escape_windows_batch_value(&dir.to_string_lossy())
-        )
-    })
-    .unwrap_or_default()
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_windows_unc_path(path: &str) -> bool {
+    path.starts_with(r"\\")
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_cwd_command_str(path: &str) -> String {
+    let escaped = escape_windows_batch_value(path);
+
+    if is_windows_unc_path(path) {
+        // `cmd.exe` cannot make a UNC path current via `cd`; `pushd` maps it first.
+        format!("pushd \"{escaped}\" || exit /b 1\r\n")
+    } else {
+        format!("cd /d \"{escaped}\" || exit /b 1\r\n")
+    }
 }
 
 #[cfg(target_os = "windows")]
+fn build_windows_cwd_command(cwd: Option<&Path>) -> String {
+    cwd.map(|dir| build_windows_cwd_command_str(&dir.to_string_lossy()))
+        .unwrap_or_default()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn escape_windows_batch_value(value: &str) -> String {
     value
         .replace('^', "^^")
@@ -1458,5 +1470,32 @@ mod tests {
         let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
 
         assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
+    }
+
+    #[test]
+    fn build_windows_cwd_command_str_uses_cd_for_drive_paths() {
+        let command = build_windows_cwd_command_str(r"C:\work\repo");
+
+        assert_eq!(command, "cd /d \"C:\\work\\repo\" || exit /b 1\r\n");
+    }
+
+    #[test]
+    fn build_windows_cwd_command_str_uses_pushd_for_unc_paths() {
+        let command = build_windows_cwd_command_str(r"\\wsl$\Ubuntu\home\coder\repo");
+
+        assert_eq!(
+            command,
+            "pushd \"\\\\wsl$\\Ubuntu\\home\\coder\\repo\" || exit /b 1\r\n"
+        );
+    }
+
+    #[test]
+    fn build_windows_cwd_command_str_escapes_batch_metacharacters() {
+        let command = build_windows_cwd_command_str(r"\\server\share\100%&(test)");
+
+        assert_eq!(
+            command,
+            "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
+        );
     }
 }
