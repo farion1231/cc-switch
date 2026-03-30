@@ -129,6 +129,29 @@ export const handlers = [
     return success(deleteSession(providerId, sessionId, sourcePath));
   }),
 
+  http.post(`${TAURI_ENDPOINT}/delete_sessions`, async ({ request }) => {
+    const { items = [] } = await withJson<{
+      items?: {
+        providerId: string;
+        sessionId: string;
+        sourcePath: string;
+      }[];
+    }>(request);
+
+    return success(
+      items.map((item) => ({
+        providerId: item.providerId,
+        sessionId: item.sessionId,
+        sourcePath: item.sourcePath,
+        success: deleteSession(
+          item.providerId,
+          item.sessionId,
+          item.sourcePath,
+        ),
+      })),
+    );
+  }),
+
   // MCP APIs
   http.post(`${TAURI_ENDPOINT}/get_mcp_config`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
