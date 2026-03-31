@@ -191,12 +191,43 @@ pub struct ProviderProxyConfig {
     pub proxy_password: Option<String>,
 }
 
+/// 认证绑定来源
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthBindingSource {
+    /// 从 provider 自身配置读取认证信息（默认）
+    #[default]
+    ProviderConfig,
+    /// 使用托管账号认证（如 GitHub Copilot OAuth）
+    ManagedAccount,
+}
+
+/// 通用认证绑定
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuthBinding {
+    /// 认证来源
+    #[serde(default)]
+    pub source: AuthBindingSource,
+    /// 托管认证供应商标识（如 github_copilot）
+    #[serde(rename = "authProvider", skip_serializing_if = "Option::is_none")]
+    pub auth_provider: Option<String>,
+    /// 托管账号 ID；为空表示跟随该认证供应商的默认账号
+    #[serde(rename = "accountId", skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
     /// 自定义端点列表（按 URL 去重存储）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,
+    /// 是否在写入 live 时应用通用配置片段
+    #[serde(
+        rename = "commonConfigEnabled",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub common_config_enabled: Option<bool>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
@@ -233,8 +264,54 @@ pub struct ProviderMeta {
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
+    /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// 通用认证绑定（provider_config / managed_account）
+    ///
+    /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。
+    #[serde(rename = "authBinding", skip_serializing_if = "Option::is_none")]
+    pub auth_binding: Option<AuthBinding>,
+    /// Claude 认证字段名（"ANTHROPIC_AUTH_TOKEN" 或 "ANTHROPIC_API_KEY"）
+    #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
+    pub api_key_field: Option<String>,
+    /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
+    #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
+    pub is_full_url: Option<bool>,
+    /// Prompt cache key for OpenAI-compatible endpoints.
+    /// When set, injected into converted requests to improve cache hit rate.
+    /// If not set, provider ID is used automatically during format conversion.
+    #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    /// 供应商类型标识（用于特殊供应商检测）
+    /// - "github_copilot": GitHub Copilot 供应商
+    #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
+    pub provider_type: Option<String>,
+    /// GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
+    /// 用于多账号支持，关联到特定的 GitHub 账号
+    #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
+    pub github_account_id: Option<String>,
+}
+
+impl ProviderMeta {
+    /// 解析指定托管认证供应商绑定的账号 ID。
+    ///
+    /// 新版优先读取 authBinding，旧版继续兼容 githubAccountId。
+    pub fn managed_account_id_for(&self, auth_provider: &str) -> Option<String> {
+        if let Some(binding) = self.auth_binding.as_ref() {
+            if binding.source == AuthBindingSource::ManagedAccount
+                && binding.auth_provider.as_deref() == Some(auth_provider)
+            {
+                return binding.account_id.clone();
+            }
+        }
+
+        if auth_provider == "github_copilot" {
+            return self.github_account_id.clone();
+        }
+
+        None
+    }
 }
 
 impl ProviderManager {

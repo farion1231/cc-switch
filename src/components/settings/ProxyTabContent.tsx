@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Server, Activity, Zap, Globe } from "lucide-react";
+import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -16,6 +16,7 @@ import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import type { SettingsFormState } from "@/hooks/useSettings";
 
@@ -30,6 +31,7 @@ export function ProxyTabContent({
 }: ProxyTabContentProps) {
   const { t } = useTranslation();
   const [showProxyConfirm, setShowProxyConfirm] = useState(false);
+  const [showFailoverConfirm, setShowFailoverConfirm] = useState(false);
 
   const {
     isRunning,
@@ -59,6 +61,23 @@ export function ProxyTabContent({
       await startProxyServer();
     } catch (error) {
       console.error("Proxy confirm failed:", error);
+    }
+  };
+
+  const handleFailoverToggleChange = (checked: boolean) => {
+    if (checked && !settings?.failoverConfirmed) {
+      setShowFailoverConfirm(true);
+    } else {
+      void onAutoSave({ enableFailoverToggle: checked });
+    }
+  };
+
+  const handleFailoverConfirm = async () => {
+    setShowFailoverConfirm(false);
+    try {
+      await onAutoSave({ failoverConfirmed: true, enableFailoverToggle: true });
+    } catch (error) {
+      console.error("Failover confirm failed:", error);
     }
   };
 
@@ -131,6 +150,16 @@ export function ProxyTabContent({
           </AccordionTrigger>
           <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
             <div className="space-y-6">
+              <ToggleRow
+                icon={<ShieldAlert className="h-4 w-4 text-orange-500" />}
+                title={t("settings.advanced.proxy.enableFailoverToggle")}
+                description={t(
+                  "settings.advanced.proxy.enableFailoverToggleDescription",
+                )}
+                checked={settings?.enableFailoverToggle ?? false}
+                onCheckedChange={handleFailoverToggleChange}
+              />
+
               {!isRunning && (
                 <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
                   <p className="text-sm text-yellow-600 dark:text-yellow-400">
@@ -273,6 +302,16 @@ export function ProxyTabContent({
         confirmText={t("confirm.proxy.confirm")}
         onConfirm={() => void handleProxyConfirm()}
         onCancel={() => setShowProxyConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showFailoverConfirm}
+        variant="info"
+        title={t("confirm.failover.title")}
+        message={t("confirm.failover.message")}
+        confirmText={t("confirm.failover.confirm")}
+        onConfirm={() => void handleFailoverConfirm()}
+        onCancel={() => setShowFailoverConfirm(false)}
       />
     </motion.div>
   );

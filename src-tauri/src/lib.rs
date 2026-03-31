@@ -13,6 +13,7 @@ mod error;
 mod gemini_config;
 mod gemini_mcp;
 mod init_status;
+mod lightweight;
 mod mcp;
 mod openclaw_config;
 mod opencode_config;
@@ -26,10 +27,11 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+
 mod tray;
 mod usage_script;
 
-pub use app_config::{AppType, McpApps, McpServer, MultiAppConfig};
+pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use bridges::provider as provider_bridge;
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
 pub use commands::open_provider_terminal;
@@ -47,6 +49,7 @@ pub use mcp::{
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
+    skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
 };
@@ -203,6 +206,12 @@ pub fn run() {
             log::debug!("Args count: {}", args.len());
             for (i, arg) in args.iter().enumerate() {
                 log::debug!("  arg[{i}]: {}", redact_url_for_log(arg));
+            }
+
+            if crate::lightweight::is_lightweight_mode() {
+                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+                    log::error!("退出轻量模式重建窗口失败: {e}");
+                }
             }
 
             // Check for deep link URL in args (mainly for Windows/Linux command line)
@@ -563,59 +572,6 @@ pub fn run() {
                 }
             }
 
-            // 5. Auto-extract common config snippets from live files (when snippet is missing)
-            for app_type in crate::app_config::AppType::all() {
-                // Skip if snippet already exists
-                if app_state
-                    .db
-                    .get_config_snippet(app_type.as_str())
-                    .ok()
-                    .flatten()
-                    .is_some()
-                {
-                    continue;
-                }
-
-                // Try to read the live config file for this app type
-                let settings =
-                    match crate::services::provider::ProviderService::read_live_settings(
-                        app_type.clone(),
-                    ) {
-                        Ok(s) => s,
-                        Err(_) => continue, // No live config file, skip silently
-                    };
-
-                // Extract common config (strip provider-specific fields)
-                match crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
-                    app_type.clone(),
-                    &settings,
-                ) {
-                    Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
-                        match app_state
-                            .db
-                            .set_config_snippet(app_type.as_str(), Some(snippet))
-                        {
-                            Ok(()) => log::info!(
-                                "✓ Auto-extracted common config snippet for {}",
-                                app_type.as_str()
-                            ),
-                            Err(e) => log::warn!(
-                                "✗ Failed to save config snippet for {}: {e}",
-                                app_type.as_str()
-                            ),
-                        }
-                    }
-                    Ok(_) => log::debug!(
-                        "○ Live config for {} has no extractable common fields",
-                        app_type.as_str()
-                    ),
-                    Err(e) => log::warn!(
-                        "✗ Failed to extract config snippet for {}: {e}",
-                        app_type.as_str()
-                    ),
-                }
-            }
-
             // 迁移旧的 app_config_dir 配置到 Store
             if let Err(e) = app_store::migrate_app_config_dir_from_settings(app.handle()) {
                 log::warn!("迁移 app_config_dir 失败: {e}");
@@ -668,6 +624,12 @@ pub fn run() {
                     log::info!("=== Deep Link Event Received (on_open_url) ===");
                     let urls = event.urls();
                     log::info!("Received {} URL(s)", urls.len());
+
+                    if crate::lightweight::is_lightweight_mode() {
+                        if let Err(e) = crate::lightweight::exit_lightweight_mode(&app_handle) {
+                            log::error!("退出轻量模式重建窗口失败: {e}");
+                        }
+                    }
 
                     for (i, url) in urls.iter().enumerate() {
                         let url_str = url.as_str();
@@ -744,6 +706,18 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
+            // 初始化 CopilotAuthManager
+            {
+                use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+                use commands::CopilotAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let copilot_auth_manager = CopilotAuthManager::new(app_config_dir);
+                app.manage(CopilotAuthState(Arc::new(RwLock::new(copilot_auth_manager))));
+                log::info!("✓ CopilotAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -800,6 +774,8 @@ pub fn run() {
                     }
                 }
 
+                initialize_common_config_snippets(&state);
+
                 // 检查 settings 表中的代理状态，自动恢复代理服务
                 restore_proxy_state_on_startup(&state).await;
 
@@ -808,16 +784,18 @@ pub fn run() {
                     log::warn!("Periodic backup failed on startup: {e}");
                 }
 
-                // Periodic backup timer: check every hour while the app is running
+                // Periodic maintenance timer: run once per day while the app is running
                 let db_for_timer = state.db.clone();
                 tauri::async_runtime::spawn(async move {
-                    let mut interval =
-                        tokio::time::interval(std::time::Duration::from_secs(3600));
+                    const PERIODIC_MAINTENANCE_INTERVAL_SECS: u64 = 24 * 60 * 60;
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                        PERIODIC_MAINTENANCE_INTERVAL_SECS,
+                    ));
                     interval.tick().await; // skip immediate first tick (already checked above)
                     loop {
                         interval.tick().await;
                         if let Err(e) = db_for_timer.periodic_backup_if_needed() {
-                            log::warn!("Periodic backup timer failed: {e}");
+                            log::warn!("Periodic maintenance timer failed: {e}");
                         }
                     }
                 });
@@ -856,6 +834,7 @@ pub fn run() {
                 }
             }
 
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -889,6 +868,8 @@ pub fn run() {
             commands::save_settings,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
+            commands::get_optimizer_config,
+            commands::set_optimizer_config,
             commands::get_log_config,
             commands::set_log_config,
             commands::restart_app,
@@ -967,8 +948,11 @@ pub fn run() {
             commands::restore_env_backup,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
+            commands::get_skill_backups,
+            commands::delete_skill_backup,
             commands::install_skill_unified,
             commands::uninstall_skill_unified,
+            commands::restore_skill_backup,
             commands::toggle_skill_app,
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
@@ -1039,6 +1023,8 @@ pub fn run() {
             // Session manager
             commands::list_sessions,
             commands::get_session_messages,
+            commands::delete_session,
+            commands::delete_sessions,
             commands::launch_session_terminal,
             commands::get_tool_versions,
             // Provider terminal
@@ -1055,6 +1041,8 @@ pub fn run() {
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,
+            commands::get_openclaw_live_provider,
+            commands::scan_openclaw_config_health,
             commands::get_openclaw_default_model,
             commands::set_openclaw_default_model,
             commands::get_openclaw_model_catalog,
@@ -1073,6 +1061,31 @@ pub fn run() {
             commands::scan_local_proxies,
             // Window theme control
             commands::set_window_theme,
+            // Generic managed auth commands
+            commands::auth_start_login,
+            commands::auth_poll_for_account,
+            commands::auth_list_accounts,
+            commands::auth_get_status,
+            commands::auth_remove_account,
+            commands::auth_set_default_account,
+            commands::auth_logout,
+            // Copilot OAuth commands (multi-account support)
+            commands::copilot_start_device_flow,
+            commands::copilot_poll_for_auth,
+            commands::copilot_poll_for_account,
+            commands::copilot_list_accounts,
+            commands::copilot_remove_account,
+            commands::copilot_set_default_account,
+            commands::copilot_get_auth_status,
+            commands::copilot_logout,
+            commands::copilot_is_authenticated,
+            commands::copilot_get_token,
+            commands::copilot_get_token_for_account,
+            commands::copilot_get_models,
+            commands::copilot_get_models_for_account,
+            commands::copilot_get_usage,
+            commands::copilot_get_usage_for_account,
+            // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,
             commands::disable_current_omo,
@@ -1089,6 +1102,10 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
+            // lightweight mode (for testing or low-resource environments)
+            commands::enter_lightweight_mode,
+            commands::exit_lightweight_mode,
+            commands::is_lightweight_mode,
         ]);
 
     let app = builder
@@ -1139,6 +1156,10 @@ pub fn run() {
                         let _ = window.show();
                         let _ = window.set_focus();
                         tray::apply_tray_policy(app_handle, true);
+                    } else if crate::lightweight::is_lightweight_mode() {
+                        if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
+                            log::error!("退出轻量模式重建窗口失败: {e}");
+                        }
                     }
                 }
                 // 处理通过自定义 URL 协议触发的打开事件（例如 ccswitch://...）
@@ -1148,6 +1169,13 @@ pub fn run() {
                         log::info!("RunEvent::Opened with URL: {url_str}");
 
                         if url_str.starts_with("ccswitch://") {
+                            if crate::lightweight::is_lightweight_mode() {
+                                if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
+                                {
+                                    log::error!("退出轻量模式重建窗口失败: {e}");
+                                }
+                            }
+
                             // 解析并广播深链接事件，复用与 single_instance 相同的逻辑
                             match crate::deeplink::parse_deeplink_url(&url_str) {
                                 Ok(request) => {
@@ -1297,6 +1325,85 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
                     log::error!("清除 {app_type} 代理状态失败: {clear_err}");
                 }
             }
+        }
+    }
+}
+
+fn initialize_common_config_snippets(state: &store::AppState) {
+    // Auto-extract common config snippets from clean live files when snippet is missing.
+    // This must run before proxy takeover is restored on startup, otherwise we'd read
+    // proxy-placeholder configs instead of the user's actual live settings.
+    for app_type in crate::app_config::AppType::all() {
+        if !state
+            .db
+            .should_auto_extract_config_snippet(app_type.as_str())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let settings = match crate::services::provider::ProviderService::read_live_settings(
+            app_type.clone(),
+        ) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        match crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
+            app_type.clone(),
+            &settings,
+        ) {
+            Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                match state.db.set_config_snippet(app_type.as_str(), Some(snippet)) {
+                    Ok(()) => {
+                        let _ = state.db.set_config_snippet_cleared(app_type.as_str(), false);
+                        log::info!(
+                            "✓ Auto-extracted common config snippet for {}",
+                            app_type.as_str()
+                        );
+                    }
+                    Err(e) => log::warn!(
+                        "✗ Failed to save config snippet for {}: {e}",
+                        app_type.as_str()
+                    ),
+                }
+            }
+            Ok(_) => log::debug!(
+                "○ Live config for {} has no extractable common fields",
+                app_type.as_str()
+            ),
+            Err(e) => log::warn!(
+                "✗ Failed to extract config snippet for {}: {e}",
+                app_type.as_str()
+            ),
+        }
+    }
+
+    let should_run_legacy_migration = state
+        .db
+        .is_legacy_common_config_migrated()
+        .map(|done| !done)
+        .unwrap_or(true);
+
+    if should_run_legacy_migration {
+        for app_type in [
+            crate::app_config::AppType::Claude,
+            crate::app_config::AppType::Codex,
+            crate::app_config::AppType::Gemini,
+        ] {
+            if let Err(e) = crate::services::provider::ProviderService::migrate_legacy_common_config_usage_if_needed(
+                state,
+                app_type.clone(),
+            ) {
+                log::warn!(
+                    "✗ Failed to migrate legacy common-config usage for {}: {e}",
+                    app_type.as_str()
+                );
+            }
+        }
+
+        if let Err(e) = state.db.set_legacy_common_config_migrated(true) {
+            log::warn!("✗ Failed to persist legacy common-config migration flag: {e}");
         }
     }
 }

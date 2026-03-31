@@ -204,7 +204,8 @@ export function ProviderList({
     setShowStreamCheckConfirm(false);
     try {
       if (settings) {
-        await settingsApi.save({ ...settings, streamCheckConfirmed: true });
+        const { webdavSync: _, ...rest } = settings;
+        await settingsApi.save({ ...rest, streamCheckConfirmed: true });
         await queryClient.invalidateQueries({ queryKey: ["settings"] });
       }
     } catch (error) {
@@ -298,6 +299,7 @@ export function ProviderList({
   if (sortedProviders.length === 0) {
     return (
       <ProviderEmptyState
+        appId={appId}
         onCreate={onCreate}
         onImport={() => importMutation.mutate()}
       />

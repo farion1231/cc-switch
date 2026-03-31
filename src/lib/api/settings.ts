@@ -102,7 +102,7 @@ export const settingsApi = {
     return await invoke("import_config_from_file", { filePath });
   },
 
-  // ─── WebDAV v2 sync ───────────────────────────────────────
+  // ─── WebDAV sync ──────────────────────────────────────────
 
   async webdavTestConnection(
     settings: WebDavSyncSettings,
@@ -196,6 +196,14 @@ export const settingsApi = {
     return await invoke("set_rectifier_config", { config });
   },
 
+  async getOptimizerConfig(): Promise<OptimizerConfig> {
+    return await invoke("get_optimizer_config");
+  },
+
+  async setOptimizerConfig(config: OptimizerConfig): Promise<boolean> {
+    return await invoke("set_optimizer_config", { config });
+  },
+
   async getLogConfig(): Promise<LogConfig> {
     return await invoke("get_log_config");
   },
@@ -209,6 +217,13 @@ export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
   requestThinkingBudget: boolean;
+}
+
+export interface OptimizerConfig {
+  enabled: boolean;
+  thinkingOptimizer: boolean;
+  cacheInjection: boolean;
+  cacheTtl: string;
 }
 
 export interface LogConfig {

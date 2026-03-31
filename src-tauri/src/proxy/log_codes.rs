@@ -26,12 +26,15 @@ pub mod srv {
     pub const STOPPED: &str = "SRV-002";
     pub const STOP_TIMEOUT: &str = "SRV-003";
     pub const TASK_ERROR: &str = "SRV-004";
+    pub const ACCEPT_ERR: &str = "SRV-005";
+    pub const CONN_ERR: &str = "SRV-006";
 }
 
 /// 转发器日志码
 pub mod fwd {
     pub const PROVIDER_FAILED_RETRY: &str = "FWD-001";
     pub const ALL_PROVIDERS_FAILED: &str = "FWD-002";
+    pub const SINGLE_PROVIDER_FAILED: &str = "FWD-003";
 }
 
 /// 故障转移日志码

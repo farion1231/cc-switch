@@ -12,7 +12,8 @@ pub fn legacy_set_env_from_core(
     env: cc_switch_core::openclaw_config::OpenClawEnvConfig,
 ) -> Result<(), AppError> {
     let env = convert(env)?;
-    crate::openclaw_config::set_env_config(&env)
+    crate::openclaw_config::set_env_config(&env)?;
+    Ok(())
 }
 
 pub fn import_openclaw_providers_from_live() -> Result<usize, AppError> {

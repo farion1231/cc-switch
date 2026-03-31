@@ -59,16 +59,37 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             None => continue,
         };
 
-        if payload.get("type").and_then(Value::as_str) != Some("message") {
-            continue;
-        }
+        let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
 
-        let role = payload
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
-        let content = payload.get("content").map(extract_text).unwrap_or_default();
+        // Codex uses separate payload types for tool interactions
+        let (role, content) = match payload_type {
+            "message" => {
+                let role = payload
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string();
+                let content = payload.get("content").map(extract_text).unwrap_or_default();
+                (role, content)
+            }
+            "function_call" => {
+                let name = payload
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                ("assistant".to_string(), format!("[Tool: {name}]"))
+            }
+            "function_call_output" => {
+                let output = payload
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                ("tool".to_string(), output)
+            }
+            _ => continue,
+        };
+
         if content.trim().is_empty() {
             continue;
         }
@@ -79,6 +100,27 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(messages)
+}
+
+pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    let meta = parse_session(path)
+        .ok_or_else(|| format!("Failed to parse Codex session metadata: {}", path.display()))?;
+
+    if meta.session_id != session_id {
+        return Err(format!(
+            "Codex session ID mismatch: expected {session_id}, found {}",
+            meta.session_id
+        ));
+    }
+
+    std::fs::remove_file(path).map_err(|e| {
+        format!(
+            "Failed to delete Codex session file {}: {e}",
+            path.display()
+        )
+    })?;
+
+    Ok(true)
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
@@ -190,5 +232,64 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
             files.push(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn delete_session_removes_jsonl_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp
+            .path()
+            .join("rollout-2026-03-06T21-50-12-019cc369-bd7c-7891-b371-7b20b4fe0b18.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019cc369-bd7c-7891-b371-7b20b4fe0b18\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"hello\"}}\n"
+            ),
+        )
+        .expect("write session");
+
+        delete_session(temp.path(), &path, "019cc369-bd7c-7891-b371-7b20b4fe0b18")
+            .expect("delete session");
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn load_messages_includes_function_call_and_output() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"list files\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell\",\"arguments\":\"{\\\"cmd\\\":[\\\"ls\\\"]}\",\"call_id\":\"call_1\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:15Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"file1.txt\\nfile2.txt\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:16Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Done.\"}]}}\n",
+            ),
+        )
+        .expect("write");
+
+        let msgs = load_messages(&path).expect("load");
+        assert_eq!(msgs.len(), 4);
+
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "list files");
+
+        assert_eq!(msgs[1].role, "assistant");
+        assert!(msgs[1].content.contains("[Tool: shell]"));
+
+        assert_eq!(msgs[2].role, "tool");
+        assert!(msgs[2].content.contains("file1.txt"));
+
+        assert_eq!(msgs[3].role, "assistant");
+        assert_eq!(msgs[3].content, "Done.");
     }
 }

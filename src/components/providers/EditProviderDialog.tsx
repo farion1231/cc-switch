@@ -8,7 +8,7 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
-import { providersApi, vscodeApi, type AppId } from "@/lib/api";
+import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -28,6 +28,7 @@ export function EditProviderDialog({
   isProxyTakeover = false,
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
+  const [isFormSubmitting, setIsFormSubmitting] = useState(false);
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
   const [liveSettings, setLiveSettings] = useState<Record<
@@ -69,6 +70,26 @@ export function EditProviderDialog({
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);
+        }
+        return;
+      }
+
+      if (appId === "openclaw") {
+        try {
+          const live = await openclawApi.getLiveProvider(provider.id);
+          if (!cancelled && live && typeof live === "object") {
+            setLiveSettings(live);
+          } else if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } catch {
+          if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } finally {
+          if (!cancelled) {
+            setHasLoadedLive(true);
+          }
         }
         return;
       }
@@ -177,6 +198,7 @@ export function EditProviderDialog({
         <Button
           type="submit"
           form="provider-form"
+          disabled={isFormSubmitting}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Save className="h-4 w-4 mr-2" />
@@ -190,6 +212,7 @@ export function EditProviderDialog({
         submitLabel={t("common.save")}
         onSubmit={handleSubmit}
         onCancel={() => onOpenChange(false)}
+        onSubmittingChange={setIsFormSubmitting}
         initialData={initialData}
         showButtons={false}
       />

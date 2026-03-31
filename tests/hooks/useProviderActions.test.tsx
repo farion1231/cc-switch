@@ -7,11 +7,15 @@ import type { Provider, UsageScript } from "@/types";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+const toastInfoMock = vi.fn();
+const toastWarningMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
+    info: (...args: unknown[]) => toastInfoMock(...args),
+    warning: (...args: unknown[]) => toastWarningMock(...args),
   },
 }));
 
@@ -53,6 +57,9 @@ const providersApiUpdateMock = vi.fn();
 const providersApiUpdateTrayMenuMock = vi.fn();
 const settingsApiGetMock = vi.fn();
 const settingsApiApplyMock = vi.fn();
+const openclawApiGetModelCatalogMock = vi.fn();
+const openclawApiGetDefaultModelMock = vi.fn();
+const openclawApiSetDefaultModelMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -64,6 +71,14 @@ vi.mock("@/lib/api", () => ({
     get: (...args: unknown[]) => settingsApiGetMock(...args),
     applyClaudePluginConfig: (...args: unknown[]) =>
       settingsApiApplyMock(...args),
+  },
+  openclawApi: {
+    getModelCatalog: (...args: unknown[]) =>
+      openclawApiGetModelCatalogMock(...args),
+    getDefaultModel: (...args: unknown[]) =>
+      openclawApiGetDefaultModelMock(...args),
+    setDefaultModel: (...args: unknown[]) =>
+      openclawApiSetDefaultModelMock(...args),
   },
 }));
 
@@ -100,8 +115,13 @@ beforeEach(() => {
   providersApiUpdateTrayMenuMock.mockReset();
   settingsApiGetMock.mockReset();
   settingsApiApplyMock.mockReset();
+  openclawApiGetModelCatalogMock.mockReset();
+  openclawApiGetDefaultModelMock.mockReset();
+  openclawApiSetDefaultModelMock.mockReset();
   toastSuccessMock.mockReset();
   toastErrorMock.mockReset();
+  toastInfoMock.mockReset();
+  toastWarningMock.mockReset();
 
   addProviderMutation.isPending = false;
   updateProviderMutation.isPending = false;
@@ -169,6 +189,50 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
     expect(settingsApiGetMock).not.toHaveBeenCalled();
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks switching providers that require proxy when proxy is not running", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        apiFormat: "openai_chat",
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("claude", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(settingsApiGetMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks switching Codex full URL providers when proxy is not running", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        isFullUrl: true,
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("codex", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(settingsApiGetMock).not.toHaveBeenCalled();
   });
 
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {
@@ -449,6 +513,35 @@ describe("useProviderActions", () => {
     });
 
     expect(result.current.isLoading).toBe(true);
+  });
+
+  it("does not show backup details when setting OpenClaw default model", async () => {
+    openclawApiSetDefaultModelMock.mockResolvedValueOnce({
+      backupPath: "/tmp/openclaw-backup.json5",
+      warnings: [],
+    });
+
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      settingsConfig: {
+        models: [{ id: "gpt-4.1" }, { id: "gpt-4.1-mini" }],
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("openclaw"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.setAsDefaultModel(provider);
+    });
+
+    expect(openclawApiSetDefaultModelMock).toHaveBeenCalledWith({
+      primary: "provider-1/gpt-4.1",
+      fallbacks: ["provider-1/gpt-4.1-mini"],
+    });
+    expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+    expect(toastSuccessMock.mock.calls[0]?.[1]).toEqual({ closeButton: true });
   });
 });
 it("clears loading flag when all mutations idle", () => {

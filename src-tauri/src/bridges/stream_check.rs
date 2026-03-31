@@ -32,7 +32,7 @@ pub async fn legacy_check_provider(
     let provider = providers
         .get(provider_id)
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
-    let result = LegacyStreamCheckService::check_with_retry(&app_type, provider, &config).await?;
+    let result = LegacyStreamCheckService::check_with_retry(&app_type, provider, &config, None, None).await?;
     let _ = state
         .db
         .save_stream_check_log(provider_id, &provider.name, app_type.as_str(), &result);
@@ -82,7 +82,7 @@ pub async fn legacy_check_all_providers(
             }
         }
 
-        let result = LegacyStreamCheckService::check_with_retry(&app_type, &provider, &config)
+        let result = LegacyStreamCheckService::check_with_retry(&app_type, &provider, &config, None, None)
             .await
             .unwrap_or_else(|error| StreamCheckResult {
                 status: crate::services::stream_check::HealthStatus::Failed,

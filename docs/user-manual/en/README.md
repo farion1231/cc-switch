@@ -99,9 +99,9 @@ CC Switch User Manual
 
 ## Version Information
 
-- Documentation version: v3.11.1
-- Last updated: 2026-03-02
-- Applicable to CC Switch v3.11.1+
+- Documentation version: v3.12.0
+- Last updated: 2026-03-09
+- Applicable to CC Switch v3.12.0+
 
 ## Contributing
 

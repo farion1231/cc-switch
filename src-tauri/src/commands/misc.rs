@@ -489,7 +489,8 @@ fn extend_from_path_list(
 
 /// OpenCode install.sh 路径优先级（见 https://github.com/anomalyco/opencode README）:
 ///   $OPENCODE_INSTALL_DIR > $XDG_BIN_DIR > $HOME/bin > $HOME/.opencode/bin
-/// 额外扫描 Go 安装路径（~/go/bin、$GOPATH/*/bin）。
+/// 额外扫描 Bun 默认全局安装路径（~/.bun/bin）
+/// 和 Go 安装路径（~/go/bin、$GOPATH/*/bin）。
 fn opencode_extra_search_paths(
     home: &Path,
     opencode_install_dir: Option<std::ffi::OsString>,
@@ -504,6 +505,7 @@ fn opencode_extra_search_paths(
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut paths, home.join("bin"));
         push_unique_path(&mut paths, home.join(".opencode").join("bin"));
+        push_unique_path(&mut paths, home.join(".bun").join("bin"));
         push_unique_path(&mut paths, home.join("go").join("bin"));
     }
 
@@ -1269,6 +1271,7 @@ mod tests {
         assert_eq!(paths[1], PathBuf::from("/xdg/bin"));
         assert!(paths.contains(&PathBuf::from("/home/tester/bin")));
         assert!(paths.contains(&PathBuf::from("/home/tester/.opencode/bin")));
+        assert!(paths.contains(&PathBuf::from("/home/tester/.bun/bin")));
         assert!(paths.contains(&PathBuf::from("/home/tester/go/bin")));
         assert!(paths.contains(&PathBuf::from("/go/path1/bin")));
         assert!(paths.contains(&PathBuf::from("/go/path2/bin")));
@@ -1279,11 +1282,23 @@ mod tests {
         let home = PathBuf::from("/home/tester");
         let same_dir = Some(std::ffi::OsString::from("/same/path"));
 
-        let paths = opencode_extra_search_paths(&home, same_dir.clone(), same_dir.clone(), None);
+        let paths = opencode_extra_search_paths(&home, same_dir.clone(), same_dir, None);
 
         let count = paths
             .iter()
             .filter(|path| **path == PathBuf::from("/same/path"))
+            .count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn opencode_extra_search_paths_deduplicates_bun_default_dir() {
+        let home = PathBuf::from("/home/tester");
+        let paths = opencode_extra_search_paths(&home, None, None, None);
+
+        let count = paths
+            .iter()
+            .filter(|path| **path == PathBuf::from("/home/tester/.bun/bin"))
             .count();
         assert_eq!(count, 1);
     }
