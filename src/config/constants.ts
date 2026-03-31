@@ -7,6 +7,7 @@ export const PROVIDER_TYPES = {
 export const TEMPLATE_TYPES = {
   CUSTOM: "custom",
   GENERAL: "general",
+  MINIMAX: "minimax",
   NEW_API: "newapi",
   GITHUB_COPILOT: "github_copilot",
 } as const;

@@ -30,6 +30,201 @@ interface UsageScriptModalProps {
   onSave: (script: UsageScript) => void;
 }
 
+interface MiniMaxTemplateLabels {
+  queryFailedMessage: string;
+  modelNotFound: string;
+  currentRemaining: string;
+  weeklyRemaining: string;
+  defaultPlan: string;
+}
+
+const normalizeTemplateCode = (code: string): string => code.replace(/\s+/g, "");
+
+const isMiniMaxProvider = (provider: Provider): boolean => {
+  const config = provider.settingsConfig as Record<string, any> | undefined;
+  const candidates = [
+    provider.meta?.providerType,
+    provider.icon,
+    provider.name,
+    provider.websiteUrl,
+    config?.env?.ANTHROPIC_BASE_URL,
+    config?.env?.GOOGLE_GEMINI_BASE_URL,
+    config?.options?.baseURL,
+    config?.baseUrl,
+  ];
+
+  return candidates.some(
+    (value) => typeof value === "string" && /minimax|minimaxi/i.test(value),
+  );
+};
+
+const resolveMiniMaxUsageUrl = (
+  provider: Provider,
+  providerBaseUrl?: string,
+): string => {
+  const candidates = [
+    providerBaseUrl,
+    provider.meta?.providerType,
+    provider.name,
+    provider.websiteUrl,
+  ];
+  const isGlobal = candidates.some(
+    (value) => typeof value === "string" && /minimax\.io/i.test(value),
+  );
+
+  return isGlobal
+    ? "https://www.minimax.io/v1/api/openplatform/coding_plan/remains"
+    : "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains";
+};
+
+const buildMiniMaxTemplate = ({
+  queryFailedMessage,
+  modelNotFound,
+  currentRemaining,
+  weeklyRemaining,
+  defaultPlan,
+}: MiniMaxTemplateLabels): string => `({
+  request: {
+    url: "{{baseUrl}}",
+    method: "GET",
+    headers: {
+      "Authorization": "Bearer {{apiKey}}",
+      "User-Agent": "cc-switch/1.0"
+    },
+  },
+  extractor: function(response) {
+    if (!response || !response.base_resp || response.base_resp.status_code !== 0) {
+      return {
+        isValid: false,
+        invalidMessage:
+          response?.base_resp?.status_msg ||
+          response?.message ||
+          ${JSON.stringify(queryFailedMessage)}
+      };
+    }
+
+    const models = Array.isArray(response.model_remains) ? response.model_remains : [];
+    const targetModel = models.find(
+      (model) => model.model_name && model.model_name.includes("MiniMax-M"),
+    );
+
+    if (!targetModel) {
+      return {
+        isValid: false,
+        invalidMessage: ${JSON.stringify(modelNotFound)}
+      };
+    }
+
+    const total = Number(targetModel.current_interval_total_count || 0);
+    const remaining = Number(targetModel.current_interval_usage_count || 0);
+    const used = total >= remaining ? total - remaining : 0;
+    const remainPercent = total > 0 ? ((remaining / total) * 100).toFixed(2) : "0.00";
+
+    const weeklyTotal = Number(targetModel.current_weekly_total_count || 0);
+    const weeklyRemaining = Number(targetModel.current_weekly_usage_count || 0);
+
+    let extraText = ${JSON.stringify(currentRemaining)} + " " + remainPercent + "%";
+    if (weeklyTotal > 0) {
+      const weeklyRemainPercent = ((weeklyRemaining / weeklyTotal) * 100).toFixed(2);
+      extraText += " | " + ${JSON.stringify(weeklyRemaining)} + " " + weeklyRemainPercent + "%";
+    }
+
+    return {
+      isValid: true,
+      remaining,
+      used,
+      total,
+      planName: targetModel.model_name || ${JSON.stringify(defaultPlan)},
+      extra: extraText
+    };
+  },
+})`;
+
+const BUILT_IN_MINIMAX_TEMPLATE_VARIANTS: MiniMaxTemplateLabels[] = [
+  {
+    queryFailedMessage: "Query failed",
+    modelNotFound: "MiniMax-M quota was not found",
+    currentRemaining: "Remaining available",
+    weeklyRemaining: "Weekly remaining",
+    defaultPlan: "Default Plan",
+  },
+  {
+    queryFailedMessage: "Query failed",
+    modelNotFound: "MiniMax-M quota was not found",
+    currentRemaining: "5h left",
+    weeklyRemaining: "Week left",
+    defaultPlan: "Default Plan",
+  },
+  {
+    queryFailedMessage: "Query failed",
+    modelNotFound: "MiniMax-M quota was not found",
+    currentRemaining: "5h",
+    weeklyRemaining: "Week",
+    defaultPlan: "Default Plan",
+  },
+  {
+    queryFailedMessage: "查询失败",
+    modelNotFound: "未找到 MiniMax-M 系列模型额度",
+    currentRemaining: "剩余可用",
+    weeklyRemaining: "周剩余",
+    defaultPlan: "默认套餐",
+  },
+  {
+    queryFailedMessage: "查询失败",
+    modelNotFound: "未找到 MiniMax-M 系列模型额度",
+    currentRemaining: "5小时剩余",
+    weeklyRemaining: "周剩余",
+    defaultPlan: "默认套餐",
+  },
+  {
+    queryFailedMessage: "查询失败",
+    modelNotFound: "未找到 MiniMax-M 系列模型额度",
+    currentRemaining: "5小时",
+    weeklyRemaining: "周限额",
+    defaultPlan: "默认套餐",
+  },
+  {
+    queryFailedMessage: "查询失败",
+    modelNotFound: "未找到 MiniMax-M 系列模型额度",
+    currentRemaining: "5小时",
+    weeklyRemaining: "周",
+    defaultPlan: "默认套餐",
+  },
+  {
+    queryFailedMessage: "照会に失敗しました",
+    modelNotFound: "MiniMax-M 系モデルの残枠が見つかりません",
+    currentRemaining: "残り利用可能",
+    weeklyRemaining: "週次残り",
+    defaultPlan: "デフォルトプラン",
+  },
+  {
+    queryFailedMessage: "照会に失敗しました",
+    modelNotFound: "MiniMax-M 系モデルの残枠が見つかりません",
+    currentRemaining: "5時間残り",
+    weeklyRemaining: "週残り",
+    defaultPlan: "デフォルトプラン",
+  },
+  {
+    queryFailedMessage: "照会に失敗しました",
+    modelNotFound: "MiniMax-M 系モデルの残枠が見つかりません",
+    currentRemaining: "5時間",
+    weeklyRemaining: "週",
+    defaultPlan: "デフォルトプラン",
+  },
+];
+
+const isBuiltInMiniMaxTemplate = (code?: string): boolean => {
+  if (!code) {
+    return false;
+  }
+
+  const normalizedCode = normalizeTemplateCode(code);
+  return BUILT_IN_MINIMAX_TEMPLATE_VARIANTS.some(
+    (labels) =>
+      normalizedCode === normalizeTemplateCode(buildMiniMaxTemplate(labels)),
+  );
+};
+
 // 生成预设模板的函数（支持国际化）
 const generatePresetTemplates = (
   t: (key: string) => string,
@@ -66,6 +261,14 @@ const generatePresetTemplates = (
   }
 })`,
 
+  [TEMPLATE_TYPES.MINIMAX]: buildMiniMaxTemplate({
+    queryFailedMessage: t("usageScript.queryFailedMessage"),
+    modelNotFound: t("usageScript.minimaxModelNotFound"),
+    currentRemaining: t("usageScript.minimaxCurrentRemaining"),
+    weeklyRemaining: t("usageScript.minimaxWeeklyRemaining"),
+    defaultPlan: t("usageScript.defaultPlan"),
+  }),
+
   [TEMPLATE_TYPES.NEW_API]: `({
   request: {
     url: "{{baseUrl}}/api/user/self",
@@ -101,6 +304,7 @@ const generatePresetTemplates = (
 const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.CUSTOM]: "usageScript.templateCustom",
   [TEMPLATE_TYPES.GENERAL]: "usageScript.templateGeneral",
+  [TEMPLATE_TYPES.MINIMAX]: "usageScript.templateMiniMax",
   [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
 };
@@ -119,6 +323,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   // 生成带国际化的预设模板
   const PRESET_TEMPLATES = generatePresetTemplates(t);
+  const isMiniMaxPresetProvider = isMiniMaxProvider(provider);
 
   // 从 provider 的 settingsConfig 中提取 API Key 和 Base URL
   const getProviderCredentials = (): {
@@ -152,6 +357,17 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           apiKey: env.GEMINI_API_KEY,
           baseUrl: env.GOOGLE_GEMINI_BASE_URL,
         };
+      } else if (appId === "opencode") {
+        const options = (config as any).options || {};
+        return {
+          apiKey: options.apiKey,
+          baseUrl: options.baseURL,
+        };
+      } else if (appId === "openclaw") {
+        return {
+          apiKey: (config as any).apiKey,
+          baseUrl: (config as any).baseUrl,
+        };
       }
       return { apiKey: undefined, baseUrl: undefined };
     } catch (error) {
@@ -161,18 +377,42 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const providerCredentials = getProviderCredentials();
+  const miniMaxUsageUrl = resolveMiniMaxUsageUrl(
+    provider,
+    providerCredentials.baseUrl,
+  );
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
+    const defaultTemplateType = isMiniMaxPresetProvider
+      ? TEMPLATE_TYPES.MINIMAX
+      : TEMPLATE_TYPES.GENERAL;
     const defaultScript = {
       enabled: false,
       language: "javascript" as const,
-      code: PRESET_TEMPLATES[TEMPLATE_TYPES.GENERAL],
+      code: PRESET_TEMPLATES[defaultTemplateType],
+      baseUrl:
+        defaultTemplateType === TEMPLATE_TYPES.MINIMAX
+          ? miniMaxUsageUrl
+          : undefined,
       timeout: 10,
     };
 
     if (!savedScript) {
       return defaultScript;
+    }
+
+    if (
+      savedScript.templateType === TEMPLATE_TYPES.MINIMAX &&
+      (!savedScript.baseUrl || isBuiltInMiniMaxTemplate(savedScript.code))
+    ) {
+      return {
+        ...savedScript,
+        code: isBuiltInMiniMaxTemplate(savedScript.code)
+          ? PRESET_TEMPLATES[TEMPLATE_TYPES.MINIMAX]
+          : savedScript.code,
+        baseUrl: miniMaxUsageUrl,
+      };
     }
 
     return savedScript;
@@ -238,6 +478,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (existingScript?.templateType) {
         return existingScript.templateType;
       }
+      if (!existingScript && isMiniMaxPresetProvider) {
+        return TEMPLATE_TYPES.MINIMAX;
+      }
       // 向后兼容：根据字段推断模板类型
       // 检测 NEW_API 模板（有 accessToken 或 userId）
       if (existingScript?.accessToken || existingScript?.userId) {
@@ -289,12 +532,29 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return;
       }
     }
+
+    const trimmedScriptApiKey = script.apiKey?.trim();
+    const providerApiKey = providerCredentials.apiKey?.trim();
+    const resolvedApiKey =
+      selectedTemplate === TEMPLATE_TYPES.MINIMAX
+        ? trimmedScriptApiKey && trimmedScriptApiKey !== providerApiKey
+          ? trimmedScriptApiKey
+          : undefined
+        : script.apiKey;
+    const resolvedBaseUrl =
+      selectedTemplate === TEMPLATE_TYPES.MINIMAX
+        ? script.baseUrl?.trim() || miniMaxUsageUrl
+        : script.baseUrl;
+
     // 保存时记录当前选择的模板类型
     const scriptWithTemplate = {
       ...script,
+      apiKey: resolvedApiKey || undefined,
+      baseUrl: resolvedBaseUrl || undefined,
       templateType: selectedTemplate as
         | "custom"
         | "general"
+        | "minimax"
         | "newapi"
         | "github_copilot"
         | undefined,
@@ -338,22 +598,39 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return;
       }
 
+      const resolvedApiKey =
+        selectedTemplate === TEMPLATE_TYPES.MINIMAX
+          ? script.apiKey?.trim() || providerCredentials.apiKey?.trim()
+          : script.apiKey;
+      const resolvedBaseUrl =
+        selectedTemplate === TEMPLATE_TYPES.MINIMAX
+          ? script.baseUrl?.trim() || miniMaxUsageUrl
+          : script.baseUrl;
       const result = await usageApi.testScript(
         provider.id,
         appId,
         script.code,
         script.timeout,
-        script.apiKey,
-        script.baseUrl,
+        resolvedApiKey || undefined,
+        resolvedBaseUrl || undefined,
         script.accessToken,
         script.userId,
-        selectedTemplate as "custom" | "general" | "newapi" | undefined,
+        selectedTemplate as
+          | "custom"
+          | "general"
+          | "minimax"
+          | "newapi"
+          | undefined,
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
           .map((plan: UsageData) => {
             const planInfo = plan.planName ? `[${plan.planName}]` : "";
-            return `${planInfo} ${t("usage.remaining")} ${plan.remaining} ${plan.unit}`;
+            const remainingInfo =
+              plan.remaining !== undefined
+                ? `${t("usage.remaining")} ${plan.remaining}${plan.unit ? ` ${plan.unit}` : ""}`
+                : "";
+            return [planInfo, remainingInfo].filter(Boolean).join(" ");
           })
           .join(", ");
         toast.success(`${t("usageScript.testSuccess")}${summary}`, {
@@ -431,6 +708,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           accessToken: undefined,
           userId: undefined,
         });
+      } else if (presetName === TEMPLATE_TYPES.MINIMAX) {
+        setScript({
+          ...script,
+          code: preset,
+          baseUrl: miniMaxUsageUrl,
+          accessToken: undefined,
+          userId: undefined,
+        });
       } else if (presetName === TEMPLATE_TYPES.NEW_API) {
         setScript({
           ...script,
@@ -454,6 +739,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
+    selectedTemplate === TEMPLATE_TYPES.MINIMAX ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API;
 
   const footer = (
@@ -647,7 +933,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
-                  {selectedTemplate === TEMPLATE_TYPES.GENERAL && (
+                  {(selectedTemplate === TEMPLATE_TYPES.GENERAL ||
+                    selectedTemplate === TEMPLATE_TYPES.MINIMAX) && (
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="usage-api-key">
@@ -691,7 +978,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                       <div className="space-y-2">
                         <Label htmlFor="usage-base-url">
-                          {t("usageScript.baseUrl")}{" "}
+                          {selectedTemplate === TEMPLATE_TYPES.MINIMAX
+                            ? t("usageScript.requestUrl")
+                            : t("usageScript.baseUrl")}{" "}
                           <span className="text-xs text-muted-foreground font-normal">
                             ({t("usageScript.optional")})
                           </span>
@@ -703,7 +992,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           onChange={(e) =>
                             setScript({ ...script, baseUrl: e.target.value })
                           }
-                          placeholder={t("usageScript.baseUrlPlaceholder")}
+                          placeholder={
+                            selectedTemplate === TEMPLATE_TYPES.MINIMAX
+                              ? miniMaxUsageUrl
+                              : t("usageScript.baseUrlPlaceholder")
+                          }
                           autoComplete="off"
                           className="border-white/10"
                         />
