@@ -21,33 +21,41 @@ type OmoProfileData = (Option<Value>, Option<Value>, Option<Value>);
 // ── Variant descriptor ─────────────────────────────────────────
 
 pub struct OmoVariant {
-    pub filename: &'static str,
+    pub preferred_filename: &'static str,
+    pub config_candidates: &'static [&'static str],
     pub category: &'static str,
     pub provider_prefix: &'static str,
     pub plugin_name: &'static str,
-    pub plugin_prefix: &'static str,
+    pub plugin_prefixes: &'static [&'static str],
     pub has_categories: bool,
     pub label: &'static str,
     pub import_label: &'static str,
 }
 
 pub const STANDARD: OmoVariant = OmoVariant {
-    filename: "oh-my-opencode.jsonc",
+    preferred_filename: "oh-my-openagent.jsonc",
+    config_candidates: &[
+        "oh-my-openagent.jsonc",
+        "oh-my-openagent.json",
+        "oh-my-opencode.jsonc",
+        "oh-my-opencode.json",
+    ],
     category: "omo",
     provider_prefix: "omo-",
-    plugin_name: "oh-my-opencode@latest",
-    plugin_prefix: "oh-my-opencode",
+    plugin_name: "oh-my-openagent@latest",
+    plugin_prefixes: &["oh-my-openagent", "oh-my-opencode"],
     has_categories: true,
     label: "OMO",
     import_label: "Imported",
 };
 
 pub const SLIM: OmoVariant = OmoVariant {
-    filename: "oh-my-opencode-slim.jsonc",
+    preferred_filename: "oh-my-opencode-slim.jsonc",
+    config_candidates: &["oh-my-opencode-slim.jsonc", "oh-my-opencode-slim.json"],
     category: "omo-slim",
     provider_prefix: "omo-slim-",
     plugin_name: "oh-my-opencode-slim@latest",
-    plugin_prefix: "oh-my-opencode-slim",
+    plugin_prefixes: &["oh-my-opencode-slim"],
     has_categories: false,
     label: "OMO Slim",
     import_label: "Imported Slim",
@@ -60,22 +68,27 @@ pub struct OmoService;
 impl OmoService {
     // ── Path helpers ────────────────────────────────────────
 
+    fn config_candidates(v: &OmoVariant, base_dir: &Path) -> Vec<PathBuf> {
+        v.config_candidates
+            .iter()
+            .map(|name| base_dir.join(name))
+            .collect()
+    }
+
+    fn find_existing_config_path(v: &OmoVariant, base_dir: &Path) -> Option<PathBuf> {
+        Self::config_candidates(v, base_dir)
+            .into_iter()
+            .find(|path| path.exists())
+    }
+
     fn config_path(v: &OmoVariant) -> PathBuf {
-        get_opencode_dir().join(v.filename)
+        let base_dir = get_opencode_dir();
+        Self::find_existing_config_path(v, &base_dir)
+            .unwrap_or_else(|| base_dir.join(v.preferred_filename))
     }
 
     fn resolve_local_config_path(v: &OmoVariant) -> Result<PathBuf, AppError> {
-        let config_path = Self::config_path(v);
-        if config_path.exists() {
-            return Ok(config_path);
-        }
-
-        let json_path = config_path.with_extension("json");
-        if json_path.exists() {
-            return Ok(json_path);
-        }
-
-        Err(AppError::OmoConfigNotFound)
+        Self::find_existing_config_path(v, &get_opencode_dir()).ok_or(AppError::OmoConfigNotFound)
     }
 
     fn read_jsonc_object(path: &Path) -> Result<Map<String, Value>, AppError> {
@@ -123,12 +136,18 @@ impl OmoService {
     // ── Public API (variant-parameterized) ─────────────────
 
     pub fn delete_config_file(v: &OmoVariant) -> Result<(), AppError> {
-        let config_path = Self::config_path(v);
-        if config_path.exists() {
-            std::fs::remove_file(&config_path).map_err(|e| AppError::io(&config_path, e))?;
-            log::info!("{} config file deleted: {config_path:?}", v.label);
+        let base_dir = get_opencode_dir();
+        let mut deleted_paths = Vec::new();
+        for config_path in Self::config_candidates(v, &base_dir) {
+            if config_path.exists() {
+                std::fs::remove_file(&config_path).map_err(|e| AppError::io(&config_path, e))?;
+                deleted_paths.push(config_path);
+            }
         }
-        crate::opencode_config::remove_plugin_by_prefix(v.plugin_prefix)?;
+        if !deleted_paths.is_empty() {
+            log::info!("{} config files deleted: {deleted_paths:?}", v.label);
+        }
+        crate::opencode_config::remove_plugins_by_prefixes(v.plugin_prefixes)?;
         Ok(())
     }
 
@@ -450,5 +469,39 @@ mod tests {
         assert_eq!(obj["$schema"], "https://slim.schema");
         assert!(obj.contains_key("agents"));
         assert!(obj.contains_key("disabled_agents"));
+    }
+
+    #[test]
+    fn test_find_existing_config_prefers_new_name_over_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_path = dir.path().join("oh-my-opencode.jsonc");
+        let new_path = dir.path().join("oh-my-openagent.jsonc");
+
+        // Create both old and new files
+        std::fs::write(&old_path, r#"{"agents":{}}"#).unwrap();
+        std::fs::write(&new_path, r#"{"agents":{}}"#).unwrap();
+
+        let found = OmoService::find_existing_config_path(&STANDARD, dir.path());
+        assert_eq!(
+            found.unwrap(),
+            new_path,
+            "When both old and new config files exist, the new name (oh-my-openagent) must be preferred"
+        );
+    }
+
+    #[test]
+    fn test_find_existing_config_falls_back_to_old_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_path = dir.path().join("oh-my-opencode.jsonc");
+
+        // Only old file exists
+        std::fs::write(&old_path, r#"{"agents":{}}"#).unwrap();
+
+        let found = OmoService::find_existing_config_path(&STANDARD, dir.path());
+        assert_eq!(
+            found.unwrap(),
+            old_path,
+            "When only the old config file exists, it should still be found"
+        );
     }
 }
