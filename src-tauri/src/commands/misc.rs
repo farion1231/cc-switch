@@ -1192,7 +1192,8 @@ del \"%~f0\" >nul 2>&1
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
     let bat_path = bat_file.to_string_lossy();
-    let ps_cmd = format!("& '{}'", bat_path);
+    let bat_path_for_cmd = build_windows_cmd_command_str(&bat_path);
+    let ps_cmd = format!("& '{}'", escape_powershell_single_quoted(&bat_path));
 
     // Try the preferred terminal first
     let result = match terminal {
@@ -1200,8 +1201,10 @@ del \"%~f0\" >nul 2>&1
             &["powershell", "-NoExit", "-Command", &ps_cmd],
             "PowerShell",
         ),
-        "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
-        _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
+        "wt" => {
+            run_windows_start_command(&["wt", "cmd", "/K", &bat_path_for_cmd], "Windows Terminal")
+        }
+        _ => run_windows_start_command(&["cmd", "/K", &bat_path_for_cmd], "cmd"), // "cmd" or default
     };
 
     // If preferred terminal fails and it's not the default, try cmd as fallback
@@ -1211,7 +1214,7 @@ del \"%~f0\" >nul 2>&1
             terminal,
             result.as_ref().err()
         );
-        return run_windows_start_command(&["cmd", "/K", &bat_path], "cmd");
+        return run_windows_start_command(&["cmd", "/K", &bat_path_for_cmd], "cmd");
     }
 
     result
@@ -1229,6 +1232,26 @@ fn build_shell_cd_command(cwd: Option<&Path>) -> String {
 
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn escape_powershell_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_cmd_command_str(path: &str) -> String {
+    // Avoid handing `cmd /K` a string that starts with a single quoted path:
+    // per cmd.exe parsing rules, those outer quotes may be stripped when the
+    // quoted text contains shell metacharacters. An explicit `call "..."` form
+    // keeps the command from starting with a quote while still protecting
+    // spaces and other special characters in the batch path.
+    format!("call \"{}\"", escape_windows_cmd_quoted_path(path))
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn escape_windows_cmd_quoted_path(value: &str) -> String {
+    value.replace('%', "%%")
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -1470,6 +1493,20 @@ mod tests {
         let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
 
         assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
+    }
+
+    #[test]
+    fn escape_powershell_single_quoted_doubles_embedded_quotes() {
+        let escaped = escape_powershell_single_quoted(r"C:\Users\O'Brien\AppData\Local\Temp");
+
+        assert_eq!(escaped, r"C:\Users\O''Brien\AppData\Local\Temp");
+    }
+
+    #[test]
+    fn build_windows_cmd_command_str_quotes_and_escapes_metacharacters() {
+        let command = build_windows_cmd_command_str(r"C:\Users\100%&(test)\cc switch.bat");
+
+        assert_eq!(command, "call \"C:\\Users\\100%%&(test)\\cc switch.bat\"");
     }
 
     #[test]
