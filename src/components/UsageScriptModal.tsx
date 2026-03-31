@@ -68,12 +68,12 @@ const generatePresetTemplates = (
 
   [TEMPLATE_TYPES.NEW_API]: `({
   request: {
-    url: "{{baseUrl}}/api/user/self",
+    url: "{{baseUrl}}/api/usage/token",
     method: "GET",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": "Bearer {{accessToken}}",
-      "New-Api-User": "{{userId}}"
+      "Authorization": "Bearer {{apiKey}}",
+      "User-Agent": "cc-switch/1.0"
     },
   },
   extractor: function (response) {
@@ -714,6 +714,43 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   {selectedTemplate === TEMPLATE_TYPES.NEW_API && (
                     <>
                       <div className="space-y-2">
+                        <Label htmlFor="usage-newapi-api-key">
+                          API Key
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            id="usage-newapi-api-key"
+                            type={showApiKey ? "text" : "password"}
+                            value={script.apiKey || ""}
+                            onChange={(e) =>
+                              setScript({ ...script, apiKey: e.target.value })
+                            }
+                            placeholder={t("usageScript.apiKeyPlaceholder")}
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                          {script.apiKey && (
+                            <button
+                              type="button"
+                              onClick={() => setShowApiKey(!showApiKey)}
+                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                              aria-label={
+                                showApiKey
+                                  ? t("apiKeyInput.hide")
+                                  : t("apiKeyInput.show")
+                              }
+                            >
+                              {showApiKey ? (
+                                <EyeOff size={16} />
+                              ) : (
+                                <Eye size={16} />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
                         <Label htmlFor="usage-newapi-base-url">
                           {t("usageScript.baseUrl")}
                         </Label>
@@ -725,67 +762,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             setScript({ ...script, baseUrl: e.target.value })
                           }
                           placeholder="https://api.newapi.com"
-                          autoComplete="off"
-                          className="border-white/10"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="usage-access-token">
-                          {t("usageScript.accessToken")}
-                        </Label>
-                        <div className="relative">
-                          <Input
-                            id="usage-access-token"
-                            type={showAccessToken ? "text" : "password"}
-                            value={script.accessToken || ""}
-                            onChange={(e) =>
-                              setScript({
-                                ...script,
-                                accessToken: e.target.value,
-                              })
-                            }
-                            placeholder={t(
-                              "usageScript.accessTokenPlaceholder",
-                            )}
-                            autoComplete="off"
-                            className="border-white/10"
-                          />
-                          {script.accessToken && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setShowAccessToken(!showAccessToken)
-                              }
-                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
-                              aria-label={
-                                showAccessToken
-                                  ? t("apiKeyInput.hide")
-                                  : t("apiKeyInput.show")
-                              }
-                            >
-                              {showAccessToken ? (
-                                <EyeOff size={16} />
-                              ) : (
-                                <Eye size={16} />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="usage-user-id">
-                          {t("usageScript.userId")}
-                        </Label>
-                        <Input
-                          id="usage-user-id"
-                          type="text"
-                          value={script.userId || ""}
-                          onChange={(e) =>
-                            setScript({ ...script, userId: e.target.value })
-                          }
-                          placeholder={t("usageScript.userIdPlaceholder")}
                           autoComplete="off"
                           className="border-white/10"
                         />
