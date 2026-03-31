@@ -35,10 +35,10 @@ pub struct OmoVariant {
 pub const STANDARD: OmoVariant = OmoVariant {
     preferred_filename: "oh-my-openagent.jsonc",
     config_candidates: &[
-        "oh-my-opencode.jsonc",
-        "oh-my-opencode.json",
         "oh-my-openagent.jsonc",
         "oh-my-openagent.json",
+        "oh-my-opencode.jsonc",
+        "oh-my-opencode.json",
     ],
     category: "omo",
     provider_prefix: "omo-",
@@ -469,5 +469,39 @@ mod tests {
         assert_eq!(obj["$schema"], "https://slim.schema");
         assert!(obj.contains_key("agents"));
         assert!(obj.contains_key("disabled_agents"));
+    }
+
+    #[test]
+    fn test_find_existing_config_prefers_new_name_over_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_path = dir.path().join("oh-my-opencode.jsonc");
+        let new_path = dir.path().join("oh-my-openagent.jsonc");
+
+        // Create both old and new files
+        std::fs::write(&old_path, r#"{"agents":{}}"#).unwrap();
+        std::fs::write(&new_path, r#"{"agents":{}}"#).unwrap();
+
+        let found = OmoService::find_existing_config_path(&STANDARD, dir.path());
+        assert_eq!(
+            found.unwrap(),
+            new_path,
+            "When both old and new config files exist, the new name (oh-my-openagent) must be preferred"
+        );
+    }
+
+    #[test]
+    fn test_find_existing_config_falls_back_to_old_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_path = dir.path().join("oh-my-opencode.jsonc");
+
+        // Only old file exists
+        std::fs::write(&old_path, r#"{"agents":{}}"#).unwrap();
+
+        let found = OmoService::find_existing_config_path(&STANDARD, dir.path());
+        assert_eq!(
+            found.unwrap(),
+            old_path,
+            "When only the old config file exists, it should still be found"
+        );
     }
 }
