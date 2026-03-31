@@ -8,7 +8,6 @@ mod live;
 mod usage;
 
 use indexmap::IndexMap;
-use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -927,6 +926,54 @@ base_url = "http://localhost:8080"
             );
         });
     }
+
+    #[test]
+    fn extract_provider_base_url_prefers_active_codex_model_provider_section() {
+        let provider = Provider::with_id(
+            "codex".into(),
+            "Codex".into(),
+            json!({
+                "config": r#"model_provider = "azure"
+base_url = "https://top-level.example/v1"
+
+[model_providers.azure]
+base_url = "https://azure.example/v1"
+
+[model_providers.openai]
+base_url = "https://openai.example/v1"
+
+[mcp_servers.local]
+base_url = "http://localhost:8080"
+"#
+            }),
+            None,
+        );
+
+        let base_url = extract_provider_base_url(&provider, &AppType::Codex);
+
+        assert_eq!(base_url.as_deref(), Some("https://azure.example/v1"));
+    }
+
+    #[test]
+    fn extract_provider_base_url_falls_back_to_top_level_codex_base_url() {
+        let provider = Provider::with_id(
+            "codex".into(),
+            "Codex".into(),
+            json!({
+                "config": r#"model = "gpt-5"
+base_url = "https://top-level.example/v1"
+
+[mcp_servers.local]
+base_url = "http://localhost:8080"
+"#
+            }),
+            None,
+        );
+
+        let base_url = extract_provider_base_url(&provider, &AppType::Codex);
+
+        assert_eq!(base_url.as_deref(), Some("https://top-level.example/v1"));
+    }
 }
 
 pub(super) fn non_empty_trimmed(value: Option<&str>) -> Option<String> {
@@ -936,11 +983,26 @@ pub(super) fn non_empty_trimmed(value: Option<&str>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-pub(super) fn extract_toml_base_url(config_toml: &str) -> Option<String> {
-    let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).ok()?;
-    re.captures(config_toml)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
+pub(super) fn extract_codex_toml_base_url(config_toml: &str) -> Option<String> {
+    let doc = config_toml.parse::<toml::Value>().ok()?;
+    let model_provider = doc
+        .get("model_provider")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+
+    if let Some(provider_key) = model_provider {
+        if let Some(base_url) = non_empty_trimmed(
+            doc.get("model_providers")
+                .and_then(|v| v.get(provider_key))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+        ) {
+            return Some(base_url);
+        }
+    }
+
+    non_empty_trimmed(doc.get("base_url").and_then(|v| v.as_str()))
 }
 
 pub(super) fn extract_provider_api_key(provider: &Provider, app_type: &AppType) -> Option<String> {
@@ -996,7 +1058,7 @@ pub(super) fn extract_provider_base_url(
         AppType::Codex => settings
             .get("config")
             .and_then(|v| v.as_str())
-            .and_then(extract_toml_base_url),
+            .and_then(extract_codex_toml_base_url),
         _ => None,
     };
 

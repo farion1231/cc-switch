@@ -338,6 +338,32 @@ mod tests {
     }
 
     #[test]
+    fn resolve_usage_credentials_prefers_active_codex_model_provider_base_url() {
+        let provider = provider_with_settings(json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-codex"
+            },
+            "config": r#"model_provider = "azure"
+base_url = "https://top-level.example/v1"
+
+[model_providers.azure]
+base_url = "https://azure.example/v1"
+
+[model_providers.openai]
+base_url = "https://openai.example/v1"
+
+[mcp_servers.local]
+base_url = "http://localhost:8080"
+"#
+        }));
+
+        let (api_key, base_url) = resolve_usage_credentials(&provider, &AppType::Codex, None, None);
+
+        assert_eq!(api_key, "sk-codex");
+        assert_eq!(base_url, "https://azure.example/v1");
+    }
+
+    #[test]
     fn resolve_usage_credentials_supports_legacy_alias_fields() {
         let provider = provider_with_settings(json!({
             "api_key": "sk-legacy",
