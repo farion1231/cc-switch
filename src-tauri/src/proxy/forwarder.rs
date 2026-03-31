@@ -823,7 +823,22 @@ impl RequestForwarder {
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+        let mut filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+
+        // Tool Schema 整流：修复非 OpenAI provider 的 tool 兼容性
+        // - 移除非 function 类型的 tool（如 web_search）
+        // - 为缺少 required 字段的 parameters 补充空数组
+        let tool_rectify_result =
+            super::tool_schema_rectifier::rectify_tool_schema(&mut filtered_body);
+        if tool_rectify_result.applied {
+            let tag = adapter.name();
+            log::info!(
+                "[{tag}] [TOOL-001] Tool Schema 整流: 移除 {} 个非 function tool, 修补 {} 个缺失 required 字段",
+                tool_rectify_result.removed_non_function_tools,
+                tool_rectify_result.patched_required_count,
+            );
+        }
+
         let force_identity_encoding = needs_transform
             || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
