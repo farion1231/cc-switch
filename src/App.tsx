@@ -54,7 +54,7 @@ import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
-import { SkillsPage } from "@/components/skills/SkillsPage";
+import { SkillsPage, type SkillsPageHandle } from "@/components/skills/SkillsPage";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
@@ -207,7 +207,7 @@ function App() {
 
   const promptPanelRef = useRef<any>(null);
   const mcpPanelRef = useRef<any>(null);
-  const skillsPageRef = useRef<any>(null);
+  const skillsPageRef = useRef<SkillsPageHandle>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
@@ -1088,6 +1088,15 @@ function App() {
                     >
                       <RefreshCw className="w-4 h-4 mr-2" />
                       {t("skills.refresh")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => skillsPageRef.current?.forceRefresh()}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      {t("skills.forceRefresh", { defaultValue: "强制刷新" })}
                     </Button>
                     <Button
                       variant="ghost"

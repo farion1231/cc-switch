@@ -59,6 +59,16 @@ export function useDiscoverableSkills() {
   });
 }
 
+export function useForceRefreshDiscoverableSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => skillsApi.discoverAvailable(true),
+    onSuccess: (skills) => {
+      queryClient.setQueryData(["skills", "discoverable"], skills);
+    },
+  });
+}
+
 /**
  * 安装 Skill
  * 成功后直接更新缓存，不触发重新加载/刷新

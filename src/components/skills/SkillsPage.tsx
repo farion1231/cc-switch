@@ -9,12 +9,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Search } from "lucide-react";
+import { LayoutGrid, List, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { SkillCard } from "./SkillCard";
+import { SkillItem } from "./SkillItem";
 import { RepoManagerPanel } from "./RepoManagerPanel";
 import {
   useDiscoverableSkills,
+  useForceRefreshDiscoverableSkills,
   useInstalledSkills,
   useInstallSkill,
   useSkillRepos,
@@ -31,6 +33,7 @@ interface SkillsPageProps {
 
 export interface SkillsPageHandle {
   refresh: () => void;
+  forceRefresh: () => void;
   openRepoManager: () => void;
 }
 
@@ -47,6 +50,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
+    const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
     // currentApp 用于安装时的默认应用
     const currentApp = initialApp;
@@ -58,11 +62,13 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       isFetching: fetchingDiscoverable,
       refetch: refetchDiscoverable,
     } = useDiscoverableSkills();
-    const { data: installedSkills } = useInstalledSkills();
+    const { data: installedSkills, refetch: refetchInstalled } =
+      useInstalledSkills();
     const { data: repos = [], refetch: refetchRepos } = useSkillRepos();
 
     // Mutations
     const installMutation = useInstallSkill();
+    const forceRefreshMutation = useForceRefreshDiscoverableSkills();
     const addRepoMutation = useAddSkillRepo();
     const removeRepoMutation = useRemoveSkillRepo();
 
@@ -111,14 +117,6 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     }, [discoverableSkills, installedKeys]);
 
     const loading = loadingDiscoverable || fetchingDiscoverable;
-
-    useImperativeHandle(ref, () => ({
-      refresh: () => {
-        refetchDiscoverable();
-        refetchRepos();
-      },
-      openRepoManager: () => setRepoManagerOpen(true),
-    }));
 
     const handleInstall = async (directory: string) => {
       // 找到对应的 DiscoverableSkill
@@ -200,6 +198,34 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         });
       }
     };
+
+    const handleForceRefresh = async () => {
+      try {
+        const refreshedSkills = await forceRefreshMutation.mutateAsync();
+        refetchRepos();
+        toast.success(
+          t("skills.forceRefreshSuccess", {
+            defaultValue: "已强制刷新技能仓库，共拉取 {{count}} 个技能",
+            count: refreshedSkills.length,
+          }),
+          { closeButton: true },
+        );
+      } catch (error) {
+        toast.error(t("skills.forceRefreshFailed", { defaultValue: "强制刷新失败" }), {
+          description: String(error),
+        });
+      }
+    };
+
+    useImperativeHandle(ref, () => ({
+      refresh: () => {
+        refetchInstalled();
+      },
+      forceRefresh: () => {
+        void handleForceRefresh();
+      },
+      openRepoManager: () => setRepoManagerOpen(true),
+    }));
 
     // 过滤技能列表
     const filteredSkills = useMemo(() => {
@@ -340,6 +366,40 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="w-full md:w-auto">
+                    <div className="inline-flex w-full md:w-auto items-center rounded-md border bg-card p-1 shadow-sm">
+                      <Button
+                        type="button"
+                        variant={viewMode === "grid" ? "default" : "ghost"}
+                        size="sm"
+                        onClick={() => setViewMode("grid")}
+                        className="h-8 px-2.5"
+                        aria-label={t("skills.viewMode.grid", {
+                          defaultValue: "网格视图",
+                        })}
+                        title={t("skills.viewMode.grid", {
+                          defaultValue: "网格视图",
+                        })}
+                      >
+                        <LayoutGrid className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={viewMode === "list" ? "default" : "ghost"}
+                        size="sm"
+                        onClick={() => setViewMode("list")}
+                        className="h-8 px-2.5"
+                        aria-label={t("skills.viewMode.list", {
+                          defaultValue: "列表视图",
+                        })}
+                        title={t("skills.viewMode.list", {
+                          defaultValue: "列表视图",
+                        })}
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
                   {searchQuery && (
                     <p className="mt-2 text-sm text-muted-foreground">
                       {t("skills.count", { count: filteredSkills.length })}
@@ -358,16 +418,31 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {filteredSkills.map((skill) => (
-                      <SkillCard
-                        key={skill.key}
-                        skill={skill}
-                        onInstall={handleInstall}
-                        onUninstall={handleUninstall}
-                      />
-                    ))}
-                  </div>
+                  <>
+                    {viewMode === "grid" ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredSkills.map((skill) => (
+                          <SkillCard
+                            key={skill.key}
+                            skill={skill}
+                            onInstall={handleInstall}
+                            onUninstall={handleUninstall}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {filteredSkills.map((skill) => (
+                          <SkillItem
+                            key={skill.key}
+                            skill={skill}
+                            onInstall={handleInstall}
+                            onUninstall={handleUninstall}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}

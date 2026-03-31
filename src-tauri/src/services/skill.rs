@@ -99,6 +99,15 @@ pub struct SkillRepo {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillRepoCache {
+    pub owner: String,
+    pub name: String,
+    pub branch: String,
+    pub updated_at: i64,
+    pub skills: Vec<DiscoverableSkill>,
+}
+
 /// 技能安装状态（旧版兼容）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillState {
@@ -367,6 +376,60 @@ impl SkillService {
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
     fn build_skill_doc_url(owner: &str, repo: &str, branch: &str, doc_path: &str) -> String {
         format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+    }
+
+    fn get_repo_cache_dir() -> Result<PathBuf> {
+        let dir = get_app_config_dir().join("skill-repo-cache");
+        fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    fn sanitize_repo_segment(raw: &str) -> String {
+        raw.chars()
+            .map(|c| match c {
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+                _ => c,
+            })
+            .collect::<String>()
+            .to_lowercase()
+    }
+
+    fn get_repo_cache_file(repo: &SkillRepo) -> Result<PathBuf> {
+        let file_name = format!(
+            "{}__{}__{}.json",
+            Self::sanitize_repo_segment(&repo.owner),
+            Self::sanitize_repo_segment(&repo.name),
+            Self::sanitize_repo_segment(&repo.branch)
+        );
+        Ok(Self::get_repo_cache_dir()?.join(file_name))
+    }
+
+    fn read_repo_skills_cache(repo: &SkillRepo) -> Result<Option<Vec<DiscoverableSkill>>> {
+        let cache_file = Self::get_repo_cache_file(repo)?;
+        if !cache_file.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&cache_file)?;
+        let cache: SkillRepoCache = serde_json::from_str(&content)?;
+        Ok(Some(cache.skills))
+    }
+
+    fn write_repo_skills_cache(
+        repo: &SkillRepo,
+        skills: &[DiscoverableSkill],
+        resolved_branch: &str,
+    ) -> Result<()> {
+        let cache_file = Self::get_repo_cache_file(repo)?;
+        let payload = SkillRepoCache {
+            owner: repo.owner.clone(),
+            name: repo.name.clone(),
+            branch: resolved_branch.to_string(),
+            updated_at: Utc::now().timestamp(),
+            skills: skills.to_vec(),
+        };
+        let json = serde_json::to_string_pretty(&payload)?;
+        fs::write(cache_file, json)?;
+        Ok(())
     }
 
     /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
@@ -1218,10 +1281,35 @@ impl SkillService {
         &self,
         repos: Vec<SkillRepo>,
     ) -> Result<Vec<DiscoverableSkill>> {
+        self.discover_available_with_cache(repos, false).await
+    }
+
+    pub async fn discover_available_with_cache(
+        &self,
+        repos: Vec<SkillRepo>,
+        force_refresh: bool,
+    ) -> Result<Vec<DiscoverableSkill>> {
         let mut skills = Vec::new();
 
         // 仅使用启用的仓库
         let enabled_repos: Vec<SkillRepo> = repos.into_iter().filter(|repo| repo.enabled).collect();
+
+        if !force_refresh {
+            for repo in &enabled_repos {
+                match Self::read_repo_skills_cache(repo) {
+                    Ok(Some(cached_skills)) => skills.extend(cached_skills),
+                    Ok(None) => {}
+                    Err(e) => {
+                        log::warn!("读取技能仓库缓存失败 {}/{}: {}", repo.owner, repo.name, e);
+                    }
+                }
+            }
+            if !skills.is_empty() {
+                Self::deduplicate_discoverable_skills(&mut skills);
+                skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                return Ok(skills);
+            }
+        }
 
         let fetch_tasks = enabled_repos
             .iter()
@@ -1232,8 +1320,27 @@ impl SkillService {
 
         for (repo, result) in enabled_repos.into_iter().zip(results.into_iter()) {
             match result {
-                Ok(repo_skills) => skills.extend(repo_skills),
-                Err(e) => log::warn!("获取仓库 {}/{} 技能失败: {}", repo.owner, repo.name, e),
+                Ok(repo_skills) => {
+                    if let Err(e) = Self::write_repo_skills_cache(&repo, &repo_skills, &repo.branch) {
+                        log::warn!("写入技能仓库缓存失败 {}/{}: {}", repo.owner, repo.name, e);
+                    }
+                    skills.extend(repo_skills);
+                }
+                Err(e) => {
+                    log::warn!("获取仓库 {}/{} 技能失败: {}", repo.owner, repo.name, e);
+                    match Self::read_repo_skills_cache(&repo) {
+                        Ok(Some(cached_skills)) => skills.extend(cached_skills),
+                        Ok(None) => {}
+                        Err(cache_err) => {
+                            log::warn!(
+                                "获取仓库失败后读取缓存失败 {}/{}: {}",
+                                repo.owner,
+                                repo.name,
+                                cache_err
+                            );
+                        }
+                    }
+                }
             }
         }
 
