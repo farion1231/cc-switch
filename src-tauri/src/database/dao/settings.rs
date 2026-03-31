@@ -270,6 +270,29 @@ impl Database {
         self.set_setting("optimizer_config", &json)
     }
 
+    // --- 敏感词过滤配置 ---
+
+    /// 获取敏感词过滤配置
+    ///
+    /// 返回配置，如果不存在则返回默认值（默认关闭）
+    pub fn get_sensitive_word_config(&self) -> Result<crate::proxy::types::SensitiveWordConfig, AppError> {
+        match self.get_setting("sensitive_word_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析敏感词配置失败: {e}"))),
+            None => Ok(crate::proxy::types::SensitiveWordConfig::default()),
+        }
+    }
+
+    /// 更新敏感词过滤配置
+    pub fn set_sensitive_word_config(
+        &self,
+        config: &crate::proxy::types::SensitiveWordConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化敏感词配置失败: {e}")))?;
+        self.set_setting("sensitive_word_config", &json)
+    }
+
     // --- 日志配置 ---
 
     /// 获取日志配置

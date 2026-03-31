@@ -699,6 +699,26 @@ pub fn run() {
                 }
             }
 
+            // 启动时按已保存配置预加载一次敏感词缓存；后续仅在手动重载时更新。
+            {
+                let db = &app.state::<AppState>().db;
+                match db.get_sensitive_word_config() {
+                    Ok(config) if config.enabled && !config.file_path.trim().is_empty() => {
+                        if let Err(e) =
+                            crate::proxy::sensitive_word_filter::reload_sensitive_words(
+                                &config.file_path,
+                            )
+                        {
+                            log::warn!("[SensitiveWordFilter] 启动预加载失败: {e}");
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::warn!("[SensitiveWordFilter] 读取配置失败: {e}");
+                    }
+                }
+            }
+
             // 初始化 SkillService
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
@@ -869,6 +889,10 @@ pub fn run() {
             commands::set_optimizer_config,
             commands::get_log_config,
             commands::set_log_config,
+            commands::get_sensitive_word_config,
+            commands::set_sensitive_word_config,
+            commands::reload_sensitive_word_cache,
+            commands::get_sensitive_word_cache_info,
             commands::restart_app,
             commands::check_for_updates,
             commands::is_portable_mode,

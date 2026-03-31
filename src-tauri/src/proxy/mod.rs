@@ -22,6 +22,7 @@ pub mod providers;
 pub mod response_handler;
 pub mod response_processor;
 pub(crate) mod server;
+pub mod sensitive_word_filter;
 pub mod session;
 pub(crate) mod sse;
 pub mod thinking_budget_rectifier;

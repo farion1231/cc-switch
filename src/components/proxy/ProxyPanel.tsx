@@ -9,7 +9,11 @@ import {
   Loader2,
   Zap,
   Power,
+  ShieldCheck,
+  FolderOpen,
+  RefreshCw,
 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -27,6 +31,11 @@ import {
   useUpdateGlobalProxyConfig,
 } from "@/lib/query/proxy";
 import type { ProxyStatus } from "@/types/proxy";
+import {
+  settingsApi,
+  type SensitiveWordCacheInfo,
+  type SensitiveWordConfig,
+} from "@/lib/api/settings";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -65,6 +74,136 @@ export function ProxyPanel({
       setListenPort(String(globalConfig.listenPort));
     }
   }, [globalConfig]);
+
+  // 敏感词过滤配置
+  const [sensitiveWordConfig, setSensitiveWordConfig] =
+    useState<SensitiveWordConfig>({
+      enabled: false,
+      filePath: "",
+    });
+  const [sensitiveFilePath, setSensitiveFilePath] = useState("");
+  const [sensitiveWordCacheInfo, setSensitiveWordCacheInfo] =
+    useState<SensitiveWordCacheInfo>({
+      loaded: false,
+      filePath: "",
+      words: [],
+      modifiedAt: null,
+    });
+  const [isPickingSensitiveFile, setIsPickingSensitiveFile] = useState(false);
+  const [isReloadingSensitiveWords, setIsReloadingSensitiveWords] =
+    useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      settingsApi.getSensitiveWordConfig(),
+      settingsApi.getSensitiveWordCacheInfo(),
+    ])
+      .then(([config, cacheInfo]) => {
+        setSensitiveWordConfig(config);
+        setSensitiveFilePath(config.filePath);
+        setSensitiveWordCacheInfo(cacheInfo);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSensitiveWordEnabledChange = async (enabled: boolean) => {
+    const newConfig = { ...sensitiveWordConfig, enabled };
+    setSensitiveWordConfig(newConfig);
+    try {
+      await settingsApi.setSensitiveWordConfig(newConfig);
+      toast.success(
+        enabled
+          ? t("proxy.sensitiveWord.enabled", {
+              defaultValue: "敏感词过滤已启用",
+            })
+          : t("proxy.sensitiveWord.disabled", {
+              defaultValue: "敏感词过滤已关闭",
+            }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(
+        t("proxy.sensitiveWord.failed", {
+          defaultValue: "切换敏感词过滤失败",
+        }),
+      );
+      setSensitiveWordConfig(sensitiveWordConfig);
+    }
+  };
+
+  const handleSensitiveWordFileSelect = async () => {
+    setIsPickingSensitiveFile(true);
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [
+          {
+            name: "Text",
+            extensions: ["txt"],
+          },
+        ],
+      });
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+
+      const filePath = selected.trim();
+      const newConfig = { ...sensitiveWordConfig, filePath };
+      setSensitiveWordConfig(newConfig);
+      setSensitiveFilePath(filePath);
+      await settingsApi.setSensitiveWordConfig(newConfig);
+      toast.success(
+        t("proxy.sensitiveWord.pathSaved", {
+          defaultValue: "敏感词文件路径已保存",
+        }),
+        { closeButton: true },
+      );
+      if (
+        sensitiveWordCacheInfo.loaded &&
+        sensitiveWordCacheInfo.filePath !== filePath
+      ) {
+        setSensitiveWordCacheInfo({
+          loaded: false,
+          filePath,
+          words: [],
+          modifiedAt: null,
+        });
+      }
+    } catch (error) {
+      toast.error(
+        t("proxy.sensitiveWord.pathSaveFailed", {
+          defaultValue: "保存敏感词文件路径失败",
+        }),
+      );
+    } finally {
+      setIsPickingSensitiveFile(false);
+    }
+  };
+
+  const handleSensitiveWordReload = async () => {
+    setIsReloadingSensitiveWords(true);
+    try {
+      const cacheInfo = await settingsApi.reloadSensitiveWordCache();
+      setSensitiveWordCacheInfo(cacheInfo);
+      toast.success(
+        t("proxy.sensitiveWord.reloadSuccess", {
+          defaultValue: "敏感词已重新加载到缓存",
+        }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error ?? "");
+      toast.error(
+        t("proxy.sensitiveWord.reloadFailed", {
+          defaultValue: "重新加载敏感词失败: {{message}}",
+          message,
+        }),
+      );
+    } finally {
+      setIsReloadingSensitiveWords(false);
+    }
+  };
 
   // 获取所有三个应用类型的故障转移队列
   // 启用自动故障转移后，将按队列优先级（P1→P2→...）选择供应商
@@ -389,6 +528,93 @@ export function ProxyPanel({
                     disabled={updateGlobalConfig.isPending}
                   />
                 </div>
+              </div>
+
+              {/* [5b] Sensitive word filter */}
+              <div className="pt-3 border-t border-border">
+                <div className="flex items-center justify-between rounded-md border border-border bg-background/60 px-3 py-2">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium flex items-center gap-1.5">
+                      <ShieldCheck className="h-3.5 w-3.5 text-blue-500" />
+                      {t("proxy.sensitiveWord.title", {
+                        defaultValue: "敏感词过滤",
+                      })}
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t("proxy.sensitiveWord.description", {
+                        defaultValue:
+                          "自动过滤请求中的敏感词，替换为 ***",
+                      })}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={sensitiveWordConfig.enabled}
+                    onCheckedChange={handleSensitiveWordEnabledChange}
+                  />
+                </div>
+
+                {sensitiveWordConfig.enabled && (
+                  <div className="mt-2 space-y-2">
+                    <div className="flex gap-2">
+                      <Input
+                        value={sensitiveFilePath}
+                        readOnly
+                        placeholder={t(
+                          "proxy.sensitiveWord.pathPlaceholder",
+                          {
+                            defaultValue: "/path/to/sensitive_words.txt",
+                          },
+                        )}
+                        className="flex-1 text-sm"
+                      />
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        onClick={handleSensitiveWordFileSelect}
+                        disabled={isPickingSensitiveFile}
+                        title={t("proxy.sensitiveWord.selectFile", {
+                          defaultValue: "选择敏感词文件",
+                        })}
+                      >
+                        {isPickingSensitiveFile ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <FolderOpen className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        onClick={handleSensitiveWordReload}
+                        disabled={
+                          isReloadingSensitiveWords || !sensitiveWordConfig.filePath
+                        }
+                        title={t("proxy.sensitiveWord.reload", {
+                          defaultValue: "重新加载敏感词",
+                        })}
+                      >
+                        {isReloadingSensitiveWords ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">
+                      {sensitiveWordCacheInfo.loaded &&
+                      sensitiveWordCacheInfo.filePath === sensitiveWordConfig.filePath
+                        ? t("proxy.sensitiveWord.cacheLoaded", {
+                            defaultValue: "当前缓存已加载 {{count}} 个敏感词",
+                            count: sensitiveWordCacheInfo.words.length,
+                          })
+                        : t("proxy.sensitiveWord.cacheNotLoaded", {
+                            defaultValue:
+                              "当前文件尚未加载到缓存，重启应用或点击重新加载后生效",
+                          })}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* [6] Provider queues */}

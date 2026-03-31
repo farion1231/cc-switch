@@ -14,7 +14,7 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{OptimizerConfig, ProxyStatus, RectifierConfig, SensitiveWordConfig},
     ProxyError,
 };
 use crate::commands::CopilotAuthState;
@@ -52,6 +52,8 @@ pub struct RequestForwarder {
     rectifier_config: RectifierConfig,
     /// 优化器配置
     optimizer_config: OptimizerConfig,
+    /// 敏感词过滤配置
+    sensitive_word_config: SensitiveWordConfig,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
 }
@@ -70,6 +72,7 @@ impl RequestForwarder {
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
+        sensitive_word_config: SensitiveWordConfig,
     ) -> Self {
         Self {
             router,
@@ -80,6 +83,7 @@ impl RequestForwarder {
             current_provider_id_at_start,
             rectifier_config,
             optimizer_config,
+            sensitive_word_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
     }
@@ -119,6 +123,21 @@ impl RequestForwarder {
         // 整流器重试标记：确保整流最多触发一次
         let mut rectifier_retried = false;
         let mut budget_rectifier_retried = false;
+
+        // 敏感词过滤（在转发前一次性处理原始 body）
+        let mut body = body;
+        if self.sensitive_word_config.enabled && !self.sensitive_word_config.file_path.is_empty() {
+            if let Some(words) = super::sensitive_word_filter::get_cached_sensitive_words(
+                &self.sensitive_word_config.file_path,
+            ) {
+                super::sensitive_word_filter::filter_sensitive_words(&mut body, &words);
+            } else {
+                log::debug!(
+                    "[SensitiveWordFilter] 当前文件未加载到缓存，跳过过滤: {}",
+                    self.sensitive_word_config.file_path
+                );
+            }
+        }
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
