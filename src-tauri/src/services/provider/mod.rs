@@ -57,7 +57,7 @@ mod tests {
     use crate::store::AppState;
     use serde_json::json;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, OnceLock};
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -111,6 +111,84 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    fn opencode_provider(id: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            settings_config: json!({
+                "npm": "@ai-sdk/openai-compatible",
+                "name": format!("Provider {id}"),
+                "options": {
+                    "baseURL": "https://api.example.com/v1",
+                    "apiKey": "test-key"
+                },
+                "models": {
+                    "gpt-4o": {
+                        "name": "GPT-4o"
+                    }
+                }
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn opencode_omo_provider(id: &str, category: &str) -> Provider {
+        let mut settings = serde_json::Map::new();
+        settings.insert(
+            "agents".to_string(),
+            json!({
+                "writer": {
+                    "model": "gpt-4o-mini"
+                }
+            }),
+        );
+        if category == "omo" {
+            settings.insert(
+                "categories".to_string(),
+                json!({
+                    "default": ["writer"]
+                }),
+            );
+        }
+        settings.insert(
+            "otherFields".to_string(),
+            json!({
+                "theme": "dark"
+            }),
+        );
+
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            settings_config: Value::Object(settings),
+            website_url: None,
+            category: Some(category.to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn omo_config_path(home: &Path, category: &str) -> PathBuf {
+        home.join(".config").join("opencode").join(match category {
+            "omo" => crate::services::omo::STANDARD.filename,
+            "omo-slim" => crate::services::omo::SLIM.filename,
+            other => panic!("unexpected OMO category in test: {other}"),
+        })
     }
 
     #[test]
@@ -265,6 +343,186 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    fn sync_current_provider_for_app_skips_db_only_opencode_provider() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("db-only-opencode");
+            ProviderService::add(state, AppType::OpenCode, provider.clone(), false)
+                .expect("seed db-only opencode provider");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect("sync additive opencode providers");
+
+            let live_providers = crate::opencode_config::get_providers()
+                .expect("read opencode providers after sync");
+            assert!(
+                !live_providers.contains_key(&provider.id),
+                "db-only opencode provider should not be written to live during sync"
+            );
+        });
+    }
+
+    #[test]
+    fn sync_current_provider_for_app_skips_db_only_openclaw_provider() {
+        with_test_home(|state, _| {
+            let provider = openclaw_provider("db-only-openclaw");
+            ProviderService::add(state, AppType::OpenClaw, provider.clone(), false)
+                .expect("seed db-only openclaw provider");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenClaw)
+                .expect("sync additive openclaw providers");
+
+            let live_providers = crate::openclaw_config::get_providers()
+                .expect("read openclaw providers after sync");
+            assert!(
+                !live_providers.contains_key(&provider.id),
+                "db-only openclaw provider should not be written to live during sync"
+            );
+        });
+    }
+
+    #[test]
+    fn sync_current_provider_for_app_preserves_legacy_live_opencode_provider() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("legacy-opencode");
+            crate::opencode_config::set_provider(&provider.id, provider.settings_config.clone())
+                .expect("seed opencode live provider");
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed legacy opencode provider in db");
+
+            let mut updated = provider.clone();
+            updated.settings_config["options"]["apiKey"] = Value::String("updated-key".to_string());
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &updated)
+                .expect("update legacy opencode provider in db");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect("sync legacy opencode provider");
+
+            let live_providers =
+                crate::opencode_config::get_providers().expect("read opencode providers");
+            assert_eq!(
+                live_providers
+                    .get(&provider.id)
+                    .and_then(|config| config.get("options"))
+                    .and_then(|options| options.get("apiKey")),
+                Some(&Value::String("updated-key".to_string())),
+                "legacy provider that already exists in live should still be synced"
+            );
+        });
+    }
+
+    #[test]
+    fn sync_current_provider_for_app_restores_legacy_opencode_provider_after_live_reset() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("legacy-opencode-reset");
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed legacy opencode provider in db");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect("sync legacy opencode provider after reset");
+
+            let live_providers =
+                crate::opencode_config::get_providers().expect("read opencode providers");
+            assert!(
+                live_providers.contains_key(&provider.id),
+                "legacy opencode provider should be restored when live config is reset"
+            );
+        });
+    }
+
+    #[test]
+    fn sync_current_provider_for_app_restores_legacy_openclaw_provider_after_live_reset() {
+        with_test_home(|state, _| {
+            let mut provider = openclaw_provider("legacy-openclaw-reset");
+            provider.settings_config["models"] = json!([
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4"
+                }
+            ]);
+            state
+                .db
+                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .expect("seed legacy openclaw provider in db");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenClaw)
+                .expect("sync legacy openclaw provider after reset");
+
+            let live_providers =
+                crate::openclaw_config::get_providers().expect("read openclaw providers");
+            assert!(
+                live_providers.contains_key(&provider.id),
+                "legacy openclaw provider should be restored when live config is reset"
+            );
+        });
+    }
+
+    #[test]
+    fn import_opencode_providers_from_live_marks_provider_as_live_managed() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("imported-opencode");
+            crate::opencode_config::set_provider(&provider.id, provider.settings_config.clone())
+                .expect("seed opencode live provider");
+
+            let imported = import_opencode_providers_from_live(state)
+                .expect("import opencode providers from live");
+            assert_eq!(imported, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .expect("query imported opencode provider")
+                .expect("imported opencode provider should exist");
+            assert_eq!(
+                saved
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.live_config_managed),
+                Some(true),
+                "providers imported from live should be treated as live-managed"
+            );
+        });
+    }
+
+    #[test]
+    fn import_openclaw_providers_from_live_marks_provider_as_live_managed() {
+        with_test_home(|state, _| {
+            let mut provider = openclaw_provider("imported-openclaw");
+            provider.settings_config["models"] = json!([
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4"
+                }
+            ]);
+            crate::openclaw_config::set_provider(&provider.id, provider.settings_config.clone())
+                .expect("seed openclaw live provider");
+
+            let imported = import_openclaw_providers_from_live(state)
+                .expect("import openclaw providers from live");
+            assert_eq!(imported, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenClaw.as_str())
+                .expect("query imported openclaw provider")
+                .expect("imported openclaw provider should exist");
+            assert_eq!(
+                saved
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.live_config_managed),
+                Some(true),
+                "providers imported from live should be treated as live-managed"
+            );
+        });
+    }
+
+    #[test]
     fn legacy_additive_provider_still_errors_on_live_config_parse_failure() {
         with_test_home(|state, home| {
             let provider = openclaw_provider("legacy-provider");
@@ -286,6 +544,196 @@ base_url = "http://localhost:8080"
             assert!(
                 err.to_string().contains("Failed to parse OpenClaw config"),
                 "expected parse error, got {err:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn update_persists_non_current_omo_variants_in_database() {
+        with_test_home(|state, _| {
+            for category in ["omo", "omo-slim"] {
+                let provider = opencode_omo_provider(&format!("{category}-provider"), category);
+                state
+                    .db
+                    .save_provider(AppType::OpenCode.as_str(), &provider)
+                    .unwrap_or_else(|err| panic!("seed {category} provider: {err}"));
+
+                let mut updated = provider.clone();
+                updated.name = format!("Updated {category}");
+                updated.settings_config["agents"]["writer"]["model"] =
+                    Value::String(format!("{category}-next-model"));
+
+                ProviderService::update(state, AppType::OpenCode, None, updated)
+                    .unwrap_or_else(|err| panic!("update {category} provider: {err}"));
+
+                let saved = state
+                    .db
+                    .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                    .unwrap_or_else(|err| panic!("query updated {category} provider: {err}"))
+                    .unwrap_or_else(|| panic!("{category} provider should exist"));
+
+                assert_eq!(saved.name, format!("Updated {category}"));
+                assert_eq!(
+                    saved.settings_config["agents"]["writer"]["model"],
+                    Value::String(format!("{category}-next-model")),
+                    "{category} updates should persist in the database"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn update_current_omo_variant_rewrites_config_from_saved_provider() {
+        with_test_home(|state, home| {
+            for category in ["omo", "omo-slim"] {
+                let provider = opencode_omo_provider(&format!("{category}-current"), category);
+                state
+                    .db
+                    .save_provider(AppType::OpenCode.as_str(), &provider)
+                    .unwrap_or_else(|err| panic!("seed current {category} provider: {err}"));
+                state
+                    .db
+                    .set_omo_provider_current(AppType::OpenCode.as_str(), &provider.id, category)
+                    .unwrap_or_else(|err| panic!("set current {category} provider: {err}"));
+
+                let mut updated = provider.clone();
+                updated.name = format!("Current {category} updated");
+                updated.settings_config["agents"]["writer"]["model"] =
+                    Value::String(format!("{category}-saved-model"));
+                updated.settings_config["otherFields"]["theme"] =
+                    Value::String(format!("{category}-light"));
+
+                ProviderService::update(state, AppType::OpenCode, None, updated)
+                    .unwrap_or_else(|err| panic!("update current {category} provider: {err}"));
+
+                let saved = state
+                    .db
+                    .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                    .unwrap_or_else(|err| panic!("query current {category} provider: {err}"))
+                    .unwrap_or_else(|| panic!("current {category} provider should exist"));
+                assert_eq!(saved.name, format!("Current {category} updated"));
+
+                let written = fs::read_to_string(omo_config_path(home, category))
+                    .unwrap_or_else(|err| panic!("read written {category} config: {err}"));
+                let written_json: Value = serde_json::from_str(&written)
+                    .unwrap_or_else(|err| panic!("parse written {category} config: {err}"));
+
+                assert_eq!(
+                    written_json["agents"]["writer"]["model"],
+                    Value::String(format!("{category}-saved-model")),
+                    "{category} config should be written from the saved provider state"
+                );
+                assert_eq!(
+                    written_json["theme"],
+                    Value::String(format!("{category}-light")),
+                    "{category} top-level config should reflect updated otherFields"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn update_current_omo_variant_does_not_persist_database_when_file_write_fails() {
+        with_test_home(|state, home| {
+            let provider = opencode_omo_provider("omo-current", "omo");
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .unwrap_or_else(|err| panic!("seed current omo provider: {err}"));
+            state
+                .db
+                .set_omo_provider_current(AppType::OpenCode.as_str(), &provider.id, "omo")
+                .unwrap_or_else(|err| panic!("set current omo provider: {err}"));
+
+            let config_dir = home.join(".config").join("opencode");
+            fs::create_dir_all(config_dir.parent().expect("config dir parent"))
+                .expect("create .config dir");
+            fs::write(&config_dir, "not a directory").expect("block opencode config dir");
+
+            let mut updated = provider.clone();
+            updated.name = "Current omo updated".to_string();
+            updated.settings_config["agents"]["writer"]["model"] =
+                Value::String("omo-saved-model".to_string());
+
+            ProviderService::update(state, AppType::OpenCode, None, updated)
+                .expect_err("update should fail when current omo file write fails");
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .unwrap_or_else(|err| panic!("query current omo provider: {err}"))
+                .unwrap_or_else(|| panic!("current omo provider should exist"));
+
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["agents"]["writer"]["model"],
+                provider.settings_config["agents"]["writer"]["model"],
+                "database should remain unchanged when file write fails"
+            );
+        });
+    }
+
+    #[test]
+    fn update_current_omo_variant_rolls_back_file_when_plugin_sync_fails() {
+        with_test_home(|state, home| {
+            let provider = opencode_omo_provider("omo-current", "omo");
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .unwrap_or_else(|err| panic!("seed current omo provider: {err}"));
+            state
+                .db
+                .set_omo_provider_current(AppType::OpenCode.as_str(), &provider.id, "omo")
+                .unwrap_or_else(|err| panic!("set current omo provider: {err}"));
+
+            let config_path = omo_config_path(home, "omo");
+            fs::create_dir_all(config_path.parent().expect("omo config parent"))
+                .expect("create omo config dir");
+            let previous_content = serde_json::to_string_pretty(&json!({
+                "theme": "legacy-live-theme",
+                "agents": {
+                    "writer": {
+                        "model": "legacy-live-model"
+                    }
+                },
+                "categories": {
+                    "default": ["writer"]
+                }
+            }))
+            .expect("serialize previous config");
+            fs::write(&config_path, &previous_content).expect("seed previous omo config");
+
+            let opencode_config_path = home.join(".config").join("opencode").join("opencode.json");
+            fs::write(&opencode_config_path, "{ invalid json").expect("seed malformed opencode");
+
+            let mut updated = provider.clone();
+            updated.name = "Current omo updated".to_string();
+            updated.settings_config["agents"]["writer"]["model"] =
+                Value::String("omo-saved-model".to_string());
+            updated.settings_config["otherFields"]["theme"] =
+                Value::String("omo-light".to_string());
+
+            ProviderService::update(state, AppType::OpenCode, None, updated)
+                .expect_err("update should fail when plugin sync fails");
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .unwrap_or_else(|err| panic!("query current omo provider: {err}"))
+                .unwrap_or_else(|| panic!("current omo provider should exist"));
+
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["agents"]["writer"]["model"],
+                provider.settings_config["agents"]["writer"]["model"],
+                "database should remain unchanged when plugin sync fails"
+            );
+
+            let written =
+                fs::read_to_string(&config_path).expect("read rolled back omo config content");
+            assert_eq!(
+                written, previous_content,
+                "OMO config should roll back to its previous on-disk contents"
             );
         });
     }
@@ -478,33 +926,40 @@ impl ProviderService {
         // Additive mode apps (OpenCode, OpenClaw): only sync to live when the provider
         // already exists in live config. Editing a DB-only provider must not auto-add it.
         if app_type.is_additive_mode() {
-            if matches!(app_type, AppType::OpenCode) && provider.category.as_deref() == Some("omo")
-            {
-                let is_omo_current =
-                    state
-                        .db
-                        .is_omo_provider_current(app_type.as_str(), &provider.id, "omo")?;
-                if is_omo_current {
-                    crate::services::OmoService::write_config_to_file(
-                        state,
-                        &crate::services::omo::STANDARD,
-                    )?;
+            let omo_variant = if matches!(app_type, AppType::OpenCode) {
+                match provider.category.as_deref() {
+                    Some("omo") => Some(&crate::services::omo::STANDARD),
+                    Some("omo-slim") => Some(&crate::services::omo::SLIM),
+                    _ => None,
                 }
-                return Ok(true);
-            }
-            if matches!(app_type, AppType::OpenCode)
-                && provider.category.as_deref() == Some("omo-slim")
-            {
+            } else {
+                None
+            };
+            if let Some(variant) = omo_variant {
                 let is_current = state.db.is_omo_provider_current(
                     app_type.as_str(),
                     &provider.id,
-                    "omo-slim",
+                    variant.category,
                 )?;
                 if is_current {
-                    crate::services::OmoService::write_config_to_file(
-                        state,
-                        &crate::services::omo::SLIM,
-                    )?;
+                    crate::services::OmoService::write_provider_config_to_file(&provider, variant)?;
+                }
+                if let Err(err) = state.db.save_provider(app_type.as_str(), &provider) {
+                    if is_current {
+                        if let Err(rollback_err) =
+                            crate::services::OmoService::write_config_to_file(state, variant)
+                        {
+                            log::warn!(
+                                "Failed to roll back {} config after DB save error: {}",
+                                variant.label,
+                                rollback_err
+                            );
+                        }
+                    }
+                    return Err(err);
+                }
+                if is_current {
+                    return Ok(true);
                 }
                 return Ok(true);
             }
