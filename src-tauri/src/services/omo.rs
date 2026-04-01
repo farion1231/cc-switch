@@ -1,6 +1,7 @@
-use crate::config::write_json_file;
+use crate::config::{atomic_write, write_json_file};
 use crate::error::AppError;
 use crate::opencode_config::get_opencode_dir;
+use crate::provider::Provider;
 use crate::store::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -133,6 +134,68 @@ impl OmoService {
         }
     }
 
+    fn profile_data_from_provider(provider: &Provider, v: &OmoVariant) -> OmoProfileData {
+        let agents = provider.settings_config.get("agents").cloned();
+        let categories = if v.has_categories {
+            provider.settings_config.get("categories").cloned()
+        } else {
+            None
+        };
+        let other_fields = provider.settings_config.get("otherFields").cloned();
+        (agents, categories, other_fields)
+    }
+
+    fn snapshot_config_file(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        std::fs::read(path)
+            .map(Some)
+            .map_err(|e| AppError::io(path, e))
+    }
+
+    fn restore_config_file(path: &Path, snapshot: Option<&[u8]>) -> Result<(), AppError> {
+        match snapshot {
+            Some(bytes) => atomic_write(path, bytes),
+            None => {
+                if path.exists() {
+                    std::fs::remove_file(path).map_err(|e| AppError::io(path, e))?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn write_profile_config(
+        v: &OmoVariant,
+        profile_data: Option<&OmoProfileData>,
+    ) -> Result<(), AppError> {
+        let merged = Self::build_config(v, profile_data);
+        let config_path = Self::config_path(v);
+
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        }
+
+        let previous_contents = Self::snapshot_config_file(&config_path)?;
+        write_json_file(&config_path, &merged)?;
+        if let Err(err) = crate::opencode_config::add_plugin(v.plugin_name) {
+            if let Err(rollback_err) =
+                Self::restore_config_file(&config_path, previous_contents.as_deref())
+            {
+                log::warn!(
+                    "Failed to roll back {} config after plugin sync error: {}",
+                    v.label,
+                    rollback_err
+                );
+            }
+            return Err(err);
+        }
+        log::info!("{} config written to {config_path:?}", v.label);
+        Ok(())
+    }
+
     // ── Public API (variant-parameterized) ─────────────────
 
     pub fn delete_config_file(v: &OmoVariant) -> Result<(), AppError> {
@@ -153,28 +216,18 @@ impl OmoService {
 
     pub fn write_config_to_file(state: &AppState, v: &OmoVariant) -> Result<(), AppError> {
         let current_omo = state.db.get_current_omo_provider("opencode", v.category)?;
-        let profile_data = current_omo.as_ref().map(|p| {
-            let agents = p.settings_config.get("agents").cloned();
-            let categories = if v.has_categories {
-                p.settings_config.get("categories").cloned()
-            } else {
-                None
-            };
-            let other_fields = p.settings_config.get("otherFields").cloned();
-            (agents, categories, other_fields)
-        });
+        let profile_data = current_omo
+            .as_ref()
+            .map(|provider| Self::profile_data_from_provider(provider, v));
+        Self::write_profile_config(v, profile_data.as_ref())
+    }
 
-        let merged = Self::build_config(v, profile_data.as_ref());
-        let config_path = Self::config_path(v);
-
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-        }
-
-        write_json_file(&config_path, &merged)?;
-        crate::opencode_config::add_plugin(v.plugin_name)?;
-        log::info!("{} config written to {config_path:?}", v.label);
-        Ok(())
+    pub fn write_provider_config_to_file(
+        provider: &Provider,
+        v: &OmoVariant,
+    ) -> Result<(), AppError> {
+        let profile_data = Self::profile_data_from_provider(provider, v);
+        Self::write_profile_config(v, Some(&profile_data))
     }
 
     fn build_config(v: &OmoVariant, profile_data: Option<&OmoProfileData>) -> Value {
