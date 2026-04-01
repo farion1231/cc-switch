@@ -537,6 +537,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
     const trimmedScriptApiKey = script.apiKey?.trim();
     const providerApiKey = providerCredentials.apiKey?.trim();
+    const trimmedScriptBaseUrl = script.baseUrl?.trim();
     const resolvedApiKey =
       selectedTemplate === TEMPLATE_TYPES.MINIMAX
         ? trimmedScriptApiKey && trimmedScriptApiKey !== providerApiKey
@@ -545,7 +546,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         : script.apiKey;
     const resolvedBaseUrl =
       selectedTemplate === TEMPLATE_TYPES.MINIMAX
-        ? script.baseUrl?.trim() || miniMaxUsageUrl
+        ? trimmedScriptBaseUrl && trimmedScriptBaseUrl !== miniMaxUsageUrl
+          ? trimmedScriptBaseUrl
+          : undefined
         : script.baseUrl;
 
     // 保存时记录当前选择的模板类型
