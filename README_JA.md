@@ -100,6 +100,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <td>CTok.ai のご支援に感謝します！CTok.ai はワンストップ AI プログラミングツールサービスプラットフォームの構築に取り組んでいます。Claude Code のプロフェッショナルプランと技術コミュニティサービスを提供し、Google Gemini や OpenAI Codex にも対応しています。丁寧に設計されたプランと専門的な技術コミュニティを通じて、開発者に安定したサービス保証と継続的な技術サポートを提供し、AI アシストプログラミングを真の生産性ツールにします。<a href="https://ctok.ai">こちら</a>から登録してください！</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://chefshop.ai"><img src="assets/partners/logos/chefshop.png" alt="ChefShop" width="150"></a></td>
+<td>ChefShop AI のご支援に感謝します！ChefShop AI は、AI ヘビーユーザー向けにカスタマイズされたプレミアムアカウントサービスプロバイダーです。ChatGPT Plus/Pro、Claude Max、Grok Super/Heavy、Gemini など主流の大規模モデルの公式チャージと安定したアカウントサービスを提供しています。<a href="https://chefshop.ai">こちら</a>から購入してください！</td>
+</tr>
+
 </table>
 
 </details>

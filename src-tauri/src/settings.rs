@@ -584,17 +584,14 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
 /// 这是设备级别的设置，不随数据库同步。
 /// 传入 `None` 会清除当前供应商设置。
 pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), AppError> {
-    let mut settings = get_settings();
-
-    match app_type {
-        AppType::Claude => settings.current_provider_claude = id.map(|s| s.to_string()),
-        AppType::Codex => settings.current_provider_codex = id.map(|s| s.to_string()),
-        AppType::Gemini => settings.current_provider_gemini = id.map(|s| s.to_string()),
-        AppType::OpenCode => settings.current_provider_opencode = id.map(|s| s.to_string()),
-        AppType::OpenClaw => settings.current_provider_openclaw = id.map(|s| s.to_string()),
-    }
-
-    update_settings(settings)
+    let id_owned = id.map(|s| s.to_string());
+    mutate_settings(|settings| match app_type {
+        AppType::Claude => settings.current_provider_claude = id_owned.clone(),
+        AppType::Codex => settings.current_provider_codex = id_owned.clone(),
+        AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
+        AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
+        AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
+    })
 }
 
 /// 获取有效的当前供应商 ID（验证存在性）

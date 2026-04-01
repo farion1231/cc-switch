@@ -480,32 +480,12 @@ impl ProviderService {
                 id
             );
 
-            // 获取新供应商的完整配置（用于更新备份）
-            let provider = providers
-                .get(id)
-                .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
-
-            // Update database is_current
-            state.db.set_current_provider(app_type.as_str(), id)?;
-
-            // Update local settings for consistency
-            crate::settings::set_current_provider(&app_type, Some(id))?;
-
-            // 更新 Live 备份（确保代理关闭时恢复正确的供应商配置）
             futures::executor::block_on(
                 state
                     .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
+                    .hot_switch_provider(app_type.as_str(), id),
             )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-
-            // 关键修复：接管模式下切换供应商不会写回 Live 配置，
-            // 需要主动清理 Claude Live 中的“模型覆盖”字段，避免仍以旧模型名发起请求。
-            if matches!(app_type, AppType::Claude) {
-                if let Err(e) = state.proxy_service.cleanup_claude_model_overrides_in_live() {
-                    log::warn!("清理 Claude Live 模型字段失败（不影响切换结果）: {e}");
-                }
-            }
+            .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
 
             // Note: No Live config write, no MCP sync
             // The proxy server will route requests to the new provider via is_current

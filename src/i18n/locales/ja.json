@@ -714,7 +714,7 @@
     "aggregatorApiKeyHint": "💡 API Key のみ入力すれば OK。エンドポイントはプリセット済みです",
     "thirdPartyApiKeyHint": "💡 API Key のみ入力すれば OK。エンドポイントはプリセット済みです",
     "customApiKeyHint": "💡 カスタム設定では必要な項目をすべて手動で入力してください",
-    "omoHint": "💡 OMO 設定は Agent のモデル割り当てを管理し、oh-my-opencode.jsonc に書き込みます",
+    "omoHint": "💡 OMO 設定は Agent のモデル割り当てを管理し、oh-my-openagent.jsonc / oh-my-opencode.jsonc の両方に対応します",
     "officialHint": "💡 公式プロバイダーはブラウザログインで、API Key は不要です",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {

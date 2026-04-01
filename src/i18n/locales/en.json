@@ -714,7 +714,7 @@
     "aggregatorApiKeyHint": "💡 Only need to fill in API Key, endpoint is preset",
     "thirdPartyApiKeyHint": "💡 Only need to fill in API Key, endpoint is preset",
     "customApiKeyHint": "💡 Custom configuration requires manually filling all necessary fields",
-    "omoHint": "💡 OMO config manages Agent model assignments and writes to oh-my-opencode.jsonc",
+    "omoHint": "💡 OMO config manages Agent model assignments and supports both oh-my-openagent.jsonc and oh-my-opencode.jsonc",
     "officialHint": "💡 Official provider uses browser login, no API Key needed",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
