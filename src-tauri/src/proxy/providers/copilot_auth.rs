@@ -944,7 +944,6 @@ impl CopilotAuthManager {
                 .or_insert_with(|| Arc::new(Mutex::new(()))),
         )
     }
-
     /// 获取认证状态（支持多账号）
     pub async fn get_status(&self) -> CopilotAuthStatus {
         // 确保迁移完成
