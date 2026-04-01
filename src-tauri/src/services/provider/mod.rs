@@ -185,8 +185,8 @@ mod tests {
 
     fn omo_config_path(home: &Path, category: &str) -> PathBuf {
         home.join(".config").join("opencode").join(match category {
-            "omo" => crate::services::omo::STANDARD.filename,
-            "omo-slim" => crate::services::omo::SLIM.filename,
+            "omo" => crate::services::omo::STANDARD.preferred_filename,
+            "omo-slim" => crate::services::omo::SLIM.preferred_filename,
             other => panic!("unexpected OMO category in test: {other}"),
         })
     }
