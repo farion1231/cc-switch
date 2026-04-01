@@ -65,7 +65,7 @@ export function ProviderPresetSelector({
       case "omo":
         return t("providerForm.omoHint", {
           defaultValue:
-            "💡 OMO 配置管理 Agent 模型分配，写入 oh-my-opencode.jsonc",
+            "💡 OMO 配置管理 Agent 模型分配，兼容 oh-my-openagent.jsonc / oh-my-opencode.jsonc",
         });
       default:
         return t("providerPreset.hint", {
