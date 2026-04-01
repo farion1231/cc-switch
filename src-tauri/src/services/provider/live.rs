@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 
+use regex::Regex;
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
@@ -29,8 +30,115 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("apiFormat");
         obj.remove("openrouter_compat_mode");
         obj.remove("openrouterCompatMode");
+
+        // Normalize legacy Claude cloud-provider shapes before writing live config.
+        // This keeps older saved providers usable after upstream auth changes.
+        let legacy_api_key = obj
+            .get("apiKey")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.to_string());
+
+        if let Some(env) = obj.get_mut("env").and_then(|v| v.as_object_mut()) {
+            let is_foundry = env
+                .get("CLAUDE_CODE_USE_FOUNDRY")
+                .and_then(|v| v.as_str())
+                .map(|v| v == "1")
+                .unwrap_or(false)
+                || env
+                    .get("ANTHROPIC_BASE_URL")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.contains(".services.ai.azure.com/anthropic"))
+                    .unwrap_or(false);
+
+            if is_foundry {
+                if let Some(token) = env
+                    .get("ANTHROPIC_AUTH_TOKEN")
+                    .and_then(|v| v.as_str())
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|value| value.to_string())
+                {
+                    env.entry("ANTHROPIC_FOUNDRY_API_KEY".to_string())
+                        .or_insert_with(|| json!(token));
+                }
+
+                if let Some(base_url) = env
+                    .get("ANTHROPIC_BASE_URL")
+                    .and_then(|v| v.as_str())
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|value| value.to_string())
+                {
+                    if !env.contains_key("ANTHROPIC_FOUNDRY_RESOURCE") {
+                        if let Some(resource) = base_url
+                            .strip_prefix("https://")
+                            .and_then(|v| v.split('.').next())
+                            .filter(|value| !value.is_empty())
+                        {
+                            env.insert("ANTHROPIC_FOUNDRY_RESOURCE".to_string(), json!(resource));
+                        } else {
+                            env.entry("ANTHROPIC_FOUNDRY_BASE_URL".to_string())
+                                .or_insert_with(|| json!(base_url));
+                        }
+                    }
+                }
+
+                if env.contains_key("ANTHROPIC_FOUNDRY_RESOURCE") {
+                    env.remove("ANTHROPIC_FOUNDRY_BASE_URL");
+                }
+            }
+
+            let is_bedrock = env
+                .get("CLAUDE_CODE_USE_BEDROCK")
+                .and_then(|v| v.as_str())
+                .map(|v| v == "1")
+                .unwrap_or(false);
+
+            if is_bedrock {
+                if let Some(api_key) = legacy_api_key.as_ref() {
+                    env.entry("AWS_BEARER_TOKEN_BEDROCK".to_string())
+                        .or_insert_with(|| json!(api_key));
+                }
+            }
+        }
+
+        if obj
+            .get("env")
+            .and_then(|v| v.get("CLAUDE_CODE_USE_BEDROCK"))
+            .and_then(|v| v.as_str())
+            == Some("1")
+        {
+            obj.remove("apiKey");
+            obj.remove("api_key");
+        }
     }
     v
+}
+
+fn normalize_codex_auth_for_live(auth: &Value, config_str: &str) -> Value {
+    let mut normalized = auth.clone();
+    let Some(obj) = normalized.as_object_mut() else {
+        return normalized;
+    };
+
+    let env_key = Regex::new(r#"(?m)^\s*env_key\s*=\s*["']([^"']+)["']"#)
+        .ok()
+        .and_then(|re| re.captures(config_str))
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "OPENAI_API_KEY".to_string());
+
+    if obj.get(&env_key).is_none() {
+        if let Some(existing) = obj
+            .get("OPENAI_API_KEY")
+            .or_else(|| obj.get("AZURE_API_KEY"))
+            .cloned()
+        {
+            obj.insert(env_key, existing);
+        }
+    }
+
+    normalized
 }
 
 fn json_is_subset(target: &Value, source: &Value) -> bool {
@@ -669,7 +777,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             })?;
 
             let auth_path = get_codex_auth_path();
-            write_json_file(&auth_path, auth)?;
+            let normalized_auth = normalize_codex_auth_for_live(auth, config_str);
+            write_json_file(&auth_path, &normalized_auth)?;
             let config_path = get_codex_config_path();
             std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
         }

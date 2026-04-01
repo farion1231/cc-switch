@@ -80,6 +80,45 @@ pub struct StreamCheckResult {
 pub struct StreamCheckService;
 
 impl StreamCheckService {
+    fn detect_claude_special_backend(provider: &Provider) -> Option<&'static str> {
+        let env = provider.settings_config.get("env")?.as_object()?;
+
+        let has_bedrock_flag = env
+            .get("CLAUDE_CODE_USE_BEDROCK")
+            .and_then(|v| v.as_str())
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let has_foundry_flag = env
+            .get("CLAUDE_CODE_USE_FOUNDRY")
+            .and_then(|v| v.as_str())
+            .map(|v| v == "1")
+            .unwrap_or(false);
+
+        let anthropic_base_url = env
+            .get("ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let foundry_base_url = env
+            .get("ANTHROPIC_FOUNDRY_BASE_URL")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        if has_bedrock_flag || anthropic_base_url.contains("bedrock-runtime.") {
+            return Some("bedrock");
+        }
+
+        if has_foundry_flag
+            || env.contains_key("ANTHROPIC_FOUNDRY_RESOURCE")
+            || env.contains_key("ANTHROPIC_FOUNDRY_API_KEY")
+            || !foundry_base_url.is_empty()
+            || anthropic_base_url.contains(".services.ai.azure.com/anthropic")
+        {
+            return Some("foundry");
+        }
+
+        None
+    }
+
     /// 执行流式健康检查（带重试）
     ///
     /// 如果 Provider 配置了单独的测试配置（meta.testConfig），则使用该配置覆盖全局配置
@@ -194,6 +233,38 @@ impl StreamCheckService {
         claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
+
+        if app_type == &AppType::Claude {
+            if let Some(backend) = Self::detect_claude_special_backend(provider) {
+                let message = match backend {
+                    "bedrock" => AppError::localized(
+                        "claude_bedrock_direct_check_unsupported",
+                        "AWS Bedrock 需要 Claude Code 的专用鉴权链路，CC Switch 的独立直连健康检查无法可靠验证。请以 Claude Code 实际调用结果为准。",
+                        "AWS Bedrock uses Claude Code specific authentication, so CC Switch direct health checks cannot verify it reliably. Use real Claude Code requests as the source of truth.",
+                    )
+                    .to_string(),
+                    "foundry" => AppError::localized(
+                        "claude_foundry_direct_check_unsupported",
+                        "Microsoft Foundry 需要 Claude Code 的专用鉴权链路，CC Switch 的独立直连健康检查无法可靠验证。请以 Claude Code 实际调用结果为准。",
+                        "Microsoft Foundry uses Claude Code specific authentication, so CC Switch direct health checks cannot verify it reliably. Use real Claude Code requests as the source of truth.",
+                    )
+                    .to_string(),
+                    _ => unreachable!(),
+                };
+
+                return Ok(StreamCheckResult {
+                    status: HealthStatus::Failed,
+                    success: false,
+                    message,
+                    response_time_ms: Some(start.elapsed().as_millis() as u64),
+                    http_status: None,
+                    model_used: String::new(),
+                    tested_at: chrono::Utc::now().timestamp(),
+                    retry_count: 0,
+                });
+            }
+        }
+
         let adapter = get_adapter(app_type);
 
         let base_url = adapter
@@ -993,6 +1064,46 @@ mod tests {
                 "https://api.openai.com/responses",
                 "https://api.openai.com/v1/responses",
             ]
+        );
+    }
+
+    #[test]
+    fn test_detect_claude_special_backend_for_bedrock_flag() {
+        let provider = Provider::with_id(
+            "bedrock".to_string(),
+            "Bedrock".to_string(),
+            json!({
+                "env": {
+                    "CLAUDE_CODE_USE_BEDROCK": "1",
+                    "ANTHROPIC_BASE_URL": "https://bedrock-runtime.us-east-1.amazonaws.com"
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(
+            StreamCheckService::detect_claude_special_backend(&provider),
+            Some("bedrock")
+        );
+    }
+
+    #[test]
+    fn test_detect_claude_special_backend_for_foundry_resource() {
+        let provider = Provider::with_id(
+            "foundry".to_string(),
+            "Foundry".to_string(),
+            json!({
+                "env": {
+                    "CLAUDE_CODE_USE_FOUNDRY": "1",
+                    "ANTHROPIC_FOUNDRY_RESOURCE": "demo"
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(
+            StreamCheckService::detect_claude_special_backend(&provider),
+            Some("foundry")
         );
     }
 }

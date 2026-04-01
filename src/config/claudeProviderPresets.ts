@@ -34,7 +34,11 @@ export interface ProviderPreset {
   partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
   category?: ProviderCategory; // 新增：分类
   // 新增：指定该预设所使用的 API Key 字段名（默认 ANTHROPIC_AUTH_TOKEN）
-  apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+  apiKeyField?:
+    | "ANTHROPIC_AUTH_TOKEN"
+    | "ANTHROPIC_API_KEY"
+    | "ANTHROPIC_FOUNDRY_API_KEY"
+    | "AWS_BEARER_TOKEN_BEDROCK";
   // 新增：模板变量定义，用于动态替换配置中的值
   templateValues?: Record<string, TemplateValueConfig>; // editorValue 存储编辑器中的实时输入值
   // 新增：请求地址候选列表（用于地址管理/测速）
@@ -785,10 +789,10 @@ export const providerPresets: ProviderPreset[] = [
     name: "AWS Bedrock (API Key)",
     websiteUrl: "https://aws.amazon.com/bedrock/",
     settingsConfig: {
-      apiKey: "",
       env: {
         ANTHROPIC_BASE_URL:
           "https://bedrock-runtime.${AWS_REGION}.amazonaws.com",
+        AWS_BEARER_TOKEN_BEDROCK: "",
         AWS_REGION: "${AWS_REGION}",
         ANTHROPIC_MODEL: "global.anthropic.claude-opus-4-6-v1",
         ANTHROPIC_DEFAULT_HAIKU_MODEL:
@@ -799,6 +803,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cloud_provider",
+    apiKeyField: "AWS_BEARER_TOKEN_BEDROCK",
     templateValues: {
       AWS_REGION: {
         label: "AWS Region",
@@ -808,5 +813,34 @@ export const providerPresets: ProviderPreset[] = [
     },
     icon: "aws",
     iconColor: "#FF9900",
+  },
+  {
+    name: "Azure Foundry",
+    websiteUrl: "https://learn.microsoft.com/en-us/azure/ai-foundry/",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_FOUNDRY_API_KEY: "",
+        ANTHROPIC_FOUNDRY_RESOURCE: "${FOUNDRY_RESOURCE}",
+        ANTHROPIC_MODEL: "claude-opus-4-6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-6",
+        CLAUDE_CODE_USE_FOUNDRY: "1",
+      },
+    },
+    category: "cloud_provider",
+    apiKeyField: "ANTHROPIC_FOUNDRY_API_KEY",
+    templateValues: {
+      FOUNDRY_RESOURCE: {
+        label: "Foundry Resource",
+        placeholder: "your-resource-name",
+        editorValue: "",
+      },
+    },
+    endpointCandidates: [
+      "https://${FOUNDRY_RESOURCE}.services.ai.azure.com/anthropic",
+    ],
+    icon: "azure",
+    iconColor: "#0078D4",
   },
 ];
