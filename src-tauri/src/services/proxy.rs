@@ -83,6 +83,65 @@ impl ProxyService {
         Ok(())
     }
 
+    fn apply_claude_takeover_fields(config: &mut Value, proxy_url: &str) {
+        if !config.is_object() {
+            *config = json!({});
+        }
+
+        let root = config
+            .as_object_mut()
+            .expect("Claude config should be normalized to an object");
+        let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
+        if !env.is_object() {
+            *env = json!({});
+        }
+
+        let env = env
+            .as_object_mut()
+            .expect("Claude env should be normalized to an object");
+        env.insert("ANTHROPIC_BASE_URL".to_string(), json!(proxy_url));
+
+        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
+            env.remove(key);
+        }
+
+        let token_keys = [
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENAI_API_KEY",
+        ];
+
+        let mut replaced_any = false;
+        for key in token_keys {
+            if env.contains_key(key) {
+                env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                replaced_any = true;
+            }
+        }
+
+        if !replaced_any {
+            env.insert(
+                "ANTHROPIC_AUTH_TOKEN".to_string(),
+                json!(PROXY_TOKEN_PLACEHOLDER),
+            );
+        }
+    }
+
+    pub async fn sync_claude_live_from_provider_while_proxy_active(
+        &self,
+        provider: &Provider,
+    ) -> Result<(), String> {
+        let mut effective_settings =
+            build_effective_settings_with_common_config(self.db.as_ref(), &AppType::Claude, provider)
+                .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
+        let (proxy_url, _) = self.build_proxy_urls().await?;
+
+        Self::apply_claude_takeover_fields(&mut effective_settings, &proxy_url);
+        self.write_claude_live(&effective_settings)?;
+        Ok(())
+    }
+
     /// 设置 AppHandle（在应用初始化时调用）
     pub fn set_app_handle(&self, handle: tauri::AppHandle) {
         futures::executor::block_on(async {
@@ -849,41 +908,7 @@ impl ProxyService {
 
         // Claude: 修改 ANTHROPIC_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
         if let Ok(mut live_config) = self.read_claude_live() {
-            if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
-                env.insert("ANTHROPIC_BASE_URL".to_string(), json!(&proxy_url));
-                // 关键：接管模式下移除模型覆盖字段，避免切换供应商后仍用旧模型名发起请求
-                for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
-                    env.remove(key);
-                }
-                // 仅覆盖已存在的 Token 字段，避免新增字段导致用户困惑；
-                // 若完全没有 Token 字段，则写入 ANTHROPIC_AUTH_TOKEN 占位符用于避免客户端警告。
-                let token_keys = [
-                    "ANTHROPIC_AUTH_TOKEN",
-                    "ANTHROPIC_API_KEY",
-                    "OPENROUTER_API_KEY",
-                    "OPENAI_API_KEY",
-                ];
-
-                let mut replaced_any = false;
-                for key in token_keys {
-                    if env.contains_key(key) {
-                        env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
-                        replaced_any = true;
-                    }
-                }
-
-                if !replaced_any {
-                    env.insert(
-                        "ANTHROPIC_AUTH_TOKEN".to_string(),
-                        json!(PROXY_TOKEN_PLACEHOLDER),
-                    );
-                }
-            } else {
-                live_config["env"] = json!({
-                    "ANTHROPIC_BASE_URL": &proxy_url,
-                    "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER
-                });
-            }
+            Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
             self.write_claude_live(&live_config)?;
             log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
         }
@@ -933,41 +958,7 @@ impl ProxyService {
         match app_type {
             AppType::Claude => {
                 let mut live_config = self.read_claude_live()?;
-                if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
-                    env.insert("ANTHROPIC_BASE_URL".to_string(), json!(&proxy_url));
-                    // 关键：接管模式下移除模型覆盖字段，避免切换供应商后仍用旧模型名发起请求
-                    for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
-                        env.remove(key);
-                    }
-
-                    let token_keys = [
-                        "ANTHROPIC_AUTH_TOKEN",
-                        "ANTHROPIC_API_KEY",
-                        "OPENROUTER_API_KEY",
-                        "OPENAI_API_KEY",
-                    ];
-
-                    let mut replaced_any = false;
-                    for key in token_keys {
-                        if env.contains_key(key) {
-                            env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
-                            replaced_any = true;
-                        }
-                    }
-
-                    if !replaced_any {
-                        env.insert(
-                            "ANTHROPIC_AUTH_TOKEN".to_string(),
-                            json!(PROXY_TOKEN_PLACEHOLDER),
-                        );
-                    }
-                } else {
-                    live_config["env"] = json!({
-                        "ANTHROPIC_BASE_URL": &proxy_url,
-                        "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER
-                    });
-                }
-
+                Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
                 self.write_claude_live(&live_config)?;
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
             }
@@ -1024,41 +1015,7 @@ impl ProxyService {
         match app_type {
             AppType::Claude => {
                 if let Ok(mut live_config) = self.read_claude_live() {
-                    if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
-                        env.insert("ANTHROPIC_BASE_URL".to_string(), json!(&proxy_url));
-                        // 关键：接管模式下移除模型覆盖字段，避免切换供应商后仍用旧模型名发起请求
-                        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
-                            env.remove(key);
-                        }
-
-                        let token_keys = [
-                            "ANTHROPIC_AUTH_TOKEN",
-                            "ANTHROPIC_API_KEY",
-                            "OPENROUTER_API_KEY",
-                            "OPENAI_API_KEY",
-                        ];
-
-                        let mut replaced_any = false;
-                        for key in token_keys {
-                            if env.contains_key(key) {
-                                env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
-                                replaced_any = true;
-                            }
-                        }
-
-                        if !replaced_any {
-                            env.insert(
-                                "ANTHROPIC_AUTH_TOKEN".to_string(),
-                                json!(PROXY_TOKEN_PLACEHOLDER),
-                            );
-                        }
-                    } else {
-                        live_config["env"] = json!({
-                            "ANTHROPIC_BASE_URL": &proxy_url,
-                            "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER
-                        });
-                    }
-
+                    Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
                     let _ = self.write_claude_live(&live_config);
                 }
             }
@@ -1614,6 +1571,8 @@ impl ProxyService {
                 .await?;
 
             if matches!(app_type_enum, AppType::Claude) {
+                self.sync_claude_live_from_provider_while_proxy_active(&provider)
+                    .await?;
                 if let Err(e) = self.cleanup_claude_model_overrides_in_live() {
                     log::warn!("清理 Claude Live 模型字段失败（不影响热切换结果）: {e}");
                 }
@@ -2246,6 +2205,108 @@ model = "gpt-5.1-codex"
         );
 
         // 断言：Live 备份已更新为目标供应商配置（用于 stop_with_restore 恢复）
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
+        assert_eq!(backup.original_config, expected);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_provider_updates_claude_live_while_preserving_takeover_fields() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "a-key",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "claude-old"
+                },
+                "permissions": { "allow": ["Bash"] }
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "b-key",
+                    "ANTHROPIC_BASE_URL": "https://api.b.example",
+                    "ANTHROPIC_MODEL": "claude-new"
+                },
+                "permissions": { "allow": ["Read"] }
+            }),
+            None,
+        );
+
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.save_provider("claude", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_MODEL": "stale-model"
+                },
+                "permissions": { "allow": ["Bash"] }
+            }))
+            .expect("seed taken-over live file");
+
+        service
+            .hot_switch_provider("claude", "b")
+            .await
+            .expect("hot switch provider");
+
+        let live = service.read_claude_live().expect("read live config");
+        assert_eq!(
+            live.get("permissions"),
+            provider_b.settings_config.get("permissions"),
+            "provider-derived live settings should be refreshed"
+        );
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some(PROXY_TOKEN_PLACEHOLDER),
+            "takeover token placeholder should be preserved"
+        );
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721"),
+            "takeover proxy URL should remain active"
+        );
+        assert!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_MODEL"))
+                .is_none(),
+            "Claude model override fields should be removed in takeover mode"
+        );
+
         let backup = db
             .get_live_backup("claude")
             .await

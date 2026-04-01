@@ -52,13 +52,56 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
     use crate::provider::ProviderMeta;
+    use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
+    use serial_test::serial;
+    use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, OnceLock};
+    use tempfile::TempDir;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+        }
+    }
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -264,6 +307,125 @@ base_url = "http://localhost:8080"
         assert!(
             extracted.contains("http://localhost:8080"),
             "should keep mcp_servers.* base_url"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_provider_syncs_live_when_proxy_takeover_detected_without_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let original = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "model-a"
+                },
+                "permissions": { "allow": ["Bash"] }
+            }),
+            None,
+        );
+        db.save_provider("claude", &original)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        write_json_file(
+            &get_claude_settings_path(),
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": "PROXY_MANAGED",
+                    "ANTHROPIC_MODEL": "stale-model"
+                },
+                "permissions": { "allow": ["Bash"] }
+            }),
+        )
+        .expect("seed taken-over live file");
+
+        state.proxy_service.start().await.expect("start proxy service");
+
+        let updated = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "token-updated",
+                    "ANTHROPIC_BASE_URL": "https://api.updated.example",
+                    "ANTHROPIC_MODEL": "model-updated"
+                },
+                "permissions": { "allow": ["Read"] }
+            }),
+            None,
+        );
+
+        ProviderService::update(&state, AppType::Claude, None, updated.clone())
+            .expect("update current provider");
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored_provider = db
+            .get_provider_by_id("p1", "claude")
+            .expect("get stored provider")
+            .expect("stored provider exists");
+        let expected_backup =
+            serde_json::to_string(&stored_provider.settings_config).expect("serialize");
+        assert_eq!(backup.original_config, expected_backup);
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live.get("permissions"),
+            updated.settings_config.get("permissions"),
+            "provider edits should propagate into Claude live config during takeover"
+        );
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("PROXY_MANAGED"),
+            "takeover placeholder should stay intact"
+        );
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721"),
+            "proxy base URL should stay intact"
+        );
+        assert!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_MODEL"))
+                .is_none(),
+            "model override should be removed in takeover live config"
         );
     }
 
@@ -1007,24 +1169,37 @@ impl ProviderService {
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
 
         if is_current {
-            // 如果代理接管模式处于激活状态，并且代理服务正在运行：
-            // - 不写 Live 配置（否则会破坏接管）
-            // - 仅更新 Live 备份（保证关闭代理时能恢复到最新配置）
-            let is_app_taken_over =
+            // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
+            // - 不直接走普通 Live 写入逻辑
+            // - 改为更新 Live 备份，并在 Claude 下同步代理安全的 Live 配置
+            let has_live_backup =
                 futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
                     .ok()
                     .flatten()
                     .is_some();
             let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
-            let should_skip_live_write = is_app_taken_over && is_proxy_running;
+            let live_taken_over = state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&app_type);
+            let should_sync_via_proxy =
+                is_proxy_running && (has_live_backup || live_taken_over);
 
-            if should_skip_live_write {
+            if should_sync_via_proxy {
                 futures::executor::block_on(
                     state
                         .proxy_service
                         .update_live_backup_from_provider(app_type.as_str(), &provider),
                 )
                 .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+
+                if matches!(app_type, AppType::Claude) {
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .sync_claude_live_from_provider_while_proxy_active(&provider),
+                    )
+                    .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
+                }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
                 // Sync MCP
