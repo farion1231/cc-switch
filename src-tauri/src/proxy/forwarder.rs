@@ -893,6 +893,12 @@ impl RequestForwarder {
                 "copilot-integration-id",
                 "x-github-api-version",
                 "openai-intent",
+                // 新增 headers
+                "x-initiator",
+                "x-interaction-type",
+                "x-vscode-user-agent-library-version",
+                "x-request-id",
+                "x-agent-task-id",
             ]
         } else {
             &[]

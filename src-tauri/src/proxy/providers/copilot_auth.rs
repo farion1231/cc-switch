@@ -46,10 +46,10 @@ const TOKEN_REFRESH_BUFFER_SECONDS: i64 = 60;
 const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 
 /// Copilot API Header 常量
-pub const COPILOT_EDITOR_VERSION: &str = "vscode/1.96.0";
-pub const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
-pub const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
-pub const COPILOT_API_VERSION: &str = "2025-04-01";
+pub const COPILOT_EDITOR_VERSION: &str = "vscode/1.110.1";
+pub const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.38.2";
+pub const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.38.2";
+pub const COPILOT_API_VERSION: &str = "2025-10-01";
 pub const COPILOT_INTEGRATION_ID: &str = "vscode-chat";
 
 /// Copilot 使用量 API URL
@@ -64,6 +64,19 @@ pub struct CopilotUsageResponse {
     pub quota_reset_date: String,
     /// 配额快照
     pub quota_snapshots: QuotaSnapshots,
+    /// API 端点信息 (用于动态获取 API URL)
+    #[serde(default)]
+    pub endpoints: Option<CopilotEndpoints>,
+}
+
+/// Copilot API 端点信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotEndpoints {
+    /// API 端点 URL
+    pub api: String,
+    /// Telemetry 端点 URL
+    #[serde(default)]
+    pub telemetry: Option<String>,
 }
 
 /// 配额快照
@@ -312,6 +325,8 @@ pub struct CopilotAuthManager {
     copilot_tokens: Arc<RwLock<HashMap<String, CopilotToken>>>,
     /// Copilot Models 缓存（key = GitHub user ID，仅进程内复用）
     copilot_models: Arc<RwLock<HashMap<String, Vec<CopilotModel>>>>,
+    /// Copilot API 端点缓存（key = GitHub user ID，从 /copilot_internal/user 获取）
+    api_endpoints: Arc<RwLock<HashMap<String, String>>>,
     /// HTTP 客户端
     http_client: Client,
     /// 存储路径
@@ -333,6 +348,7 @@ impl CopilotAuthManager {
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             copilot_tokens: Arc::new(RwLock::new(HashMap::new())),
             copilot_models: Arc::new(RwLock::new(HashMap::new())),
+            api_endpoints: Arc::new(RwLock::new(HashMap::new())),
             http_client: Client::new(),
             storage_path,
             pending_migration: Arc::new(RwLock::new(None)),
@@ -775,6 +791,16 @@ impl CopilotAuthManager {
             .await
             .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
 
+        // 存储动态 API 端点（如果有）
+        if let Some(ref endpoints) = usage.endpoints {
+            let mut api_endpoints = self.api_endpoints.write().await;
+            api_endpoints.insert(account_id.to_string(), endpoints.api.clone());
+            log::info!(
+                "[CopilotAuth] 账号 {account_id} API 端点: {}",
+                endpoints.api
+            );
+        }
+
         log::info!(
             "[CopilotAuth] 获取使用量成功，计划: {}, 重置日期: {}",
             usage.copilot_plan,
@@ -793,6 +819,23 @@ impl CopilotAuthManager {
     }
 
     // ==================== 状态查询 ====================
+
+    /// 获取指定账号的 API 端点（如果没有缓存则返回默认值）
+    pub async fn get_api_endpoint(&self, account_id: &str) -> String {
+        let endpoints = self.api_endpoints.read().await;
+        endpoints
+            .get(account_id)
+            .cloned()
+            .unwrap_or_else(|| "https://api.githubcopilot.com".to_string())
+    }
+
+    /// 获取默认账号的 API 端点
+    pub async fn get_default_api_endpoint(&self) -> String {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.get_api_endpoint(&id).await,
+            None => "https://api.githubcopilot.com".to_string(),
+        }
+    }
 
     /// 获取认证状态（支持多账号）
     pub async fn get_status(&self) -> CopilotAuthStatus {

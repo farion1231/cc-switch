@@ -364,6 +364,8 @@ impl StreamCheckService {
         let mut request_builder = client.post(&url);
 
         if is_github_copilot {
+            // 生成请求追踪 ID
+            let request_id = uuid::Uuid::new_v4().to_string();
             request_builder = request_builder
                 .header("authorization", format!("Bearer {}", auth.api_key))
                 .header("content-type", "application/json")
@@ -380,7 +382,13 @@ impl StreamCheckService {
                     copilot_auth::COPILOT_INTEGRATION_ID,
                 )
                 .header("x-github-api-version", copilot_auth::COPILOT_API_VERSION)
-                .header("openai-intent", "conversation-panel");
+                // 260401 新增copilot 的关键 headers
+                .header("openai-intent", "conversation-agent")
+                .header("x-initiator", "user")
+                .header("x-interaction-type", "conversation-agent")
+                .header("x-vscode-user-agent-library-version", "electron-fetch")
+                .header("x-request-id", &request_id)
+                .header("x-agent-task-id", &request_id);
         } else if is_openai_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder
