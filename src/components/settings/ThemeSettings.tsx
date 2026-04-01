@@ -117,6 +117,10 @@ const QUICK_COLOR_SWATCHES = [
   "#d946ef",
   "#ec4899",
 ] as const;
+const PRESET_SWATCHES = {
+  default: ["#ffffff", "#1f9cff", "#f4f4f5"],
+  bubblegum: ["#fff1f7", "#f25ca8", "#ffd6a3"],
+} as const;
 
 type EditablePaletteMode = "light" | "dark";
 type CustomThemeFieldKey = (typeof CUSTOM_THEME_FIELDS)[number]["key"];
@@ -588,14 +592,16 @@ export function ThemeSettings() {
               active={themePreset === "default"}
               name={t("settings.themePresetDefault")}
               description={t("settings.themePresetDefaultDescription")}
-              swatches={["bg-white", "bg-sky-500", "bg-slate-100"]}
+              swatches={[...PRESET_SWATCHES.default]}
+              useInlineSwatches
               onClick={() => setThemePreset("default")}
             />
             <PresetCard
               active={themePreset === "bubblegum"}
               name={t("settings.themePresetBubblegum")}
               description={t("settings.themePresetBubblegumDescription")}
-              swatches={["bg-rose-50", "bg-pink-500", "bg-amber-200"]}
+              swatches={[...PRESET_SWATCHES.bubblegum]}
+              useInlineSwatches
               onClick={() => setThemePreset("bubblegum")}
             />
             <PresetCard

@@ -116,7 +116,7 @@ export function LogConfigPanel() {
             {t("settings.advanced.logConfig.levelDesc.debug")}
           </p>
           <p>
-            <span className="font-mono text-gray-500">trace</span> -{" "}
+            <span className="font-mono text-muted-foreground">trace</span> -{" "}
             {t("settings.advanced.logConfig.levelDesc.trace")}
           </p>
         </div>

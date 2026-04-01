@@ -40,6 +40,36 @@ export function ProviderPresetSelector({
 }: ProviderPresetSelectorProps) {
   const { t } = useTranslation();
 
+  const getReadableTextColor = (backgroundColor: string) => {
+    const normalized = backgroundColor.replace("#", "");
+    const hex =
+      normalized.length === 3
+        ? normalized
+            .split("")
+            .map((char) => `${char}${char}`)
+            .join("")
+        : normalized;
+
+    if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
+      return undefined;
+    }
+
+    const channel = (start: number) =>
+      Number.parseInt(hex.slice(start, start + 2), 16);
+    const [r, g, b] = [channel(0), channel(2), channel(4)];
+    const toLinear = (value: number) => {
+      const normalizedValue = value / 255;
+      return normalizedValue <= 0.03928
+        ? normalizedValue / 12.92
+        : ((normalizedValue + 0.055) / 1.055) ** 2.4;
+    };
+
+    const luminance =
+      0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+
+    return luminance > 0.58 ? "#111827" : "#ffffff";
+  };
+
   const getCategoryHint = (): React.ReactNode => {
     switch (category) {
       case "official":
@@ -103,7 +133,7 @@ export function ProviderPresetSelector({
 
     if (isSelected) {
       if (preset.theme?.backgroundColor) {
-        return `${baseClass} text-white`;
+        return baseClass;
       }
       return `${baseClass} bg-primary text-primary-foreground`;
     }
@@ -121,7 +151,9 @@ export function ProviderPresetSelector({
 
     return {
       backgroundColor: preset.theme.backgroundColor,
-      color: preset.theme.textColor || "#FFFFFF",
+      color:
+        preset.theme.textColor ??
+        getReadableTextColor(preset.theme.backgroundColor),
     };
   };
 
