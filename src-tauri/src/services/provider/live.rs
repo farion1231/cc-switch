@@ -740,10 +740,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                             provider.id
                         );
                     } else {
-                        log::error!(
-                            "OpenCode provider '{}' has invalid config structure, skipping write",
+                        return Err(AppError::Message(format!(
+                            "OpenCode provider '{}' has invalid config structure for live config (must contain 'npm' or 'options')",
                             provider.id
-                        );
+                        )));
                     }
                 }
             }
@@ -782,10 +782,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                             provider.id
                         );
                     } else {
-                        log::error!(
-                            "OpenClaw provider '{}' has invalid config structure, skipping write",
+                        return Err(AppError::Message(format!(
+                            "OpenClaw provider '{}' has invalid config structure for live config (must contain 'baseUrl', 'api', or 'models')",
                             provider.id
-                        );
+                        )));
                     }
                 }
             }
