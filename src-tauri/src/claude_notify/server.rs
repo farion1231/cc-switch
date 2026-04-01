@@ -10,6 +10,7 @@ use axum::{
 use tokio::sync::{oneshot, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
+use crate::error::AppError;
 use crate::settings::{get_settings, update_settings};
 
 use super::dedupe::ClaudeNotifyDedupe;
@@ -132,7 +133,14 @@ impl ClaudeNotifyService {
         if let Some(handle) = handle {
             tokio::time::timeout(std::time::Duration::from_secs(3), handle)
                 .await
-                .map_err(|_| "关闭 Claude 通知监听超时".to_string())
+                .map_err(|_| {
+                    AppError::localized(
+                        "claude_notify.stop_timeout",
+                        "关闭 Claude 通知监听超时",
+                        "Timed out while stopping Claude notification listener",
+                    )
+                    .to_string()
+                })
                 .map(|_| ())?;
         }
 
@@ -149,7 +157,14 @@ impl ClaudeNotifyService {
             if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
                 let actual_port = listener
                     .local_addr()
-                    .map_err(|e| format!("读取 Claude 通知监听端口失败: {e}"))?
+                    .map_err(|e| {
+                        AppError::localized(
+                            "claude_notify.read_port_failed",
+                            format!("读取 Claude 通知监听端口失败: {e}"),
+                            format!("Failed to read Claude notification listener port: {e}"),
+                        )
+                        .to_string()
+                    })?
                     .port();
 
                 if settings.claude_notify_port != Some(actual_port) {
@@ -163,10 +178,24 @@ impl ClaudeNotifyService {
 
         let listener = tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
             .await
-            .map_err(|e| format!("绑定 Claude 通知监听失败: {e}"))?;
+            .map_err(|e| {
+                AppError::localized(
+                    "claude_notify.bind_listener_failed",
+                    format!("绑定 Claude 通知监听失败: {e}"),
+                    format!("Failed to bind Claude notification listener: {e}"),
+                )
+                .to_string()
+            })?;
         let port = listener
             .local_addr()
-            .map_err(|e| format!("读取 Claude 通知监听端口失败: {e}"))?
+            .map_err(|e| {
+                AppError::localized(
+                    "claude_notify.read_port_failed",
+                    format!("读取 Claude 通知监听端口失败: {e}"),
+                    format!("Failed to read Claude notification listener port: {e}"),
+                )
+                .to_string()
+            })?
             .port();
 
         settings.claude_notify_port = Some(port);

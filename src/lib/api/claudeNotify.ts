@@ -7,8 +7,8 @@ export interface ClaudeNotifyStatus {
 }
 
 export const claudeNotifyApi = {
-  async applyHooks(port: number): Promise<boolean> {
-    return await invoke("apply_claude_notify_hook_config", { port });
+  async applyHooks(): Promise<boolean> {
+    return await invoke("apply_claude_notify_hook_config");
   },
 
   async clearHooks(): Promise<boolean> {

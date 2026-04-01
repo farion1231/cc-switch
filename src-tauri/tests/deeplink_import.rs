@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use cc_switch_lib::{
-    import_provider_from_deeplink, parse_deeplink_url, AppState, Database, ProxyService,
-};
+use cc_switch_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState, Database};
 
 #[path = "support.rs"]
 mod support;
@@ -18,11 +16,7 @@ fn deeplink_import_claude_provider_persists_to_db() {
     let request = parse_deeplink_url(url).expect("parse deeplink url");
 
     let db = Arc::new(Database::memory().expect("create memory db"));
-    let proxy_service = ProxyService::new(db.clone());
-    let state = AppState {
-        db: db.clone(),
-        proxy_service,
-    };
+    let state = AppState::new(db.clone());
 
     let provider_id = import_provider_from_deeplink(&state, request.clone())
         .expect("import provider from deeplink");
@@ -58,11 +52,7 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
     let request = parse_deeplink_url(url).expect("parse deeplink url");
 
     let db = Arc::new(Database::memory().expect("create memory db"));
-    let proxy_service = ProxyService::new(db.clone());
-    let state = AppState {
-        db: db.clone(),
-        proxy_service,
-    };
+    let state = AppState::new(db.clone());
 
     let provider_id = import_provider_from_deeplink(&state, request.clone())
         .expect("import provider from deeplink");

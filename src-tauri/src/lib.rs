@@ -227,10 +227,14 @@ pub fn run() {
         }));
     }
 
+    // 注册 deep-link 插件（处理 macOS AppleEvent 和其他平台的深链接）
+    let builder = builder.plugin(tauri_plugin_deep_link::init());
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(tauri_plugin_notification::init());
+    #[cfg(not(target_os = "windows"))]
+    let builder = builder;
+
     let builder = builder
-        // 注册 deep-link 插件（处理 macOS AppleEvent 和其他平台的深链接）
-        .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_notification::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

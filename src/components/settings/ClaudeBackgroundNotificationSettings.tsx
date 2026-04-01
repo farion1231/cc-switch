@@ -79,7 +79,7 @@ export function ClaudeBackgroundNotificationSettings({
 
     setIsApplying(true);
     try {
-      await claudeNotifyApi.applyHooks(status.port);
+      await claudeNotifyApi.applyHooks();
       setStatus((prev) => (prev ? { ...prev, hooksApplied: true } : prev));
       toast.success(t("settings.claudeNotifyHooksApplied"));
     } catch (error) {

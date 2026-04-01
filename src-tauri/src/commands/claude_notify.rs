@@ -376,7 +376,6 @@ pub fn clear_claude_notify_hooks() -> Result<bool, AppError> {
 #[tauri::command]
 pub async fn apply_claude_notify_hook_config(
     app: tauri::AppHandle,
-    _port: u16,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<bool, String> {
     state.claude_notify_service.set_app_handle(app).await;
@@ -388,7 +387,13 @@ pub async fn apply_claude_notify_hook_config(
     let actual_port = runtime
         .port
         .or(crate::settings::get_settings().claude_notify_port)
-        .ok_or_else(|| "Claude 通知监听端口尚未就绪".to_string())?;
+        .ok_or_else(|| {
+            AppError::localized(
+                "claude_notify.port_not_ready",
+                "Claude 通知监听端口尚未就绪",
+                "Claude notification listener port is not ready yet",
+            )
+        })?;
     let result = apply_claude_notify_hooks(actual_port).map_err(|e| e.to_string())?;
     Ok(result)
 }

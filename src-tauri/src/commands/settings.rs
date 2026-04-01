@@ -2,6 +2,8 @@
 
 use tauri::AppHandle;
 
+use crate::error::AppError;
+
 fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
@@ -34,7 +36,16 @@ pub async fn save_settings(
         crate::commands::sync_claude_notify_runtime_if_needed(app, &state, &existing, &merged)
             .await
     {
-        crate::settings::update_settings(existing).map_err(|e| e.to_string())?;
+        if let Err(rollback_error) = crate::settings::update_settings(existing) {
+            return Err(AppError::localized(
+                "settings.save_and_rollback_failed",
+                format!("保存设置后同步运行时失败: {error}；同时回滚设置失败: {rollback_error}"),
+                format!(
+                    "Runtime sync failed after saving settings: {error}; settings rollback also failed: {rollback_error}"
+                ),
+            )
+            .to_string());
+        }
         return Err(error);
     }
 
