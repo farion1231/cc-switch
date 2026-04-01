@@ -298,7 +298,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://platform.stepfun.ai",
     apiKeyUrl: "https://platform.stepfun.ai/interface-key",
     settingsConfig: {
-      baseUrl: "https://api.stepfun.ai/v1",
+      baseUrl: "https://api.stepfun.com/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -315,8 +315,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder: "https://api.stepfun.ai/v1",
-        defaultValue: "https://api.stepfun.ai/v1",
+        placeholder: "https://api.stepfun.com/v1",
+        defaultValue: "https://api.stepfun.com/v1",
         editorValue: "",
       },
       apiKey: {

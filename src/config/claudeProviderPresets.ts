@@ -192,7 +192,7 @@ export const providerPresets: ProviderPreset[] = [
     apiKeyUrl: "https://platform.stepfun.ai/interface-key",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.stepfun.ai/v1",
+        ANTHROPIC_BASE_URL: "https://api.stepfun.com/v1",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "step-3.5-flash",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "step-3.5-flash",
@@ -201,7 +201,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    endpointCandidates: ["https://api.stepfun.ai/v1"],
+    endpointCandidates: ["https://api.stepfun.com/v1"],
     apiFormat: "openai_chat",
     icon: "stepfun",
     iconColor: "#005AFF",

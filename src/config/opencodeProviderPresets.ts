@@ -489,7 +489,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "StepFun",
       options: {
-        baseURL: "https://api.stepfun.ai/v1",
+        baseURL: "https://api.stepfun.com/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -503,8 +503,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://api.stepfun.ai/v1",
-        defaultValue: "https://api.stepfun.ai/v1",
+        placeholder: "https://api.stepfun.com/v1",
+        defaultValue: "https://api.stepfun.com/v1",
         editorValue: "",
       },
       apiKey: {
