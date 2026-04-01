@@ -406,12 +406,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       savedScript.templateType === TEMPLATE_TYPES.MINIMAX &&
       (!savedScript.baseUrl || isBuiltInMiniMaxTemplate(savedScript.code))
     ) {
+      const savedBaseUrl = savedScript.baseUrl?.trim();
+      const shouldRefreshBuiltInCode = isBuiltInMiniMaxTemplate(savedScript.code);
       return {
         ...savedScript,
-        code: isBuiltInMiniMaxTemplate(savedScript.code)
+        code: shouldRefreshBuiltInCode
           ? PRESET_TEMPLATES[TEMPLATE_TYPES.MINIMAX]
           : savedScript.code,
-        baseUrl: miniMaxUsageUrl,
+        baseUrl: savedBaseUrl || miniMaxUsageUrl,
       };
     }
 
