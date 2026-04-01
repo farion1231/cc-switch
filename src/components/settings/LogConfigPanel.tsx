@@ -93,19 +93,26 @@ export function LogConfigPanel() {
         </p>
         <div className="grid gap-1 text-muted-foreground">
           <p>
-            <span className="font-mono text-red-500">error</span> -{" "}
+            <span className="font-mono text-[hsl(var(--destructive))]">
+              error
+            </span>{" "}
+            -{" "}
             {t("settings.advanced.logConfig.levelDesc.error")}
           </p>
           <p>
-            <span className="font-mono text-orange-500">warn</span> -{" "}
+            <span className="font-mono text-[hsl(var(--warning))]">warn</span>{" "}
+            -{" "}
             {t("settings.advanced.logConfig.levelDesc.warn")}
           </p>
           <p>
-            <span className="font-mono text-blue-500">info</span> -{" "}
+            <span className="font-mono text-primary">info</span> -{" "}
             {t("settings.advanced.logConfig.levelDesc.info")}
           </p>
           <p>
-            <span className="font-mono text-green-500">debug</span> -{" "}
+            <span className="font-mono text-[hsl(var(--success))]">
+              debug
+            </span>{" "}
+            -{" "}
             {t("settings.advanced.logConfig.levelDesc.debug")}
           </p>
           <p>

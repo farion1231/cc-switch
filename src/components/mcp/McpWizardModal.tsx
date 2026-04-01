@@ -288,7 +288,8 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
             {/* Title */}
             <div>
               <label className="mb-1 block text-sm font-medium text-foreground">
-                {t("mcp.form.title")} <span className="text-red-500">*</span>
+                {t("mcp.form.title")}{" "}
+                <span className="text-[hsl(var(--destructive))]">*</span>
               </label>
               <Input
                 type="text"
@@ -307,7 +308,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                 <div>
                   <label className="mb-1 block text-sm font-medium text-foreground">
                     {t("mcp.wizard.command")}{" "}
-                    <span className="text-red-500">*</span>
+                    <span className="text-[hsl(var(--destructive))]">*</span>
                   </label>
                   <Input
                     type="text"
@@ -356,7 +357,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                 <div>
                   <label className="mb-1 block text-sm font-medium text-foreground">
                     {t("mcp.wizard.url")}{" "}
-                    <span className="text-red-500">*</span>
+                    <span className="text-[hsl(var(--destructive))]">*</span>
                   </label>
                   <Input
                     type="text"

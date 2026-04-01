@@ -65,7 +65,7 @@ export function McpConfirmation({
       </div>
 
       {request.enabled && (
-        <div className="text-yellow-600 dark:text-yellow-500 text-sm flex items-center gap-2">
+        <div className="text-sm flex items-center gap-2 text-[hsl(var(--warning))]">
           <span>⚠️</span>
           <span>{t("deeplink.mcp.enabledWarning")}</span>
         </div>

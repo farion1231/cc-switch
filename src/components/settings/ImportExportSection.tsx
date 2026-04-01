@@ -92,7 +92,7 @@ export function ImportExportSection({
               <button
                 type="button"
                 onClick={onClear}
-                className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-lg transition-colors z-10"
+                className="absolute -top-2 -right-2 z-10 flex h-6 w-6 items-center justify-center rounded-full text-white shadow-lg transition-colors bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.9)]"
                 aria-label={t("common.clear")}
               >
                 <XCircle className="h-4 w-4" />
@@ -160,17 +160,20 @@ function ImportStatusMessage({
   if (status === "success") {
     return (
       <div
-        className={`${baseClass} border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400`}
+        className={`${baseClass} border-[hsl(var(--success)/0.24)] bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success))]`}
       >
         <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0" />
         <div className="space-y-1.5">
           <p className="font-semibold">{t("settings.importSuccess")}</p>
           {backupId ? (
-            <p className="text-xs text-green-600/80 dark:text-green-400/80">
+            <p
+              className="text-xs"
+              style={{ color: "hsl(var(--success) / 0.8)" }}
+            >
               {t("settings.backupId")}: {backupId}
             </p>
           ) : null}
-          <p className="text-green-600/80 dark:text-green-400/80">
+          <p style={{ color: "hsl(var(--success) / 0.8)" }}>
             {t("settings.autoReload")}
           </p>
         </div>
@@ -181,12 +184,12 @@ function ImportStatusMessage({
   if (status === "partial-success") {
     return (
       <div
-        className={`${baseClass} border-yellow-500/30 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400`}
+        className={`${baseClass} border-[hsl(var(--warning)/0.24)] bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning))]`}
       >
         <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
         <div className="space-y-1.5">
           <p className="font-semibold">{t("settings.importPartialSuccess")}</p>
-          <p className="text-yellow-600/80 dark:text-yellow-400/80">
+          <p style={{ color: "hsl(var(--warning) / 0.8)" }}>
             {t("settings.importPartialHint")}
           </p>
         </div>
@@ -198,12 +201,12 @@ function ImportStatusMessage({
 
   return (
     <div
-      className={`${baseClass} border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400`}
+      className={`${baseClass} border-[hsl(var(--destructive)/0.24)] bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--destructive))]`}
     >
       <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
       <div className="space-y-1.5">
         <p className="font-semibold">{t("settings.importFailed")}</p>
-        <p className="text-red-600/80 dark:text-red-400/80">{message}</p>
+        <p style={{ color: "hsl(var(--destructive) / 0.8)" }}>{message}</p>
       </div>
     </div>
   );

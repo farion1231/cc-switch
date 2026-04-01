@@ -256,7 +256,9 @@
       "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
-      "codexOauthDescription": "管理 ChatGPT 账号"
+      "codexOauthDescription": "管理 ChatGPT 账号",
+      "heading": "认证中心",
+      "headingDescription": "统一管理可跨应用复用的 OAuth 账号和默认认证来源。"
     },
     "advanced": {
       "configDir": {
@@ -373,12 +375,12 @@
     "themePaletteLight": "浅色方案",
     "themePaletteDark": "深色方案",
     "themeCustomPaletteTip": "建议优先调整主色、强调色和背景色，再微调边框与 ring。",
-    "themeCustomPaletteReset": "重置当前方案",
+    "themeCustomPaletteResetBase": "重置基础配色",
     "themeEditorExpand": "展开自定义选项",
     "themeEditorCollapse": "收起自定义选项",
     "themeAdvancedEditingShow": "分别编辑浅/深色",
     "themeAdvancedEditingHide": "关闭分开编辑",
-    "themeEditingCurrentMode": "当前编辑：{{mode}}",
+    "themeEditingBasePalette": "当前编辑基础配色",
     "themeDarkOverlayBadge": "深色模式自动叠加",
     "themeColorBackground": "背景色",
     "themeColorForeground": "前景色",

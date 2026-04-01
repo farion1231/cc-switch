@@ -691,12 +691,22 @@ export function WebdavSyncSection({
           </p>
         )}
         {showAutoSyncError && (
-          <div className="rounded-lg border border-red-300/70 bg-red-50/80 px-3 py-2 text-xs text-red-900 dark:border-red-500/50 dark:bg-red-950/30 dark:text-red-200">
+          <div
+            className="rounded-lg border px-3 py-2 text-xs"
+            style={{
+              borderColor: "hsl(var(--destructive) / 0.28)",
+              backgroundColor: "hsl(var(--destructive) / 0.12)",
+              color: "hsl(var(--destructive))",
+            }}
+          >
             <p className="font-medium">
               {t("settings.webdavSync.autoSyncLastErrorTitle")}
             </p>
             <p className="mt-1 break-all whitespace-pre-wrap">{lastError}</p>
-            <p className="mt-1 text-[11px] text-red-700/90 dark:text-red-300/80">
+            <p
+              className="mt-1 text-[11px]"
+              style={{ color: "hsl(var(--destructive) / 0.8)" }}
+            >
               {t("settings.webdavSync.autoSyncLastErrorHint")}
             </p>
           </div>
@@ -729,13 +739,22 @@ export function WebdavSyncSection({
 
           {/* Save status indicator */}
           {dirty && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-amber-500 dark:text-amber-400 animate-in fade-in duration-200">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />
+            <span
+              className="inline-flex items-center gap-1.5 text-xs animate-in fade-in duration-200"
+              style={{ color: "hsl(var(--warning))" }}
+            >
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: "hsl(var(--warning))" }}
+              />
               {t("settings.webdavSync.unsaved")}
             </span>
           )}
           {!dirty && justSaved && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
+            <span
+              className="inline-flex items-center gap-1.5 text-xs animate-in fade-in duration-200"
+              style={{ color: "hsl(var(--success))" }}
+            >
               <Check className="h-3 w-3" />
               {t("settings.webdavSync.saved")}
             </span>
@@ -855,7 +874,10 @@ export function WebdavSyncSection({
                   </p>
                 )}
                 {remoteInfo && remoteIsLegacy && (
-                  <p className="font-medium text-amber-600 dark:text-amber-400">
+                  <p
+                    className="font-medium"
+                    style={{ color: "hsl(var(--warning))" }}
+                  >
                     {t("settings.webdavSync.confirmUpload.legacyNotice")}
                   </p>
                 )}
@@ -925,7 +947,10 @@ export function WebdavSyncSection({
                   </dl>
                 )}
                 {remoteInfo?.layout === "legacy" && (
-                  <p className="font-medium text-amber-600 dark:text-amber-400">
+                  <p
+                    className="font-medium"
+                    style={{ color: "hsl(var(--warning))" }}
+                  >
                     {t("settings.webdavSync.confirmDownload.legacyNotice")}
                   </p>
                 )}

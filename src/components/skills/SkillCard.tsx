@@ -136,7 +136,7 @@ export function SkillCard({
             size="sm"
             onClick={handleUninstall}
             disabled={loading}
-            className="flex-1 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300"
+            className="flex-1 border-[hsl(var(--destructive)/0.24)] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.08)] hover:text-[hsl(var(--destructive))]"
           >
             {loading ? (
               <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />

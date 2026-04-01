@@ -210,8 +210,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
                     ? "text-destructive"
                     : firstUsage.remaining <
                         (firstUsage.total || firstUsage.remaining) * 0.1
-                      ? "text-amber-500 dark:text-amber-400"
-                      : "text-emerald-600 dark:text-emerald-400"
+                      ? "text-[hsl(var(--warning))]"
+                      : "text-[hsl(var(--success))]"
                 }`}
               >
                 {firstUsage.remaining.toFixed(2)}
@@ -370,8 +370,8 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
                 isExpired
                   ? "text-destructive"
                   : remaining < (total || remaining) * 0.1
-                    ? "text-amber-500 dark:text-amber-400"
-                    : "text-emerald-600 dark:text-emerald-400"
+                    ? "text-[hsl(var(--warning))]"
+                    : "text-[hsl(var(--success))]"
               }`}
             >
               {remaining.toFixed(2)}

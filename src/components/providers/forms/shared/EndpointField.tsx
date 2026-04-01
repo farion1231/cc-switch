@@ -98,8 +98,8 @@ export function EndpointField({
         autoComplete="off"
       />
       {effectiveHint ? (
-        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
-          <p className="text-xs text-amber-600 dark:text-amber-400">
+        <div className="p-3 rounded-lg border border-[hsl(var(--warning)/0.24)] bg-[hsl(var(--warning)/0.08)]">
+          <p className="text-xs text-[hsl(var(--warning))]">
             {effectiveHint}
           </p>
         </div>

@@ -341,7 +341,9 @@ export function RequestLogTable({
         </div>
 
         {validationError && (
-          <div className="text-sm text-red-600">{validationError}</div>
+          <div className="text-sm text-[hsl(var(--destructive))]">
+            {validationError}
+          </div>
         )}
       </div>
 
@@ -444,7 +446,7 @@ export function RequestLogTable({
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {(parseFiniteNumber(log.costMultiplier) ?? 1) !== 1 ? (
-                          <span className="text-orange-600">
+                          <span className="text-[hsl(var(--warning))]">
                             ×{log.costMultiplier}
                           </span>
                         ) : (

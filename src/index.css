@@ -24,10 +24,17 @@
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
+    --success: 142 71% 45%;
+    --warning: 38 92% 50%;
 
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
     --ring: 210 100% 56%;
+    --chart-1: 217 91% 60%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 24 95% 53%;
+    --chart-4: 272 91% 65%;
+    --chart-5: 346 84% 60%;
 
     --radius: 0.5rem;
   }
@@ -44,9 +51,16 @@
     --accent: 42 100% 88%;
     --accent-foreground: 24 45% 22%;
 
+    --success: 166 68% 42%;
+    --warning: 32 93% 56%;
     --border: 327 54% 85%;
     --input: 327 54% 85%;
     --ring: 333 82% 60%;
+    --chart-1: 333 82% 60%;
+    --chart-2: 166 68% 42%;
+    --chart-3: 32 93% 56%;
+    --chart-4: 279 84% 68%;
+    --chart-5: 347 86% 64%;
     --radius: 1rem;
   }
 
@@ -71,10 +85,17 @@
 
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
+    --success: 142 69% 50%;
+    --warning: 27 95% 61%;
 
     --border: 240 5% 24%;
     --input: 240 5% 24%;
     --ring: 210 100% 54%;
+    --chart-1: 217 91% 64%;
+    --chart-2: 142 69% 50%;
+    --chart-3: 27 95% 61%;
+    --chart-4: 272 95% 72%;
+    --chart-5: 346 84% 68%;
   }
 
   .dark[data-theme-preset="bubblegum"] {
@@ -96,9 +117,16 @@
     --accent: 36 88% 62%;
     --accent-foreground: 20 64% 12%;
 
+    --success: 170 66% 48%;
+    --warning: 36 88% 62%;
     --border: 315 23% 26%;
     --input: 315 23% 26%;
     --ring: 332 82% 68%;
+    --chart-1: 332 82% 68%;
+    --chart-2: 170 66% 48%;
+    --chart-3: 36 88% 62%;
+    --chart-4: 276 78% 72%;
+    --chart-5: 347 86% 70%;
     --radius: 1rem;
   }
 }

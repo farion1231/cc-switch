@@ -480,10 +480,11 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-sm font-medium text-foreground">
-                  {t("mcp.form.title")} <span className="text-red-500">*</span>
+                  {t("mcp.form.title")}{" "}
+                  <span className="text-[hsl(var(--destructive))]">*</span>
                 </label>
                 {!isEditing && idError && (
-                  <span className="text-xs text-red-500 dark:text-red-400">
+                  <span className="text-xs text-[hsl(var(--destructive))]">
                     {idError}
                   </span>
                 )}
@@ -686,7 +687,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 />
               </div>
               {configError && (
-                <div className="flex items-center gap-2 mt-2 text-red-500 dark:text-red-400 text-sm flex-shrink-0">
+                <div className="flex items-center gap-2 mt-2 text-[hsl(var(--destructive))] text-sm flex-shrink-0">
                   <AlertCircle size={16} />
                   <span>{configError}</span>
                 </div>

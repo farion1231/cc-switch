@@ -77,7 +77,7 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
       />
 
       {error && (
-        <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
+        <p className="text-xs text-[hsl(var(--destructive))]">{error}</p>
       )}
 
       {!error && (
@@ -270,7 +270,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       </div>
 
       {commonConfigError && (
-        <p className="text-xs text-red-500 dark:text-red-400 text-right">
+        <p className="text-xs text-[hsl(var(--destructive))] text-right">
           {commonConfigError}
         </p>
       )}
@@ -307,7 +307,9 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       />
 
       {configError && (
-        <p className="text-xs text-red-500 dark:text-red-400">{configError}</p>
+        <p className="text-xs text-[hsl(var(--destructive))]">
+          {configError}
+        </p>
       )}
     </div>
   );

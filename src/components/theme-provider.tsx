@@ -50,9 +50,18 @@ const CUSTOM_THEME_VARIABLES = [
   "--muted-foreground",
   "--accent",
   "--accent-foreground",
+  "--destructive",
+  "--destructive-foreground",
+  "--success",
+  "--warning",
   "--border",
   "--input",
   "--ring",
+  "--chart-1",
+  "--chart-2",
+  "--chart-3",
+  "--chart-4",
+  "--chart-5",
 ] as const;
 const DEFAULT_CUSTOM_THEME: CustomThemeConfig = {
   light: {
@@ -326,6 +335,72 @@ function deriveDarkPalette(base: CustomThemePalette): CustomThemePalette {
   };
 }
 
+function shiftChartHue(
+  hex: string,
+  hueShift: number,
+  targetLightness: number,
+  options: { satScale?: number; minSat?: number; maxSat?: number } = {},
+) {
+  const { h, s } = hexToHslValues(hex);
+  const scaledSaturation = s * (options.satScale ?? 1);
+  const nextSaturation = Math.min(
+    options.maxSat ?? 1,
+    Math.max(options.minSat ?? 0, scaledSaturation),
+  );
+  return hslToHex(h + hueShift, nextSaturation, targetLightness);
+}
+
+function deriveChartPalette(
+  palette: CustomThemePalette,
+  mode: CustomThemeMode,
+) {
+  return {
+    chart1: palette.primary,
+    chart2: shiftChartHue(
+      palette.primary,
+      115,
+      mode === "dark" ? 0.5 : 0.42,
+      {
+        satScale: 0.95,
+        minSat: 0.42,
+        maxSat: 0.9,
+      },
+    ),
+    chart3: shiftChartHue(
+      palette.primary,
+      38,
+      mode === "dark" ? 0.6 : 0.52,
+      {
+        satScale: 1.08,
+        minSat: 0.46,
+        maxSat: 0.95,
+      },
+    ),
+    chart4: shiftChartHue(
+      palette.primary,
+      72,
+      mode === "dark" ? 0.7 : 0.6,
+      {
+        satScale: 0.92,
+        minSat: 0.42,
+        maxSat: 0.88,
+      },
+    ),
+    chart5: palette.destructive,
+  };
+}
+
+function deriveStatusPalette(
+  palette: CustomThemePalette,
+  mode: CustomThemeMode,
+) {
+  const chartPalette = deriveChartPalette(palette, mode);
+  return {
+    success: chartPalette.chart2,
+    warning: chartPalette.chart3,
+  };
+}
+
 function parseStoredCustomTheme(
   value: string | null,
 ): CustomThemeConfig | null {
@@ -407,6 +482,16 @@ const ThemeProviderContext = createContext<ThemeContextValue | undefined>(
   undefined,
 );
 
+function getSystemThemeMode(): CustomThemeMode {
+  if (typeof window === "undefined" || !window.matchMedia) {
+    return "light";
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
 export function ThemeProvider({
   children,
   defaultTheme = "system",
@@ -457,6 +542,10 @@ export function ThemeProvider({
       ) ?? DEFAULT_CUSTOM_THEME
     );
   });
+  const [systemThemeMode, setSystemThemeMode] =
+    useState<CustomThemeMode>(getSystemThemeMode);
+  const resolvedThemeMode: CustomThemeMode =
+    theme === "system" ? systemThemeMode : theme;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -499,12 +588,6 @@ export function ThemeProvider({
     }
 
     const root = window.document.documentElement;
-    const resolvedMode: CustomThemeMode =
-      theme === "system"
-        ? window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light"
-        : theme;
 
     for (const variable of CUSTOM_THEME_VARIABLES) {
       root.style.removeProperty(variable);
@@ -515,9 +598,11 @@ export function ThemeProvider({
     }
 
     const palette =
-      resolvedMode === "dark"
+      resolvedThemeMode === "dark"
         ? deriveDarkPalette(customTheme.light)
         : customTheme.light;
+    const chartPalette = deriveChartPalette(palette, resolvedThemeMode);
+    const statusPalette = deriveStatusPalette(palette, resolvedThemeMode);
     root.style.setProperty("--background", hexToHslString(palette.background));
     root.style.setProperty("--foreground", hexToHslString(palette.foreground));
     root.style.setProperty("--card", hexToHslString(palette.card));
@@ -558,10 +643,17 @@ export function ThemeProvider({
       "--destructive-foreground",
       hexToHslString(palette.destructiveForeground),
     );
+    root.style.setProperty("--success", hexToHslString(statusPalette.success));
+    root.style.setProperty("--warning", hexToHslString(statusPalette.warning));
     root.style.setProperty("--border", hexToHslString(palette.border));
     root.style.setProperty("--input", hexToHslString(palette.input));
     root.style.setProperty("--ring", hexToHslString(palette.ring));
-  }, [customTheme, theme, themePreset]);
+    root.style.setProperty("--chart-1", hexToHslString(chartPalette.chart1));
+    root.style.setProperty("--chart-2", hexToHslString(chartPalette.chart2));
+    root.style.setProperty("--chart-3", hexToHslString(chartPalette.chart3));
+    root.style.setProperty("--chart-4", hexToHslString(chartPalette.chart4));
+    root.style.setProperty("--chart-5", hexToHslString(chartPalette.chart5));
+  }, [customTheme, resolvedThemeMode, themePreset]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -570,41 +662,22 @@ export function ThemeProvider({
 
     const root = window.document.documentElement;
     root.classList.remove("light", "dark");
-
-    if (theme === "system") {
-      const isDark =
-        window.matchMedia &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches;
-      root.classList.add(isDark ? "dark" : "light");
-      return;
-    }
-
-    root.classList.add(theme);
-  }, [theme]);
+    root.classList.add(resolvedThemeMode);
+  }, [resolvedThemeMode]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || !window.matchMedia) {
       return;
     }
 
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = () => {
-      if (theme !== "system") {
-        return;
-      }
+    const handleChange = () =>
+      setSystemThemeMode(mediaQuery.matches ? "dark" : "light");
 
-      const root = window.document.documentElement;
-      root.classList.toggle("dark", mediaQuery.matches);
-      root.classList.toggle("light", !mediaQuery.matches);
-    };
-
-    if (theme === "system") {
-      handleChange();
-    }
-
+    handleChange();
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
-  }, [theme]);
+  }, []);
 
   // Sync native window theme (Windows/macOS title bar)
   useEffect(() => {

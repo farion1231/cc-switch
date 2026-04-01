@@ -24,28 +24,24 @@ export function ProviderHealthBadge({
         labelKey: "health.operational",
         labelFallback: "正常",
         status: ProviderHealthStatus.Healthy,
-        color: "bg-green-500",
-        // 使用更深/柔和的背景色，去除可能的白色内容感
-        bgColor: "bg-green-500/10",
-        textColor: "text-green-600 dark:text-green-400",
+        statusColor: "hsl(var(--success))",
+        backgroundColor: "hsl(var(--success) / 0.12)",
       };
     } else if (consecutiveFailures < 5) {
       return {
         labelKey: "health.degraded",
         labelFallback: "降级",
         status: ProviderHealthStatus.Degraded,
-        color: "bg-yellow-500",
-        bgColor: "bg-yellow-500/10",
-        textColor: "text-yellow-600 dark:text-yellow-400",
+        statusColor: "hsl(var(--warning))",
+        backgroundColor: "hsl(var(--warning) / 0.12)",
       };
     } else {
       return {
         labelKey: "health.circuitOpen",
         labelFallback: "熔断",
         status: ProviderHealthStatus.Failed,
-        color: "bg-red-500",
-        bgColor: "bg-red-500/10",
-        textColor: "text-red-600 dark:text-red-400",
+        statusColor: "hsl(var(--destructive))",
+        backgroundColor: "hsl(var(--destructive) / 0.12)",
       };
     }
   };
@@ -59,16 +55,21 @@ export function ProviderHealthBadge({
     <div
       className={cn(
         "inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium",
-        statusConfig.bgColor,
-        statusConfig.textColor,
         className,
       )}
+      style={{
+        backgroundColor: statusConfig.backgroundColor,
+        color: statusConfig.statusColor,
+      }}
       title={t("health.consecutiveFailures", {
         count: consecutiveFailures,
         defaultValue: `连续失败 ${consecutiveFailures} 次`,
       })}
     >
-      <div className={cn("w-2 h-2 rounded-full", statusConfig.color)} />
+      <div
+        className="h-2 w-2 rounded-full"
+        style={{ backgroundColor: statusConfig.statusColor }}
+      />
       <span>{label}</span>
     </div>
   );

@@ -632,12 +632,7 @@ export function ThemeSettings() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full border border-border/70 bg-background px-3 py-1 text-xs text-muted-foreground">
-                    {t("settings.themeEditingCurrentMode", {
-                      mode:
-                        resolvedPaletteMode === "light"
-                          ? t("settings.themePaletteLight")
-                          : t("settings.themePaletteDark"),
-                    })}
+                    {t("settings.themeEditingBasePalette")}
                   </span>
                   <Button
                     type="button"
@@ -679,7 +674,7 @@ export function ThemeSettings() {
                             size="sm"
                             onClick={() => resetCustomTheme("light")}
                           >
-                            {t("settings.themeCustomPaletteReset")}
+                            {t("settings.themeCustomPaletteResetBase")}
                           </Button>
                         </div>
                       </div>

@@ -256,7 +256,9 @@
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
-      "codexOauthDescription": "Manage ChatGPT accounts"
+      "codexOauthDescription": "Manage ChatGPT accounts",
+      "heading": "Authentication Center",
+      "headingDescription": "Manage reusable OAuth accounts and default authentication sources across apps."
     },
     "advanced": {
       "configDir": {
@@ -373,12 +375,12 @@
     "themePaletteLight": "Light palette",
     "themePaletteDark": "Dark palette",
     "themeCustomPaletteTip": "Start with primary, accent, and background, then fine-tune border and ring.",
-    "themeCustomPaletteReset": "Reset current palette",
+    "themeCustomPaletteResetBase": "Reset base palette",
     "themeEditorExpand": "Expand custom options",
     "themeEditorCollapse": "Collapse custom options",
     "themeAdvancedEditingShow": "Edit light/dark separately",
     "themeAdvancedEditingHide": "Use one active palette",
-    "themeEditingCurrentMode": "Editing now: {{mode}}",
+    "themeEditingBasePalette": "Editing base palette",
     "themeDarkOverlayBadge": "Dark mode auto-overlay",
     "themeColorBackground": "Background",
     "themeColorForeground": "Foreground",

@@ -215,7 +215,7 @@ export function CommonConfigEditor({
           </Button>
         </div>
         {commonConfigError && !isModalOpen && (
-          <p className="text-right text-xs text-red-500 dark:text-red-400">
+          <p className="text-right text-xs text-[hsl(var(--destructive))]">
             {commonConfigError}
           </p>
         )}
@@ -347,7 +347,7 @@ export function CommonConfigEditor({
             language="json"
           />
           {commonConfigError && (
-            <p className="text-sm text-red-500 dark:text-red-400">
+            <p className="text-sm text-[hsl(var(--destructive))]">
               {commonConfigError}
             </p>
           )}

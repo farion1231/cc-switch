@@ -59,8 +59,8 @@ export const getRoleTone = (role: string) => {
   const normalized = role.toLowerCase();
   if (normalized === "assistant") return "text-primary";
   if (normalized === "user") return "text-accent-foreground";
-  if (normalized === "system") return "text-amber-500";
-  if (normalized === "tool") return "text-purple-500";
+  if (normalized === "system") return "text-[hsl(var(--warning))]";
+  if (normalized === "tool") return "text-[hsl(var(--chart-5))]";
   return "text-muted-foreground";
 };
 

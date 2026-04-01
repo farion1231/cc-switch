@@ -96,7 +96,7 @@ export function ProxyTabContent({
         >
           <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
             <div className="flex items-center gap-3">
-              <Server className="h-5 w-5 text-green-500" />
+              <Server className="h-5 w-5 text-[hsl(var(--success))]" />
               <div className="text-left">
                 <h3 className="text-base font-semibold">
                   {t("settings.advanced.proxy.title")}
@@ -137,7 +137,7 @@ export function ProxyTabContent({
         >
           <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
             <div className="flex items-center gap-3">
-              <Activity className="h-5 w-5 text-orange-500" />
+              <Activity className="h-5 w-5 text-[hsl(var(--warning))]" />
               <div className="text-left">
                 <h3 className="text-base font-semibold">
                   {t("settings.advanced.failover.title")}
@@ -151,7 +151,9 @@ export function ProxyTabContent({
           <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
             <div className="space-y-6">
               <ToggleRow
-                icon={<ShieldAlert className="h-4 w-4 text-orange-500" />}
+                icon={
+                  <ShieldAlert className="h-4 w-4 text-[hsl(var(--warning))]" />
+                }
                 title={t("settings.advanced.proxy.enableFailoverToggle")}
                 description={t(
                   "settings.advanced.proxy.enableFailoverToggleDescription",
@@ -161,8 +163,8 @@ export function ProxyTabContent({
               />
 
               {!isRunning && (
-                <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-                  <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                <div className="rounded-lg border border-[hsl(var(--warning)/0.24)] bg-[hsl(var(--warning)/0.12)] p-4">
+                  <p className="text-sm text-[hsl(var(--warning))]">
                     {t("proxy.failover.proxyRequired", {
                       defaultValue: "需要先启动代理服务才能配置故障转移",
                     })}
@@ -254,7 +256,7 @@ export function ProxyTabContent({
         >
           <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
             <div className="flex items-center gap-3">
-              <Zap className="h-5 w-5 text-purple-500" />
+              <Zap className="h-5 w-5 text-[hsl(var(--chart-5))]" />
               <div className="text-left">
                 <h3 className="text-base font-semibold">
                   {t("settings.advanced.rectifier.title")}
@@ -277,7 +279,7 @@ export function ProxyTabContent({
         >
           <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
             <div className="flex items-center gap-3">
-              <Globe className="h-5 w-5 text-cyan-500" />
+              <Globe className="h-5 w-5 text-[hsl(var(--chart-4))]" />
               <div className="text-left">
                 <h3 className="text-base font-semibold">
                   {t("settings.advanced.globalProxy.title")}

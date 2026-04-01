@@ -61,7 +61,7 @@ const ENV_BADGE_CONFIG: Record<
   wsl: {
     labelKey: "settings.envBadge.wsl",
     className:
-      "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20",
+      "bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.24)]",
   },
   windows: {
     labelKey: "settings.envBadge.windows",
@@ -74,7 +74,7 @@ const ENV_BADGE_CONFIG: Record<
   linux: {
     labelKey: "settings.envBadge.linux",
     className:
-      "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20",
+      "bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.24)]",
   },
 };
 
@@ -531,14 +531,20 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     ) : tool?.version ? (
                       tool.latest_version &&
                       tool.version !== tool.latest_version ? (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full border bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.24)]">
                           {tool.latest_version}
                         </span>
                       ) : (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <CheckCircle2
+                          className="h-4 w-4"
+                          style={{ color: "hsl(var(--success))" }}
+                        />
                       )
                     ) : (
-                      <AlertCircle className="h-4 w-4 text-yellow-500" />
+                      <AlertCircle
+                        className="h-4 w-4"
+                        style={{ color: "hsl(var(--warning))" }}
+                      />
                     )}
                   </div>
                   <div

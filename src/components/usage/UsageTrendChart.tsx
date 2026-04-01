@@ -72,6 +72,13 @@ export function UsageTrendChart({
     }) || [];
 
   const displayData = chartData;
+  const chartColors = {
+    input: "hsl(var(--chart-1))",
+    output: "hsl(var(--chart-2))",
+    cacheCreation: "hsl(var(--chart-3))",
+    cacheRead: "hsl(var(--chart-4))",
+    cost: "hsl(var(--chart-5))",
+  } as const;
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -125,12 +132,12 @@ export function UsageTrendChart({
           >
             <defs>
               <linearGradient id="colorInput" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                <stop offset="5%" stopColor={chartColors.input} stopOpacity={0.2} />
+                <stop offset="95%" stopColor={chartColors.input} stopOpacity={0} />
               </linearGradient>
               <linearGradient id="colorOutput" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#22c55e" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                <stop offset="5%" stopColor={chartColors.output} stopOpacity={0.2} />
+                <stop offset="95%" stopColor={chartColors.output} stopOpacity={0} />
               </linearGradient>
               <linearGradient
                 id="colorCacheCreation"
@@ -139,12 +146,12 @@ export function UsageTrendChart({
                 x2="0"
                 y2="1"
               >
-                <stop offset="5%" stopColor="#f97316" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+                <stop offset="5%" stopColor={chartColors.cacheCreation} stopOpacity={0.2} />
+                <stop offset="95%" stopColor={chartColors.cacheCreation} stopOpacity={0} />
               </linearGradient>
               <linearGradient id="colorCacheRead" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#a855f7" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#a855f7" stopOpacity={0} />
+                <stop offset="5%" stopColor={chartColors.cacheRead} stopOpacity={0.2} />
+                <stop offset="95%" stopColor={chartColors.cacheRead} stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid
@@ -182,7 +189,7 @@ export function UsageTrendChart({
               type="monotone"
               dataKey="inputTokens"
               name={t("usage.inputTokens", "输入 Tokens")}
-              stroke="#3b82f6"
+              stroke={chartColors.input}
               fillOpacity={1}
               fill="url(#colorInput)"
               strokeWidth={2}
@@ -192,7 +199,7 @@ export function UsageTrendChart({
               type="monotone"
               dataKey="outputTokens"
               name={t("usage.outputTokens", "输出 Tokens")}
-              stroke="#22c55e"
+              stroke={chartColors.output}
               fillOpacity={1}
               fill="url(#colorOutput)"
               strokeWidth={2}
@@ -202,7 +209,7 @@ export function UsageTrendChart({
               type="monotone"
               dataKey="cacheCreationTokens"
               name={t("usage.cacheCreationTokens", "缓存创建")}
-              stroke="#f97316"
+              stroke={chartColors.cacheCreation}
               fillOpacity={1}
               fill="url(#colorCacheCreation)"
               strokeWidth={2}
@@ -212,7 +219,7 @@ export function UsageTrendChart({
               type="monotone"
               dataKey="cacheReadTokens"
               name={t("usage.cacheReadTokens", "缓存命中")}
-              stroke="#a855f7"
+              stroke={chartColors.cacheRead}
               fillOpacity={1}
               fill="url(#colorCacheRead)"
               strokeWidth={2}
@@ -222,7 +229,7 @@ export function UsageTrendChart({
               type="monotone"
               dataKey="cost"
               name={t("usage.cost", "成本")}
-              stroke="#f43f5e"
+              stroke={chartColors.cost}
               fill="none"
               strokeWidth={2}
               strokeDasharray="4 4"

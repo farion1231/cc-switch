@@ -548,7 +548,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
             </Button>
           </div>
           {addError && (
-            <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+            <div className="flex items-center gap-1.5 text-xs text-[hsl(var(--destructive))]">
               <AlertCircle className="h-3 w-3" />
               {addError}
             </div>
@@ -593,15 +593,17 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                     {latency !== null ? (
                       <div className="text-right">
                         <div
-                          className={`font-mono text-sm font-medium ${
-                            latency < 300
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : latency < 500
-                                ? "text-yellow-600 dark:text-yellow-400"
-                                : latency < 800
-                                  ? "text-orange-600 dark:text-orange-400"
-                                  : "text-red-600 dark:text-red-400"
-                          }`}
+                          className="font-mono text-sm font-medium"
+                          style={{
+                            color:
+                              latency < 300
+                                ? "hsl(var(--success))"
+                                : latency < 500
+                                  ? "hsl(var(--warning))"
+                                  : latency < 800
+                                    ? "hsl(var(--chart-2))"
+                                    : "hsl(var(--destructive))",
+                          }}
                         >
                           {latency}ms
                         </div>
@@ -622,7 +624,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                         event.stopPropagation();
                         handleRemoveEndpoint(entry);
                       }}
-                      className="opacity-0 transition hover:text-red-600 group-hover:opacity-100 dark:hover:text-red-400"
+                      className="opacity-0 transition group-hover:opacity-100 hover:text-[hsl(var(--destructive))]"
                     >
                       <X className="h-4 w-4" />
                     </button>
@@ -639,7 +641,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
 
         {/* 错误提示 */}
         {lastError && (
-          <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+          <div className="flex items-center gap-1.5 text-xs text-[hsl(var(--destructive))]">
             <AlertCircle className="h-3 w-3" />
             {lastError}
           </div>

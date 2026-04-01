@@ -11,22 +11,19 @@ interface HealthStatusIndicatorProps {
 
 const statusConfig = {
   operational: {
-    color: "bg-emerald-500",
     labelKey: "health.operational",
     labelFallback: "正常",
-    textColor: "text-emerald-600 dark:text-emerald-400",
+    color: "hsl(var(--success))",
   },
   degraded: {
-    color: "bg-yellow-500",
     labelKey: "health.degraded",
     labelFallback: "降级",
-    textColor: "text-yellow-600 dark:text-yellow-400",
+    color: "hsl(var(--warning))",
   },
   failed: {
-    color: "bg-red-500",
     labelKey: "health.failed",
     labelFallback: "失败",
-    textColor: "text-red-600 dark:text-red-400",
+    color: "hsl(var(--destructive))",
   },
 };
 
@@ -41,8 +38,11 @@ export const HealthStatusIndicator: React.FC<HealthStatusIndicatorProps> = ({
 
   return (
     <div className={cn("flex items-center gap-2", className)}>
-      <div className={cn("w-2 h-2 rounded-full", config.color)} />
-      <span className={cn("text-xs font-medium", config.textColor)}>
+      <div
+        className="w-2 h-2 rounded-full"
+        style={{ backgroundColor: config.color }}
+      />
+      <span className="text-xs font-medium" style={{ color: config.color }}>
         {label}
         {responseTimeMs !== undefined && ` (${responseTimeMs}ms)`}
       </span>

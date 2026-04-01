@@ -216,7 +216,10 @@ export function UsageDashboard() {
         >
           <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
             <div className="flex items-center gap-3">
-              <Coins className="h-5 w-5 text-yellow-500" />
+              <Coins
+                className="h-5 w-5"
+                style={{ color: "hsl(var(--warning))" }}
+              />
               <div className="text-left">
                 <h3 className="text-base font-semibold">
                   {t("settings.advanced.pricing.title")}

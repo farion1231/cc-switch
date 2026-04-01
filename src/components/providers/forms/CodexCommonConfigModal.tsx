@@ -143,7 +143,7 @@ export const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
         />
 
         {error && (
-          <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
+          <p className="text-sm text-[hsl(var(--destructive))]">{error}</p>
         )}
       </div>
     </FullScreenPanel>

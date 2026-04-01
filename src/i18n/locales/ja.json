@@ -256,7 +256,9 @@
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
-      "codexOauthDescription": "ChatGPT アカウントを管理します"
+      "codexOauthDescription": "ChatGPT アカウントを管理します",
+      "heading": "認証センター",
+      "headingDescription": "アプリ間で再利用できる OAuth アカウントと既定の認証ソースをまとめて管理します。"
     },
     "advanced": {
       "configDir": {
@@ -373,12 +375,12 @@
     "themePaletteLight": "ライトパレット",
     "themePaletteDark": "ダークパレット",
     "themeCustomPaletteTip": "まずは primary、accent、background を調整し、その後 border と ring を整えるのがおすすめです。",
-    "themeCustomPaletteReset": "現在のパレットをリセット",
+    "themeCustomPaletteResetBase": "ベース配色をリセット",
     "themeEditorExpand": "カスタム設定を展開",
     "themeEditorCollapse": "カスタム設定を折りたたむ",
     "themeAdvancedEditingShow": "ライト/ダークを個別編集",
     "themeAdvancedEditingHide": "現在のパレットのみ編集",
-    "themeEditingCurrentMode": "現在編集中: {{mode}}",
+    "themeEditingBasePalette": "ベース配色を編集中",
     "themeDarkOverlayBadge": "ダークは自動オーバーレイ",
     "themeColorBackground": "背景",
     "themeColorForeground": "前景色",

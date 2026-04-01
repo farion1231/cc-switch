@@ -102,7 +102,11 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         <Label>{t("copilot.authStatus", "GitHub Copilot 认证")}</Label>
         <Badge
           variant={hasAnyAccount ? "default" : "secondary"}
-          className={hasAnyAccount ? "bg-green-500 hover:bg-green-600" : ""}
+          className={
+            hasAnyAccount
+              ? "bg-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.9)] text-white"
+              : ""
+          }
         >
           {hasAnyAccount
             ? t("copilot.accountCount", {
@@ -114,7 +118,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       </div>
 
       {migrationError && (
-        <p className="text-sm text-amber-600 dark:text-amber-400">
+        <p className="text-sm text-[hsl(var(--warning))]">
           {t("copilot.migrationFailed", {
             error: migrationError,
             defaultValue: `旧认证数据迁移失败：${migrationError}`,
@@ -268,7 +272,10 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
                 title={t("copilot.copyCode", "复制代码")}
               >
                 {copied ? (
-                  <Check className="h-4 w-4 text-green-500" />
+                  <Check
+                    className="h-4 w-4"
+                    style={{ color: "hsl(var(--success))" }}
+                  />
                 ) : (
                   <Copy className="h-4 w-4" />
                 )}
@@ -306,7 +313,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       {/* 错误状态 */}
       {pollingState === "error" && error && (
         <div className="space-y-2">
-          <p className="text-sm text-red-500">{error}</p>
+          <p className="text-sm text-[hsl(var(--destructive))]">{error}</p>
           <div className="flex gap-2">
             <Button
               type="button"
@@ -334,7 +341,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
           type="button"
           variant="outline"
           onClick={logout}
-          className="w-full text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+          className="w-full text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.08)]"
         >
           <LogOut className="mr-2 h-4 w-4" />
           {t("copilot.logoutAll", "注销所有账号")}

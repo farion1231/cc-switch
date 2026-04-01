@@ -442,7 +442,7 @@ export function SettingsPage({
                       >
                         <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
                           <div className="flex items-center gap-3">
-                            <ScrollText className="h-5 w-5 text-cyan-500" />
+                            <ScrollText className="h-5 w-5 text-[hsl(var(--chart-4))]" />
                             <div className="text-left">
                               <h3 className="text-base font-semibold">
                                 {t("settings.advanced.logConfig.title")}

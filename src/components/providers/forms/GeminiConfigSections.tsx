@@ -120,7 +120,7 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
       </div>
 
       {commonConfigError && (
-        <p className="text-right text-xs text-red-500 dark:text-red-400">
+        <p className="text-right text-xs text-[hsl(var(--destructive))]">
           {commonConfigError}
         </p>
       )}
@@ -138,7 +138,7 @@ GEMINI_MODEL=gemini-3-pro-preview`}
       />
 
       {error && (
-        <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
+        <p className="text-xs text-[hsl(var(--destructive))]">{error}</p>
       )}
     </div>
   );
@@ -202,7 +202,9 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
       />
 
       {configError && (
-        <p className="text-xs text-red-500 dark:text-red-400">{configError}</p>
+        <p className="text-xs text-[hsl(var(--destructive))]">
+          {configError}
+        </p>
       )}
     </div>
   );
