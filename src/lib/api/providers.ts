@@ -34,12 +34,24 @@ export const providersApi = {
     return await invoke("get_current_provider", { app: appId });
   },
 
-  async add(provider: Provider, appId: AppId): Promise<boolean> {
-    return await invoke("add_provider", { provider, app: appId });
+  async add(
+    provider: Provider,
+    appId: AppId,
+    addToLive?: boolean,
+  ): Promise<boolean> {
+    return await invoke("add_provider", { provider, app: appId, addToLive });
   },
 
-  async update(provider: Provider, appId: AppId): Promise<boolean> {
-    return await invoke("update_provider", { provider, app: appId });
+  async update(
+    provider: Provider,
+    appId: AppId,
+    originalId?: string,
+  ): Promise<boolean> {
+    return await invoke("update_provider", {
+      provider,
+      app: appId,
+      originalId,
+    });
   },
 
   async delete(id: string, appId: AppId): Promise<boolean> {

@@ -110,7 +110,7 @@ pub fn import_provider_from_deeplink(
     let provider_id = provider.id.clone();
 
     // Use ProviderService to add the provider
-    ProviderService::add(state, app_type.clone(), provider)?;
+    ProviderService::add(state, app_type.clone(), provider, true)?;
 
     // Add extra endpoints as custom endpoints (skip first one as it's the primary)
     for ep in all_endpoints.iter().skip(1) {

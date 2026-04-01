@@ -169,7 +169,10 @@ describe("useProviderActions", () => {
       await result.current.updateProvider(provider);
     });
 
-    expect(updateProviderMutateAsync).toHaveBeenCalledWith(provider);
+    expect(updateProviderMutateAsync).toHaveBeenCalledWith({
+      provider,
+      originalId: undefined,
+    });
     expect(providersApiUpdateTrayMenuMock).toHaveBeenCalledTimes(1);
   });
 
