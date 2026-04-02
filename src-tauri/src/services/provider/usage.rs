@@ -308,6 +308,51 @@ pub async fn query_usage(
     .await
 }
 
+/// Test usage script (using temporary script content, not saved)
+#[allow(clippy::too_many_arguments)]
+pub async fn test_usage_script(
+    _state: &AppState,
+    _app_type: AppType,
+    _provider_id: &str,
+    script_code: &str,
+    timeout: u64,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+    access_token: Option<&str>,
+    user_id: Option<&str>,
+    template_type: Option<&str>,
+) -> Result<UsageResult, AppError> {
+    // Use provided credential parameters directly for testing
+    execute_and_format_usage_result(
+        script_code,
+        api_key.unwrap_or(""),
+        base_url.unwrap_or(""),
+        timeout,
+        access_token,
+        user_id,
+        template_type,
+    )
+    .await
+}
+
+/// Validate UsageScript configuration (boundary checks)
+pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError> {
+    // Validate auto query interval (0-1440 minutes, max 24 hours)
+    if let Some(interval) = script.auto_query_interval {
+        if interval > 1440 {
+            return Err(AppError::localized(
+                "usage_script.interval_too_large",
+                format!("自动查询间隔不能超过 1440 分钟（24小时），当前值: {interval}"),
+                format!(
+                    "Auto query interval cannot exceed 1440 minutes (24 hours), current: {interval}"
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -446,49 +491,4 @@ base_url = "https://api.minimax.io/v1"
             Some("https://www.minimax.io/v1/api/openplatform/coding_plan/remains".to_string())
         );
     }
-}
-
-/// Test usage script (using temporary script content, not saved)
-#[allow(clippy::too_many_arguments)]
-pub async fn test_usage_script(
-    _state: &AppState,
-    _app_type: AppType,
-    _provider_id: &str,
-    script_code: &str,
-    timeout: u64,
-    api_key: Option<&str>,
-    base_url: Option<&str>,
-    access_token: Option<&str>,
-    user_id: Option<&str>,
-    template_type: Option<&str>,
-) -> Result<UsageResult, AppError> {
-    // Use provided credential parameters directly for testing
-    execute_and_format_usage_result(
-        script_code,
-        api_key.unwrap_or(""),
-        base_url.unwrap_or(""),
-        timeout,
-        access_token,
-        user_id,
-        template_type,
-    )
-    .await
-}
-
-/// Validate UsageScript configuration (boundary checks)
-pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError> {
-    // Validate auto query interval (0-1440 minutes, max 24 hours)
-    if let Some(interval) = script.auto_query_interval {
-        if interval > 1440 {
-            return Err(AppError::localized(
-                "usage_script.interval_too_large",
-                format!("自动查询间隔不能超过 1440 分钟（24小时），当前值: {interval}"),
-                format!(
-                    "Auto query interval cannot exceed 1440 minutes (24 hours), current: {interval}"
-                ),
-            ));
-        }
-    }
-
-    Ok(())
 }

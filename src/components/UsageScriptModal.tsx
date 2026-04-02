@@ -38,7 +38,8 @@ interface MiniMaxTemplateLabels {
   defaultPlan: string;
 }
 
-const normalizeTemplateCode = (code: string): string => code.replace(/\s+/g, "");
+const normalizeTemplateCode = (code: string): string =>
+  code.replace(/\s+/g, "");
 
 const isMiniMaxProvider = (provider: Provider): boolean => {
   const config = provider.settingsConfig as Record<string, any> | undefined;
@@ -407,7 +408,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       (!savedScript.baseUrl || isBuiltInMiniMaxTemplate(savedScript.code))
     ) {
       const savedBaseUrl = savedScript.baseUrl?.trim();
-      const shouldRefreshBuiltInCode = isBuiltInMiniMaxTemplate(savedScript.code);
+      const shouldRefreshBuiltInCode = isBuiltInMiniMaxTemplate(
+        savedScript.code,
+      );
       return {
         ...savedScript,
         code: shouldRefreshBuiltInCode
