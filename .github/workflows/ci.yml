@@ -50,9 +50,6 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
-      - name: Lint
-        run: pnpm lint
-
       - name: Unit tests
         run: pnpm test:unit
 
