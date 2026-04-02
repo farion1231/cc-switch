@@ -12,6 +12,27 @@ type CurrentProviderState = Record<AppId, string>;
 type McpConfigState = Record<AppId, Record<string, McpServer>>;
 type LiveProviderIdsByApp = Record<"opencode" | "openclaw", string[]>;
 
+type CliDetectionState = {
+  wslInstalled: boolean;
+  wslDistro: string | null;
+  tools: Array<{
+    app: Exclude<AppId, "openclaw">;
+    native: {
+      envType: "windows" | "wsl" | "macos" | "linux" | "unknown";
+      executablePath: string | null;
+      configDir: string;
+      configExists: boolean;
+    };
+    wsl: {
+      envType: "windows" | "wsl" | "macos" | "linux" | "unknown";
+      distro: string;
+      executablePath: string | null;
+      configDir: string;
+      configExists: boolean;
+    } | null;
+  }>;
+};
+
 const createDefaultProviders = (): ProvidersByApp => ({
   claude: {
     "claude-1": {
@@ -91,6 +112,52 @@ let settingsState: Settings = {
   language: "zh",
 };
 let appConfigDirOverride: string | null = null;
+let cliDetectionState: CliDetectionState = {
+  wslInstalled: false,
+  wslDistro: null,
+  tools: [
+    {
+      app: "claude",
+      native: {
+        envType: "linux",
+        executablePath: "/usr/bin/claude",
+        configDir: "/default/claude",
+        configExists: true,
+      },
+      wsl: null,
+    },
+    {
+      app: "codex",
+      native: {
+        envType: "linux",
+        executablePath: "/usr/bin/codex",
+        configDir: "/default/codex",
+        configExists: true,
+      },
+      wsl: null,
+    },
+    {
+      app: "gemini",
+      native: {
+        envType: "linux",
+        executablePath: "/usr/bin/gemini",
+        configDir: "/default/gemini",
+        configExists: true,
+      },
+      wsl: null,
+    },
+    {
+      app: "opencode",
+      native: {
+        envType: "linux",
+        executablePath: "/usr/bin/opencode",
+        configDir: "/default/opencode",
+        configExists: true,
+      },
+      wsl: null,
+    },
+  ],
+};
 const sessionMessageKey = (providerId: string, sourcePath: string) =>
   `${providerId}:${sourcePath}`;
 
@@ -204,6 +271,52 @@ export const resetProviderState = () => {
     language: "zh",
   };
   appConfigDirOverride = null;
+  cliDetectionState = {
+    wslInstalled: false,
+    wslDistro: null,
+    tools: [
+      {
+        app: "claude",
+        native: {
+          envType: "linux",
+          executablePath: "/usr/bin/claude",
+          configDir: "/default/claude",
+          configExists: true,
+        },
+        wsl: null,
+      },
+      {
+        app: "codex",
+        native: {
+          envType: "linux",
+          executablePath: "/usr/bin/codex",
+          configDir: "/default/codex",
+          configExists: true,
+        },
+        wsl: null,
+      },
+      {
+        app: "gemini",
+        native: {
+          envType: "linux",
+          executablePath: "/usr/bin/gemini",
+          configDir: "/default/gemini",
+          configExists: true,
+        },
+        wsl: null,
+      },
+      {
+        app: "opencode",
+        native: {
+          envType: "linux",
+          executablePath: "/usr/bin/opencode",
+          configDir: "/default/opencode",
+          configExists: true,
+        },
+        wsl: null,
+      },
+    ],
+  };
   mcpConfigs = {
     claude: {
       sample: {
@@ -335,6 +448,9 @@ export const setSettings = (data: Partial<Settings>) => {
 };
 
 export const getAppConfigDirOverride = () => appConfigDirOverride;
+
+export const getCliDetectionState = () =>
+  JSON.parse(JSON.stringify(cliDetectionState)) as CliDetectionState;
 
 export const setAppConfigDirOverrideState = (value: string | null) => {
   appConfigDirOverride = value;

@@ -8,6 +8,7 @@ import type { Settings } from "@/types";
 import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
 import {
   useDirectorySettings,
+  type CliDetectionMap,
   type ResolvedDirectories,
 } from "./useDirectorySettings";
 import { useSettingsMetadata } from "./useSettingsMetadata";
@@ -25,6 +26,12 @@ export interface UseSettingsResult {
   isPortable: boolean;
   appConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
+  cliDetections: CliDetectionMap;
+  cliDetectionMeta: {
+    isLoading: boolean;
+    wslInstalled: boolean;
+    wslDistro?: string;
+  };
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
   updateDirectory: (app: AppId, value?: string) => void;
@@ -78,6 +85,8 @@ export function useSettings(): UseSettingsResult {
   const {
     appConfigDir,
     resolvedDirs,
+    cliDetections,
+    cliDetectionMeta,
     isLoading: isDirectoryLoading,
     initialAppConfigDir,
     updateDirectory,
@@ -425,6 +434,8 @@ export function useSettings(): UseSettingsResult {
     isPortable,
     appConfigDir,
     resolvedDirs,
+    cliDetections,
+    cliDetectionMeta,
     requiresRestart,
     updateSettings,
     updateDirectory,

@@ -532,6 +532,25 @@
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
+    "cliDetection": {
+      "loading": "Detecting native and WSL CLI configuration locations…",
+      "nativeOnly": "Showing native detection results only. If WSL is installed on Windows, WSL CLI config paths will also appear here.",
+      "wslInstalled": "WSL detected. Showing paths for distro: {{distro}}",
+      "unknownDistro": "Unknown distro",
+      "noData": "No detection data is available for this CLI yet.",
+      "nativeFound": "{{env}} config directory: {{path}}",
+      "nativeDefault": "{{env}} default config directory: {{path}}",
+      "wslPath": "WSL ({{distro}}) config directory: {{path}}",
+      "noWslPath": "No WSL CLI config path was detected.",
+      "executable": "CLI executable: {{path}}",
+      "env": {
+        "windows": "Windows",
+        "wsl": "WSL",
+        "macos": "macOS",
+        "linux": "Linux",
+        "unknown": "Unknown"
+      }
+    },
     "checkForUpdates": "Check for Updates",
     "updateTo": "Update to v{{version}}",
     "updating": "Updating...",

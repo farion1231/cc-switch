@@ -18,6 +18,29 @@ export interface WebDavSyncResult {
   status: string;
 }
 
+export interface CliLocationDetection {
+  envType: "windows" | "wsl" | "macos" | "linux" | "unknown";
+  executablePath: string | null;
+  configDir: string;
+  configExists: boolean;
+}
+
+export interface WslCliLocationDetection extends CliLocationDetection {
+  distro: string;
+}
+
+export interface CliToolDetection {
+  app: AppId;
+  native: CliLocationDetection;
+  wsl: WslCliLocationDetection | null;
+}
+
+export interface CliDetectionSummary {
+  wslInstalled: boolean;
+  wslDistro: string | null;
+  tools: CliToolDetection[];
+}
+
 export const settingsApi = {
   async get(): Promise<Settings> {
     return await invoke("get_settings");
@@ -41,6 +64,10 @@ export const settingsApi = {
 
   async getConfigDir(appId: AppId): Promise<string> {
     return await invoke("get_config_dir", { app: appId });
+  },
+
+  async detectCliTools(): Promise<CliDetectionSummary> {
+    return await invoke("detect_cli_tools");
   },
 
   async openConfigFolder(appId: AppId): Promise<void> {

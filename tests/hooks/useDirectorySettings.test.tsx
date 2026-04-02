@@ -5,6 +5,7 @@ import type { SettingsFormState } from "@/hooks/useSettingsForm";
 
 const getAppConfigDirOverrideMock = vi.hoisted(() => vi.fn());
 const getConfigDirMock = vi.hoisted(() => vi.fn());
+const detectCliToolsMock = vi.hoisted(() => vi.fn());
 const selectConfigDirectoryMock = vi.hoisted(() => vi.fn());
 const setAppConfigDirOverrideMock = vi.hoisted(() => vi.fn());
 const homeDirMock = vi.hoisted(() => vi.fn<() => Promise<string>>());
@@ -17,6 +18,7 @@ vi.mock("@/lib/api", () => ({
   settingsApi: {
     getAppConfigDirOverride: getAppConfigDirOverrideMock,
     getConfigDir: getConfigDirMock,
+    detectCliTools: detectCliToolsMock,
     selectConfigDirectory: selectConfigDirectoryMock,
     setAppConfigDirOverride: setAppConfigDirOverrideMock,
   },
@@ -69,6 +71,32 @@ describe("useDirectorySettings", () => {
       if (app === "codex") return "/remote/codex";
       if (app === "gemini") return "/remote/gemini";
       return "/remote/opencode";
+    });
+    detectCliToolsMock.mockResolvedValue({
+      wslInstalled: false,
+      wslDistro: null,
+      tools: [
+        {
+          app: "claude",
+          native: {
+            envType: "linux",
+            executablePath: "/usr/bin/claude",
+            configDir: "/remote/claude",
+            configExists: true,
+          },
+          wsl: null,
+        },
+        {
+          app: "codex",
+          native: {
+            envType: "linux",
+            executablePath: "/usr/bin/codex",
+            configDir: "/remote/codex",
+            configExists: true,
+          },
+          wsl: null,
+        },
+      ],
     });
     selectConfigDirectoryMock.mockReset();
   });
