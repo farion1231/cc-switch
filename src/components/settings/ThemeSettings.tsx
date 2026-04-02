@@ -33,6 +33,7 @@ import {
   type CustomThemePalette,
   getReadableTextColor,
   hexToHsv,
+  hexToRgb,
   hsvToHex,
   isHexColor,
   mixHex,
@@ -57,6 +58,10 @@ const CUSTOM_THEME_FIELDS = [
   { key: "mutedForeground", labelKey: "settings.themeColorMutedForeground" },
   { key: "destructive", labelKey: "settings.themeColorDestructive" },
   { key: "destructiveForeground", labelKey: "settings.themeColorDestructiveForeground" },
+  { key: "success", labelKey: "settings.themeColorSuccess" },
+  { key: "info", labelKey: "settings.themeColorInfo" },
+  { key: "warning", labelKey: "settings.themeColorWarning" },
+  { key: "error", labelKey: "settings.themeColorError" },
   { key: "border", labelKey: "settings.themeColorBorder" },
   { key: "input", labelKey: "settings.themeColorInput" },
   { key: "ring", labelKey: "settings.themeColorRing" },
@@ -106,6 +111,12 @@ const SECTION_DEFINITIONS = [
     id: "borderInput",
     titleKey: "settings.themeSectionBorderInput",
     rowKeys: ["border", "input", "ring"] as const,
+  },
+  {
+    id: "semantic",
+    titleKey: "settings.themeSectionSemanticAdvanced",
+    rowKeys: ["success", "info", "warning", "error"] as const,
+    allowSync: false,
   },
 ] as const;
 const QUICK_COLOR_SWATCHES = [
@@ -193,11 +204,15 @@ function getSectionSyncValues(
       return { mutedForeground: getReadableTextColor(palette.muted) };
     case "destructive":
       return { destructiveForeground: getReadableTextColor(palette.destructive) };
+    case "semantic":
+      return {};
     case "borderInput":
       return {
         input: palette.border,
         ring: palette.primary,
       };
+    default:
+      return {};
   }
 }
 
@@ -232,6 +247,7 @@ export function ThemeSettings() {
     popover: false,
     muted: false,
     destructive: false,
+    semantic: false,
     borderInput: false,
   });
 
@@ -248,7 +264,11 @@ export function ThemeSettings() {
           fieldKey.toLowerCase().includes(query)
         );
       });
-      return { ...section, rows };
+      return {
+        ...section,
+        allowSync: "allowSync" in section ? section.allowSync : true,
+        rows,
+      };
     }).filter((section) => section.rows.length > 0);
   }, [searchQuery, t]);
 
@@ -439,9 +459,10 @@ export function ThemeSettings() {
                                   searchQuery.trim().length > 0;
                                 const isOpen =
                                   forcedOpen || openSections[section.id];
+                                const canSync = section.allowSync !== false;
                                 const previewColors = section.rows
                                   .map((fieldKey) => currentPalette[fieldKey])
-                                  .slice(0, 3);
+                                  .slice(0, section.id === "semantic" ? 4 : 3);
                                 return (
                                   <Collapsible
                                     key={section.id}
@@ -491,35 +512,39 @@ export function ThemeSettings() {
                                             </div>
                                           </button>
                                         </CollapsibleTrigger>
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <Button
-                                              type="button"
-                                              variant="outline"
-                                              size="icon"
-                                              className="h-9 w-9 shrink-0 rounded-lg border-border/70 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                              aria-label={t(
-                                                "settings.themeSyncSection",
+                                        {canSync ? (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="icon"
+                                                className="h-9 w-9 shrink-0 rounded-lg border-border/70 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                                aria-label={t(
+                                                  "settings.themeSyncSection",
+                                                )}
+                                                onClick={() =>
+                                                  setCustomThemeColors(
+                                                    "light",
+                                                    getSectionSyncValues(
+                                                      section.id,
+                                                      currentPalette,
+                                                    ),
+                                                  )
+                                                }
+                                              >
+                                                <Sparkles className="h-4 w-4" />
+                                              </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="left">
+                                              {t(
+                                                "settings.themeSyncSectionTooltip",
                                               )}
-                                              onClick={() =>
-                                                setCustomThemeColors(
-                                                  "light",
-                                                  getSectionSyncValues(
-                                                    section.id,
-                                                    currentPalette,
-                                                  ),
-                                                )
-                                              }
-                                            >
-                                              <Sparkles className="h-4 w-4" />
-                                            </Button>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="left">
-                                            {t(
-                                              "settings.themeSyncSectionTooltip",
-                                            )}
-                                          </TooltipContent>
-                                        </Tooltip>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        ) : (
+                                          <div className="h-9 w-9 shrink-0" />
+                                        )}
                                       </div>
 
                                       <CollapsibleContent className="space-y-1.5 pt-1.5">
@@ -917,8 +942,8 @@ function ColorPopover({
           aria-label={label}
         />
       </PopoverTrigger>
-      <PopoverContent className="w-[22rem] rounded-2xl border-border/70 p-4">
-        <div className="space-y-4">
+      <PopoverContent className="w-[19rem] rounded-2xl border-border/70 p-3">
+        <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-foreground">
@@ -929,12 +954,12 @@ function ColorPopover({
               </div>
             </div>
             <div
-              className="h-12 w-12 rounded-2xl border border-border/70 shadow-sm"
+              className="h-10 w-10 rounded-xl border border-border/70 shadow-sm"
               style={{ backgroundColor: value }}
             />
           </div>
 
-          <label className="block space-y-2">
+          <label className="block space-y-1.5">
             <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t("settings.themeColorHex")}
             </span>
@@ -952,11 +977,11 @@ function ColorPopover({
                 }
               }}
               aria-label={`${label} ${t("settings.themeColorHex")}`}
-              className="h-10 rounded-xl font-mono"
+              className="h-9 rounded-xl font-mono"
             />
           </label>
 
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t("settings.themeColorField")}
             </div>
@@ -968,7 +993,7 @@ function ColorPopover({
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(hsv.s * 100)}
-              className="relative h-44 w-full cursor-crosshair overflow-hidden rounded-2xl border border-border/70"
+              className="relative h-36 w-full cursor-crosshair overflow-hidden rounded-xl border border-border/70"
               style={{ backgroundColor: hueColor }}
               onPointerDown={(event) => startDrag(event, updateFromSquare)}
               onKeyDown={handleSquareKeyDown}
@@ -985,7 +1010,7 @@ function ColorPopover({
               />
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   {t("settings.themeColorHue")}
@@ -1002,7 +1027,7 @@ function ColorPopover({
                 aria-valuemin={0}
                 aria-valuemax={360}
                 aria-valuenow={Math.round(hsv.h)}
-                className="relative h-4 w-full cursor-ew-resize rounded-full border border-border/70"
+                className="relative h-3.5 w-full cursor-ew-resize rounded-full border border-border/70"
                 style={{
                   background:
                     "linear-gradient(90deg, #ff0000 0%, #ffff00 16.6%, #00ff00 33.3%, #00ffff 50%, #0000ff 66.6%, #ff00ff 83.3%, #ff0000 100%)",
@@ -1020,18 +1045,18 @@ function ColorPopover({
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t("settings.themeQuickPicks")}
             </div>
-            <div className="grid grid-cols-8 gap-2">
+            <div className="grid grid-cols-8 gap-1.5">
               {quickColors.map((color) => (
                 <button
                   key={`${label}-${color}`}
                   type="button"
                   aria-label={`${label} ${color.toUpperCase()}`}
                   className={cn(
-                    "h-8 w-8 rounded-lg border shadow-sm transition-transform hover:scale-105",
+                    "h-7 w-7 rounded-md border shadow-sm transition-transform hover:scale-105",
                     value.toLowerCase() === color.toLowerCase()
                       ? "border-primary ring-2 ring-primary/25"
                       : "border-border/70",
@@ -1058,6 +1083,14 @@ function ThemePreviewPanel({
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const statSurface = mixHex(palette.card, palette.background, 0.22);
+  const ringShadow = (() => {
+    const { r, g, b } = hexToRgb(palette.ring);
+    return `0 0 0 3px rgba(${r}, ${g}, ${b}, 0.18)`;
+  })();
+  const previewButtonClass =
+    "inline-flex items-center justify-center rounded-xl px-3 py-2 text-xs font-medium";
+  const previewInputClass =
+    "flex h-10 items-center rounded-xl border bg-transparent px-3 text-sm shadow-none";
 
   return (
     <div className="space-y-3 rounded-2xl border border-border/70 bg-card/55 p-4 shadow-sm">
@@ -1090,16 +1123,15 @@ function ThemePreviewPanel({
                 : t("settings.themePaletteDark")}
             </div>
           </div>
-          <button
-            type="button"
-            className="rounded-full px-3 py-1.5 text-xs font-medium shadow-sm"
+          <div
+            className="inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium shadow-sm"
             style={{
               backgroundColor: palette.primary,
               color: palette.primaryForeground,
             }}
           >
             {t("common.save")}
-          </button>
+          </div>
         </div>
 
         <div className="grid gap-3 p-4">
@@ -1134,109 +1166,234 @@ function ThemePreviewPanel({
               </span>
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-2">
-              <div
-                className="rounded-2xl border p-3"
-                style={{
-                  backgroundColor: statSurface,
-                  borderColor: palette.border,
-                }}
-              >
-                <div
-                  className="text-[11px] uppercase tracking-wide"
-                  style={{ color: palette.mutedForeground }}
-                >
-                  {t("settings.themeColorPrimary")}
-                </div>
-                <div className="mt-1 text-sm font-semibold">
-                  {t("settings.themePreviewStatA")}
-                </div>
-              </div>
-              <div
-                className="rounded-2xl border p-3"
-                style={{
-                  backgroundColor: statSurface,
-                  borderColor: palette.border,
-                }}
-              >
-                <div
-                  className="text-[11px] uppercase tracking-wide"
-                  style={{ color: palette.mutedForeground }}
-                >
-                  {t("settings.themeColorAccent")}
-                </div>
-                <div className="mt-1 text-sm font-semibold">
-                  {t("settings.themePreviewStatB")}
-                </div>
-              </div>
-            </div>
-
             <div className="mt-4 space-y-3">
-              <div
-                className="rounded-2xl border p-3"
-                style={{
-                  backgroundColor: palette.popover,
-                  borderColor: palette.input,
-                  color: palette.popoverForeground,
-                }}
-              >
-                <div className="mb-2 text-xs font-medium">
-                  {t("settings.themeSectionPopover")}
-                </div>
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)]">
                 <div
-                  className="rounded-xl border px-3 py-2 text-sm"
+                  className="rounded-2xl border p-3"
                   style={{
-                    borderColor: palette.input,
-                    color: palette.mutedForeground,
+                    backgroundColor: statSurface,
+                    borderColor: palette.border,
                   }}
                 >
-                  sk-cc-switch-demo
+                  <div
+                    className="mb-2 text-[11px] font-medium uppercase tracking-wide"
+                    style={{ color: palette.mutedForeground }}
+                  >
+                    {t("settings.themePreviewStatusLabel")}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <span
+                      className="rounded-full px-2.5 py-1 text-[10px] font-semibold"
+                      style={{
+                        backgroundColor: palette.accent,
+                        color: palette.accentForeground,
+                      }}
+                    >
+                      {t("common.enabled")}
+                    </span>
+                    <span
+                      className="rounded-full px-2.5 py-1 text-[10px] font-semibold"
+                      style={{
+                        backgroundColor: palette.secondary,
+                        color: palette.secondaryForeground,
+                        border: `1px solid ${palette.border}`,
+                      }}
+                    >
+                      {t("settings.themePreviewSelected")}
+                    </span>
+                  </div>
+                </div>
+
+                <div
+                  className="rounded-2xl border p-3"
+                  style={{
+                    backgroundColor: palette.popover,
+                    borderColor: palette.input,
+                    color: palette.popoverForeground,
+                  }}
+                >
+                  <div
+                    className="mb-3 text-[11px] font-medium uppercase tracking-wide"
+                    style={{ color: palette.popoverForeground }}
+                  >
+                    {t("settings.themePreviewInputLabel")}
+                  </div>
+
+                  <div className="grid gap-2.5 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <div
+                        className="text-[11px] font-medium uppercase tracking-wide"
+                        style={{ color: palette.mutedForeground }}
+                      >
+                        {t("settings.themePreviewInputDefault")}
+                      </div>
+                      <div
+                        className={previewInputClass}
+                        style={{
+                          backgroundColor: palette.background,
+                          borderColor: palette.input,
+                          color: palette.mutedForeground,
+                        }}
+                      >
+                        {t("settings.themePreviewInputPlaceholder")}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div
+                        className="text-[11px] font-medium uppercase tracking-wide"
+                        style={{ color: palette.mutedForeground }}
+                      >
+                        {t("settings.themePreviewInputFocused")}
+                      </div>
+                      <div className="rounded-xl" style={{ boxShadow: ringShadow }}>
+                        <div
+                          className={previewInputClass}
+                          style={{
+                            backgroundColor: palette.background,
+                            borderColor: palette.ring,
+                            color: palette.popoverForeground,
+                          }}
+                        >
+                          sk-cc-switch-demo
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="rounded-xl px-3 py-2 text-xs font-medium shadow-sm"
-                  style={{
-                    backgroundColor: palette.primary,
-                    color: palette.primaryForeground,
-                  }}
+              <div
+                className="rounded-2xl border p-3"
+                style={{
+                  backgroundColor: statSurface,
+                  borderColor: palette.border,
+                }}
+              >
+                <div
+                  className="mb-2 text-[11px] font-medium uppercase tracking-wide"
+                  style={{ color: palette.mutedForeground }}
                 >
-                  {t("common.confirm")}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-xl border px-3 py-2 text-xs font-medium"
-                  style={{
-                    backgroundColor: palette.secondary,
-                    borderColor: palette.border,
-                    color: palette.secondaryForeground,
-                  }}
+                  {t("settings.themePreviewActionsLabel")}
+                </div>
+                <div
+                  className="mb-3 text-xs"
+                  style={{ color: palette.mutedForeground }}
                 >
-                  {t("common.cancel")}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-xl border px-3 py-2 text-xs font-medium"
-                  style={{
-                    backgroundColor: palette.accent,
-                    borderColor: palette.border,
-                    color: palette.accentForeground,
-                  }}
+                  {t("settings.themePreviewActionsHint")}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <div
+                    className={`${previewButtonClass} shadow-sm`}
+                    style={{
+                      backgroundColor: palette.primary,
+                      color: palette.primaryForeground,
+                    }}
+                  >
+                    {t("common.confirm")}
+                  </div>
+                  <div
+                    className={`${previewButtonClass} border`}
+                    style={{
+                      backgroundColor: palette.secondary,
+                      borderColor: palette.border,
+                      color: palette.secondaryForeground,
+                    }}
+                  >
+                    {t("common.cancel")}
+                  </div>
+                  <div
+                    className={`${previewButtonClass} border`}
+                    style={{
+                      backgroundColor: palette.accent,
+                      borderColor: palette.border,
+                      color: palette.accentForeground,
+                    }}
+                  >
+                    {t("settings.themePreviewAccent")}
+                  </div>
+                  <div
+                    className={previewButtonClass}
+                    style={{
+                      backgroundColor: palette.destructive,
+                      color: palette.destructiveForeground,
+                    }}
+                  >
+                    {t("settings.themeSectionDestructive")}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="rounded-2xl border p-3"
+                style={{
+                  backgroundColor: palette.card,
+                  borderColor: palette.border,
+                }}
+              >
+                <div
+                  className="mb-2 text-[11px] font-medium uppercase tracking-wide"
+                  style={{ color: palette.mutedForeground }}
                 >
-                  {t("settings.themePreviewAccent")}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-xl px-3 py-2 text-xs font-medium"
-                  style={{
-                    backgroundColor: palette.destructive,
-                    color: palette.destructiveForeground,
-                  }}
+                  {t("settings.themePreviewToastLabel")}
+                </div>
+                <div
+                  className="mb-3 text-xs"
+                  style={{ color: palette.mutedForeground }}
                 >
-                  {t("settings.themeSectionDestructive")}
-                </button>
+                  {t("settings.themePreviewToastHint")}
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {[
+                    {
+                      key: "success",
+                      title: t("settings.themePreviewToastSuccess"),
+                      background: mixHex(palette.success, palette.card, 0.88),
+                      border: mixHex(palette.success, palette.card, 0.74),
+                      color: palette.success,
+                    },
+                    {
+                      key: "info",
+                      title: t("settings.themePreviewToastInfo"),
+                      background: mixHex(palette.info, palette.card, 0.88),
+                      border: mixHex(palette.info, palette.card, 0.74),
+                      color: palette.info,
+                    },
+                    {
+                      key: "warning",
+                      title: t("settings.themePreviewToastWarning"),
+                      background: mixHex(palette.warning, palette.card, 0.88),
+                      border: mixHex(palette.warning, palette.card, 0.74),
+                      color: palette.warning,
+                    },
+                    {
+                      key: "error",
+                      title: t("settings.themePreviewToastError"),
+                      background: mixHex(palette.error, palette.card, 0.88),
+                      border: mixHex(palette.error, palette.card, 0.74),
+                      color: palette.error,
+                    },
+                  ].map((toastPreview) => (
+                    <div
+                      key={toastPreview.key}
+                      className="rounded-xl border px-3 py-2.5 shadow-sm"
+                      style={{
+                        backgroundColor: toastPreview.background,
+                        borderColor: toastPreview.border,
+                        color: toastPreview.color,
+                      }}
+                    >
+                      <div className="text-xs font-semibold">
+                        {toastPreview.title}
+                      </div>
+                      <div className="mt-1 text-[11px] opacity-90">
+                        {t("settings.themePreviewToastBody")}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

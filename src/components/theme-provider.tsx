@@ -31,22 +31,43 @@ function parseStoredCustomTheme(value: string | null): CustomThemeConfig | null 
 
   try {
     const parsed = JSON.parse(value) as Partial<CustomThemeConfig>;
-    const result = { ...DEFAULT_CUSTOM_THEME.light };
-    const palette = parsed.light;
+    const light = { ...DEFAULT_CUSTOM_THEME.light };
 
-    if (palette) {
+    if (parsed.light) {
       for (const token of CUSTOM_THEME_TOKENS) {
-        const candidate = palette[token];
+        const candidate = parsed.light[token];
         if (typeof candidate === "string" && isHexColor(normalizeHex(candidate))) {
-          result[token] = normalizeHex(candidate);
+          light[token] = normalizeHex(candidate);
         }
       }
     }
 
-    return syncDerivedDarkPalette({
-      light: result,
+    const restored = syncDerivedDarkPalette({
+      light,
       dark: DEFAULT_CUSTOM_THEME.dark,
     });
+
+    if (!parsed.dark) {
+      return restored;
+    }
+
+    const dark = { ...restored.dark };
+    let hasExplicitDarkOverrides = false;
+
+    for (const token of CUSTOM_THEME_TOKENS) {
+      const candidate = parsed.dark[token];
+      if (typeof candidate === "string" && isHexColor(normalizeHex(candidate))) {
+        dark[token] = normalizeHex(candidate);
+        hasExplicitDarkOverrides = true;
+      }
+    }
+
+    return hasExplicitDarkOverrides
+      ? {
+          light: restored.light,
+          dark,
+        }
+      : restored;
   } catch {
     return null;
   }
@@ -99,6 +120,21 @@ export function ThemeProvider({
   presetStorageKey = "cc-switch-theme-preset",
   customThemeStorageKey = "cc-switch-theme-custom",
 }: ThemeProviderProps) {
+  const syncLightPalette = (
+    current: CustomThemeConfig,
+    nextLight: CustomThemePalette,
+  ) =>
+    syncDerivedDarkPalette(
+      {
+        ...current,
+        light: nextLight,
+      },
+      {
+        preserveDarkOverrides: true,
+        sourceConfig: current,
+      },
+    );
+
   const getInitialTheme = () => {
     if (typeof window === "undefined") {
       return defaultTheme;
@@ -242,7 +278,9 @@ export function ThemeProvider({
       hexToHslString(palette.destructiveForeground),
     );
     root.style.setProperty("--success", hexToHslString(statusPalette.success));
+    root.style.setProperty("--info", hexToHslString(palette.info));
     root.style.setProperty("--warning", hexToHslString(statusPalette.warning));
+    root.style.setProperty("--error", hexToHslString(palette.error));
     root.style.setProperty("--border", hexToHslString(palette.border));
     root.style.setProperty("--input", hexToHslString(palette.input));
     root.style.setProperty("--ring", hexToHslString(palette.ring));
@@ -352,15 +390,17 @@ export function ThemeProvider({
         if (!isHexColor(normalized)) return;
 
         setCustomThemeState((current) => {
-          const next = {
-            ...current,
-            [mode]: {
-              ...current[mode],
-              [token]: normalized,
-            },
+          const nextPalette = {
+            ...current[mode],
+            [token]: normalized,
           };
 
-          return mode === "light" ? syncDerivedDarkPalette(next) : next;
+          return mode === "light"
+            ? syncLightPalette(current, nextPalette)
+            : {
+                ...current,
+                [mode]: nextPalette,
+              };
         });
       },
       setCustomThemeColors: (
@@ -375,17 +415,19 @@ export function ThemeProvider({
         if (entries.length === 0) return;
 
         setCustomThemeState((current) => {
-          const next = {
-            ...current,
-            [mode]: {
-              ...current[mode],
-              ...Object.fromEntries(
-                entries.map(([token, value]) => [token, normalizeHex(value)]),
-              ),
-            },
+          const nextPalette = {
+            ...current[mode],
+            ...Object.fromEntries(
+              entries.map(([token, value]) => [token, normalizeHex(value)]),
+            ),
           };
 
-          return mode === "light" ? syncDerivedDarkPalette(next) : next;
+          return mode === "light"
+            ? syncLightPalette(current, nextPalette)
+            : {
+                ...current,
+                [mode]: nextPalette,
+              };
         });
       },
       resetCustomTheme: (mode?: CustomThemeMode) => {
@@ -395,10 +437,7 @@ export function ThemeProvider({
           }
 
           if (mode === "light") {
-            return syncDerivedDarkPalette({
-              ...current,
-              light: DEFAULT_CUSTOM_THEME.light,
-            });
+            return syncLightPalette(current, DEFAULT_CUSTOM_THEME.light);
           }
 
           return {

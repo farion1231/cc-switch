@@ -28,6 +28,10 @@ const themeState = vi.hoisted(() => {
     accentForeground: "#18181b",
     destructive: "#ef4444",
     destructiveForeground: "#fafafa",
+    success: "#16a34a",
+    info: "#2563eb",
+    warning: "#d97706",
+    error: "#ef4444",
     border: "#e4e4e7",
     input: "#e4e4e7",
     ring: "#1f9cff",
@@ -199,5 +203,92 @@ describe("ThemeSettings", () => {
     expect(
       removeSpy.mock.calls.some(([type]) => type === "pointercancel"),
     ).toBe(true);
+  });
+
+  it("filters sections by search query and syncs linked colors for the matching section", () => {
+    render(<ThemeSettings />);
+
+    fireEvent.change(screen.getByPlaceholderText("settings.themeEditorSearchPlaceholder"), {
+      target: { value: "primary" },
+    });
+
+    expect(screen.getByText("settings.themeSectionPrimary")).toBeInTheDocument();
+    expect(screen.queryByText("settings.themeSectionSecondary")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("settings.themeSyncSection"));
+
+    expect(themeState.setCustomThemeColors).toHaveBeenCalledWith("light", {
+      primaryForeground: "#ffffff",
+    });
+  });
+
+  it("shows semantic colors as an advanced section without a sync action", () => {
+    render(<ThemeSettings />);
+
+    fireEvent.change(
+      screen.getByPlaceholderText("settings.themeEditorSearchPlaceholder"),
+      {
+        target: { value: "success" },
+      },
+    );
+
+    expect(
+      screen.getByText("settings.themeSectionSemanticAdvanced"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("settings.themeSyncSection"),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("settings.themeColorSuccess").length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it("renders the info toast preview from the dedicated info token", () => {
+    render(<ThemeSettings />);
+
+    const infoToast = screen
+      .getByText("settings.themePreviewToastInfo")
+      .parentElement;
+
+    expect(infoToast).toHaveStyle({
+      color: "rgb(37, 99, 235)",
+    });
+  });
+
+  it("renders preview controls as inert examples instead of interactive form elements", () => {
+    render(<ThemeSettings />);
+
+    expect(
+      screen.queryByRole("button", { name: "common.save" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "common.confirm" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "common.cancel" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("sk-cc-switch-demo")).not.toBeInTheDocument();
+    expect(screen.getByText("sk-cc-switch-demo").tagName).toBe("DIV");
+  });
+
+  it("allows partial editing inside the popover hex input before committing a valid value", () => {
+    render(<ThemeSettings />);
+
+    const input = screen.getByLabelText(
+      "settings.themeColorPrimary settings.themeColorHex",
+    );
+
+    fireEvent.change(input, { target: { value: "#12" } });
+    expect(input).toHaveValue("#12");
+    expect(themeState.setCustomThemeColor).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "#654321" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(themeState.setCustomThemeColor).toHaveBeenCalledWith(
+      "light",
+      "primary",
+      "#654321",
+    );
   });
 });

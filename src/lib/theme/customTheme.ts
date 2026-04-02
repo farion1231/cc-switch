@@ -18,6 +18,10 @@ export const CUSTOM_THEME_TOKENS = [
   "accentForeground",
   "destructive",
   "destructiveForeground",
+  "success",
+  "info",
+  "warning",
+  "error",
   "border",
   "input",
   "ring",
@@ -45,7 +49,9 @@ export const CUSTOM_THEME_VARIABLES = [
   "--destructive",
   "--destructive-foreground",
   "--success",
+  "--info",
   "--warning",
+  "--error",
   "--border",
   "--input",
   "--ring",
@@ -75,6 +81,10 @@ const DEFAULT_LIGHT_CUSTOM_THEME: CustomThemePalette = {
   accentForeground: "#18181b",
   destructive: "#ef4444",
   destructiveForeground: "#fafafa",
+  success: "#16a34a",
+  info: "#2563eb",
+  warning: "#d97706",
+  error: "#ef4444",
   border: "#e4e4e7",
   input: "#e4e4e7",
   ring: "#1f9cff",
@@ -336,6 +346,26 @@ export function deriveDarkPalette(base: CustomThemePalette): CustomThemePalette 
     maxSat: 0.78,
   });
   const destructiveForeground = getReadableTextColor(destructive);
+  const success = remapForDark(base.success, 0.56, {
+    satScale: 0.92,
+    minSat: 0.46,
+    maxSat: 0.82,
+  });
+  const info = remapForDark(base.info, 0.62, {
+    satScale: 0.96,
+    minSat: 0.44,
+    maxSat: 0.86,
+  });
+  const warning = remapForDark(base.warning, 0.62, {
+    satScale: 0.98,
+    minSat: 0.5,
+    maxSat: 0.9,
+  });
+  const error = remapForDark(base.error, 0.62, {
+    satScale: 0.94,
+    minSat: 0.5,
+    maxSat: 0.88,
+  });
   const border = remapForDark(base.border, 0.26, {
     satScale: 0.25,
     maxSat: 0.16,
@@ -368,6 +398,10 @@ export function deriveDarkPalette(base: CustomThemePalette): CustomThemePalette 
     accentForeground,
     destructive,
     destructiveForeground,
+    success,
+    info,
+    warning,
+    error,
     border,
     input,
     ring,
@@ -431,12 +465,11 @@ export function deriveChartPalette(
 
 export function deriveStatusPalette(
   palette: CustomThemePalette,
-  mode: CustomThemeMode,
+  _mode: CustomThemeMode,
 ) {
-  const chartPalette = deriveChartPalette(palette, mode);
   return {
-    success: chartPalette.chart2,
-    warning: chartPalette.chart3,
+    success: palette.success,
+    warning: palette.warning,
   };
 }
 
@@ -450,10 +483,46 @@ export function createCustomThemeConfig(
   };
 }
 
+function getExplicitDarkOverrides(
+  config: CustomThemeConfig,
+): Partial<CustomThemePalette> {
+  const derivedDark = deriveDarkPalette(config.light);
+  const overrides: Partial<CustomThemePalette> = {};
+
+  for (const token of CUSTOM_THEME_TOKENS) {
+    if (config.dark[token].toLowerCase() !== derivedDark[token].toLowerCase()) {
+      overrides[token] = config.dark[token];
+    }
+  }
+
+  return overrides;
+}
+
 export function syncDerivedDarkPalette(
   config: CustomThemeConfig,
+  options?: {
+    preserveDarkOverrides?: boolean;
+    sourceConfig?: CustomThemeConfig;
+  },
 ): CustomThemeConfig {
-  return createCustomThemeConfig(config.light);
+  const next = createCustomThemeConfig(config.light);
+
+  if (!options?.preserveDarkOverrides) {
+    return next;
+  }
+
+  const overrides = getExplicitDarkOverrides(options.sourceConfig ?? config);
+  if (Object.keys(overrides).length === 0) {
+    return next;
+  }
+
+  return {
+    light: next.light,
+    dark: {
+      ...next.dark,
+      ...overrides,
+    },
+  };
 }
 
 export const DEFAULT_CUSTOM_THEME = createCustomThemeConfig(

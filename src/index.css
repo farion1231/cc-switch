@@ -25,7 +25,9 @@
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
     --success: 142 71% 45%;
+    --info: 221 83% 53%;
     --warning: 38 92% 50%;
+    --error: 0 84.2% 60.2%;
 
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
@@ -52,7 +54,9 @@
     --accent-foreground: 24 45% 22%;
 
     --success: 166 68% 42%;
+    --info: 333 82% 60%;
     --warning: 32 93% 56%;
+    --error: 347 86% 64%;
     --border: 327 54% 85%;
     --input: 327 54% 85%;
     --ring: 333 82% 60%;
@@ -86,7 +90,9 @@
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
     --success: 142 69% 50%;
+    --info: 217 91% 64%;
     --warning: 27 95% 61%;
+    --error: 358 100% 81%;
 
     --border: 240 5% 24%;
     --input: 240 5% 24%;
@@ -118,7 +124,9 @@
     --accent-foreground: 20 64% 12%;
 
     --success: 170 66% 48%;
+    --info: 332 82% 68%;
     --warning: 36 88% 62%;
+    --error: 347 86% 70%;
     --border: 315 23% 26%;
     --input: 315 23% 26%;
     --ring: 332 82% 68%;
@@ -129,6 +137,7 @@
     --chart-5: 347 86% 70%;
     --radius: 1rem;
   }
+
 }
 
 .glass {
