@@ -294,14 +294,8 @@ Download the latest Linux build from the [Releases](../../releases) page:
 - `CC-Switch-v{version}-Linux.deb` (Debian/Ubuntu)
 - `CC-Switch-v{version}-Linux.rpm` (Fedora/RHEL/openSUSE)
 - `CC-Switch-v{version}-Linux.AppImage` (Universal)
-- `CC-Switch-v{version}-Linux.flatpak` (Flatpak)
 
-Flatpak install & run:
-
-```bash
-flatpak install --user ./CC-Switch-v{version}-Linux.flatpak
-flatpak run com.ccswitch.desktop
-```
+> **Flatpak**: Not included in official releases. You can build it yourself from the `.deb` — see [`flatpak/README.md`](flatpak/README.md) for instructions.
 
 <details>
 <summary><strong>Architecture Overview</strong></summary>
@@ -340,7 +334,7 @@ flatpak run com.ccswitch.desktop
 - **ProviderService**: Provider CRUD, switching, backfill, sorting
 - **McpService**: MCP server management, import/export, live file sync
 - **ProxyService**: Local proxy mode with hot-switching and format conversion
-- **SessionManager**: Claude Code conversation history browsing
+- **SessionManager**: Conversation history browsing across all supported apps
 - **ConfigService**: Config import/export, backup rotation
 - **SpeedtestService**: API endpoint latency measurement
 

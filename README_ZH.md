@@ -297,14 +297,8 @@ paru -S cc-switch-bin
 - `CC-Switch-v{版本号}-Linux.deb`（Debian/Ubuntu）
 - `CC-Switch-v{版本号}-Linux.rpm`（Fedora/RHEL/openSUSE）
 - `CC-Switch-v{版本号}-Linux.AppImage`（通用）
-- `CC-Switch-v{版本号}-Linux.flatpak`（Flatpak）
 
-Flatpak 安装与运行：
-
-```bash
-flatpak install --user ./CC-Switch-v{版本号}-Linux.flatpak
-flatpak run com.ccswitch.desktop
-```
+> **Flatpak**：官方 Release 不包含 Flatpak 包。如需使用，可从 `.deb` 自行构建 — 参见 [`flatpak/README.md`](flatpak/README.md)。
 
 <details>
 <summary><strong>架构总览</strong></summary>
@@ -343,7 +337,7 @@ flatpak run com.ccswitch.desktop
 - **ProviderService**：供应商增删改查、切换、回填、排序
 - **McpService**：MCP 服务器管理、导入导出、live 文件同步
 - **ProxyService**：本地 Proxy 模式，支持热切换和格式转换
-- **SessionManager**：Claude Code 对话历史浏览
+- **SessionManager**：全应用会话历史浏览
 - **ConfigService**：配置导入导出、备份轮换
 - **SpeedtestService**：API 端点延迟测量
 
