@@ -628,6 +628,25 @@
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
+    "cliDetection": {
+      "loading": "正在探测本机与 WSL 中的 CLI 配置位置…",
+      "nativeOnly": "当前仅显示本机探测结果。若你在 Windows 下安装了 WSL，也会在这里显示 WSL 内的 CLI 配置路径。",
+      "wslInstalled": "已检测到 WSL，当前展示的 WSL 发行版：{{distro}}",
+      "unknownDistro": "未知发行版",
+      "noData": "暂未获取到该 CLI 的探测信息。",
+      "nativeFound": "{{env}} 配置目录：{{path}}",
+      "nativeDefault": "{{env}} 默认配置目录：{{path}}",
+      "wslPath": "WSL（{{distro}}）配置目录：{{path}}",
+      "noWslPath": "未发现可展示的 WSL CLI 配置路径。",
+      "executable": "CLI 可执行文件：{{path}}",
+      "env": {
+        "windows": "Windows",
+        "wsl": "WSL",
+        "macos": "macOS",
+        "linux": "Linux",
+        "unknown": "未知环境"
+      }
+    },
     "checkForUpdates": "检查更新",
     "updateTo": "更新到 v{{version}}",
     "updating": "更新中...",

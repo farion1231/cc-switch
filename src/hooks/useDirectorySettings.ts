@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { homeDir, join } from "@tauri-apps/api/path";
@@ -50,6 +50,33 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   hermes: "hermesConfigDir",
 };
 
+export interface CliDetectionItem {
+  app: AppId;
+  native: {
+    envType: "windows" | "wsl" | "macos" | "linux" | "unknown";
+    executablePath?: string | null;
+    configDir: string;
+    configExists: boolean;
+  };
+  wsl?: {
+    envType: "windows" | "wsl" | "macos" | "linux" | "unknown";
+    distro: string;
+    executablePath?: string | null;
+    configDir: string;
+    configExists: boolean;
+  } | null;
+}
+
+export interface CliDetectionMap {
+  claude?: CliDetectionItem;
+  codex?: CliDetectionItem;
+  gemini?: CliDetectionItem;
+  opencode?: CliDetectionItem;
+}
+
+const isCliDetectableApp = (app: string): app is keyof CliDetectionMap =>
+  app === "claude" || app === "codex" || app === "gemini" || app === "opencode";
+
 const sanitizeDir = (value?: string | null): string | undefined => {
   if (!value) return undefined;
   const trimmed = value.trim();
@@ -92,6 +119,12 @@ export interface UseDirectorySettingsProps {
 export interface UseDirectorySettingsResult {
   appConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
+  cliDetections: CliDetectionMap;
+  cliDetectionMeta: {
+    isLoading: boolean;
+    wslInstalled: boolean;
+    wslDistro?: string;
+  };
   isLoading: boolean;
   initialAppConfigDir?: string;
   updateDirectory: (app: DirectoryAppId, value?: string) => void;
@@ -133,6 +166,15 @@ export function useDirectorySettings({
     opencode: "",
     openclaw: "",
     hermes: "",
+  });
+  const [cliDetections, setCliDetections] = useState<CliDetectionMap>({});
+  const [cliDetectionMeta, setCliDetectionMeta] = useState<{
+    isLoading: boolean;
+    wslInstalled: boolean;
+    wslDistro?: string;
+  }>({
+    isLoading: true,
+    wslInstalled: false,
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -229,6 +271,52 @@ export function useDirectorySettings({
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadCliDetections = async () => {
+      try {
+        const summary = await settingsApi.detectCliTools();
+        if (!active) return;
+
+        const mapped = summary.tools.reduce<CliDetectionMap>((acc, item) => {
+          if (isCliDetectableApp(item.app)) {
+            acc[item.app] = {
+              app: item.app,
+              native: item.native,
+              wsl: item.wsl,
+            };
+          }
+          return acc;
+        }, {});
+
+        setCliDetections(mapped);
+        setCliDetectionMeta({
+          isLoading: false,
+          wslInstalled: summary.wslInstalled,
+          wslDistro: summary.wslDistro ?? undefined,
+        });
+      } catch (error) {
+        console.error(
+          "[useDirectorySettings] Failed to load CLI detection info",
+          error,
+        );
+        if (!active) return;
+        setCliDetectionMeta({
+          isLoading: false,
+          wslInstalled: false,
+        });
+      }
+    };
+
+    void loadCliDetections();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const normalizedCliDetections = useMemo(() => cliDetections, [cliDetections]);
 
   const updateDirectoryState = useCallback(
     (key: DirectoryKey, value?: string) => {
@@ -360,6 +448,8 @@ export function useDirectorySettings({
   return {
     appConfigDir,
     resolvedDirs,
+    cliDetections: normalizedCliDetections,
+    cliDetectionMeta,
     isLoading,
     initialAppConfigDir: initialAppConfigDirRef.current,
     updateDirectory,
