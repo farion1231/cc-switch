@@ -1015,7 +1015,7 @@ end tell"#,
     Ok(())
 }
 
-/// macOS: 使用 open -a 启动支持 --args 参数的终端（Alacritty/Kitty/Ghostty）
+/// macOS: 使用 open -na 启动支持 --args 参数的终端（Alacritty/Kitty/Ghostty/WezTerm）
 #[cfg(target_os = "macos")]
 fn launch_macos_open_app(
     app_name: &str,
@@ -1025,7 +1025,7 @@ fn launch_macos_open_app(
     use std::process::Command;
 
     let mut cmd = Command::new("open");
-    cmd.arg("-a").arg(app_name).arg("--args");
+    cmd.arg("-na").arg(app_name).arg("--args");
 
     if use_e_flag {
         cmd.arg("-e");
