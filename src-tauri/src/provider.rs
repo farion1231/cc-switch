@@ -275,12 +275,18 @@ pub struct ProviderMeta {
     /// Claude 认证字段名（"ANTHROPIC_AUTH_TOKEN" 或 "ANTHROPIC_API_KEY"）
     #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
     pub api_key_field: Option<String>,
-
+    /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
+    #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
+    pub is_full_url: Option<bool>,
     /// Prompt cache key for OpenAI-compatible endpoints.
     /// When set, injected into converted requests to improve cache hit rate.
     /// If not set, provider ID is used automatically during format conversion.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    /// 累加模式应用中，该 provider 是否已写入 live config。
+    /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
+    #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
+    pub live_config_managed: Option<bool>,
     /// 供应商类型标识（用于特殊供应商检测）
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]

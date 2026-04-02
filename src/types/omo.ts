@@ -246,7 +246,7 @@ export const OMO_DISABLEABLE_SKILLS = [
 ] as const;
 
 export const OMO_DEFAULT_SCHEMA_URL =
-  "https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json";
+  "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json";
 
 export const OMO_SISYPHUS_AGENT_PLACEHOLDER = `{
   "disabled": false,

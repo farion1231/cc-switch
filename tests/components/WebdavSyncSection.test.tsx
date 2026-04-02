@@ -104,11 +104,12 @@ function renderSection(config?: WebDavSyncSettings) {
       mutations: { retry: false },
     },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <WebdavSyncSection config={config} />
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 
 describe("WebdavSyncSection", () => {
@@ -204,7 +205,7 @@ describe("WebdavSyncSection", () => {
       expect.objectContaining({
         baseUrl: "https://dav.example.com/dav/",
         username: "alice",
-        password: "secret",
+        password: "",
         autoSync: false,
       }),
       false,
@@ -220,6 +221,111 @@ describe("WebdavSyncSection", () => {
     expect(toastSuccessMock).toHaveBeenCalledWith(
       "settings.webdavSync.saveAndTestSuccess",
     );
+  });
+
+  it("preserves password only for the single post-save refresh", async () => {
+    const view = renderSection(baseConfig);
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.webdavSync.save" }));
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection config={{ ...baseConfig, password: "" }} />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "settings.webdavSync.passwordPlaceholder",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("secret");
+
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection config={{ ...baseConfig, password: "" }} />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "settings.webdavSync.passwordPlaceholder",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("");
+  });
+
+  it("does not preserve password after a later external config refresh", async () => {
+    const view = renderSection(baseConfig);
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.webdavSync.save" }));
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection config={{ ...baseConfig, password: "" }} />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "settings.webdavSync.passwordPlaceholder",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("secret");
+
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection
+          config={{ ...baseConfig, username: "bob", password: "" }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "settings.webdavSync.passwordPlaceholder",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("");
+  });
+
+  it("does not submit a preserved password again when testing without touching it", async () => {
+    const view = renderSection(baseConfig);
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.webdavSync.save" }));
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection config={{ ...baseConfig, password: "" }} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.webdavSync.test" }));
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavTestConnection).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          password: "",
+        }),
+        true,
+      );
+    });
   });
 
   it("saves auto sync as true after toggle", async () => {

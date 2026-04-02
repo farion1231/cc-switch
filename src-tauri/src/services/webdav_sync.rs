@@ -463,12 +463,10 @@ fn validate_manifest_compat(manifest: &SyncManifest, layout: RemoteLayout) -> Re
             return Err(localized(
                 "webdav.sync.manifest_db_version_incompatible",
                 format!(
-                    "远端数据库快照版本不兼容: db-v{} (本地 db-v{DB_COMPAT_VERSION})",
-                    db_compat_version
+                    "远端数据库快照版本不兼容: db-v{db_compat_version} (本地 db-v{DB_COMPAT_VERSION})"
                 ),
                 format!(
-                    "Remote database snapshot version is incompatible: db-v{} (local db-v{DB_COMPAT_VERSION})",
-                    db_compat_version
+                    "Remote database snapshot version is incompatible: db-v{db_compat_version} (local db-v{DB_COMPAT_VERSION})"
                 ),
             ));
         }
@@ -476,12 +474,10 @@ fn validate_manifest_compat(manifest: &SyncManifest, layout: RemoteLayout) -> Re
             return Err(localized(
                 "webdav.sync.manifest_db_version_incompatible",
                 format!(
-                    "远端数据库快照版本不兼容: db-v{} (本地最高支持 db-v{DB_COMPAT_VERSION})",
-                    db_compat_version
+                    "远端数据库快照版本不兼容: db-v{db_compat_version} (本地最高支持 db-v{DB_COMPAT_VERSION})"
                 ),
                 format!(
-                    "Remote database snapshot version is incompatible: db-v{} (local supports up to db-v{DB_COMPAT_VERSION})",
-                    db_compat_version
+                    "Remote database snapshot version is incompatible: db-v{db_compat_version} (local supports up to db-v{DB_COMPAT_VERSION})"
                 ),
             ));
         }
@@ -661,11 +657,8 @@ fn validate_artifact_size_limit(artifact_name: &str, size: u64) -> Result<(), Ap
         let max_mb = MAX_SYNC_ARTIFACT_BYTES / 1024 / 1024;
         return Err(localized(
             "webdav.sync.artifact_too_large",
-            format!("artifact {artifact_name} 超过下载上限（{} MB）", max_mb),
-            format!(
-                "Artifact {artifact_name} exceeds download limit ({} MB)",
-                max_mb
-            ),
+            format!("artifact {artifact_name} 超过下载上限（{max_mb} MB）"),
+            format!("Artifact {artifact_name} exceeds download limit ({max_mb} MB)"),
         ));
     }
     Ok(())

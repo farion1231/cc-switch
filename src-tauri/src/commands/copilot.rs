@@ -49,7 +49,7 @@ pub async fn copilot_poll_for_auth(
             Ok(false)
         }
         Err(e) => {
-            log::error!("[CopilotAuth] 轮询失败: {}", e);
+            log::error!("[CopilotAuth] 轮询失败: {e}");
             Err(e.to_string())
         }
     }
@@ -70,7 +70,7 @@ pub async fn copilot_poll_for_account(
             Ok(None)
         }
         Err(e) => {
-            log::error!("[CopilotAuth] 轮询失败: {}", e);
+            log::error!("[CopilotAuth] 轮询失败: {e}");
             Err(e.to_string())
         }
     }

@@ -148,7 +148,7 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
             },
             created_at: Some(created),
             last_active_at: Some(updated),
-            source_path: Some(format!("sqlite:{}:{}", db_display, session_id)),
+            source_path: Some(format!("sqlite:{db_display}:{session_id}")),
             resume_command: Some(format!("opencode session resume {session_id}")),
         });
     }

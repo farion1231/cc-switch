@@ -57,6 +57,9 @@ export interface ProviderPreset {
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
+
+  // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
+  hidden?: boolean;
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -704,6 +707,7 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "github",
     iconColor: "#000000",
+    hidden: true, // 临时隐藏：用户反馈消耗速度过快
   },
   {
     name: "Nvidia",

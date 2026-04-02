@@ -88,8 +88,8 @@ struct ToolBlockState {
 }
 
 /// 创建 Anthropic SSE 流
-pub fn create_anthropic_sse_stream(
-    stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -598,7 +598,9 @@ mod tests {
             "data: [DONE]\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream(upstream);
         let chunks: Vec<_> = converted.collect().await;
 
@@ -686,7 +688,9 @@ mod tests {
             "data: [DONE]\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream(upstream);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
