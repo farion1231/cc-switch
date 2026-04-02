@@ -70,6 +70,7 @@ mod tests {
         dir: TempDir,
         original_home: Option<String>,
         original_userprofile: Option<String>,
+        original_test_home: Option<String>,
     }
 
     impl TempHome {
@@ -77,14 +78,17 @@ mod tests {
             let dir = TempDir::new().expect("failed to create temp home");
             let original_home = env::var("HOME").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
 
             env::set_var("HOME", dir.path());
             env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
 
             Self {
                 dir,
                 original_home,
                 original_userprofile,
+                original_test_home,
             }
         }
     }
@@ -99,6 +103,11 @@ mod tests {
             match &self.original_userprofile {
                 Some(value) => env::set_var("USERPROFILE", value),
                 None => env::remove_var("USERPROFILE"),
+            }
+
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
     }
@@ -435,6 +444,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn rename_rejects_missing_original_provider() {
         with_test_home(|state, _| {
             let original = openclaw_provider("deepseek");
@@ -468,6 +478,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn db_only_additive_update_survives_live_config_parse_errors() {
         with_test_home(|state, home| {
             let provider = openclaw_provider("deepseek");
@@ -510,6 +521,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_skips_db_only_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("db-only-opencode");
@@ -529,6 +541,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_skips_db_only_openclaw_provider() {
         with_test_home(|state, _| {
             let provider = openclaw_provider("db-only-openclaw");
@@ -548,6 +561,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_preserves_legacy_live_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("legacy-opencode");
@@ -582,6 +596,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_restores_legacy_opencode_provider_after_live_reset() {
         with_test_home(|state, _| {
             let provider = opencode_provider("legacy-opencode-reset");
@@ -603,6 +618,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_restores_legacy_openclaw_provider_after_live_reset() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("legacy-openclaw-reset");
@@ -630,6 +646,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn import_opencode_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let provider = opencode_provider("imported-opencode");
@@ -657,6 +674,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn import_openclaw_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("imported-openclaw");
@@ -690,6 +708,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn legacy_additive_provider_still_errors_on_live_config_parse_failure() {
         with_test_home(|state, home| {
             let provider = openclaw_provider("legacy-provider");
@@ -716,6 +735,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn update_persists_non_current_omo_variants_in_database() {
         with_test_home(|state, _| {
             for category in ["omo", "omo-slim"] {
@@ -750,6 +770,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn update_current_omo_variant_rewrites_config_from_saved_provider() {
         with_test_home(|state, home| {
             for category in ["omo", "omo-slim"] {
@@ -800,6 +821,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn update_current_omo_variant_does_not_persist_database_when_file_write_fails() {
         with_test_home(|state, home| {
             let provider = opencode_omo_provider("omo-current", "omo");
@@ -841,6 +863,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn update_current_omo_variant_rolls_back_file_when_plugin_sync_fails() {
         with_test_home(|state, home| {
             let provider = opencode_omo_provider("omo-current", "omo");

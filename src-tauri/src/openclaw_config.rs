@@ -37,9 +37,7 @@ pub fn get_openclaw_dir() -> PathBuf {
         return override_dir;
     }
 
-    dirs::home_dir()
-        .map(|h| h.join(".openclaw"))
-        .unwrap_or_else(|| PathBuf::from(".openclaw"))
+    crate::config::get_home_dir().join(".openclaw")
 }
 
 /// 获取 OpenClaw 配置文件路径

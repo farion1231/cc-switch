@@ -37,9 +37,9 @@ pub fn get_opencode_dir() -> PathBuf {
         return override_dir;
     }
 
-    dirs::home_dir()
-        .map(|h| h.join(".config").join("opencode"))
-        .unwrap_or_else(|| PathBuf::from(".config").join("opencode"))
+    crate::config::get_home_dir()
+        .join(".config")
+        .join("opencode")
 }
 
 pub fn get_opencode_config_path() -> PathBuf {
