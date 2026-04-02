@@ -303,9 +303,18 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     onClose();
   };
 
+  const getResolvedTestCredentials = (): {
+    apiKey: string | undefined;
+    baseUrl: string | undefined;
+  } => ({
+    apiKey: script.apiKey?.trim() || providerCredentials.apiKey,
+    baseUrl: script.baseUrl?.trim() || providerCredentials.baseUrl,
+  });
+
   const handleTest = async () => {
     setTesting(true);
     try {
+      const resolvedCredentials = getResolvedTestCredentials();
       // Copilot 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT) {
         const accountId = resolveManagedAccountId(
@@ -337,14 +346,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         });
         return;
       }
-
       const result = await usageApi.testScript(
         provider.id,
         appId,
         script.code,
         script.timeout,
-        script.apiKey,
-        script.baseUrl,
+        resolvedCredentials.apiKey,
+        resolvedCredentials.baseUrl,
         script.accessToken,
         script.userId,
         selectedTemplate as "custom" | "general" | "newapi" | undefined,
@@ -412,13 +420,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     const preset = PRESET_TEMPLATES[presetName];
     if (preset) {
       if (presetName === TEMPLATE_TYPES.CUSTOM) {
-        // 🔧 自定义模式：用户应该在脚本中直接写完整 URL 和凭证，而不是依赖变量替换
-        // 这样可以避免同源检查导致的问题
-        // 如果用户想使用变量，需要手动在配置中设置 baseUrl/apiKey
+        // 自定义模板不显示单独凭证输入，但测试与真实查询都保持
+        // “脚本值优先，空值回退 provider” 的解析顺序。
         setScript({
           ...script,
           code: preset,
-          // 清除凭证，用户可选择手动输入或保持空
+          // 清除显式覆盖值，回到 provider 回退路径。
           apiKey: undefined,
           baseUrl: undefined,
           accessToken: undefined,
