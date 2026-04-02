@@ -872,6 +872,7 @@ pub fn run() {
             commands::restart_app,
             commands::check_for_updates,
             commands::is_portable_mode,
+            commands::copy_text_to_clipboard,
             commands::get_claude_plugin_status,
             commands::read_claude_plugin_config,
             commands::apply_claude_plugin_config,

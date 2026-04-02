@@ -34,6 +34,16 @@ pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> 
     Ok(true)
 }
 
+#[tauri::command]
+pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| format!("访问系统剪贴板失败: {e}"))?;
+    clipboard
+        .set_text(text)
+        .map_err(|e| format!("写入系统剪贴板失败: {e}"))?;
+    Ok(true)
+}
+
 /// 检查更新
 #[tauri::command]
 pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
