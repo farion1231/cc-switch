@@ -29,25 +29,34 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  type CustomThemePalette,
+  getReadableTextColor,
+  hexToHsv,
+  hsvToHex,
+  isHexColor,
+  mixHex,
+  normalizeHex,
+} from "@/lib/theme/customTheme";
 import { cn } from "@/lib/utils";
 
 const CUSTOM_THEME_FIELDS = [
   { key: "background", labelKey: "settings.themeColorBackground" },
   { key: "foreground", labelKey: "settings.themeColorForeground" },
-  { key: "primary", labelKey: "settings.themeColorBackground" },
-  { key: "primaryForeground", labelKey: "settings.themeColorForeground" },
-  { key: "secondary", labelKey: "settings.themeColorBackground" },
-  { key: "secondaryForeground", labelKey: "settings.themeColorForeground" },
-  { key: "accent", labelKey: "settings.themeColorBackground" },
-  { key: "accentForeground", labelKey: "settings.themeColorForeground" },
-  { key: "card", labelKey: "settings.themeColorBackground" },
-  { key: "cardForeground", labelKey: "settings.themeColorForeground" },
-  { key: "popover", labelKey: "settings.themeColorBackground" },
-  { key: "popoverForeground", labelKey: "settings.themeColorForeground" },
-  { key: "muted", labelKey: "settings.themeColorBackground" },
-  { key: "mutedForeground", labelKey: "settings.themeColorForeground" },
-  { key: "destructive", labelKey: "settings.themeColorBackground" },
-  { key: "destructiveForeground", labelKey: "settings.themeColorForeground" },
+  { key: "primary", labelKey: "settings.themeColorPrimary" },
+  { key: "primaryForeground", labelKey: "settings.themeColorPrimaryForeground" },
+  { key: "secondary", labelKey: "settings.themeColorSecondary" },
+  { key: "secondaryForeground", labelKey: "settings.themeColorSecondaryForeground" },
+  { key: "accent", labelKey: "settings.themeColorAccent" },
+  { key: "accentForeground", labelKey: "settings.themeColorAccentForeground" },
+  { key: "card", labelKey: "settings.themeColorCard" },
+  { key: "cardForeground", labelKey: "settings.themeColorCardForeground" },
+  { key: "popover", labelKey: "settings.themeColorPopover" },
+  { key: "popoverForeground", labelKey: "settings.themeColorPopoverForeground" },
+  { key: "muted", labelKey: "settings.themeColorMuted" },
+  { key: "mutedForeground", labelKey: "settings.themeColorMutedForeground" },
+  { key: "destructive", labelKey: "settings.themeColorDestructive" },
+  { key: "destructiveForeground", labelKey: "settings.themeColorDestructiveForeground" },
   { key: "border", labelKey: "settings.themeColorBorder" },
   { key: "input", labelKey: "settings.themeColorInput" },
   { key: "ring", labelKey: "settings.themeColorRing" },
@@ -125,288 +134,6 @@ const PRESET_SWATCHES = {
 type EditablePaletteMode = "light" | "dark";
 type CustomThemeFieldKey = (typeof CUSTOM_THEME_FIELDS)[number]["key"];
 type ThemeSectionId = (typeof SECTION_DEFINITIONS)[number]["id"];
-type CustomThemePalette = Record<CustomThemeFieldKey, string>;
-
-function normalizeHex(value: string): string {
-  const trimmed = value.trim();
-  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
-}
-
-function isHexColor(value: string): boolean {
-  return /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.test(value);
-}
-
-function hexToRgb(hex: string) {
-  const normalized = normalizeHex(hex).replace("#", "");
-  const fullHex =
-    normalized.length === 3
-      ? normalized
-          .split("")
-          .map((char) => `${char}${char}`)
-          .join("")
-      : normalized;
-  const int = Number.parseInt(fullHex, 16);
-  return {
-    r: (int >> 16) & 255,
-    g: (int >> 8) & 255,
-    b: int & 255,
-  };
-}
-
-function readableText(hex: string) {
-  const { r, g, b } = hexToRgb(hex);
-  const toLinear = (channel: number) => {
-    const value = channel / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  };
-
-  const luminance =
-    0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
-
-  return luminance > 0.58 ? "#111827" : "#ffffff";
-}
-
-function mixHex(base: string, target: string, ratio: number): string {
-  const a = hexToRgb(base);
-  const b = hexToRgb(target);
-  const channel = (start: number, end: number) =>
-    Math.round(start + (end - start) * ratio)
-      .toString(16)
-      .padStart(2, "0");
-
-  return `#${channel(a.r, b.r)}${channel(a.g, b.g)}${channel(a.b, b.b)}`;
-}
-
-function hexToHslValues(hex: string) {
-  const { r, g, b } = hexToRgb(hex);
-  const red = r / 255;
-  const green = g / 255;
-  const blue = b / 255;
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  let hue = 0;
-  let saturation = 0;
-  const lightness = (max + min) / 2;
-
-  if (max !== min) {
-    const delta = max - min;
-    saturation =
-      lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
-    switch (max) {
-      case red:
-        hue = (green - blue) / delta + (green < blue ? 6 : 0);
-        break;
-      case green:
-        hue = (blue - red) / delta + 2;
-        break;
-      default:
-        hue = (red - green) / delta + 4;
-        break;
-    }
-    hue /= 6;
-  }
-
-  return { h: hue * 360, s: saturation, l: lightness };
-}
-
-function hslToHex(h: number, s: number, l: number): string {
-  const hue = ((h % 360) + 360) % 360;
-  const saturation = Math.max(0, Math.min(1, s));
-  const lightness = Math.max(0, Math.min(1, l));
-  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
-  const x = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
-  const m = lightness - chroma / 2;
-
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-
-  if (hue < 60) {
-    red = chroma;
-    green = x;
-  } else if (hue < 120) {
-    red = x;
-    green = chroma;
-  } else if (hue < 180) {
-    green = chroma;
-    blue = x;
-  } else if (hue < 240) {
-    green = x;
-    blue = chroma;
-  } else if (hue < 300) {
-    red = x;
-    blue = chroma;
-  } else {
-    red = chroma;
-    blue = x;
-  }
-
-  return rgbToHex((red + m) * 255, (green + m) * 255, (blue + m) * 255);
-}
-
-function remapForDark(
-  hex: string,
-  targetLightness: number,
-  options: { satScale?: number; minSat?: number; maxSat?: number } = {},
-) {
-  const { h, s } = hexToHslValues(hex);
-  const scaledSaturation = s * (options.satScale ?? 1);
-  const nextSaturation = Math.min(
-    options.maxSat ?? 1,
-    Math.max(options.minSat ?? 0, scaledSaturation),
-  );
-  return hslToHex(h, nextSaturation, targetLightness);
-}
-
-function rgbToHex(r: number, g: number, b: number): string {
-  return `#${[r, g, b]
-    .map((channel) => Math.max(0, Math.min(255, Math.round(channel))))
-    .map((channel) => channel.toString(16).padStart(2, "0"))
-    .join("")}`;
-}
-
-function rgbToHsv(r: number, g: number, b: number) {
-  const red = r / 255;
-  const green = g / 255;
-  const blue = b / 255;
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  const delta = max - min;
-  let hue = 0;
-
-  if (delta !== 0) {
-    if (max === red) hue = ((green - blue) / delta) % 6;
-    else if (max === green) hue = (blue - red) / delta + 2;
-    else hue = (red - green) / delta + 4;
-  }
-
-  hue = Math.round(hue * 60);
-  if (hue < 0) hue += 360;
-
-  const saturation = max === 0 ? 0 : delta / max;
-  const value = max;
-  return { h: hue, s: saturation, v: value };
-}
-
-function hexToHsv(hex: string) {
-  const { r, g, b } = hexToRgb(hex);
-  return rgbToHsv(r, g, b);
-}
-
-function hsvToHex(h: number, s: number, v: number) {
-  const hue = ((h % 360) + 360) % 360;
-  const chroma = v * s;
-  const x = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
-  const m = v - chroma;
-
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-
-  if (hue < 60) {
-    red = chroma;
-    green = x;
-  } else if (hue < 120) {
-    red = x;
-    green = chroma;
-  } else if (hue < 180) {
-    green = chroma;
-    blue = x;
-  } else if (hue < 240) {
-    green = x;
-    blue = chroma;
-  } else if (hue < 300) {
-    red = x;
-    blue = chroma;
-  } else {
-    red = chroma;
-    blue = x;
-  }
-
-  return rgbToHex((red + m) * 255, (green + m) * 255, (blue + m) * 255);
-}
-
-function deriveDarkPalette(base: CustomThemePalette): CustomThemePalette {
-  const background = remapForDark(base.background, 0.12, {
-    satScale: 0.3,
-    maxSat: 0.18,
-  });
-  const foreground = readableText(background);
-  const card = remapForDark(base.card, 0.16, {
-    satScale: 0.35,
-    maxSat: 0.2,
-  });
-  const cardForeground = readableText(card);
-  const popover = remapForDark(base.popover, 0.16, {
-    satScale: 0.35,
-    maxSat: 0.2,
-  });
-  const popoverForeground = readableText(popover);
-  const primaryBase = hexToHslValues(base.primary);
-  const primary = hslToHex(
-    primaryBase.h,
-    Math.min(0.95, Math.max(0.5, primaryBase.s * 1.05)),
-    Math.min(0.68, Math.max(0.58, primaryBase.l * 0.92)),
-  );
-  const primaryForeground = readableText(primary);
-  const secondary = remapForDark(base.secondary, 0.22, {
-    satScale: 0.5,
-    maxSat: 0.28,
-  });
-  const secondaryForeground = readableText(secondary);
-  const muted = remapForDark(base.muted, 0.22, {
-    satScale: 0.35,
-    maxSat: 0.22,
-  });
-  const mutedForeground = mixHex(foreground, background, 0.32);
-  const accent = remapForDark(base.accent, 0.24, {
-    satScale: 0.55,
-    maxSat: 0.32,
-  });
-  const accentForeground = readableText(accent);
-  const destructive = remapForDark(base.destructive, 0.34, {
-    satScale: 0.85,
-    minSat: 0.45,
-    maxSat: 0.78,
-  });
-  const destructiveForeground = readableText(destructive);
-  const border = remapForDark(base.border, 0.26, {
-    satScale: 0.25,
-    maxSat: 0.16,
-  });
-  const input = remapForDark(base.input, 0.26, {
-    satScale: 0.25,
-    maxSat: 0.16,
-  });
-  const ringBase = hexToHslValues(base.ring);
-  const ring = hslToHex(
-    ringBase.h,
-    Math.min(0.92, Math.max(0.45, ringBase.s)),
-    Math.min(0.7, Math.max(0.58, ringBase.l * 0.96)),
-  );
-
-  return {
-    background,
-    foreground,
-    card,
-    cardForeground,
-    popover,
-    popoverForeground,
-    primary,
-    primaryForeground,
-    secondary,
-    secondaryForeground,
-    muted,
-    mutedForeground,
-    accent,
-    accentForeground,
-    destructive,
-    destructiveForeground,
-    border,
-    input,
-    ring,
-  };
-}
 
 function getFieldLabelKey(fieldKey: CustomThemeFieldKey) {
   return (
@@ -421,21 +148,21 @@ function getAutoColorForField(
 ) {
   switch (fieldKey) {
     case "foreground":
-      return readableText(palette.background);
+      return getReadableTextColor(palette.background);
     case "primaryForeground":
-      return readableText(palette.primary);
+      return getReadableTextColor(palette.primary);
     case "secondaryForeground":
-      return readableText(palette.secondary);
+      return getReadableTextColor(palette.secondary);
     case "accentForeground":
-      return readableText(palette.accent);
+      return getReadableTextColor(palette.accent);
     case "cardForeground":
-      return readableText(palette.card);
+      return getReadableTextColor(palette.card);
     case "popoverForeground":
-      return readableText(palette.popover);
+      return getReadableTextColor(palette.popover);
     case "mutedForeground":
-      return readableText(palette.muted);
+      return getReadableTextColor(palette.muted);
     case "destructiveForeground":
-      return readableText(palette.destructive);
+      return getReadableTextColor(palette.destructive);
     case "input":
       return palette.border;
     case "ring":
@@ -451,21 +178,21 @@ function getSectionSyncValues(
 ): Partial<CustomThemePalette> {
   switch (sectionId) {
     case "primary":
-      return { primaryForeground: readableText(palette.primary) };
+      return { primaryForeground: getReadableTextColor(palette.primary) };
     case "secondary":
-      return { secondaryForeground: readableText(palette.secondary) };
+      return { secondaryForeground: getReadableTextColor(palette.secondary) };
     case "accent":
-      return { accentForeground: readableText(palette.accent) };
+      return { accentForeground: getReadableTextColor(palette.accent) };
     case "base":
-      return { foreground: readableText(palette.background) };
+      return { foreground: getReadableTextColor(palette.background) };
     case "card":
-      return { cardForeground: readableText(palette.card) };
+      return { cardForeground: getReadableTextColor(palette.card) };
     case "popover":
-      return { popoverForeground: readableText(palette.popover) };
+      return { popoverForeground: getReadableTextColor(palette.popover) };
     case "muted":
-      return { mutedForeground: readableText(palette.muted) };
+      return { mutedForeground: getReadableTextColor(palette.muted) };
     case "destructive":
-      return { destructiveForeground: readableText(palette.destructive) };
+      return { destructiveForeground: getReadableTextColor(palette.destructive) };
     case "borderInput":
       return {
         input: palette.border,
@@ -543,9 +270,7 @@ export function ThemeSettings() {
     theme === "system" ? (systemPrefersDark ? "dark" : "light") : theme;
   const currentPalette = customTheme.light;
   const previewPalette =
-    resolvedPaletteMode === "dark"
-      ? deriveDarkPalette(currentPalette)
-      : currentPalette;
+    resolvedPaletteMode === "dark" ? customTheme.dark : currentPalette;
 
   return (
     <section className="space-y-4">
@@ -1012,6 +737,9 @@ function ColorRow({
           if (event.key === "Enter") {
             event.preventDefault();
             commitDraft();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            setDraftValue(value);
           }
         }}
         className="h-10 rounded-xl border-border/70 bg-card/40 font-mono text-sm"
@@ -1058,8 +786,37 @@ function ColorPopover({
 }: ColorPopoverProps) {
   const squareRef = useRef<HTMLDivElement | null>(null);
   const hueRef = useRef<HTMLDivElement | null>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  const [draftValue, setDraftValue] = useState(value);
   const hsv = useMemo(() => hexToHsv(value), [value]);
   const hueColor = useMemo(() => hsvToHex(hsv.h, 1, 1), [hsv.h]);
+
+  useEffect(() => {
+    setDraftValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.();
+      dragCleanupRef.current = null;
+    };
+  }, []);
+
+  const clearDragListeners = () => {
+    dragCleanupRef.current?.();
+    dragCleanupRef.current = null;
+  };
+
+  const commitDraft = (nextValue = draftValue) => {
+    const normalized = normalizeHex(nextValue);
+    if (!isHexColor(normalized)) {
+      setDraftValue(value);
+      return;
+    }
+
+    setDraftValue(normalized);
+    onChange(normalized);
+  };
 
   const updateFromSquare = (clientX: number, clientY: number) => {
     const rect = squareRef.current?.getBoundingClientRect();
@@ -1084,17 +841,70 @@ function ColorPopover({
     updater: (clientX: number, clientY: number) => void,
   ) => {
     event.preventDefault();
+    clearDragListeners();
     updater(event.clientX, event.clientY);
 
     const handleMove = (moveEvent: PointerEvent) =>
       updater(moveEvent.clientX, moveEvent.clientY);
     const handleUp = () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
+      clearDragListeners();
     };
 
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    dragCleanupRef.current = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+    };
+  };
+
+  const handleSquareKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 0.1 : 0.05;
+    let nextS = hsv.s;
+    let nextV = hsv.v;
+
+    switch (event.key) {
+      case "ArrowLeft":
+        nextS = Math.max(0, hsv.s - step);
+        break;
+      case "ArrowRight":
+        nextS = Math.min(1, hsv.s + step);
+        break;
+      case "ArrowUp":
+        nextV = Math.min(1, hsv.v + step);
+        break;
+      case "ArrowDown":
+        nextV = Math.max(0, hsv.v - step);
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    onChange(hsvToHex(hsv.h, nextS, nextV));
+  };
+
+  const handleHueKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 15 : 5;
+    let nextHue = hsv.h;
+
+    switch (event.key) {
+      case "ArrowLeft":
+      case "ArrowDown":
+        nextHue = (hsv.h - step + 360) % 360;
+        break;
+      case "ArrowRight":
+      case "ArrowUp":
+        nextHue = (hsv.h + step) % 360;
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    onChange(hsvToHex(nextHue, hsv.s, hsv.v));
   };
 
   return (
@@ -1129,13 +939,19 @@ function ColorPopover({
               {t("settings.themeColorHex")}
             </span>
             <Input
-              value={value}
-              onChange={(event) => {
-                const nextValue = normalizeHex(event.target.value);
-                if (isHexColor(nextValue)) {
-                  onChange(nextValue);
+              value={draftValue}
+              onChange={(event) => setDraftValue(event.target.value)}
+              onBlur={() => commitDraft()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitDraft();
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setDraftValue(value);
                 }
               }}
+              aria-label={`${label} ${t("settings.themeColorHex")}`}
               className="h-10 rounded-xl font-mono"
             />
           </label>
@@ -1146,9 +962,16 @@ function ColorPopover({
             </div>
             <div
               ref={squareRef}
+              role="slider"
+              tabIndex={0}
+              aria-label={`${label} ${t("settings.themeColorField")}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(hsv.s * 100)}
               className="relative h-44 w-full cursor-crosshair overflow-hidden rounded-2xl border border-border/70"
               style={{ backgroundColor: hueColor }}
               onPointerDown={(event) => startDrag(event, updateFromSquare)}
+              onKeyDown={handleSquareKeyDown}
             >
               <div className="absolute inset-0 bg-gradient-to-r from-white via-transparent to-transparent" />
               <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
@@ -1173,6 +996,12 @@ function ColorPopover({
               </div>
               <div
                 ref={hueRef}
+                role="slider"
+                tabIndex={0}
+                aria-label={`${label} ${t("settings.themeColorHue")}`}
+                aria-valuemin={0}
+                aria-valuemax={360}
+                aria-valuenow={Math.round(hsv.h)}
                 className="relative h-4 w-full cursor-ew-resize rounded-full border border-border/70"
                 style={{
                   background:
@@ -1181,6 +1010,7 @@ function ColorPopover({
                 onPointerDown={(event) =>
                   startDrag(event, (clientX) => updateFromHue(clientX))
                 }
+                onKeyDown={handleHueKeyDown}
               >
                 <div
                   className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-transparent shadow-[0_0_0_1px_rgba(17,24,39,0.32)]"
@@ -1199,6 +1029,7 @@ function ColorPopover({
                 <button
                   key={`${label}-${color}`}
                   type="button"
+                  aria-label={`${label} ${color.toUpperCase()}`}
                   className={cn(
                     "h-8 w-8 rounded-lg border shadow-sm transition-transform hover:scale-105",
                     value.toLowerCase() === color.toLowerCase()

@@ -221,7 +221,7 @@ export function ProviderPresetSelector({
               >
                 <ProviderIcon icon={preset.icon} name={preset.name} size={14} />
                 {preset.name}
-                <span className="absolute -right-1 -top-1 flex items-center gap-0.5 rounded-full border border-primary/30 bg-primary/12 px-1.5 py-0.5 text-[10px] font-bold text-primary shadow-sm">
+                <span className="absolute -right-1 -top-1 flex items-center gap-0.5 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary shadow-sm">
                   <Layers className="h-2.5 w-2.5" />
                 </span>
               </button>

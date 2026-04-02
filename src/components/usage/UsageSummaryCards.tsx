@@ -12,30 +12,31 @@ interface UsageSummaryCardsProps {
   refreshIntervalMs: number;
 }
 
+const TONE_STYLES = {
+  requests: {
+    color: "hsl(var(--chart-1))",
+    backgroundColor: "hsl(var(--chart-1) / 0.14)",
+  },
+  cost: {
+    color: "hsl(var(--chart-5))",
+    backgroundColor: "hsl(var(--chart-5) / 0.14)",
+  },
+  tokens: {
+    color: "hsl(var(--chart-4))",
+    backgroundColor: "hsl(var(--chart-4) / 0.14)",
+  },
+  cache: {
+    color: "hsl(var(--chart-3))",
+    backgroundColor: "hsl(var(--chart-3) / 0.14)",
+  },
+} as const;
+
 export function UsageSummaryCards({
   days,
   appType,
   refreshIntervalMs,
 }: UsageSummaryCardsProps) {
   const { t } = useTranslation();
-  const toneStyles = {
-    requests: {
-      color: "hsl(var(--chart-1))",
-      backgroundColor: "hsl(var(--chart-1) / 0.14)",
-    },
-    cost: {
-      color: "hsl(var(--chart-5))",
-      backgroundColor: "hsl(var(--chart-5) / 0.14)",
-    },
-    tokens: {
-      color: "hsl(var(--chart-4))",
-      backgroundColor: "hsl(var(--chart-4) / 0.14)",
-    },
-    cache: {
-      color: "hsl(var(--chart-3))",
-      backgroundColor: "hsl(var(--chart-3) / 0.14)",
-    },
-  } as const;
 
   const { data: summary, isLoading } = useUsageSummary(days, appType, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
@@ -58,21 +59,21 @@ export function UsageSummaryCards({
         title: t("usage.totalRequests"),
         value: totalRequests.toLocaleString(),
         icon: Activity,
-        tone: toneStyles.requests,
+        tone: TONE_STYLES.requests,
         subValue: null,
       },
       {
         title: t("usage.totalCost"),
         value: totalCost == null ? "--" : fmtUsd(totalCost, 4),
         icon: DollarSign,
-        tone: toneStyles.cost,
+        tone: TONE_STYLES.cost,
         subValue: null,
       },
       {
         title: t("usage.totalTokens"),
         value: totalTokens.toLocaleString(),
         icon: Layers,
-        tone: toneStyles.tokens,
+        tone: TONE_STYLES.tokens,
         subValue: (
           <div className="flex flex-col gap-1 text-xs text-muted-foreground mt-3 pt-3 border-t border-border/50">
             <div className="flex justify-between items-center">
@@ -94,7 +95,7 @@ export function UsageSummaryCards({
         title: t("usage.cacheTokens"),
         value: totalCacheTokens.toLocaleString(),
         icon: Database,
-        tone: toneStyles.cache,
+        tone: TONE_STYLES.cache,
         subValue: (
           <div className="flex flex-col gap-1 text-xs text-muted-foreground mt-3 pt-3 border-t border-border/50">
             <div className="flex justify-between items-center">
@@ -113,7 +114,7 @@ export function UsageSummaryCards({
         ),
       },
     ];
-  }, [summary, t, toneStyles]);
+  }, [summary, t]);
 
   const container = {
     hidden: { opacity: 0 },

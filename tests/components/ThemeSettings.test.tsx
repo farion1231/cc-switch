@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
@@ -92,6 +92,8 @@ vi.mock("@/components/ui/tooltip", () => ({
 
 describe("ThemeSettings", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       writable: true,
@@ -122,5 +124,80 @@ describe("ThemeSettings", () => {
     expect(
       screen.queryByText(/settings\.themeEditingCurrentMode/),
     ).not.toBeInTheDocument();
+  });
+
+  it("uses dedicated label keys for linked foreground and surface fields", () => {
+    render(<ThemeSettings />);
+
+    expect(
+      screen.getAllByText("settings.themeColorPrimaryForeground").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("settings.themeColorPopoverForeground").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("settings.themeColorMuted").length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      screen.getAllByText("settings.themeColorDestructiveForeground").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("allows partial hex editing and only commits when the value becomes valid", () => {
+    render(<ThemeSettings />);
+
+    const input = screen.getByLabelText(
+      "settings.themeColorPrimary settings.themeColorHex",
+    );
+
+    fireEvent.change(input, { target: { value: "#12" } });
+    expect(input).toHaveValue("#12");
+    expect(themeState.setCustomThemeColor).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "123456" } });
+    fireEvent.blur(input);
+
+    expect(themeState.setCustomThemeColor).toHaveBeenCalledWith(
+      "light",
+      "primary",
+      "#123456",
+    );
+  });
+
+  it("adds accessible labels to picker controls and clears drag listeners on unmount", () => {
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+
+    const { unmount } = render(<ThemeSettings />);
+
+    const fieldSlider = screen.getByLabelText(
+      "settings.themeColorPrimary settings.themeColorField",
+    );
+    const hueSlider = screen.getByLabelText(
+      "settings.themeColorPrimary settings.themeColorHue",
+    );
+    const quickPick = screen.getByLabelText(
+      "settings.themeColorPrimary #FFFFFF",
+    );
+
+    expect(fieldSlider).toHaveAttribute("role", "slider");
+    expect(hueSlider).toHaveAttribute("role", "slider");
+    expect(quickPick).toBeInTheDocument();
+
+    fireEvent.pointerDown(fieldSlider, { clientX: 12, clientY: 18 });
+    unmount();
+
+    expect(
+      addSpy.mock.calls.some(([type]) => type === "pointermove"),
+    ).toBe(true);
+    expect(
+      removeSpy.mock.calls.some(([type]) => type === "pointermove"),
+    ).toBe(true);
+    expect(
+      removeSpy.mock.calls.some(([type]) => type === "pointerup"),
+    ).toBe(true);
+    expect(
+      removeSpy.mock.calls.some(([type]) => type === "pointercancel"),
+    ).toBe(true);
   });
 });
