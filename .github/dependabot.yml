@@ -20,7 +20,6 @@ updates:
       interval: "weekly"
     labels:
       - "dependencies"
-      - "rust"
       - "backend"
     commit-message:
       prefix: "chore(deps)"
