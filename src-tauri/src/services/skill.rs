@@ -1412,7 +1412,8 @@ impl SkillService {
             .values()
             .map(|s| Self::normalize_skill_key(&s.directory))
             .collect();
-        let managed_app_paths = Self::collect_managed_app_paths(managed_skills.values());
+        let managed_app_sources = Self::collect_managed_app_sources(managed_skills.values());
+        let ssot_dir = Self::get_ssot_dir().ok();
 
         // 收集所有待扫描的目录及其来源标签
         let mut scan_sources: Vec<(PathBuf, String)> = Vec::new();
@@ -1437,18 +1438,32 @@ impl SkillService {
                     let normalized_directory = Self::normalize_skill_key(&directory);
                     let normalized_app_path = Self::app_relative_skill_path(&app, &directory)
                         .map(|relative| Self::normalize_skill_path(&relative));
+                    let is_managed_mapped_entry = if let (Some(app_path), Some(ssot_dir)) =
+                        (normalized_app_path.as_ref(), ssot_dir.as_ref())
+                    {
+                        if normalized_directory == *app_path {
+                            managed_app_sources
+                                .get(app.as_str())
+                                .and_then(|sources| sources.get(app_path))
+                                .map(|managed_directory| {
+                                    Self::is_synced_entry_for_source(
+                                        &path,
+                                        &ssot_dir.join(managed_directory),
+                                    )
+                                    .unwrap_or(false)
+                                })
+                                .unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
 
                     // 对Claude这类会改写live目录结构的app，除了完整目录外
                     // 还要按实际映射后的叶子路径判断是否已被CC Switch管理，避免同步出的leaf目录
                     // 再次被扫成unmanaged；但外部嵌套目录仍应保留为可见的unmanaged skill。
-                    if managed_dirs.contains(&normalized_directory)
-                        || normalized_app_path.as_ref().is_some_and(|path| {
-                            normalized_directory == *path
-                                && managed_app_paths
-                                    .get(app.as_str())
-                                    .is_some_and(|paths| paths.contains(path))
-                        })
-                    {
+                    if managed_dirs.contains(&normalized_directory) || is_managed_mapped_entry {
                         continue;
                     }
 
@@ -1677,8 +1692,14 @@ impl SkillService {
             fs::create_dir_all(parent)?;
         }
 
-        // 如果已存在则先删除（无论是 symlink 还是真实目录）
+        // 仅允许覆盖由 CC Switch 同步出来的目标，避免误删用户已有目录。
         if dest.exists() || Self::is_symlink(&dest) {
+            if !Self::is_synced_entry_for_source(&dest, &source)? {
+                return Err(anyhow!(
+                    "{app:?} skill 目标路径已存在且不是由 CC Switch 管理: {}",
+                    dest.display()
+                ));
+            }
             Self::remove_path(&dest)?;
         }
 
@@ -1981,7 +2002,7 @@ impl SkillService {
         value.replace('\\', "/").to_lowercase()
     }
 
-    fn collect_managed_app_paths<'a, I>(skills: I) -> HashMap<String, HashSet<String>>
+    fn collect_managed_app_sources<'a, I>(skills: I) -> HashMap<String, HashMap<String, String>>
     where
         I: IntoIterator<Item = &'a InstalledSkill>,
     {
@@ -1996,13 +2017,113 @@ impl SkillService {
                         if !skill.apps.is_enabled_for(&app) {
                             return None;
                         }
-                        Self::app_relative_skill_path(&app, &skill.directory)
-                            .map(|relative| Self::normalize_skill_path(&relative))
+                        Self::app_relative_skill_path(&app, &skill.directory).map(|relative| {
+                            (
+                                Self::normalize_skill_path(&relative),
+                                skill.directory.clone(),
+                            )
+                        })
                     })
                     .collect();
                 (app.as_str().to_string(), paths)
             })
             .collect()
+    }
+
+    fn is_synced_entry_for_source(path: &Path, source: &Path) -> Result<bool> {
+        if Self::is_symlink(path) {
+            return Ok(Self::is_symlink_to_source(path, source));
+        }
+
+        if !path.exists() {
+            return Ok(false);
+        }
+
+        Self::paths_match(source, path)
+    }
+
+    fn is_symlink_to_source(path: &Path, source: &Path) -> bool {
+        if !Self::is_symlink(path) {
+            return false;
+        }
+
+        let Ok(target) = fs::read_link(path) else {
+            return false;
+        };
+
+        let resolved = path
+            .parent()
+            .map(|parent| {
+                if target.is_absolute() {
+                    target.clone()
+                } else {
+                    parent.join(&target)
+                }
+            })
+            .unwrap_or(target.clone());
+
+        let canonical_source = source
+            .canonicalize()
+            .unwrap_or_else(|_| source.to_path_buf());
+        let canonical_target = resolved.canonicalize().unwrap_or(resolved);
+
+        canonical_target == canonical_source
+    }
+
+    fn paths_match(source: &Path, target: &Path) -> Result<bool> {
+        let source_meta = match fs::metadata(source) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => return Err(err.into()),
+        };
+        let target_meta = match fs::metadata(target) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => return Err(err.into()),
+        };
+
+        if source_meta.is_dir() != target_meta.is_dir()
+            || source_meta.is_file() != target_meta.is_file()
+        {
+            return Ok(false);
+        }
+
+        if source_meta.is_file() {
+            if source_meta.len() != target_meta.len() {
+                return Ok(false);
+            }
+            return Ok(fs::read(source)? == fs::read(target)?);
+        }
+
+        if !source_meta.is_dir() {
+            return Ok(false);
+        }
+
+        let mut source_entries = HashSet::new();
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            source_entries.insert(name.clone());
+
+            if !Self::paths_match(&entry.path(), &target.join(&name))? {
+                return Ok(false);
+            }
+        }
+
+        for entry in fs::read_dir(target)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if source_entries.contains(&name) || Self::is_ignored_sync_extra(&name) {
+                continue;
+            }
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    fn is_ignored_sync_extra(name: &std::ffi::OsStr) -> bool {
+        name.to_string_lossy().starts_with('.')
     }
 
     fn normalize_skill_path(path: &Path) -> String {

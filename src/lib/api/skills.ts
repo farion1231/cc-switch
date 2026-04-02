@@ -134,6 +134,28 @@ export function buildSkillIdentityKey(
   return `${normalizeSkillKeyPart(directory)}:${normalizeSkillKeyPart(repoOwner)}:${normalizeSkillKeyPart(repoName)}`;
 }
 
+export function getInstalledSkillDirectory(
+  skill: Pick<InstalledSkill, "id" | "directory">,
+): string {
+  const separatorIndex = skill.id.indexOf(":");
+  if (separatorIndex === -1) {
+    return skill.directory;
+  }
+
+  const directoryFromId = skill.id.slice(separatorIndex + 1);
+  return directoryFromId || skill.directory;
+}
+
+export function buildInstalledSkillIdentityKey(
+  skill: Pick<InstalledSkill, "id" | "directory" | "repoOwner" | "repoName">,
+): string {
+  return buildSkillIdentityKey(
+    getInstalledSkillDirectory(skill),
+    skill.repoOwner,
+    skill.repoName,
+  );
+}
+
 // ========== API ==========
 
 export const skillsApi = {

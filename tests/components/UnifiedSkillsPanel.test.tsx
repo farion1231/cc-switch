@@ -1,5 +1,11 @@
 import { createRef } from "react";
-import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  act,
+  fireEvent,
+} from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
@@ -123,10 +129,12 @@ describe("UnifiedSkillsPanel", () => {
   it("shows nested installed skill directory context", async () => {
     installedSkillsData = [
       {
-        id: "local:superpowers/using-superpowers",
+        id: "owner/repo:superpowers/using-superpowers",
         name: "using-superpowers",
         description: "Imported from Claude",
-        directory: "superpowers/using-superpowers",
+        directory: "using-superpowers",
+        repoOwner: "owner",
+        repoName: "repo",
         apps: {
           claude: true,
           codex: false,
@@ -152,10 +160,10 @@ describe("UnifiedSkillsPanel", () => {
     uninstallSkillMock.mockResolvedValue({});
     installedSkillsData = [
       {
-        id: "local:superpowers/using-superpowers",
+        id: "owner/repo:superpowers/using-superpowers",
         name: "using-superpowers",
         description: "Imported from Claude",
-        directory: "superpowers/using-superpowers",
+        directory: "using-superpowers",
         repoOwner: "owner",
         repoName: "repo",
         apps: {
@@ -178,7 +186,7 @@ describe("UnifiedSkillsPanel", () => {
 
     await waitFor(() => {
       expect(uninstallSkillMock).toHaveBeenCalledWith({
-        id: "local:superpowers/using-superpowers",
+        id: "owner/repo:superpowers/using-superpowers",
         skillKey: "superpowers/using-superpowers:owner:repo",
       });
     });

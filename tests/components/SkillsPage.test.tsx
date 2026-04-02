@@ -22,7 +22,9 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/components/ui/button", () => ({
-  Button: ({ children, ...props }: any) => <button {...props}>{children}</button>,
+  Button: ({ children, ...props }: any) => (
+    <button {...props}>{children}</button>
+  ),
 }));
 
 vi.mock("@/components/ui/input", () => ({
@@ -46,7 +48,9 @@ vi.mock("@/components/skills/SkillCard", () => ({
     <div>
       <span>{skill.name}</span>
       <span>{skill.installed ? "installed" : "uninstalled"}</span>
-      <button onClick={() => onInstall(skill)}>{`install-${skill.repoName}`}</button>
+      <button
+        onClick={() => onInstall(skill)}
+      >{`install-${skill.repoName}`}</button>
     </div>
   ),
 }));
@@ -92,10 +96,10 @@ describe("SkillsPage", () => {
     ];
     installedSkillsData = [
       {
-        id: "local:superpowers/using-superpowers",
+        id: "owner/repo:superpowers/using-superpowers",
         name: "using-superpowers",
         description: "Nested skill",
-        directory: "superpowers/using-superpowers",
+        directory: "using-superpowers",
         repoOwner: "owner",
         repoName: "repo",
         apps: {

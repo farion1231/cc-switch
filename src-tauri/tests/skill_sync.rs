@@ -531,6 +531,107 @@ fn sync_to_claude_cleans_legacy_nested_dir_and_scan_unmanaged_does_not_repeat() 
 }
 
 #[test]
+fn real_claude_leaf_skill_conflicting_with_managed_nested_skill_still_appears_as_unmanaged() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    write_skill(
+        &home.join(".claude").join("skills").join("brainstorming"),
+        "Real Claude Brainstorming",
+    );
+
+    let ssot_skill_dir = home
+        .join(".cc-switch")
+        .join("skills")
+        .join("superpowers")
+        .join("brainstorming");
+    write_skill(&ssot_skill_dir, "Managed Brainstorming");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:superpowers/brainstorming".to_string(),
+            name: "Managed Brainstorming".to_string(),
+            description: Some("Enabled for Claude".to_string()),
+            directory: "superpowers/brainstorming".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            installed_at: 1,
+        })
+        .expect("save managed nested skill");
+
+    let unmanaged = SkillService::scan_unmanaged(&state.db).expect("scan unmanaged skills");
+    assert!(
+        unmanaged.iter().any(|skill| skill.directory == "brainstorming"),
+        "real Claude leaf skill should stay visible as unmanaged even when a managed nested Claude skill maps to the same leaf path"
+    );
+}
+
+#[test]
+fn sync_to_claude_rejects_overwriting_real_leaf_skill_with_managed_nested_skill() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let real_leaf_dir = home.join(".claude").join("skills").join("brainstorming");
+    write_skill(&real_leaf_dir, "Real Claude Brainstorming");
+
+    let ssot_skill_dir = home
+        .join(".cc-switch")
+        .join("skills")
+        .join("superpowers")
+        .join("brainstorming");
+    write_skill(&ssot_skill_dir, "Managed Brainstorming");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:superpowers/brainstorming".to_string(),
+            name: "Managed Brainstorming".to_string(),
+            description: Some("Enabled for Claude".to_string()),
+            directory: "superpowers/brainstorming".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            installed_at: 1,
+        })
+        .expect("save managed nested skill");
+
+    let error = SkillService::sync_to_app(&state.db, &AppType::Claude)
+        .expect_err("sync should refuse to overwrite a real Claude leaf skill");
+    assert!(
+        error
+            .to_string()
+            .contains("目标路径已存在且不是由 CC Switch 管理"),
+        "unexpected error: {error:#}"
+    );
+    assert!(
+        fs::read_to_string(real_leaf_dir.join("SKILL.md"))
+            .expect("read real Claude skill")
+            .contains("Real Claude Brainstorming"),
+        "real Claude leaf skill should remain untouched after the rejected sync"
+    );
+}
+
+#[test]
 fn codex_only_nested_skill_does_not_block_real_claude_leaf_skill() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

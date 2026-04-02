@@ -30,7 +30,10 @@ import {
 import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
-import { buildSkillIdentityKey } from "@/lib/api/skills";
+import {
+  buildInstalledSkillIdentityKey,
+  getInstalledSkillDirectory,
+} from "@/lib/api/skills";
 import { toast } from "sonner";
 import { MCP_SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
@@ -139,11 +142,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       message: t("skills.uninstallConfirm", { name: skill.name }),
       onConfirm: async () => {
         try {
-          const skillKey = buildSkillIdentityKey(
-            skill.directory,
-            skill.repoOwner,
-            skill.repoName,
-          );
+          const skillKey = buildInstalledSkillIdentityKey(skill);
 
           const result = await uninstallMutation.mutateAsync({
             id: skill.id,
@@ -505,8 +504,9 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
     }
     return t("skills.local");
   }, [skill.repoOwner, skill.repoName, t]);
-  const nestedDirectory = /[\\/]/.test(skill.directory)
-    ? skill.directory
+  const installedDirectory = getInstalledSkillDirectory(skill);
+  const nestedDirectory = /[\\/]/.test(installedDirectory)
+    ? installedDirectory
     : null;
 
   return (

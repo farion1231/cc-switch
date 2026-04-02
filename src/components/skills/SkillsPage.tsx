@@ -28,7 +28,10 @@ import {
   useRemoveSkillRepo,
   useSearchSkillsSh,
 } from "@/hooks/useSkills";
-import { buildSkillIdentityKey } from "@/lib/api/skills";
+import {
+  buildInstalledSkillIdentityKey,
+  buildSkillIdentityKey,
+} from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import type {
   DiscoverableSkill,
@@ -122,9 +125,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const installedKeys = useMemo(() => {
       if (!installedSkills) return new Set<string>();
       return new Set(
-        installedSkills.map((s) =>
-          buildSkillIdentityKey(s.directory, s.repoOwner, s.repoName),
-        ),
+        installedSkills.map((skill) => buildInstalledSkillIdentityKey(skill)),
       );
     }, [installedSkills]);
 
