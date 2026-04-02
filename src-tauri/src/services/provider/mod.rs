@@ -312,7 +312,8 @@ base_url = "http://localhost:8080"
 
     #[tokio::test]
     #[serial]
-    async fn update_current_claude_provider_syncs_live_when_proxy_takeover_detected_without_backup() {
+    async fn update_current_claude_provider_syncs_live_when_proxy_takeover_detected_without_backup()
+    {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
@@ -369,7 +370,11 @@ base_url = "http://localhost:8080"
         )
         .expect("seed taken-over live file");
 
-        state.proxy_service.start().await.expect("start proxy service");
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
 
         let updated = Provider::with_id(
             "p1".into(),
@@ -1181,8 +1186,7 @@ impl ProviderService {
             let live_taken_over = state
                 .proxy_service
                 .detect_takeover_in_live_config_for_app(&app_type);
-            let should_sync_via_proxy =
-                is_proxy_running && (has_live_backup || live_taken_over);
+            let should_sync_via_proxy = is_proxy_running && (has_live_backup || live_taken_over);
 
             if should_sync_via_proxy {
                 futures::executor::block_on(

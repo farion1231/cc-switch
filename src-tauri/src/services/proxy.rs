@@ -132,9 +132,12 @@ impl ProxyService {
         &self,
         provider: &Provider,
     ) -> Result<(), String> {
-        let mut effective_settings =
-            build_effective_settings_with_common_config(self.db.as_ref(), &AppType::Claude, provider)
-                .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
+        let mut effective_settings = build_effective_settings_with_common_config(
+            self.db.as_ref(),
+            &AppType::Claude,
+            provider,
+        )
+        .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
         let (proxy_url, _) = self.build_proxy_urls().await?;
 
         Self::apply_claude_takeover_fields(&mut effective_settings, &proxy_url);
