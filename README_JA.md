@@ -17,6 +17,8 @@
 
 ## ❤️スポンサー
 
+> [ここに掲載しませんか？](mailto:farion1231@gmail.com)
+
 <details open>
 <summary>クリックで折りたたむ</summary>
 

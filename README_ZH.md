@@ -17,6 +17,8 @@
 
 ## ❤️赞助商
 
+> [想出现在这里？](mailto:farion1231@gmail.com)
+
 <details open>
 <summary>点击折叠</summary>
 
