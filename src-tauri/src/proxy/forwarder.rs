@@ -127,16 +127,10 @@ impl RequestForwarder {
         // 敏感词过滤（在转发前一次性处理原始 body）
         let mut body = body;
         if self.sensitive_word_config.enabled && !self.sensitive_word_config.file_path.is_empty() {
-            if let Some(words) = super::sensitive_word_filter::get_cached_sensitive_words(
+            super::sensitive_word_filter::filter_sensitive_words_with_cache(
+                &mut body,
                 &self.sensitive_word_config.file_path,
-            ) {
-                super::sensitive_word_filter::filter_sensitive_words(&mut body, &words);
-            } else {
-                log::debug!(
-                    "[SensitiveWordFilter] 当前文件未加载到缓存，跳过过滤: {}",
-                    self.sensitive_word_config.file_path
-                );
-            }
+            );
         }
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
