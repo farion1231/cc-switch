@@ -315,18 +315,26 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
-        // NOTE:
-        // 过去 OpenRouter 只有 OpenAI Chat Completions 兼容接口，需要把 Claude 的 `/v1/messages`
-        // 映射到 `/v1/chat/completions`，并做 Anthropic ↔ OpenAI 的格式转换。
-        //
-        // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
-        // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
-        //
-        let mut base = format!(
-            "{}/{}",
-            base_url.trim_end_matches('/'),
-            endpoint.trim_start_matches('/')
-        );
+        let base_trimmed = base_url.trim_end_matches('/');
+        let endpoint_trimmed = endpoint.trim_start_matches('/');
+
+        // Claude/OpenAI 兼容供应商的 base_url 可能是：
+        // - 纯 origin: https://api.openai.com         (需要自动补 /v1)
+        // - 已含 /v1: https://api.openai.com/v1      (直接拼接)
+        // - 自定义前缀: https://relay.example/openai (不添加 /v1，直接拼接)
+        let already_has_v1 = base_trimmed.ends_with("/v1");
+        let origin_only = match base_trimmed.split_once("://") {
+            Some((_scheme, rest)) => !rest.contains('/'),
+            None => !base_trimmed.contains('/'),
+        };
+
+        let mut base = if already_has_v1 {
+            format!("{base_trimmed}/{endpoint_trimmed}")
+        } else if origin_only {
+            format!("{base_trimmed}/v1/{endpoint_trimmed}")
+        } else {
+            format!("{base_trimmed}/{endpoint_trimmed}")
+        };
 
         // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
         while base.contains("/v1/v1") {
@@ -627,6 +635,20 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
         assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_adds_v1_for_origin_openai_style_paths() {
+        let adapter = ClaudeAdapter::new();
+        let url = adapter.build_url("https://api.openai.com", "/chat/completions");
+        assert_eq!(url, "https://api.openai.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_preserves_custom_prefix_for_openai_style_paths() {
+        let adapter = ClaudeAdapter::new();
+        let url = adapter.build_url("https://relay.example/openai", "/responses");
+        assert_eq!(url, "https://relay.example/openai/responses");
     }
 
     #[test]

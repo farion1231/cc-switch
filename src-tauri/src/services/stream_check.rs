@@ -744,24 +744,33 @@ impl StreamCheckService {
 
         let base = base_url.trim_end_matches('/');
         let is_github_copilot = auth_strategy == AuthStrategy::GitHubCopilot;
+        let already_has_v1 = base.ends_with("/v1");
+        let origin_only = match base.split_once("://") {
+            Some((_scheme, rest)) => !rest.contains('/'),
+            None => !base.contains('/'),
+        };
 
         if is_github_copilot && api_format == "openai_responses" {
             format!("{base}/v1/responses")
         } else if is_github_copilot {
             format!("{base}/chat/completions")
         } else if api_format == "openai_responses" {
-            if base.ends_with("/v1") {
+            if already_has_v1 {
                 format!("{base}/responses")
-            } else {
+            } else if origin_only {
                 format!("{base}/v1/responses")
+            } else {
+                format!("{base}/responses")
             }
         } else if api_format == "openai_chat" {
-            if base.ends_with("/v1") {
+            if already_has_v1 {
                 format!("{base}/chat/completions")
-            } else {
+            } else if origin_only {
                 format!("{base}/v1/chat/completions")
+            } else {
+                format!("{base}/chat/completions")
             }
-        } else if base.ends_with("/v1") {
+        } else if already_has_v1 {
             format!("{base}/messages")
         } else {
             format!("{base}/v1/messages")
@@ -951,6 +960,30 @@ mod tests {
         );
 
         assert_eq!(url, "https://example.com/v1/responses");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_openai_responses_with_custom_prefix() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://example.com/openai",
+            AuthStrategy::Bearer,
+            "openai_responses",
+            false,
+        );
+
+        assert_eq!(url, "https://example.com/openai/responses");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_openai_chat_with_custom_prefix() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://example.com/openai",
+            AuthStrategy::Bearer,
+            "openai_chat",
+            false,
+        );
+
+        assert_eq!(url, "https://example.com/openai/chat/completions");
     }
 
     #[test]

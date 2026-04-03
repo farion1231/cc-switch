@@ -1432,9 +1432,9 @@ fn rewrite_claude_transform_endpoint(
     } else if is_copilot {
         "/chat/completions"
     } else if api_format == "openai_responses" {
-        "/v1/responses"
+        "/responses"
     } else {
-        "/v1/chat/completions"
+        "/chat/completions"
     };
 
     let rewritten = match passthrough_query.as_deref() {
@@ -1575,7 +1575,7 @@ mod tests {
             false,
         );
 
-        assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
+        assert_eq!(endpoint, "/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
     }
 
@@ -1587,7 +1587,7 @@ mod tests {
             false,
         );
 
-        assert_eq!(endpoint, "/v1/responses?x-id=1");
+        assert_eq!(endpoint, "/responses?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
     }
 
