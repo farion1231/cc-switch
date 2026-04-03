@@ -830,7 +830,6 @@ impl RequestForwarder {
         } else {
             None
         };
-
         // GitHub Copilot 动态 endpoint 路由
         // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
         if is_copilot && !is_full_url {
