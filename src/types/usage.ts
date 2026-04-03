@@ -86,6 +86,7 @@ export interface ModelStats {
   totalTokens: number;
   totalCost: string;
   avgCostPerRequest: string;
+  avgTokensPerSecond: number;
 }
 
 export interface LogFilters {

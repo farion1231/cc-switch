@@ -50,6 +50,20 @@ export function RequestDetailPanel({
     );
   }
 
+  const generationDurationMs =
+    typeof request.durationMs === "number" && request.durationMs > 0
+      ? request.durationMs
+      : typeof request.firstTokenMs === "number" &&
+          request.latencyMs > request.firstTokenMs
+        ? request.latencyMs - request.firstTokenMs
+        : request.latencyMs > 0
+          ? request.latencyMs
+          : null;
+  const tokensPerSecond =
+    generationDurationMs && request.outputTokens > 0
+      ? (request.outputTokens * 1000) / generationDurationMs
+      : null;
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
@@ -265,6 +279,16 @@ export function RequestDetailPanel({
                   {t("usage.latency", "延迟")}
                 </dt>
                 <dd className="font-mono">{request.latencyMs}ms</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">
+                  {t("usage.tokensPerSecond", "Tokens/s")}
+                </dt>
+                <dd className="font-mono">
+                  {tokensPerSecond != null && Number.isFinite(tokensPerSecond)
+                    ? Math.round(tokensPerSecond).toLocaleString()
+                    : "--"}
+                </dd>
               </div>
             </dl>
           </div>

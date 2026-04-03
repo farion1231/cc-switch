@@ -37,6 +37,9 @@ export function ModelStatsTable({ refreshIntervalMs }: ModelStatsTableProps) {
               {t("usage.tokens", "Tokens")}
             </TableHead>
             <TableHead className="text-right">
+              {t("usage.tokensPerSecond", "速度")}
+            </TableHead>
+            <TableHead className="text-right">
               {t("usage.totalCost", "总成本")}
             </TableHead>
             <TableHead className="text-right">
@@ -48,7 +51,7 @@ export function ModelStatsTable({ refreshIntervalMs }: ModelStatsTableProps) {
           {stats?.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={5}
+                colSpan={6}
                 className="text-center text-muted-foreground"
               >
                 {t("usage.noData", "暂无数据")}
@@ -65,6 +68,11 @@ export function ModelStatsTable({ refreshIntervalMs }: ModelStatsTableProps) {
                 </TableCell>
                 <TableCell className="text-right">
                   {stat.totalTokens.toLocaleString()}
+                </TableCell>
+                <TableCell className="text-right">
+                  {Number.isFinite(stat.avgTokensPerSecond)
+                    ? Math.round(stat.avgTokensPerSecond).toLocaleString()
+                    : "0"}
                 </TableCell>
                 <TableCell className="text-right">
                   {fmtUsd(stat.totalCost, 4)}

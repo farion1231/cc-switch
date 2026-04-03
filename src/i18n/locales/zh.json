@@ -1065,7 +1065,8 @@
     "pricingAdded": "定价已添加",
     "pricingUpdated": "定价已更新",
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
-    "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)"
+    "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)",
+    "tokensPerSecond": "速度"
   },
   "usageScript": {
     "title": "配置用量查询",

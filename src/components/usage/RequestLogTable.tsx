@@ -37,6 +37,38 @@ const MAX_FIXED_RANGE_SECONDS = 30 * ONE_DAY_SECONDS;
 
 type TimeMode = "rolling" | "fixed";
 
+function getGenerationDurationMs(log: {
+  latencyMs: number;
+  durationMs?: number;
+  firstTokenMs?: number;
+}): number | null {
+  if (typeof log.durationMs === "number" && log.durationMs > 0) {
+    return log.durationMs;
+  }
+  if (
+    typeof log.firstTokenMs === "number" &&
+    Number.isFinite(log.firstTokenMs) &&
+    log.latencyMs > log.firstTokenMs
+  ) {
+    return log.latencyMs - log.firstTokenMs;
+  }
+  if (log.latencyMs > 0) {
+    return log.latencyMs;
+  }
+  return null;
+}
+
+function getTokensPerSecond(log: {
+  outputTokens: number;
+  latencyMs: number;
+  durationMs?: number;
+  firstTokenMs?: number;
+}): number | null {
+  const durationMs = getGenerationDurationMs(log);
+  if (!durationMs || log.outputTokens <= 0) return null;
+  return (log.outputTokens * 1000) / durationMs;
+}
+
 export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -360,6 +392,9 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
                     {t("usage.cacheCreationTokens")}
                   </TableHead>
                   <TableHead className="text-right whitespace-nowrap">
+                    {t("usage.tokensPerSecond", "Tokens/s")}
+                  </TableHead>
+                  <TableHead className="text-right whitespace-nowrap">
                     {t("usage.multiplier")}
                   </TableHead>
                   <TableHead className="text-right whitespace-nowrap">
@@ -377,7 +412,7 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
                 {logs.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={11}
+                      colSpan={12}
                       className="text-center text-muted-foreground"
                     >
                       {t("usage.noData")}
@@ -424,6 +459,14 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
                       <TableCell className="text-right">
                         {fmtInt(log.cacheCreationTokens, locale)}
                       </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {(() => {
+                          const speed = getTokensPerSecond(log);
+                          return speed != null && Number.isFinite(speed)
+                            ? fmtInt(Math.round(speed), locale)
+                            : "--";
+                        })()}
+                      </TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {(parseFiniteNumber(log.costMultiplier) ?? 1) !== 1 ? (
                           <span className="text-orange-600">
@@ -440,9 +483,7 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
                         <div className="flex items-center justify-center gap-1">
                           {(() => {
                             const durationMs =
-                              typeof log.durationMs === "number"
-                                ? log.durationMs
-                                : log.latencyMs;
+                              getGenerationDurationMs(log) ?? log.latencyMs;
                             const durationSec = durationMs / 1000;
                             const durationColor = Number.isFinite(durationSec)
                               ? durationSec <= 5

@@ -60,6 +60,7 @@ pub struct ModelStats {
     pub total_tokens: u64,
     pub total_cost: String,
     pub avg_cost_per_request: String,
+    pub avg_tokens_per_second: f64,
 }
 
 /// 请求日志过滤器
@@ -477,19 +478,45 @@ impl Database {
                 model,
                 SUM(request_count) as request_count,
                 SUM(total_tokens) as total_tokens,
-                SUM(total_cost) as total_cost
+                SUM(total_cost) as total_cost,
+                CASE
+                    WHEN SUM(speed_duration_ms) > 0
+                    THEN (SUM(speed_output_tokens) * 1000.0 / SUM(speed_duration_ms))
+                    ELSE 0
+                END as avg_tokens_per_second
             FROM (
                 SELECT model,
                     COUNT(*) as request_count,
                     COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
-                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost
+                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN status_code >= 200 AND status_code < 300 AND output_tokens > 0 THEN
+                                CASE
+                                    WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms
+                                    WHEN first_token_ms IS NOT NULL AND latency_ms > first_token_ms
+                                        THEN latency_ms - first_token_ms
+                                    WHEN latency_ms > 0 THEN latency_ms
+                                    ELSE 0
+                                END
+                            ELSE 0
+                        END
+                    ), 0) as speed_duration_ms,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN status_code >= 200 AND status_code < 300 THEN output_tokens
+                            ELSE 0
+                        END
+                    ), 0) as speed_output_tokens
                 FROM proxy_request_logs
                 GROUP BY model
                 UNION ALL
                 SELECT model,
                     COALESCE(SUM(request_count), 0),
                     COALESCE(SUM(input_tokens + output_tokens), 0),
-                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
+                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
+                    0,
+                    0
                 FROM usage_daily_rollups
                 GROUP BY model
             )
@@ -512,6 +539,7 @@ impl Database {
                 total_tokens: row.get::<_, i64>(2)? as u64,
                 total_cost: format!("{total_cost:.6}"),
                 avg_cost_per_request: format!("{avg_cost:.6}"),
+                avg_tokens_per_second: row.get::<_, f64>(4)?,
             })
         })?;
 

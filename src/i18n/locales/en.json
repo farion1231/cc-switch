@@ -1065,7 +1065,8 @@
     "pricingAdded": "Pricing added",
     "pricingUpdated": "Pricing updated",
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
-    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)"
+    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)",
+    "tokensPerSecond": "Speed"
   },
   "usageScript": {
     "title": "Configure Usage Query",
