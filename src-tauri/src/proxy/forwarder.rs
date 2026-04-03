@@ -1780,7 +1780,10 @@ mod tests {
             == Some("github_copilot")
             || enterprise_base_url.contains("githubcopilot.com");
 
-        assert!(is_copilot, "企业版 Copilot 应该通过 provider_type 被正确检测");
+        assert!(
+            is_copilot,
+            "企业版 Copilot 应该通过 provider_type 被正确检测"
+        );
     }
 
     /// 验证动态 endpoint 替换条件
