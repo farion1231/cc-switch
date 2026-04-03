@@ -1020,13 +1020,6 @@ impl CopilotAuthManager {
             endpoint_locks.clear();
         }
 
-        // 删除存储文件（即使删除失败也继续，因为内存状态已清理干净）
-        if self.storage_path.exists() {
-            if let Err(e) = std::fs::remove_file(&self.storage_path) {
-                log::warn!("[CopilotAuth] 删除存储文件失败: {e}");
-            }
-        }
-
         Ok(())
     }
 
