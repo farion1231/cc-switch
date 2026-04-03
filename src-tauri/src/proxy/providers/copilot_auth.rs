@@ -1020,9 +1020,11 @@ impl CopilotAuthManager {
             endpoint_locks.clear();
         }
 
-        // 最后删除存储文件
+        // 删除存储文件（即使删除失败也继续，因为内存状态已清理干净）
         if self.storage_path.exists() {
-            std::fs::remove_file(&self.storage_path)?;
+            if let Err(e) = std::fs::remove_file(&self.storage_path) {
+                log::warn!("[CopilotAuth] 删除存储文件失败: {e}");
+            }
         }
 
         Ok(())
@@ -1724,7 +1726,6 @@ mod tests {
             assert!(api_endpoints.is_empty());
         }
     }
-
     #[tokio::test]
     async fn test_clear_auth_cleans_memory_even_when_file_removal_fails() {
         let temp_dir = tempdir().unwrap();
@@ -1761,8 +1762,7 @@ mod tests {
         }
 
         let result = manager.clear_auth().await;
-        // Should still return an error for the file deletion failure
-        assert!(result.is_err());
+        assert!(result.is_ok());
 
         // But memory state should already be cleaned
         let accounts = manager.accounts.read().await;
