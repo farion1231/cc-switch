@@ -795,7 +795,13 @@
     "fetchingModels": "正在获取...",
     "fetchModelsSuccess": "获取到 {{count}} 个模型",
     "fetchModelsFailed": "获取模型列表失败",
-    "fetchModelsEmpty": "未找到可用模型"
+    "fetchModelsEmpty": "未找到可用模型",
+    "fetchModelsNeedApiKey": "请先填写 API Key",
+    "fetchModelsNeedEndpoint": "请先填写 API 端点",
+    "fetchModelsNeedConfig": "请先填写 API 端点和 API Key",
+    "fetchModelsAuthFailed": "API Key 无效或无权限",
+    "fetchModelsNotSupported": "该供应商不支持获取模型列表",
+    "fetchModelsTimeout": "请求超时，请检查网络连接"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",

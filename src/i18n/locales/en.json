@@ -795,7 +795,13 @@
     "fetchingModels": "Fetching...",
     "fetchModelsSuccess": "Found {{count}} models",
     "fetchModelsFailed": "Failed to fetch models",
-    "fetchModelsEmpty": "No models found"
+    "fetchModelsEmpty": "No models found",
+    "fetchModelsNeedApiKey": "Please fill in API Key first",
+    "fetchModelsNeedEndpoint": "Please fill in API endpoint first",
+    "fetchModelsNeedConfig": "Please fill in API endpoint and API Key first",
+    "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
+    "fetchModelsNotSupported": "This provider does not support fetching model list",
+    "fetchModelsTimeout": "Request timed out, please check network connection"
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",

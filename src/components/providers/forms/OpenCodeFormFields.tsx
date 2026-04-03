@@ -28,7 +28,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ApiKeySection } from "./shared";
-import { fetchModelsForConfig, type FetchedModel } from "@/lib/api/model-fetch";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import { opencodeNpmPackages } from "@/config/opencodeProviderPresets";
 import { cn } from "@/lib/utils";
 import {
@@ -247,7 +251,10 @@ export function OpenCodeFormFields({
 
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
-      toast.error(t("providerForm.fetchModelsFailed"));
+      showFetchModelsError(null, t, {
+        hasApiKey: !!apiKey,
+        hasBaseUrl: !!baseUrl,
+      });
       return;
     }
     setIsFetchingModels(true);
@@ -264,7 +271,7 @@ export function OpenCodeFormFields({
       })
       .catch((err) => {
         console.warn("[ModelFetch] Failed:", err);
-        toast.error(t("providerForm.fetchModelsFailed"));
+        showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
   }, [baseUrl, apiKey, t]);

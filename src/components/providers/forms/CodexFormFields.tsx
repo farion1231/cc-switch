@@ -5,7 +5,11 @@ import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
-import { fetchModelsForConfig, type FetchedModel } from "@/lib/api/model-fetch";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import type { ProviderCategory } from "@/types";
 
 interface EndpointCandidate {
@@ -75,7 +79,10 @@ export function CodexFormFields({
 
   const handleFetchModels = useCallback(() => {
     if (!codexBaseUrl || !codexApiKey) {
-      toast.error(t("providerForm.fetchModelsFailed"));
+      showFetchModelsError(null, t, {
+        hasApiKey: !!codexApiKey,
+        hasBaseUrl: !!codexBaseUrl,
+      });
       return;
     }
     setIsFetchingModels(true);
@@ -92,7 +99,7 @@ export function CodexFormFields({
       })
       .catch((err) => {
         console.warn("[ModelFetch] Failed:", err);
-        toast.error(t("providerForm.fetchModelsFailed"));
+        showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
   }, [codexBaseUrl, codexApiKey, isFullUrl, t]);

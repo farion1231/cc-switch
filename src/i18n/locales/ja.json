@@ -795,7 +795,13 @@
     "fetchingModels": "取得中...",
     "fetchModelsSuccess": "{{count}}件のモデルを取得",
     "fetchModelsFailed": "モデル一覧の取得に失敗しました",
-    "fetchModelsEmpty": "モデルが見つかりません"
+    "fetchModelsEmpty": "モデルが見つかりません",
+    "fetchModelsNeedApiKey": "先に API Key を入力してください",
+    "fetchModelsNeedEndpoint": "先に API エンドポイントを入力してください",
+    "fetchModelsNeedConfig": "先に API エンドポイントと API Key を入力してください",
+    "fetchModelsAuthFailed": "API Key が無効か、権限がありません",
+    "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
+    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",

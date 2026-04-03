@@ -35,7 +35,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ApiKeySection } from "./shared";
-import { fetchModelsForConfig, type FetchedModel } from "@/lib/api/model-fetch";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import { openclawApiProtocols } from "@/config/openclawProviderPresets";
 import type { ProviderCategory, OpenClawModel } from "@/types";
 
@@ -129,7 +133,10 @@ export function OpenClawFormFields({
   // Fetch models from API
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
-      toast.error(t("providerForm.fetchModelsFailed"));
+      showFetchModelsError(null, t, {
+        hasApiKey: !!apiKey,
+        hasBaseUrl: !!baseUrl,
+      });
       return;
     }
     setIsFetchingModels(true);
@@ -146,7 +153,7 @@ export function OpenClawFormFields({
       })
       .catch((err) => {
         console.warn("[ModelFetch] Failed:", err);
-        toast.error(t("providerForm.fetchModelsFailed"));
+        showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
   }, [baseUrl, apiKey, t]);

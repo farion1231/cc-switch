@@ -33,7 +33,11 @@ import {
   copilotGetModelsForAccount,
 } from "@/lib/api/copilot";
 import type { CopilotModel } from "@/lib/api/copilot";
-import { fetchModelsForConfig, type FetchedModel } from "@/lib/api/model-fetch";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import type {
   ProviderCategory,
   ClaudeApiFormat,
@@ -186,7 +190,10 @@ export function ClaudeFormFields({
 
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
-      toast.error(t("providerForm.fetchModelsFailed"));
+      showFetchModelsError(null, t, {
+        hasApiKey: !!apiKey,
+        hasBaseUrl: !!baseUrl,
+      });
       return;
     }
     setIsFetchingModels(true);
@@ -203,7 +210,7 @@ export function ClaudeFormFields({
       })
       .catch((err) => {
         console.warn("[ModelFetch] Failed:", err);
-        toast.error(t("providerForm.fetchModelsFailed"));
+        showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
   }, [baseUrl, apiKey, isFullUrl, t]);

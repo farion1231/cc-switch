@@ -6,7 +6,11 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
-import { fetchModelsForConfig, type FetchedModel } from "@/lib/api/model-fetch";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import type { ProviderCategory } from "@/types";
 
 interface EndpointCandidate {
@@ -74,7 +78,10 @@ export function GeminiFormFields({
 
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
-      toast.error(t("providerForm.fetchModelsFailed"));
+      showFetchModelsError(null, t, {
+        hasApiKey: !!apiKey,
+        hasBaseUrl: !!baseUrl,
+      });
       return;
     }
     setIsFetchingModels(true);
@@ -91,7 +98,7 @@ export function GeminiFormFields({
       })
       .catch((err) => {
         console.warn("[ModelFetch] Failed:", err);
-        toast.error(t("providerForm.fetchModelsFailed"));
+        showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
   }, [baseUrl, apiKey, t]);
