@@ -1048,10 +1048,7 @@ pub(super) fn extract_provider_api_key(provider: &Provider, app_type: &AppType) 
         })
 }
 
-pub(super) fn extract_provider_base_url(
-    provider: &Provider,
-    app_type: &AppType,
-) -> Option<String> {
+pub(super) fn extract_provider_base_url(provider: &Provider, app_type: &AppType) -> Option<String> {
     let settings = &provider.settings_config;
 
     let direct = match app_type {
@@ -2260,35 +2257,32 @@ impl ProviderService {
     ) -> Result<(String, String), AppError> {
         match app_type {
             AppType::Claude => {
-                let api_key = extract_provider_api_key(provider, app_type)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?;
+                let api_key = extract_provider_api_key(provider, app_type).ok_or_else(|| {
+                    AppError::localized(
+                        "provider.claude.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    )
+                })?;
 
-                let base_url = extract_provider_base_url(provider, app_type)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.base_url.missing",
-                            "缺少 ANTHROPIC_BASE_URL 配置",
-                            "Missing ANTHROPIC_BASE_URL configuration",
-                        )
-                    })?;
+                let base_url = extract_provider_base_url(provider, app_type).ok_or_else(|| {
+                    AppError::localized(
+                        "provider.claude.base_url.missing",
+                        "缺少 ANTHROPIC_BASE_URL 配置",
+                        "Missing ANTHROPIC_BASE_URL configuration",
+                    )
+                })?;
 
                 Ok((api_key, base_url))
             }
             AppType::Codex => {
-                let api_key = extract_provider_api_key(provider, app_type)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.codex.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?;
+                let api_key = extract_provider_api_key(provider, app_type).ok_or_else(|| {
+                    AppError::localized(
+                        "provider.codex.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    )
+                })?;
 
                 let base_url = extract_provider_base_url(provider, app_type).ok_or_else(|| {
                     AppError::localized(
@@ -2315,28 +2309,26 @@ impl ProviderService {
                 Ok((api_key, base_url))
             }
             AppType::OpenCode => {
-                let api_key = extract_provider_api_key(provider, app_type)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.opencode.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?;
+                let api_key = extract_provider_api_key(provider, app_type).ok_or_else(|| {
+                    AppError::localized(
+                        "provider.opencode.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    )
+                })?;
 
                 let base_url = extract_provider_base_url(provider, app_type).unwrap_or_default();
 
                 Ok((api_key, base_url))
             }
             AppType::OpenClaw => {
-                let api_key = extract_provider_api_key(provider, app_type)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.openclaw.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?;
+                let api_key = extract_provider_api_key(provider, app_type).ok_or_else(|| {
+                    AppError::localized(
+                        "provider.openclaw.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    )
+                })?;
 
                 let base_url = extract_provider_base_url(provider, app_type).unwrap_or_default();
 
