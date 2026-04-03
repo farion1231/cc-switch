@@ -244,6 +244,14 @@ export interface Settings {
   enableClaudePluginIntegration?: boolean;
   // 跳过 Claude Code 初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding）
   skipClaudeOnboarding?: boolean;
+  // 是否启用 Claude 后台通知
+  enableClaudeBackgroundNotifications?: boolean;
+  // 是否启用 Claude 需要确认提醒
+  enableClaudePermissionPromptNotifications?: boolean;
+  // 是否启用 Claude 当前轮结束提醒（同时覆盖 idle_prompt）
+  enableClaudeRoundCompleteNotifications?: boolean;
+  // Claude 本地通知监听端口
+  claudeNotifyPort?: number;
   // 是否开机自启
   launchOnStartup?: boolean;
   // 静默启动（程序启动时不显示主窗口）

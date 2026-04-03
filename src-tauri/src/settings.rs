@@ -181,6 +181,18 @@ pub struct AppSettings {
     /// 是否跳过 Claude Code 初次安装确认
     #[serde(default)]
     pub skip_claude_onboarding: bool,
+    /// 是否启用 Claude 后台通知
+    #[serde(default)]
+    pub enable_claude_background_notifications: bool,
+    /// 是否启用 Claude 需要确认提醒
+    #[serde(default = "default_true")]
+    pub enable_claude_permission_prompt_notifications: bool,
+    /// 是否启用 Claude 当前轮结束提醒（同时覆盖 idle_prompt）
+    #[serde(default = "default_true")]
+    pub enable_claude_round_complete_notifications: bool,
+    /// Claude 本地通知监听端口
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_notify_port: Option<u16>,
     /// 是否开机自启
     #[serde(default)]
     pub launch_on_startup: bool,
@@ -286,6 +298,10 @@ impl Default for AppSettings {
             minimize_to_tray_on_close: true,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
+            enable_claude_background_notifications: false,
+            enable_claude_permission_prompt_notifications: true,
+            enable_claude_round_complete_notifications: true,
+            claude_notify_port: None,
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,

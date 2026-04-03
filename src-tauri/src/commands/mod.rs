@@ -1,6 +1,10 @@
 #![allow(non_snake_case)]
 
 mod auth;
+#[cfg(target_os = "windows")]
+mod claude_notify;
+#[cfg(not(target_os = "windows"))]
+mod claude_notify_stub;
 mod config;
 mod copilot;
 mod deeplink;
@@ -28,6 +32,10 @@ mod webdav_sync;
 mod workspace;
 
 pub use auth::*;
+#[cfg(target_os = "windows")]
+pub use claude_notify::*;
+#[cfg(not(target_os = "windows"))]
+pub use claude_notify_stub::*;
 pub use config::*;
 pub use copilot::*;
 pub use deeplink::*;

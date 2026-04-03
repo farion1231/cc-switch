@@ -83,6 +83,12 @@ export function useSettingsForm(): UseSettingsFormResult {
       minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
+      enableClaudeBackgroundNotifications:
+        data.enableClaudeBackgroundNotifications ?? false,
+      enableClaudePermissionPromptNotifications:
+        data.enableClaudePermissionPromptNotifications ?? true,
+      enableClaudeRoundCompleteNotifications:
+        data.enableClaudeRoundCompleteNotifications ?? true,
       silentStartup: data.silentStartup ?? false,
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
@@ -106,6 +112,9 @@ export function useSettingsForm(): UseSettingsFormResult {
             showInTray: true,
             minimizeToTrayOnClose: true,
             enableClaudePluginIntegration: false,
+            enableClaudeBackgroundNotifications: false,
+            enableClaudePermissionPromptNotifications: true,
+            enableClaudeRoundCompleteNotifications: true,
             skipClaudeOnboarding: false,
             language: readPersistedLanguage(),
           } as SettingsFormState);
@@ -141,6 +150,12 @@ export function useSettingsForm(): UseSettingsFormResult {
         minimizeToTrayOnClose: serverData.minimizeToTrayOnClose ?? true,
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
+        enableClaudeBackgroundNotifications:
+          serverData.enableClaudeBackgroundNotifications ?? false,
+        enableClaudePermissionPromptNotifications:
+          serverData.enableClaudePermissionPromptNotifications ?? true,
+        enableClaudeRoundCompleteNotifications:
+          serverData.enableClaudeRoundCompleteNotifications ?? true,
         silentStartup: serverData.silentStartup ?? false,
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),

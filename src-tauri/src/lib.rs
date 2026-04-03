@@ -2,6 +2,7 @@ mod app_config;
 mod app_store;
 mod auto_launch;
 mod claude_mcp;
+mod claude_notify;
 mod claude_plugin;
 mod codex_config;
 mod commands;
@@ -233,9 +234,14 @@ pub fn run() {
         }));
     }
 
+    // 注册 deep-link 插件（处理 macOS AppleEvent 和其他平台的深链接）
+    let builder = builder.plugin(tauri_plugin_deep_link::init());
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(tauri_plugin_notification::init());
+    #[cfg(not(target_os = "windows"))]
+    let builder = builder;
+
     let builder = builder
-        // 注册 deep-link 插件（处理 macOS AppleEvent 和其他平台的深链接）
-        .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -703,6 +709,26 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
+            #[cfg(target_os = "windows")]
+            {
+                let settings = crate::settings::get_settings();
+                if settings.enable_claude_background_notifications {
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = app_handle.state::<AppState>();
+                        state
+                            .claude_notify_service
+                            .set_app_handle(app_handle.clone())
+                            .await;
+                        if let Err(e) = state.claude_notify_service.ensure_started().await {
+                            log::warn!("启动 Claude 通知监听失败，已跳过：{e}");
+                        } else if let Some(port) = state.claude_notify_service.get_status().await.port {
+                            log::info!("Claude 通知监听已启动于 127.0.0.1:{port}");
+                        }
+                    });
+                }
+            }
+
             // 初始化 CopilotAuthManager
             {
                 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
@@ -878,6 +904,9 @@ pub fn run() {
             commands::is_claude_plugin_applied,
             commands::apply_claude_onboarding_skip,
             commands::clear_claude_onboarding_skip,
+            commands::apply_claude_notify_hook_config,
+            commands::clear_claude_notify_hook_config,
+            commands::get_claude_notify_status,
             // Claude MCP management
             commands::get_claude_mcp_status,
             commands::read_claude_mcp_config,
