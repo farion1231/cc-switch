@@ -790,7 +790,12 @@
     "categoryOfficial": "Official",
     "categoryCnOfficial": "Opensource Official",
     "categoryAggregation": "Aggregation",
-    "categoryThirdParty": "Third Party"
+    "categoryThirdParty": "Third Party",
+    "fetchModels": "Fetch Models",
+    "fetchingModels": "Fetching...",
+    "fetchModelsSuccess": "Found {{count}} models",
+    "fetchModelsFailed": "Failed to fetch models",
+    "fetchModelsEmpty": "No models found"
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -820,12 +825,7 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "migrationFailed": "Legacy auth migration failed: {{error}}",
-    "loadModelsFailed": "Failed to load Copilot models",
-    "fetchModels": "Fetch Models",
-    "fetchingModels": "Fetching...",
-    "fetchModelsSuccess": "Found {{count}} models",
-    "fetchModelsFailed": "Failed to fetch models",
-    "fetchModelsEmpty": "No models found"
+    "loadModelsFailed": "Failed to load Copilot models"
   },
   "endpointTest": {
     "title": "API Endpoint Management",

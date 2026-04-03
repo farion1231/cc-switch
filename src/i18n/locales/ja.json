@@ -790,7 +790,12 @@
     "categoryOfficial": "公式",
     "categoryCnOfficial": "オープンソース公式",
     "categoryAggregation": "アグリゲーター",
-    "categoryThirdParty": "サードパーティ"
+    "categoryThirdParty": "サードパーティ",
+    "fetchModels": "モデル一覧を取得",
+    "fetchingModels": "取得中...",
+    "fetchModelsSuccess": "{{count}}件のモデルを取得",
+    "fetchModelsFailed": "モデル一覧の取得に失敗しました",
+    "fetchModelsEmpty": "モデルが見つかりません"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",
@@ -820,12 +825,7 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "migrationFailed": "旧認証データの移行に失敗しました: {{error}}",
-    "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました",
-    "fetchModels": "モデル一覧を取得",
-    "fetchingModels": "取得中...",
-    "fetchModelsSuccess": "{{count}}件のモデルを取得",
-    "fetchModelsFailed": "モデル一覧の取得に失敗しました",
-    "fetchModelsEmpty": "モデルが見つかりません"
+    "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",
