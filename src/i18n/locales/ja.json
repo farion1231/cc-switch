@@ -1066,7 +1066,8 @@
     "pricingAdded": "価格設定が追加されました",
     "pricingUpdated": "価格設定が更新されました",
     "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
-    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）"
+    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）",
+    "tokensPerSecond": "速度"
   },
   "usageScript": {
     "title": "利用状況を設定",
