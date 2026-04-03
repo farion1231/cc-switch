@@ -330,7 +330,7 @@ impl ProviderAdapter for ClaudeAdapter {
             None => !base_trimmed.contains('/'),
         };
 
-        let mut base = if is_github_copilot && endpoint_trimmed == "chat/completions" {
+        let mut base = if is_github_copilot && endpoint_trimmed.starts_with("chat/completions") {
             format!("{copilot_base}/{endpoint_trimmed}")
         } else if already_has_v1 {
             format!("{base_trimmed}/{endpoint_trimmed}")
@@ -667,6 +667,16 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://api.githubcopilot.com/v1", "/chat/completions");
         assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_preserves_query_for_github_copilot_chat_completions() {
+        let adapter = ClaudeAdapter::new();
+        let url = adapter.build_url(
+            "https://api.githubcopilot.com",
+            "/chat/completions?x-id=1",
+        );
+        assert_eq!(url, "https://api.githubcopilot.com/chat/completions?x-id=1");
     }
 
     #[test]
