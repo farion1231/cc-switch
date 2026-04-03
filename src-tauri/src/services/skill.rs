@@ -2009,7 +2009,6 @@ impl SkillService {
         let skills = skills.into_iter().collect::<Vec<_>>();
 
         AppType::all()
-            .into_iter()
             .map(|app| {
                 let paths = skills
                     .iter()
