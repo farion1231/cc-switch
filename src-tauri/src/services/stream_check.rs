@@ -745,6 +745,7 @@ impl StreamCheckService {
         let base = base_url.trim_end_matches('/');
         let is_github_copilot = auth_strategy == AuthStrategy::GitHubCopilot;
         let already_has_v1 = base.ends_with("/v1");
+        let copilot_base = base.strip_suffix("/v1").unwrap_or(base);
         let origin_only = match base.split_once("://") {
             Some((_scheme, rest)) => !rest.contains('/'),
             None => !base.contains('/'),
@@ -757,7 +758,7 @@ impl StreamCheckService {
                 format!("{base}/v1/responses")
             }
         } else if is_github_copilot {
-            format!("{base}/chat/completions")
+            format!("{copilot_base}/chat/completions")
         } else if api_format == "openai_responses" {
             if already_has_v1 {
                 format!("{base}/responses")
@@ -922,6 +923,18 @@ mod tests {
     fn test_resolve_claude_stream_url_for_github_copilot() {
         let url = StreamCheckService::resolve_claude_stream_url(
             "https://api.githubcopilot.com",
+            AuthStrategy::GitHubCopilot,
+            "openai_chat",
+            false,
+        );
+
+        assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_github_copilot_chat_with_v1_base() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.githubcopilot.com/v1",
             AuthStrategy::GitHubCopilot,
             "openai_chat",
             false,
