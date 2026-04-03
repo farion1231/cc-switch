@@ -402,6 +402,11 @@ impl CopilotAuthManager {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.remove(account_id);
         }
+        // 清理 API 端点缓存
+        {
+            let mut api_endpoints = self.api_endpoints.write().await;
+            api_endpoints.remove(account_id);
+        }
 
         {
             let accounts = self.accounts.read().await;
@@ -795,10 +800,8 @@ impl CopilotAuthManager {
         if let Some(ref endpoints) = usage.endpoints {
             let mut api_endpoints = self.api_endpoints.write().await;
             api_endpoints.insert(account_id.to_string(), endpoints.api.clone());
-            log::info!(
-                "[CopilotAuth] 账号 {account_id} API 端点: {}",
-                endpoints.api
-            );
+            // 使用 debug 级别避免在日志中暴露企业内部域名
+            log::debug!("[CopilotAuth] 账号 {account_id} 已保存动态 API 端点");
         }
 
         log::info!(
@@ -898,10 +901,17 @@ impl CopilotAuthManager {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.clear();
         }
+        // 清理 API 端点缓存
+        {
+            let mut api_endpoints = self.api_endpoints.write().await;
+            api_endpoints.clear();
+        }
 
-        // 删除存储文件
+        // 删除存储文件（即使删除失败也继续，因为内存状态已清理干净）
         if self.storage_path.exists() {
-            std::fs::remove_file(&self.storage_path)?;
+            if let Err(e) = std::fs::remove_file(&self.storage_path) {
+                log::warn!("[CopilotAuth] 删除存储文件失败: {e}");
+            }
         }
 
         Ok(())
@@ -1456,5 +1466,151 @@ mod tests {
 
         let default_vendor = manager.get_model_vendor("claude-sonnet-4").await.unwrap();
         assert_eq!(default_vendor.as_deref(), Some("Anthropic"));
+    }
+
+    #[tokio::test]
+    async fn test_get_api_endpoint_returns_cached_value() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 手动设置 api_endpoints 缓存
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert(
+                "12345".to_string(),
+                "https://copilot-api.enterprise.example.com".to_string(),
+            );
+        }
+
+        let endpoint = manager.get_api_endpoint("12345").await;
+        assert_eq!(endpoint, "https://copilot-api.enterprise.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_get_api_endpoint_returns_default_when_not_cached() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        let endpoint = manager.get_api_endpoint("99999").await;
+        assert_eq!(endpoint, "https://api.githubcopilot.com");
+    }
+
+    #[tokio::test]
+    async fn test_get_default_api_endpoint_uses_default_account() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 设置默认账号
+        {
+            let mut default_account_id = manager.default_account_id.write().await;
+            *default_account_id = Some("12345".to_string());
+        }
+        // 添加账号数据
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "12345".to_string(),
+                GitHubAccountData {
+                    github_token: "gho_test".to_string(),
+                    user: GitHubUser {
+                        login: "alice".to_string(),
+                        id: 12345,
+                        avatar_url: None,
+                    },
+                    authenticated_at: 1700000000,
+                },
+            );
+        }
+        // 设置 API endpoint 缓存
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert(
+                "12345".to_string(),
+                "https://copilot-api.corp.example.com".to_string(),
+            );
+        }
+
+        let endpoint = manager.get_default_api_endpoint().await;
+        assert_eq!(endpoint, "https://copilot-api.corp.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_remove_account_clears_api_endpoint_cache() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 添加账号数据
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "12345".to_string(),
+                GitHubAccountData {
+                    github_token: "gho_test".to_string(),
+                    user: GitHubUser {
+                        login: "alice".to_string(),
+                        id: 12345,
+                        avatar_url: None,
+                    },
+                    authenticated_at: 1700000000,
+                },
+            );
+        }
+        // 设置 API endpoint 缓存
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert(
+                "12345".to_string(),
+                "https://copilot-api.enterprise.example.com".to_string(),
+            );
+        }
+
+        // 确认缓存存在
+        {
+            let api_endpoints = manager.api_endpoints.read().await;
+            assert!(api_endpoints.contains_key("12345"));
+        }
+
+        // 移除账号
+        manager.remove_account("12345").await.unwrap();
+
+        // 确认缓存已清理
+        {
+            let api_endpoints = manager.api_endpoints.read().await;
+            assert!(!api_endpoints.contains_key("12345"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_clear_auth_clears_all_api_endpoint_cache() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 添加多个账号的 API endpoint 缓存
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert(
+                "12345".to_string(),
+                "https://copilot-api.enterprise1.example.com".to_string(),
+            );
+            api_endpoints.insert(
+                "67890".to_string(),
+                "https://copilot-api.enterprise2.example.com".to_string(),
+            );
+        }
+
+        // 确认缓存存在
+        {
+            let api_endpoints = manager.api_endpoints.read().await;
+            assert_eq!(api_endpoints.len(), 2);
+        }
+
+        // 清除所有认证
+        manager.clear_auth().await.unwrap();
+
+        // 确认缓存已清空
+        {
+            let api_endpoints = manager.api_endpoints.read().await;
+            assert!(api_endpoints.is_empty());
+        }
     }
 }
