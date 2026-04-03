@@ -9,7 +9,7 @@
 //! 与 Chat Completions 的 delta chunk 模型完全不同，需要独立的状态机处理。
 
 use super::transform_responses::{build_anthropic_usage_from_responses, map_responses_stop_reason};
-use crate::proxy::sse::strip_sse_field;
+use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
@@ -121,11 +121,8 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                     let text = String::from_utf8_lossy(&bytes);
                     buffer.push_str(&text);
 
-                    // SSE 事件由 \n\n 分隔
-                    while let Some(pos) = buffer.find("\n\n") {
-                        let block = buffer[..pos].to_string();
-                        buffer = buffer[pos + 2..].to_string();
-
+                    // SSE 事件由空行分隔 (\n\n 或 \r\n\r\n)
+                    while let Some(block) = take_sse_block(&mut buffer) {
                         if block.trim().is_empty() {
                             continue;
                         }

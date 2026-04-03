@@ -2,7 +2,7 @@
 //!
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
-use crate::proxy::sse::strip_sse_field;
+use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -110,10 +110,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                     let text = String::from_utf8_lossy(&bytes);
                     buffer.push_str(&text);
 
-                    while let Some(pos) = buffer.find("\n\n") {
-                        let line = buffer[..pos].to_string();
-                        buffer = buffer[pos + 2..].to_string();
-
+                    while let Some(line) = take_sse_block(&mut buffer) {
                         if line.trim().is_empty() {
                             continue;
                         }
