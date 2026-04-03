@@ -202,9 +202,7 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
       />
 
       {configError && (
-        <p className="text-xs text-[hsl(var(--destructive))]">
-          {configError}
-        </p>
+        <p className="text-xs text-[hsl(var(--destructive))]">{configError}</p>
       )}
     </div>
   );

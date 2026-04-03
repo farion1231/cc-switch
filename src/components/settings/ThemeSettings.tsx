@@ -45,19 +45,31 @@ const CUSTOM_THEME_FIELDS = [
   { key: "background", labelKey: "settings.themeColorBackground" },
   { key: "foreground", labelKey: "settings.themeColorForeground" },
   { key: "primary", labelKey: "settings.themeColorPrimary" },
-  { key: "primaryForeground", labelKey: "settings.themeColorPrimaryForeground" },
+  {
+    key: "primaryForeground",
+    labelKey: "settings.themeColorPrimaryForeground",
+  },
   { key: "secondary", labelKey: "settings.themeColorSecondary" },
-  { key: "secondaryForeground", labelKey: "settings.themeColorSecondaryForeground" },
+  {
+    key: "secondaryForeground",
+    labelKey: "settings.themeColorSecondaryForeground",
+  },
   { key: "accent", labelKey: "settings.themeColorAccent" },
   { key: "accentForeground", labelKey: "settings.themeColorAccentForeground" },
   { key: "card", labelKey: "settings.themeColorCard" },
   { key: "cardForeground", labelKey: "settings.themeColorCardForeground" },
   { key: "popover", labelKey: "settings.themeColorPopover" },
-  { key: "popoverForeground", labelKey: "settings.themeColorPopoverForeground" },
+  {
+    key: "popoverForeground",
+    labelKey: "settings.themeColorPopoverForeground",
+  },
   { key: "muted", labelKey: "settings.themeColorMuted" },
   { key: "mutedForeground", labelKey: "settings.themeColorMutedForeground" },
   { key: "destructive", labelKey: "settings.themeColorDestructive" },
-  { key: "destructiveForeground", labelKey: "settings.themeColorDestructiveForeground" },
+  {
+    key: "destructiveForeground",
+    labelKey: "settings.themeColorDestructiveForeground",
+  },
   { key: "success", labelKey: "settings.themeColorSuccess" },
   { key: "info", labelKey: "settings.themeColorInfo" },
   { key: "warning", labelKey: "settings.themeColorWarning" },
@@ -203,7 +215,9 @@ function getSectionSyncValues(
     case "muted":
       return { mutedForeground: getReadableTextColor(palette.muted) };
     case "destructive":
-      return { destructiveForeground: getReadableTextColor(palette.destructive) };
+      return {
+        destructiveForeground: getReadableTextColor(palette.destructive),
+      };
     case "semantic":
       return {};
     case "borderInput":
@@ -1246,7 +1260,10 @@ function ThemePreviewPanel({
                       >
                         {t("settings.themePreviewInputFocused")}
                       </div>
-                      <div className="rounded-xl" style={{ boxShadow: ringShadow }}>
+                      <div
+                        className="rounded-xl"
+                        style={{ boxShadow: ringShadow }}
+                      >
                         <div
                           className={previewInputClass}
                           style={{

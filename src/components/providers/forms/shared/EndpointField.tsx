@@ -99,9 +99,7 @@ export function EndpointField({
       />
       {effectiveHint ? (
         <div className="p-3 rounded-lg border border-[hsl(var(--warning)/0.24)] bg-[hsl(var(--warning)/0.08)]">
-          <p className="text-xs text-[hsl(var(--warning))]">
-            {effectiveHint}
-          </p>
+          <p className="text-xs text-[hsl(var(--warning))]">{effectiveHint}</p>
         </div>
       ) : null}
     </div>

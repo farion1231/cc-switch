@@ -96,12 +96,10 @@ export function LogConfigPanel() {
             <span className="font-mono text-[hsl(var(--destructive))]">
               error
             </span>{" "}
-            -{" "}
-            {t("settings.advanced.logConfig.levelDesc.error")}
+            - {t("settings.advanced.logConfig.levelDesc.error")}
           </p>
           <p>
-            <span className="font-mono text-[hsl(var(--warning))]">warn</span>{" "}
-            -{" "}
+            <span className="font-mono text-[hsl(var(--warning))]">warn</span> -{" "}
             {t("settings.advanced.logConfig.levelDesc.warn")}
           </p>
           <p>
@@ -109,11 +107,8 @@ export function LogConfigPanel() {
             {t("settings.advanced.logConfig.levelDesc.info")}
           </p>
           <p>
-            <span className="font-mono text-[hsl(var(--success))]">
-              debug
-            </span>{" "}
-            -{" "}
-            {t("settings.advanced.logConfig.levelDesc.debug")}
+            <span className="font-mono text-[hsl(var(--success))]">debug</span>{" "}
+            - {t("settings.advanced.logConfig.levelDesc.debug")}
           </p>
           <p>
             <span className="font-mono text-muted-foreground">trace</span> -{" "}

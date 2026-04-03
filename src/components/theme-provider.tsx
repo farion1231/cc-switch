@@ -26,7 +26,9 @@ import {
 
 type Theme = "light" | "dark" | "system";
 
-function parseStoredCustomTheme(value: string | null): CustomThemeConfig | null {
+function parseStoredCustomTheme(
+  value: string | null,
+): CustomThemeConfig | null {
   if (!value) return null;
 
   try {
@@ -36,7 +38,10 @@ function parseStoredCustomTheme(value: string | null): CustomThemeConfig | null 
     if (parsed.light) {
       for (const token of CUSTOM_THEME_TOKENS) {
         const candidate = parsed.light[token];
-        if (typeof candidate === "string" && isHexColor(normalizeHex(candidate))) {
+        if (
+          typeof candidate === "string" &&
+          isHexColor(normalizeHex(candidate))
+        ) {
           light[token] = normalizeHex(candidate);
         }
       }
@@ -56,7 +61,10 @@ function parseStoredCustomTheme(value: string | null): CustomThemeConfig | null 
 
     for (const token of CUSTOM_THEME_TOKENS) {
       const candidate = parsed.dark[token];
-      if (typeof candidate === "string" && isHexColor(normalizeHex(candidate))) {
+      if (
+        typeof candidate === "string" &&
+        isHexColor(normalizeHex(candidate))
+      ) {
         dark[token] = normalizeHex(candidate);
         hasExplicitDarkOverrides = true;
       }

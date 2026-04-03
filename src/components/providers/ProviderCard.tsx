@@ -263,7 +263,8 @@ export function ProviderCard({
         shouldUseGreen &&
           "border-[hsl(var(--success))]/60 shadow-sm shadow-[hsl(var(--success))/0.10]",
         shouldUseBlue && "border-primary/60 shadow-sm shadow-primary/10",
-        !(isActiveProvider || hasPersistentConfigHighlight) && "hover:shadow-sm",
+        !(isActiveProvider || hasPersistentConfigHighlight) &&
+          "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}

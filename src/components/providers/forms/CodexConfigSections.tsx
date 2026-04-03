@@ -307,9 +307,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       />
 
       {configError && (
-        <p className="text-xs text-[hsl(var(--destructive))]">
-          {configError}
-        </p>
+        <p className="text-xs text-[hsl(var(--destructive))]">{configError}</p>
       )}
     </div>
   );

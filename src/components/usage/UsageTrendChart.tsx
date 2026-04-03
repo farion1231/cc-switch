@@ -132,12 +132,28 @@ export function UsageTrendChart({
           >
             <defs>
               <linearGradient id="colorInput" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={chartColors.input} stopOpacity={0.2} />
-                <stop offset="95%" stopColor={chartColors.input} stopOpacity={0} />
+                <stop
+                  offset="5%"
+                  stopColor={chartColors.input}
+                  stopOpacity={0.2}
+                />
+                <stop
+                  offset="95%"
+                  stopColor={chartColors.input}
+                  stopOpacity={0}
+                />
               </linearGradient>
               <linearGradient id="colorOutput" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={chartColors.output} stopOpacity={0.2} />
-                <stop offset="95%" stopColor={chartColors.output} stopOpacity={0} />
+                <stop
+                  offset="5%"
+                  stopColor={chartColors.output}
+                  stopOpacity={0.2}
+                />
+                <stop
+                  offset="95%"
+                  stopColor={chartColors.output}
+                  stopOpacity={0}
+                />
               </linearGradient>
               <linearGradient
                 id="colorCacheCreation"
@@ -146,12 +162,28 @@ export function UsageTrendChart({
                 x2="0"
                 y2="1"
               >
-                <stop offset="5%" stopColor={chartColors.cacheCreation} stopOpacity={0.2} />
-                <stop offset="95%" stopColor={chartColors.cacheCreation} stopOpacity={0} />
+                <stop
+                  offset="5%"
+                  stopColor={chartColors.cacheCreation}
+                  stopOpacity={0.2}
+                />
+                <stop
+                  offset="95%"
+                  stopColor={chartColors.cacheCreation}
+                  stopOpacity={0}
+                />
               </linearGradient>
               <linearGradient id="colorCacheRead" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={chartColors.cacheRead} stopOpacity={0.2} />
-                <stop offset="95%" stopColor={chartColors.cacheRead} stopOpacity={0} />
+                <stop
+                  offset="5%"
+                  stopColor={chartColors.cacheRead}
+                  stopOpacity={0.2}
+                />
+                <stop
+                  offset="95%"
+                  stopColor={chartColors.cacheRead}
+                  stopOpacity={0}
+                />
               </linearGradient>
             </defs>
             <CartesianGrid

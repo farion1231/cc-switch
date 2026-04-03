@@ -302,7 +302,9 @@ export function hsvToHex(h: number, s: number, v: number) {
   return rgbToHex((red + m) * 255, (green + m) * 255, (blue + m) * 255);
 }
 
-export function deriveDarkPalette(base: CustomThemePalette): CustomThemePalette {
+export function deriveDarkPalette(
+  base: CustomThemePalette,
+): CustomThemePalette {
   const background = remapForDark(base.background, 0.12, {
     satScale: 0.3,
     maxSat: 0.18,
@@ -429,36 +431,21 @@ export function deriveChartPalette(
 ) {
   return {
     chart1: palette.primary,
-    chart2: shiftChartHue(
-      palette.primary,
-      115,
-      mode === "dark" ? 0.5 : 0.42,
-      {
-        satScale: 0.95,
-        minSat: 0.42,
-        maxSat: 0.9,
-      },
-    ),
-    chart3: shiftChartHue(
-      palette.primary,
-      38,
-      mode === "dark" ? 0.6 : 0.52,
-      {
-        satScale: 1.08,
-        minSat: 0.46,
-        maxSat: 0.95,
-      },
-    ),
-    chart4: shiftChartHue(
-      palette.primary,
-      72,
-      mode === "dark" ? 0.7 : 0.6,
-      {
-        satScale: 0.92,
-        minSat: 0.42,
-        maxSat: 0.88,
-      },
-    ),
+    chart2: shiftChartHue(palette.primary, 115, mode === "dark" ? 0.5 : 0.42, {
+      satScale: 0.95,
+      minSat: 0.42,
+      maxSat: 0.9,
+    }),
+    chart3: shiftChartHue(palette.primary, 38, mode === "dark" ? 0.6 : 0.52, {
+      satScale: 1.08,
+      minSat: 0.46,
+      maxSat: 0.95,
+    }),
+    chart4: shiftChartHue(palette.primary, 72, mode === "dark" ? 0.7 : 0.6, {
+      satScale: 0.92,
+      minSat: 0.42,
+      maxSat: 0.88,
+    }),
     chart5: palette.destructive,
   };
 }
