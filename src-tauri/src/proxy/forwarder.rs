@@ -747,7 +747,7 @@ impl RequestForwarder {
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
-        let base_url = adapter.extract_base_url(provider)?;
+        let mut base_url = adapter.extract_base_url(provider)?;
 
         let is_full_url = provider
             .meta
@@ -770,6 +770,36 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
+
+        // GitHub Copilot 动态 endpoint 路由
+        // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
+        if is_copilot && !is_full_url {
+            if let Some(app_handle) = &self.app_handle {
+                let copilot_state = app_handle.state::<CopilotAuthState>();
+                let copilot_auth = copilot_state.0.read().await;
+
+                // 从 provider.meta 获取关联的 GitHub 账号 ID
+                let account_id = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.managed_account_id_for("github_copilot"));
+
+                let dynamic_endpoint = match &account_id {
+                    Some(id) => copilot_auth.get_api_endpoint(id).await,
+                    None => copilot_auth.get_default_api_endpoint().await,
+                };
+
+                // 只在动态 endpoint 与当前 base_url 不同时替换
+                if dynamic_endpoint != base_url {
+                    log::debug!(
+                        "[Copilot] 使用动态 API endpoint: {} (原: {})",
+                        dynamic_endpoint,
+                        base_url
+                    );
+                    base_url = dynamic_endpoint;
+                }
+            }
+        }
         let resolved_claude_api_format = if adapter.name() == "Claude" {
             Some(
                 self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
