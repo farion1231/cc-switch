@@ -751,7 +751,11 @@ impl StreamCheckService {
         };
 
         if is_github_copilot && api_format == "openai_responses" {
-            format!("{base}/v1/responses")
+            if already_has_v1 {
+                format!("{base}/responses")
+            } else {
+                format!("{base}/v1/responses")
+            }
         } else if is_github_copilot {
             format!("{base}/chat/completions")
         } else if api_format == "openai_responses" {
@@ -930,6 +934,18 @@ mod tests {
     fn test_resolve_claude_stream_url_for_github_copilot_responses() {
         let url = StreamCheckService::resolve_claude_stream_url(
             "https://api.githubcopilot.com",
+            AuthStrategy::GitHubCopilot,
+            "openai_responses",
+            false,
+        );
+
+        assert_eq!(url, "https://api.githubcopilot.com/v1/responses");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_github_copilot_responses_with_v1_base() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.githubcopilot.com/v1",
             AuthStrategy::GitHubCopilot,
             "openai_responses",
             false,

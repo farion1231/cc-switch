@@ -317,6 +317,7 @@ impl ProviderAdapter for ClaudeAdapter {
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
+        let is_github_copilot = base_trimmed.contains("githubcopilot.com");
 
         // Claude/OpenAI 兼容供应商的 base_url 可能是：
         // - 纯 origin: https://api.openai.com         (需要自动补 /v1)
@@ -328,7 +329,9 @@ impl ProviderAdapter for ClaudeAdapter {
             None => !base_trimmed.contains('/'),
         };
 
-        let mut base = if already_has_v1 {
+        let mut base = if is_github_copilot && endpoint_trimmed == "chat/completions" {
+            format!("{base_trimmed}/{endpoint_trimmed}")
+        } else if already_has_v1 {
             format!("{base_trimmed}/{endpoint_trimmed}")
         } else if origin_only {
             format!("{base_trimmed}/v1/{endpoint_trimmed}")
@@ -649,6 +652,13 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://relay.example/openai", "/responses");
         assert_eq!(url, "https://relay.example/openai/responses");
+    }
+
+    #[test]
+    fn test_build_url_no_extra_v1_for_github_copilot_chat_completions() {
+        let adapter = ClaudeAdapter::new();
+        let url = adapter.build_url("https://api.githubcopilot.com", "/chat/completions");
+        assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
     }
 
     #[test]
