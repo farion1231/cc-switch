@@ -88,6 +88,7 @@ impl StreamCheckService {
         provider: &Provider,
         config: &StreamCheckConfig,
         auth_override: Option<AuthInfo>,
+        base_url_override: Option<String>,
         claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         // 合并供应商单独配置和全局配置
@@ -100,6 +101,7 @@ impl StreamCheckService {
                 provider,
                 &effective_config,
                 auth_override.clone(),
+                base_url_override.clone(),
                 claude_api_format_override.clone(),
             )
             .await;
@@ -191,14 +193,18 @@ impl StreamCheckService {
         provider: &Provider,
         config: &StreamCheckConfig,
         auth_override: Option<AuthInfo>,
+        base_url_override: Option<String>,
         claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
         let adapter = get_adapter(app_type);
 
-        let base_url = adapter
-            .extract_base_url(provider)
-            .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}")))?;
+        let base_url = match base_url_override {
+            Some(base_url) => base_url,
+            None => adapter
+                .extract_base_url(provider)
+                .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}")))?,
+        };
 
         let auth = auth_override
             .or_else(|| adapter.extract_auth(provider))
