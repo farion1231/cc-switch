@@ -820,7 +820,12 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "migrationFailed": "Legacy auth migration failed: {{error}}",
-    "loadModelsFailed": "Failed to load Copilot models"
+    "loadModelsFailed": "Failed to load Copilot models",
+    "fetchModels": "Fetch Models",
+    "fetchingModels": "Fetching...",
+    "fetchModelsSuccess": "Found {{count}} models",
+    "fetchModelsFailed": "Failed to fetch models",
+    "fetchModelsEmpty": "No models found"
   },
   "endpointTest": {
     "title": "API Endpoint Management",

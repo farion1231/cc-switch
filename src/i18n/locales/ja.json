@@ -820,7 +820,12 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "migrationFailed": "旧認証データの移行に失敗しました: {{error}}",
-    "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました"
+    "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました",
+    "fetchModels": "モデル一覧を取得",
+    "fetchingModels": "取得中...",
+    "fetchModelsSuccess": "{{count}}件のモデルを取得",
+    "fetchModelsFailed": "モデル一覧の取得に失敗しました",
+    "fetchModelsEmpty": "モデルが見つかりません"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",

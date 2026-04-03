@@ -820,7 +820,12 @@
     "retry": "重试",
     "copyCode": "复制代码",
     "migrationFailed": "旧认证数据迁移失败：{{error}}",
-    "loadModelsFailed": "加载 Copilot 模型列表失败"
+    "loadModelsFailed": "加载 Copilot 模型列表失败",
+    "fetchModels": "获取模型列表",
+    "fetchingModels": "正在获取...",
+    "fetchModelsSuccess": "获取到 {{count}} 个模型",
+    "fetchModelsFailed": "获取模型列表失败",
+    "fetchModelsEmpty": "未找到可用模型"
   },
   "endpointTest": {
     "title": "请求地址管理",
