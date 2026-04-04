@@ -2276,5 +2276,19 @@
     },
     "suggestedDefaults": "Apply Suggested Defaults",
     "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
+  },
+  "subscription": {
+    "title": "Subscription Quota",
+    "fiveHour": "5-Hour",
+    "sevenDay": "7-Day",
+    "sevenDayOpus": "7-Day (Opus)",
+    "sevenDaySonnet": "7-Day (Sonnet)",
+    "utilization": "{{value}}%",
+    "resetsIn": "Resets in {{time}}",
+    "extraUsage": "Extra Usage",
+    "expired": "Session expired",
+    "expiredHint": "Run the claude command to refresh your login",
+    "queryFailed": "Query failed",
+    "refresh": "Refresh"
   }
 }

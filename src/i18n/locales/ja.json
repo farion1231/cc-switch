@@ -2276,5 +2276,19 @@
     },
     "suggestedDefaults": "推奨デフォルト設定を適用",
     "suggestedDefaultsHint": "このプリセットの推奨デフォルトモデル設定を使用します"
+  },
+  "subscription": {
+    "title": "サブスクリプションクォータ",
+    "fiveHour": "5時間",
+    "sevenDay": "7日間",
+    "sevenDayOpus": "7日間(Opus)",
+    "sevenDaySonnet": "7日間(Sonnet)",
+    "utilization": "{{value}}%",
+    "resetsIn": "{{time}}後にリセット",
+    "extraUsage": "超過使用量",
+    "expired": "セッション期限切れ",
+    "expiredHint": "claudeコマンドを実行してログインを更新してください",
+    "queryFailed": "クエリに失敗しました",
+    "refresh": "更新"
   }
 }

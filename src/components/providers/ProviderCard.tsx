@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
+import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
@@ -53,6 +54,14 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+}
+
+/** 判断是否为官方供应商（无自定义 base URL，直连官方 API） */
+function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+  if (appId !== "claude") return false;
+  const baseUrl = (provider.settingsConfig as Record<string, any>)?.env
+    ?.ANTHROPIC_BASE_URL;
+  return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -146,6 +155,7 @@ export function ProviderCard({
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
+  const isOfficial = isOfficialProvider(provider, appId);
 
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw）：使用 isInConfig 代替 isCurrent
@@ -342,7 +352,9 @@ export function ProviderCard({
         >
           <div className="ml-auto">
             <div className="flex items-center gap-1 transition-transform duration-200 group-hover:-translate-x-[var(--actions-width)] group-focus-within:-translate-x-[var(--actions-width)]">
-              {hasMultiplePlans ? (
+              {isOfficial ? (
+                <SubscriptionQuotaFooter appId={appId} inline={true} />
+              ) : hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                   <span className="font-medium">
                     {t("usage.multiplePlans", {

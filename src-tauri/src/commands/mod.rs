@@ -21,6 +21,7 @@ mod session_manager;
 mod settings;
 pub mod skill;
 mod stream_check;
+mod subscription;
 mod sync_support;
 
 mod lightweight;
@@ -49,6 +50,7 @@ pub use session_manager::*;
 pub use settings::*;
 pub use skill::*;
 pub use stream_check::*;
+pub use subscription::*;
 
 pub use lightweight::*;
 pub use usage::*;

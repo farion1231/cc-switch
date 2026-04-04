@@ -2276,5 +2276,19 @@
     },
     "suggestedDefaults": "应用建议默认配置",
     "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
+  },
+  "subscription": {
+    "title": "订阅额度",
+    "fiveHour": "5小时",
+    "sevenDay": "7天",
+    "sevenDayOpus": "7天(Opus)",
+    "sevenDaySonnet": "7天(Sonnet)",
+    "utilization": "{{value}}%",
+    "resetsIn": "{{time}}后重置",
+    "extraUsage": "超额用量",
+    "expired": "会话已过期",
+    "expiredHint": "请运行 claude 命令刷新登录",
+    "queryFailed": "查询失败",
+    "refresh": "刷新"
   }
 }
