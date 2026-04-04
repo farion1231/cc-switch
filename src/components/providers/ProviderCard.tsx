@@ -56,12 +56,19 @@ interface ProviderCardProps {
   onSetAsDefault?: () => void;
 }
 
-/** 判断是否为官方供应商（无自定义 base URL，直连官方 API） */
+/** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
-  if (appId !== "claude") return false;
-  const baseUrl = (provider.settingsConfig as Record<string, any>)?.env
-    ?.ANTHROPIC_BASE_URL;
-  return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
+  const config = provider.settingsConfig as Record<string, any>;
+  if (appId === "claude") {
+    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
+    return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
+  }
+  if (appId === "codex") {
+    // 无 OPENAI_API_KEY → 使用 Codex CLI 内置 OAuth（官方）
+    const apiKey = config?.auth?.OPENAI_API_KEY;
+    return !apiKey || (typeof apiKey === "string" && apiKey.trim() === "");
+  }
+  return false;
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {

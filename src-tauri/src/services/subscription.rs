@@ -410,6 +410,302 @@ async fn query_claude_quota(access_token: &str) -> SubscriptionQuota {
     }
 }
 
+// ── Codex 凭据读取 ──────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CodexAuthJson {
+    auth_mode: Option<String>,
+    tokens: Option<CodexTokens>,
+    last_refresh: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CodexTokens {
+    access_token: Option<String>,
+    account_id: Option<String>,
+}
+
+/// (access_token, account_id, status, message)
+type CodexCredentials = (
+    Option<String>,
+    Option<String>,
+    CredentialStatus,
+    Option<String>,
+);
+
+/// 读取 Codex OAuth 凭据
+///
+/// 按优先级尝试以下来源：
+/// 1. macOS Keychain (service: "Codex Auth")
+/// 2. 凭据文件 ~/.codex/auth.json
+///
+/// 仅 auth_mode == "chatgpt" (OAuth) 时有效，API key 模式不支持用量查询。
+fn read_codex_credentials() -> CodexCredentials {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(result) = read_codex_credentials_from_keychain() {
+            return result;
+        }
+    }
+
+    read_codex_credentials_from_file()
+}
+
+/// 从 macOS Keychain 读取 Codex 凭据
+#[cfg(target_os = "macos")]
+fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
+    let output = std::process::Command::new("security")
+        .args(["find-generic-password", "-s", "Codex Auth", "-w"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let json_str = String::from_utf8(output.stdout).ok()?;
+    let json_str = json_str.trim();
+    if json_str.is_empty() {
+        return None;
+    }
+
+    Some(parse_codex_credentials_json(json_str))
+}
+
+/// 从文件读取 Codex 凭据
+fn read_codex_credentials_from_file() -> CodexCredentials {
+    let auth_path = crate::codex_config::get_codex_auth_path();
+
+    if !auth_path.exists() {
+        return (None, None, CredentialStatus::NotFound, None);
+    }
+
+    let content = match std::fs::read_to_string(&auth_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                None,
+                None,
+                CredentialStatus::ParseError,
+                Some(format!("Failed to read Codex auth file: {e}")),
+            );
+        }
+    };
+
+    parse_codex_credentials_json(&content)
+}
+
+/// 解析 Codex 凭据 JSON（Keychain 和文件共用）
+fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
+    let auth: CodexAuthJson = match serde_json::from_str(content) {
+        Ok(a) => a,
+        Err(e) => {
+            return (
+                None,
+                None,
+                CredentialStatus::ParseError,
+                Some(format!("Failed to parse Codex auth JSON: {e}")),
+            );
+        }
+    };
+
+    // 仅 OAuth 模式有用量数据
+    if auth.auth_mode.as_deref() != Some("chatgpt") {
+        return (
+            None,
+            None,
+            CredentialStatus::NotFound,
+            Some("Codex not using OAuth mode".to_string()),
+        );
+    }
+
+    let tokens = match auth.tokens {
+        Some(t) => t,
+        None => {
+            return (
+                None,
+                None,
+                CredentialStatus::ParseError,
+                Some("No tokens in Codex auth".to_string()),
+            );
+        }
+    };
+
+    let access_token = match tokens.access_token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return (
+                None,
+                None,
+                CredentialStatus::ParseError,
+                Some("access_token is empty or missing".to_string()),
+            );
+        }
+    };
+
+    // 检查 token 是否可能过期（距上次刷新 > 8 天）
+    if let Some(ref last_refresh) = auth.last_refresh {
+        if is_codex_token_stale(last_refresh) {
+            return (
+                Some(access_token),
+                tokens.account_id,
+                CredentialStatus::Expired,
+                Some("Codex token may be stale (>8 days since last refresh)".to_string()),
+            );
+        }
+    }
+
+    (
+        Some(access_token),
+        tokens.account_id,
+        CredentialStatus::Valid,
+        None,
+    )
+}
+
+/// 判断 Codex token 是否可能过期（Codex CLI 在 >8 天时自动刷新）
+fn is_codex_token_stale(last_refresh: &str) -> bool {
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(last_refresh) {
+        let age_secs = now_secs.saturating_sub(dt.timestamp() as u64);
+        age_secs > 8 * 24 * 3600
+    } else {
+        false
+    }
+}
+
+// ── Codex API 查询 ──────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CodexRateLimitWindow {
+    used_percent: Option<f64>,
+    limit_window_seconds: Option<i64>,
+    reset_at: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct CodexRateLimit {
+    primary_window: Option<CodexRateLimitWindow>,
+    secondary_window: Option<CodexRateLimitWindow>,
+}
+
+#[derive(Deserialize)]
+struct CodexUsageResponse {
+    rate_limit: Option<CodexRateLimit>,
+}
+
+/// 根据窗口秒数映射到 tier 名称（与 Claude 的命名兼容以复用前端 i18n）
+fn window_seconds_to_tier_name(secs: i64) -> String {
+    match secs {
+        18000 => "five_hour".to_string(),
+        604800 => "seven_day".to_string(),
+        s => {
+            let hours = s / 3600;
+            if hours >= 24 {
+                format!("{}_day", hours / 24)
+            } else {
+                format!("{}_hour", hours)
+            }
+        }
+    }
+}
+
+/// Unix 时间戳（秒）转 ISO 8601 字符串
+fn unix_ts_to_iso(ts: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(ts, 0).map(|dt| dt.to_rfc3339())
+}
+
+/// 查询 Codex 官方订阅额度
+async fn query_codex_quota(access_token: &str, account_id: Option<&str>) -> SubscriptionQuota {
+    let client = crate::proxy::http_client::get();
+
+    let mut req = client
+        .get("https://chatgpt.com/backend-api/wham/usage")
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("User-Agent", "codex-cli")
+        .header("Accept", "application/json");
+
+    if let Some(id) = account_id {
+        req = req.header("ChatGPT-Account-Id", id);
+    }
+
+    let resp = match req.timeout(std::time::Duration::from_secs(10)).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return SubscriptionQuota::error(
+                "codex",
+                CredentialStatus::Valid,
+                format!("Network error: {e}"),
+            );
+        }
+    };
+
+    let status = resp.status();
+
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return SubscriptionQuota::error(
+            "codex",
+            CredentialStatus::Expired,
+            format!("Authentication failed (HTTP {status}). Please re-login with Codex CLI."),
+        );
+    }
+
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return SubscriptionQuota::error(
+            "codex",
+            CredentialStatus::Valid,
+            format!("API error (HTTP {status}): {body}"),
+        );
+    }
+
+    let body: CodexUsageResponse = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            return SubscriptionQuota::error(
+                "codex",
+                CredentialStatus::Valid,
+                format!("Failed to parse API response: {e}"),
+            );
+        }
+    };
+
+    let mut tiers = Vec::new();
+
+    if let Some(rate_limit) = body.rate_limit {
+        for window in [rate_limit.primary_window, rate_limit.secondary_window]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(used) = window.used_percent {
+                tiers.push(QuotaTier {
+                    name: window
+                        .limit_window_seconds
+                        .map(window_seconds_to_tier_name)
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    utilization: used,
+                    resets_at: window.reset_at.and_then(unix_ts_to_iso),
+                });
+            }
+        }
+    }
+
+    SubscriptionQuota {
+        tool: "codex".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: true,
+        tiers,
+        extra_usage: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    }
+}
+
 // ── 入口函数 ──────────────────────────────────────────────
 
 /// 查询指定 CLI 工具的官方订阅额度
@@ -445,7 +741,37 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 }
             }
         }
-        // Codex / Gemini: 暂不支持
+        "codex" => {
+            let (token, account_id, status, message) = read_codex_credentials();
+
+            match status {
+                CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found("codex")),
+                CredentialStatus::ParseError => Ok(SubscriptionQuota::error(
+                    "codex",
+                    CredentialStatus::ParseError,
+                    message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
+                )),
+                CredentialStatus::Expired => {
+                    // 即使可能过期也尝试调用 API
+                    if let Some(token) = token {
+                        let result = query_codex_quota(&token, account_id.as_deref()).await;
+                        if result.success {
+                            return Ok(result);
+                        }
+                    }
+                    Ok(SubscriptionQuota::error(
+                        "codex",
+                        CredentialStatus::Expired,
+                        message.unwrap_or_else(|| "Codex OAuth token may be stale".to_string()),
+                    ))
+                }
+                CredentialStatus::Valid => {
+                    let token = token.expect("token must be Some when status is Valid");
+                    Ok(query_codex_quota(&token, account_id.as_deref()).await)
+                }
+            }
+        }
+        // Gemini: 暂不支持
         _ => Ok(SubscriptionQuota::not_found(tool)),
     }
 }
