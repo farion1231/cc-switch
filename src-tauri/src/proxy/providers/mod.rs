@@ -22,6 +22,7 @@ pub mod streaming;
 pub mod streaming_responses;
 pub mod transform;
 pub mod transform_responses;
+pub mod url_classify;
 
 use crate::app_config::AppType;
 use crate::provider::Provider;

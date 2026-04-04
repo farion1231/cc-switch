@@ -5,6 +5,7 @@
 //! ## 客户端检测
 //! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
 
+use super::url_classify::{dedup_v1, BaseUrlInfo};
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
@@ -139,36 +140,17 @@ impl ProviderAdapter for CodexAdapter {
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
+        let info = BaseUrlInfo::new(base_trimmed);
 
-        // OpenAI/Codex 的 base_url 可能是：
-        // - 纯 origin: https://api.openai.com  (需要自动补 /v1)
-        // - 已含 /v1: https://api.openai.com/v1 (直接拼接)
-        // - 自定义前缀: https://xxx/openai (不添加 /v1，直接拼接)
-
-        // 检查 base_url 是否已经包含 /v1
-        let already_has_v1 = base_trimmed.ends_with("/v1");
-
-        // 检查是否是纯 origin（没有路径部分）
-        let origin_only = match base_trimmed.split_once("://") {
-            Some((_scheme, rest)) => !rest.contains('/'),
-            None => !base_trimmed.contains('/'),
-        };
-
-        let mut url = if already_has_v1 {
-            // 已经有 /v1，直接拼接
+        let mut url = if info.already_has_v1 {
             format!("{base_trimmed}/{endpoint_trimmed}")
-        } else if origin_only {
-            // 纯 origin，添加 /v1
+        } else if info.origin_only {
             format!("{base_trimmed}/v1/{endpoint_trimmed}")
         } else {
-            // 自定义前缀，不添加 /v1，直接拼接
             format!("{base_trimmed}/{endpoint_trimmed}")
         };
 
-        // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
-        while url.contains("/v1/v1") {
-            url = url.replace("/v1/v1", "/v1");
-        }
+        dedup_v1(&mut url);
 
         url
     }

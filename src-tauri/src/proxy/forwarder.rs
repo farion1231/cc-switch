@@ -9,7 +9,11 @@ use super::{
     failover_switch::FailoverSwitchManager,
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
-    providers::{get_adapter, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType},
+    providers::{
+        get_adapter,
+        url_classify::{dedup_v1, is_openai_compat_endpoint, BaseUrlInfo},
+        AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
+    },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
@@ -1478,29 +1482,17 @@ fn build_claude_runtime_url(
 ) -> String {
     let base_trimmed = base_url.trim_end_matches('/');
     let endpoint_trimmed = endpoint.trim_start_matches('/');
-    let already_has_v1 = base_trimmed.ends_with("/v1");
-    let origin_only = match base_trimmed.split_once("://") {
-        Some((_scheme, rest)) => !rest.contains('/'),
-        None => !base_trimmed.contains('/'),
-    };
-    let copilot_base = base_trimmed.strip_suffix("/v1").unwrap_or(base_trimmed);
-    let endpoint_is_openai_compat = matches!(
-        endpoint_trimmed,
-        value
-            if value.starts_with("chat/completions")
-                || value.starts_with("responses")
-                || value.starts_with("v1/chat/completions")
-                || value.starts_with("v1/responses")
-    );
+    let info = BaseUrlInfo::new(base_trimmed);
+    let endpoint_is_openai_compat = is_openai_compat_endpoint(endpoint_trimmed);
 
     let mut url = if is_copilot && endpoint_trimmed.starts_with("chat/completions") {
-        format!("{copilot_base}/{endpoint_trimmed}")
-    } else if already_has_v1 && endpoint_trimmed.starts_with("v1/") {
+        format!("{}/{endpoint_trimmed}", info.copilot_base)
+    } else if info.already_has_v1 && endpoint_trimmed.starts_with("v1/") {
         format!(
             "{base_trimmed}/{}",
             endpoint_trimmed.trim_start_matches("v1/")
         )
-    } else if (is_openrouter || origin_only) && endpoint_is_openai_compat {
+    } else if (is_openrouter || info.origin_only) && endpoint_is_openai_compat {
         format!(
             "{base_trimmed}/v1/{}",
             endpoint_trimmed.trim_start_matches("v1/")
@@ -1509,9 +1501,7 @@ fn build_claude_runtime_url(
         format!("{base_trimmed}/{endpoint_trimmed}")
     };
 
-    while url.contains("/v1/v1") {
-        url = url.replace("/v1/v1", "/v1");
-    }
+    dedup_v1(&mut url);
 
     url
 }

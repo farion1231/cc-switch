@@ -15,6 +15,7 @@ use crate::provider::Provider;
 use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
+use crate::proxy::providers::url_classify::BaseUrlInfo;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
 /// 健康状态枚举
@@ -755,39 +756,34 @@ impl StreamCheckService {
         }
 
         let base = base_url.trim_end_matches('/');
+        let info = BaseUrlInfo::new(base);
         let is_github_copilot = auth_strategy == AuthStrategy::GitHubCopilot;
-        let already_has_v1 = base.ends_with("/v1");
-        let copilot_base = base.strip_suffix("/v1").unwrap_or(base);
-        let origin_only = match base.split_once("://") {
-            Some((_scheme, rest)) => !rest.contains('/'),
-            None => !base.contains('/'),
-        };
 
         if is_github_copilot && api_format == "openai_responses" {
-            if already_has_v1 {
+            if info.already_has_v1 {
                 format!("{base}/responses")
             } else {
                 format!("{base}/v1/responses")
             }
         } else if is_github_copilot {
-            format!("{copilot_base}/chat/completions")
+            format!("{}/chat/completions", info.copilot_base)
         } else if api_format == "openai_responses" {
-            if already_has_v1 {
+            if info.already_has_v1 {
                 format!("{base}/responses")
-            } else if is_openrouter || origin_only {
+            } else if is_openrouter || info.origin_only {
                 format!("{base}/v1/responses")
             } else {
                 format!("{base}/responses")
             }
         } else if api_format == "openai_chat" {
-            if already_has_v1 {
+            if info.already_has_v1 {
                 format!("{base}/chat/completions")
-            } else if is_openrouter || origin_only {
+            } else if is_openrouter || info.origin_only {
                 format!("{base}/v1/chat/completions")
             } else {
                 format!("{base}/chat/completions")
             }
-        } else if already_has_v1 {
+        } else if info.already_has_v1 {
             format!("{base}/messages")
         } else {
             format!("{base}/v1/messages")

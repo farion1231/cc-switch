@@ -13,6 +13,7 @@
 //! - **OpenRouter**: 已支持 Claude Code 兼容接口，默认透传
 //! - **GitHubCopilot**: GitHub Copilot (OAuth + Copilot Token)
 
+use super::url_classify::{dedup_v1, is_openai_compat_endpoint, BaseUrlInfo};
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
@@ -317,47 +318,27 @@ impl ProviderAdapter for ClaudeAdapter {
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
+        let info = BaseUrlInfo::new(base_trimmed);
         let is_github_copilot = base_trimmed.contains("githubcopilot.com");
         let is_openrouter = base_trimmed.contains("openrouter.ai");
-        let copilot_base = base_trimmed.strip_suffix("/v1").unwrap_or(base_trimmed);
-
-        // Claude/OpenAI 兼容供应商的 base_url 可能是：
-        // - 纯 origin: https://api.openai.com         (需要自动补 /v1)
-        // - 已含 /v1: https://api.openai.com/v1      (直接拼接)
-        // - 自定义前缀: https://relay.example/openai (不添加 /v1，直接拼接)
-        let already_has_v1 = base_trimmed.ends_with("/v1");
-        let origin_only = match base_trimmed.split_once("://") {
-            Some((_scheme, rest)) => !rest.contains('/'),
-            None => !base_trimmed.contains('/'),
-        };
-        let endpoint_is_openai_compat = matches!(
-            endpoint_trimmed,
-            value
-                if value.starts_with("chat/completions")
-                    || value.starts_with("responses")
-                    || value.starts_with("v1/chat/completions")
-                    || value.starts_with("v1/responses")
-        );
+        let endpoint_is_openai_compat = is_openai_compat_endpoint(endpoint_trimmed);
 
         let mut base = if is_github_copilot && endpoint_trimmed.starts_with("chat/completions") {
-            format!("{copilot_base}/{endpoint_trimmed}")
-        } else if already_has_v1 {
+            format!("{}/{endpoint_trimmed}", info.copilot_base)
+        } else if info.already_has_v1 {
             format!("{base_trimmed}/{endpoint_trimmed}")
         } else if is_openrouter && endpoint_is_openai_compat {
             format!(
                 "{base_trimmed}/v1/{}",
                 endpoint_trimmed.trim_start_matches("v1/")
             )
-        } else if origin_only {
+        } else if info.origin_only {
             format!("{base_trimmed}/v1/{endpoint_trimmed}")
         } else {
             format!("{base_trimmed}/{endpoint_trimmed}")
         };
 
-        // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
-        while base.contains("/v1/v1") {
-            base = base.replace("/v1/v1", "/v1");
-        }
+        dedup_v1(&mut base);
 
         base
     }
