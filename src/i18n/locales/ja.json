@@ -2283,11 +2283,14 @@
     "sevenDay": "7日間",
     "sevenDayOpus": "7日間(Opus)",
     "sevenDaySonnet": "7日間(Sonnet)",
+    "geminiPro": "Pro",
+    "geminiFlash": "Flash",
+    "geminiFlashLite": "Flash Lite",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}後にリセット",
     "extraUsage": "超過使用量",
     "expired": "セッション期限切れ",
-    "expiredHint": "claudeコマンドを実行してログインを更新してください",
+    "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
   }

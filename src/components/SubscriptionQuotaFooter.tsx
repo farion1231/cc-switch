@@ -16,6 +16,10 @@ const TIER_I18N_KEYS: Record<string, string> = {
   seven_day: "subscription.sevenDay",
   seven_day_opus: "subscription.sevenDayOpus",
   seven_day_sonnet: "subscription.sevenDaySonnet",
+  // Gemini 模型分类
+  gemini_pro: "subscription.geminiPro",
+  gemini_flash: "subscription.geminiFlash",
+  gemini_flash_lite: "subscription.geminiFlashLite",
 };
 
 /** 根据使用百分比返回颜色 class */
@@ -123,7 +127,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
             <div>
               <span className="font-medium">{t("subscription.expired")}</span>
               <span className="ml-2 text-amber-500/70 dark:text-amber-400/70">
-                {t("subscription.expiredHint")}
+                {t("subscription.expiredHint", { tool: appId })}
               </span>
             </div>
           </div>

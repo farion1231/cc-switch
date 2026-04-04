@@ -2283,11 +2283,14 @@
     "sevenDay": "7-Day",
     "sevenDayOpus": "7-Day (Opus)",
     "sevenDaySonnet": "7-Day (Sonnet)",
+    "geminiPro": "Pro",
+    "geminiFlash": "Flash",
+    "geminiFlashLite": "Flash Lite",
     "utilization": "{{value}}%",
     "resetsIn": "Resets in {{time}}",
     "extraUsage": "Extra Usage",
     "expired": "Session expired",
-    "expiredHint": "Run the claude command to refresh your login",
+    "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
   }
