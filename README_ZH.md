@@ -15,6 +15,13 @@
 
 </div>
 
+> [!NOTE]
+> **这是 CC Switch 的 Legacy 版本，专为兼容 macOS 10.15 (Catalina) 而维护。**
+>
+> 主仓库的 CC Switch 依赖 Tauri 2 所使用的较新系统 API，因此要求 macOS 12 (Monterey) 及以上。然而仍有大量用户在使用 macOS 10.15，本仓库以牺牲部分新特性为代价，为他们提供一个可运行的 Legacy 构建版本。
+>
+> 如果你的系统是 macOS 12 或更新版本，请使用[主仓库版本](https://github.com/farion1231/cc-switch)以获取最新功能和更新。
+
 ## ❤️赞助商
 
 > [想出现在这里？](mailto:farion1231@gmail.com)
@@ -254,7 +261,7 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 ### 系统要求
 
 - **Windows**：Windows 10 及以上
-- **macOS**：macOS 12 (Monterey) 及以上
+- **macOS**：macOS 10.15 (Catalina) 及以上
 - **Linux**：Ubuntu 22.04+ / Debian 11+ / Fedora 34+ 等主流发行版
 
 ### Windows 用户

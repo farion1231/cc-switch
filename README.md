@@ -15,6 +15,13 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Changelog](CHANG
 
 </div>
 
+> [!NOTE]
+> **This is the legacy build of CC Switch, maintained for macOS 10.15 (Catalina) compatibility.**
+>
+> The main CC Switch requires macOS 12 (Monterey) or later due to its dependency on newer system APIs used by Tauri 2. However, many users are still running macOS 10.15 — so this repository provides a legacy build that trades some newer features for broader OS compatibility.
+>
+> If you are on macOS 12 or later, use the [main release](https://github.com/farion1231/cc-switch) instead for the latest features and updates.
+
 ## ❤️Sponsor
 
 > [Want to appear here?](mailto:farion1231@gmail.com)
@@ -251,7 +258,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 ### System Requirements
 
 - **Windows**: Windows 10 and above
-- **macOS**: macOS 12 (Monterey) and above
+- **macOS**: macOS 10.15 (Catalina) and above
 - **Linux**: Ubuntu 22.04+ / Debian 11+ / Fedora 34+ and other mainstream distributions
 
 ### Windows Users
