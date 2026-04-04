@@ -91,8 +91,17 @@ fn extract_api_key_from_provider(provider: &crate::provider::Provider) -> Option
             .or_else(|| env.get("GOOGLE_API_KEY"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
+    } else if let Some(options) = provider.settings_config.get("options") {
+        options
+            .get("apiKey")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     } else {
-        None
+        provider
+            .settings_config
+            .get("apiKey")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 }
 
@@ -104,8 +113,17 @@ fn extract_base_url_from_provider(provider: &crate::provider::Provider) -> Optio
             .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
             .and_then(|v| v.as_str())
             .map(|s| s.trim_end_matches('/').to_string())
+    } else if let Some(options) = provider.settings_config.get("options") {
+        options
+            .get("baseURL")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim_end_matches('/').to_string())
     } else {
-        None
+        provider
+            .settings_config
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim_end_matches('/').to_string())
     }
 }
 

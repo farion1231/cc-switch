@@ -1,7 +1,7 @@
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import { TEMPLATE_TYPES } from "@/config/constants";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { getProviderBaseUrl } from "@/config/usageTemplates/providerBaseUrl";
 
 export interface MiniMaxUsageConfig {
   template: typeof TEMPLATE_TYPES.MINIMAX;
@@ -93,30 +93,6 @@ export const buildMiniMaxUsageTemplate = (labels: {
     return result;
   },
 });`;
-
-const getProviderBaseUrl = (
-  provider: Provider,
-  appId: AppId,
-): string | undefined => {
-  const config = provider.settingsConfig as Record<string, any> | undefined;
-  if (!config) return undefined;
-
-  if (appId === "claude") {
-    const env = config.env || {};
-    return env.ANTHROPIC_BASE_URL;
-  }
-
-  if (appId === "codex") {
-    return extractCodexBaseUrl(config.config || "");
-  }
-
-  if (appId === "gemini") {
-    const env = config.env || {};
-    return env.GOOGLE_GEMINI_BASE_URL;
-  }
-
-  return undefined;
-};
 
 export const detectMiniMaxUsageConfig = (
   provider: Provider,
