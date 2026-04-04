@@ -720,6 +720,72 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "TheRouter",
+    websiteUrl: "https://therouter.ai",
+    apiKeyUrl: "https://dashboard.therouter.ai",
+    settingsConfig: {
+      baseUrl: "https://api.therouter.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "anthropic/claude-sonnet-4.6",
+          name: "Claude Sonnet 4.6",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        },
+        {
+          id: "openai/gpt-5.3-codex",
+          name: "GPT-5.3 Codex",
+          contextWindow: 400000,
+          cost: { input: 5, output: 40, cacheRead: 0.5 },
+        },
+        {
+          id: "openai/gpt-5.2",
+          name: "GPT-5.2",
+          contextWindow: 400000,
+          cost: { input: 1.75, output: 14, cacheRead: 0.175 },
+        },
+        {
+          id: "google/gemini-3-flash-preview",
+          name: "Gemini 3 Flash Preview",
+          contextWindow: 1000000,
+          cost: { input: 0.5, output: 3, cacheRead: 0.05 },
+        },
+        {
+          id: "qwen/qwen3-coder-480b",
+          name: "Qwen3 Coder 480B",
+          contextWindow: 262144,
+          cost: { input: 0.6, output: 2.35 },
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "therouter/anthropic/claude-sonnet-4.6",
+        fallbacks: [
+          "therouter/openai/gpt-5.2",
+          "therouter/google/gemini-3-flash-preview",
+        ],
+      },
+      modelCatalog: {
+        "therouter/anthropic/claude-sonnet-4.6": { alias: "Sonnet" },
+        "therouter/openai/gpt-5.2": { alias: "GPT-5.2" },
+        "therouter/google/gemini-3-flash-preview": { alias: "Gemini Flash" },
+        "therouter/openai/gpt-5.3-codex": { alias: "Codex" },
+        "therouter/qwen/qwen3-coder-480b": { alias: "Qwen Coder" },
+      },
+    },
+  },
+  {
     name: "ModelScope",
     websiteUrl: "https://modelscope.cn",
     apiKeyUrl: "https://modelscope.cn/my/myaccesstoken",
