@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -191,26 +191,11 @@ export function ProviderCard({
 
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const actionsRef = useRef<HTMLDivElement>(null);
-  const [actionsWidth, setActionsWidth] = useState(0);
-
   useEffect(() => {
     if (hasMultiplePlans) {
       setIsExpanded(true);
     }
   }, [hasMultiplePlans]);
-
-  useEffect(() => {
-    if (actionsRef.current) {
-      const updateWidth = () => {
-        const width = actionsRef.current?.offsetWidth || 0;
-        setActionsWidth(width);
-      };
-      updateWidth();
-      window.addEventListener("resize", updateWidth);
-      return () => window.removeEventListener("resize", updateWidth);
-    }
-  }, [onTest, onOpenTerminal]); // 按钮数量可能变化时重新计算
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -359,15 +344,10 @@ export function ProviderCard({
         </div>
 
         <div
-          className="relative flex items-center ml-auto min-w-0 gap-3"
-          style={
-            {
-              "--actions-width": `${actionsWidth || 320}px`,
-            } as React.CSSProperties
-          }
+          className="flex items-center ml-auto min-w-0 gap-3"
         >
           <div className="ml-auto">
-            <div className="flex items-center gap-1 transition-transform duration-200 group-hover:-translate-x-[var(--actions-width)] group-focus-within:-translate-x-[var(--actions-width)]">
+            <div className="flex items-center gap-1">
               {isOfficial ? (
                 <SubscriptionQuotaFooter appId={appId} inline={true} />
               ) : hasMultiplePlans ? (
@@ -414,8 +394,7 @@ export function ProviderCard({
           </div>
 
           <div
-            ref={actionsRef}
-            className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pl-3 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0"
+            className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200"
           >
             <ProviderActions
               appId={appId}
