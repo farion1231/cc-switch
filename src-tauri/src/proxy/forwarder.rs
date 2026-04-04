@@ -12,7 +12,9 @@ use super::{
     providers::{get_adapter, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
-        normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
+        normalize_adaptive_to_enabled, normalize_thinking_type,
+        provider_needs_adaptive_normalization, rectify_anthropic_request,
+        should_rectify_thinking_signature,
     },
     types::{OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
@@ -760,7 +762,12 @@ impl RequestForwarder {
             super::model_mapper::apply_model_mapping(body.clone(), provider);
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
-        let mapped_body = normalize_thinking_type(mapped_body);
+        let mut mapped_body = normalize_thinking_type(mapped_body);
+
+        // 针对不支持 adaptive thinking type 的 provider（如阿里百炼），将 adaptive 转换为 enabled
+        if provider_needs_adaptive_normalization(&base_url) {
+            mapped_body = normalize_adaptive_to_enabled(mapped_body);
+        }
 
         // 确定有效端点
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
