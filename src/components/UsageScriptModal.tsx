@@ -21,6 +21,16 @@ import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
 import { TEMPLATE_TYPES, PROVIDER_TYPES } from "@/config/constants";
+import {
+  buildMiniMaxUsageTemplate,
+  detectMiniMaxUsageConfig,
+  MINIMAX_CN_USAGE_URL,
+} from "@/config/usageTemplates/minimax";
+import {
+  buildZhipuUsageTemplate,
+  detectZhipuUsageConfig,
+  ZHIPU_CN_USAGE_URL,
+} from "@/config/usageTemplates/zhipu";
 
 interface UsageScriptModalProps {
   provider: Provider;
@@ -66,6 +76,22 @@ const generatePresetTemplates = (
   }
 })`,
 
+  [TEMPLATE_TYPES.MINIMAX]: buildMiniMaxUsageTemplate({
+    hours5Quota: t("usageScript.hours5Quota"),
+    weeklyQuota: t("usageScript.weeklyQuota"),
+    countUnit: t("usageScript.mcpMonthlyUnit"),
+    countdownHourUnit: t("usageScript.countdownHourUnit"),
+    countdownMinuteUnit: t("usageScript.countdownMinuteUnit"),
+    resetInTemplate: t("usageScript.resetInTemplate"),
+  }),
+  [TEMPLATE_TYPES.ZHIPU]: buildZhipuUsageTemplate({
+    hours5Quota: t("usageScript.hours5Quota"),
+    weeklyQuota: t("usageScript.weeklyQuota"),
+    mcpMonthly: t("usageScript.mcpMonthly"),
+    mcpMonthlyUnit: t("usageScript.mcpMonthlyUnit"),
+    queryFailed: t("usageScript.queryFailedMessage"),
+    resetSuffix: t("usageScript.resetSuffix"),
+  }),
   [TEMPLATE_TYPES.NEW_API]: `({
   request: {
     url: "{{baseUrl}}/api/user/self",
@@ -101,6 +127,8 @@ const generatePresetTemplates = (
 const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.CUSTOM]: "usageScript.templateCustom",
   [TEMPLATE_TYPES.GENERAL]: "usageScript.templateGeneral",
+  [TEMPLATE_TYPES.MINIMAX]: "usageScript.templateMiniMax",
+  [TEMPLATE_TYPES.ZHIPU]: "usageScript.templateZhipu",
   [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
 };
@@ -152,6 +180,17 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           apiKey: env.GEMINI_API_KEY,
           baseUrl: env.GOOGLE_GEMINI_BASE_URL,
         };
+      } else if (appId === "opencode") {
+        const options = (config as any).options || {};
+        return {
+          apiKey: options.apiKey,
+          baseUrl: options.baseURL,
+        };
+      } else if (appId === "openclaw") {
+        return {
+          apiKey: (config as any).apiKey,
+          baseUrl: (config as any).baseUrl,
+        };
       }
       return { apiKey: undefined, baseUrl: undefined };
     } catch (error) {
@@ -161,13 +200,20 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const providerCredentials = getProviderCredentials();
+  const detectedMiniMaxConfig = detectMiniMaxUsageConfig(provider, appId);
+  const detectedZhipuConfig = detectZhipuUsageConfig(provider, appId);
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
     const defaultScript = {
       enabled: false,
       language: "javascript" as const,
-      code: PRESET_TEMPLATES[TEMPLATE_TYPES.GENERAL],
+      code: detectedMiniMaxConfig
+        ? PRESET_TEMPLATES[TEMPLATE_TYPES.MINIMAX]
+        : detectedZhipuConfig
+          ? PRESET_TEMPLATES[TEMPLATE_TYPES.ZHIPU]
+          : PRESET_TEMPLATES[TEMPLATE_TYPES.GENERAL],
+      baseUrl: detectedMiniMaxConfig?.baseUrl || detectedZhipuConfig?.baseUrl,
       timeout: 10,
     };
 
@@ -238,6 +284,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (existingScript?.templateType) {
         return existingScript.templateType;
       }
+      if (!existingScript && detectedMiniMaxConfig) {
+        return TEMPLATE_TYPES.MINIMAX;
+      }
+      if (!existingScript && detectedZhipuConfig) {
+        return TEMPLATE_TYPES.ZHIPU;
+      }
       // 向后兼容：根据字段推断模板类型
       // 检测 NEW_API 模板（有 accessToken 或 userId）
       if (existingScript?.accessToken || existingScript?.userId) {
@@ -254,6 +306,19 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [showAccessToken, setShowAccessToken] = useState(false);
+  const isTemplateRequestUrlRequired =
+    selectedTemplate === TEMPLATE_TYPES.MINIMAX ||
+    selectedTemplate === TEMPLATE_TYPES.ZHIPU;
+  const getValidatedRequestUrl = (): string | undefined => {
+    const trimmedBaseUrl = script.baseUrl?.trim();
+    if (!script.enabled || !isTemplateRequestUrlRequired || trimmedBaseUrl) {
+      return trimmedBaseUrl;
+    }
+    toast.error(t("usageScript.requestUrlRequired") || "请求地址不能为空", {
+      duration: 5000,
+    });
+    return undefined;
+  };
 
   const handleEnableToggle = (checked: boolean) => {
     if (checked && !settingsData?.usageConfirmed) {
@@ -278,6 +343,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const handleSave = () => {
+    const validatedRequestUrl = getValidatedRequestUrl();
+
     // Copilot 模板不需要脚本验证
     if (selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT) {
       if (script.enabled && !script.code.trim()) {
@@ -288,13 +355,23 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         toast.error(t("usageScript.mustHaveReturn"), { duration: 5000 });
         return;
       }
+      if (
+        script.enabled &&
+        isTemplateRequestUrlRequired &&
+        !validatedRequestUrl
+      ) {
+        return;
+      }
     }
     // 保存时记录当前选择的模板类型
     const scriptWithTemplate = {
       ...script,
+      baseUrl: validatedRequestUrl || script.baseUrl?.trim() || undefined,
       templateType: selectedTemplate as
         | "custom"
         | "general"
+        | "minimax"
+        | "zhipu"
         | "newapi"
         | "github_copilot"
         | undefined,
@@ -306,6 +383,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const handleTest = async () => {
     setTesting(true);
     try {
+      const validatedRequestUrl = getValidatedRequestUrl();
+
       // Copilot 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT) {
         const accountId = resolveManagedAccountId(
@@ -338,31 +417,71 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return;
       }
 
+      if (
+        script.enabled &&
+        isTemplateRequestUrlRequired &&
+        !validatedRequestUrl
+      ) {
+        return;
+      }
+
       const result = await usageApi.testScript(
         provider.id,
         appId,
         script.code,
         script.timeout,
         script.apiKey,
-        script.baseUrl,
+        validatedRequestUrl || script.baseUrl?.trim(),
         script.accessToken,
         script.userId,
-        selectedTemplate as "custom" | "general" | "newapi" | undefined,
+        selectedTemplate as
+          | "custom"
+          | "general"
+          | "minimax"
+          | "zhipu"
+          | "newapi"
+          | undefined,
       );
       if (result.success && result.data && result.data.length > 0) {
+        const hasValidPlan = result.data.some((plan) => plan.isValid !== false);
         const summary = result.data
           .map((plan: UsageData) => {
             const planInfo = plan.planName ? `[${plan.planName}]` : "";
-            return `${planInfo} ${t("usage.remaining")} ${plan.remaining} ${plan.unit}`;
+            if (plan.isValid === false) {
+              return [planInfo, plan.invalidMessage || t("usage.invalid")]
+                .filter(Boolean)
+                .join(" ");
+            }
+            const remainingInfo =
+              plan.remaining !== undefined
+                ? `${plan.remaining}${plan.unit ? ` ${plan.unit}` : ""}`
+                : "";
+            const usageInfo =
+              plan.used !== undefined && plan.total !== undefined
+                ? `${plan.used}/${plan.total}`
+                : "";
+            const extraInfo = plan.extra || "";
+            return [planInfo, remainingInfo, usageInfo, extraInfo]
+              .filter(Boolean)
+              .join(" ");
           })
           .join(", ");
-        toast.success(`${t("usageScript.testSuccess")}${summary}`, {
-          duration: 3000,
-          closeButton: true,
-        });
 
-        // 🔧 测试成功后，更新主界面列表的用量查询缓存
+        // 🔧 更新主界面列表的用量查询缓存，保持测试结果和实际展示一致
         queryClient.setQueryData(["usage", provider.id, appId], result);
+        if (hasValidPlan) {
+          toast.success(`${t("usageScript.testSuccess")}${summary}`, {
+            duration: 3000,
+            closeButton: true,
+          });
+        } else {
+          toast.error(
+            `${t("usageScript.testFailed")}: ${summary || t("endpointTest.noResult")}`,
+            {
+              duration: 5000,
+            },
+          );
+        }
       } else {
         toast.error(
           `${t("usageScript.testFailed")}: ${result.error || t("endpointTest.noResult")}`,
@@ -428,6 +547,25 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         setScript({
           ...script,
           code: preset,
+          baseUrl: undefined,
+          accessToken: undefined,
+          userId: undefined,
+        });
+      } else if (presetName === TEMPLATE_TYPES.MINIMAX) {
+        const miniMaxConfig = detectMiniMaxUsageConfig(provider, appId);
+        setScript({
+          ...script,
+          code: preset,
+          baseUrl: miniMaxConfig?.baseUrl || MINIMAX_CN_USAGE_URL,
+          accessToken: undefined,
+          userId: undefined,
+        });
+      } else if (presetName === TEMPLATE_TYPES.ZHIPU) {
+        const zhipuConfig = detectZhipuUsageConfig(provider, appId);
+        setScript({
+          ...script,
+          code: preset,
+          baseUrl: zhipuConfig?.baseUrl || ZHIPU_CN_USAGE_URL,
           accessToken: undefined,
           userId: undefined,
         });
@@ -436,6 +574,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           ...script,
           code: preset,
           apiKey: undefined,
+          baseUrl: undefined,
         });
       } else if (presetName === TEMPLATE_TYPES.GITHUB_COPILOT) {
         // Copilot 模板不需要脚本和凭证，使用专用 API
@@ -454,6 +593,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
+    selectedTemplate === TEMPLATE_TYPES.MINIMAX ||
+    selectedTemplate === TEMPLATE_TYPES.ZHIPU ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API;
 
   const footer = (
@@ -647,7 +788,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
-                  {selectedTemplate === TEMPLATE_TYPES.GENERAL && (
+                  {(selectedTemplate === TEMPLATE_TYPES.GENERAL ||
+                    selectedTemplate === TEMPLATE_TYPES.MINIMAX ||
+                    selectedTemplate === TEMPLATE_TYPES.ZHIPU) && (
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="usage-api-key">
@@ -691,10 +834,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                       <div className="space-y-2">
                         <Label htmlFor="usage-base-url">
-                          {t("usageScript.baseUrl")}{" "}
-                          <span className="text-xs text-muted-foreground font-normal">
-                            ({t("usageScript.optional")})
-                          </span>
+                          {selectedTemplate === TEMPLATE_TYPES.ZHIPU ||
+                          selectedTemplate === TEMPLATE_TYPES.MINIMAX
+                            ? t("usageScript.requestUrl")
+                            : t("usageScript.baseUrl")}{" "}
+                          {!isTemplateRequestUrlRequired && (
+                            <span className="text-xs text-muted-foreground font-normal">
+                              ({t("usageScript.optional")})
+                            </span>
+                          )}
                         </Label>
                         <Input
                           id="usage-base-url"
@@ -703,7 +851,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           onChange={(e) =>
                             setScript({ ...script, baseUrl: e.target.value })
                           }
-                          placeholder={t("usageScript.baseUrlPlaceholder")}
+                          placeholder={
+                            selectedTemplate === TEMPLATE_TYPES.ZHIPU
+                              ? detectedZhipuConfig?.baseUrl ||
+                                ZHIPU_CN_USAGE_URL
+                              : selectedTemplate === TEMPLATE_TYPES.MINIMAX
+                                ? detectedMiniMaxConfig?.baseUrl ||
+                                  MINIMAX_CN_USAGE_URL
+                                : t("usageScript.baseUrlPlaceholder")
+                          }
+                          required={isTemplateRequestUrlRequired}
                           autoComplete="off"
                           className="border-white/10"
                         />
