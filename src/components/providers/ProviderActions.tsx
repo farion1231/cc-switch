@@ -28,7 +28,7 @@ interface ProviderActionsProps {
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
-  onConfigureUsage: () => void;
+  onConfigureUsage?: () => void;
   onDelete: () => void;
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
@@ -263,15 +263,17 @@ export function ProviderActions({
           </Button>
         )}
 
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onConfigureUsage}
-          title={t("provider.configureUsage")}
-          className={iconButtonClass}
-        >
-          <BarChart3 className="h-4 w-4" />
-        </Button>
+        {onConfigureUsage && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onConfigureUsage}
+            title={t("provider.configureUsage")}
+            className={iconButtonClass}
+          >
+            <BarChart3 className="h-4 w-4" />
+          </Button>
+        )}
 
         {onOpenTerminal && (
           <Button

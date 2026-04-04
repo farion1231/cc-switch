@@ -427,8 +427,10 @@ export function ProviderCard({
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
-              onTest={onTest ? () => onTest(provider) : undefined}
-              onConfigureUsage={() => onConfigureUsage(provider)}
+              onTest={onTest && !isOfficial ? () => onTest(provider) : undefined}
+              onConfigureUsage={
+                isOfficial ? undefined : () => onConfigureUsage(provider)
+              }
               onDelete={() => onDelete(provider)}
               onRemoveFromConfig={
                 onRemoveFromConfig
