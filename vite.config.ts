@@ -30,6 +30,9 @@ export default defineConfig(({ command }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  define: {
+    global: 'globalThis',
+  },
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_"],
 }));
