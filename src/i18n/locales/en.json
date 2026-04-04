@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "CC Switch",
-    "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
+    "title": "CC Switch Legacy",
+    "description": "Compatibility-focused fork with macOS 10.15 Catalina support"
   },
   "common": {
     "add": "Add",

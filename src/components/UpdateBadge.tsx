@@ -1,4 +1,5 @@
 import { useUpdate } from "@/contexts/UpdateContext";
+import { UPDATER_ENABLED } from "@/lib/featureFlags";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { ArrowUpCircle } from "lucide-react";
@@ -18,7 +19,7 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
       })
     : t("settings.checkForUpdates");
 
-  if (!isActive) {
+  if (!UPDATER_ENABLED || !isActive) {
     return null;
   }
 

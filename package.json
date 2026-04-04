@@ -1,7 +1,7 @@
 {
   "name": "cc-switch",
   "version": "3.12.3",
-  "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
+  "description": "Compatibility-focused fork of CC Switch with macOS 10.15 Catalina support",
   "type": "module",
   "scripts": {
     "dev": "pnpm tauri dev",

@@ -1,10 +1,10 @@
 [package]
 name = "cc-switch"
 version = "3.12.3"
-description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
+description = "Compatibility-focused fork of CC Switch with macOS 10.15 Catalina support"
 authors = ["Jason Young"]
 license = "MIT"
-repository = "https://github.com/farion1231/cc-switch"
+repository = "https://github.com/wz2cool/cc-switch-legacy"
 edition = "2021"
 rust-version = "1.85.0"
 
@@ -29,10 +29,10 @@ log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-png"] }
 tauri-plugin-log = "2"
-tauri-plugin-opener = "2"
-tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
-tauri-plugin-dialog = "2"
+ tauri-plugin-opener = "2"
+ tauri-plugin-process = "2"
+ tauri-plugin-updater = "2"
+ tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-deep-link = "2"
 dirs = "5.0"

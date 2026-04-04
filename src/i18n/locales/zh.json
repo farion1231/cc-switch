@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "CC Switch",
-    "description": "Claude Code / Codex / Gemini CLI 全方位辅助工具"
+    "title": "CC Switch Legacy",
+    "description": "一个面向 macOS 10.15 Catalina 的兼容性分支"
   },
   "common": {
     "add": "添加",
