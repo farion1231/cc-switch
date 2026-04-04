@@ -413,6 +413,10 @@ impl CopilotAuthManager {
             let mut api_endpoints = self.api_endpoints.write().await;
             api_endpoints.remove(account_id);
         }
+        {
+            let mut endpoint_locks = self.endpoint_locks.write().await;
+            endpoint_locks.remove(account_id);
+        }
 
         {
             let accounts = self.accounts.read().await;
@@ -985,15 +989,7 @@ impl CopilotAuthManager {
     pub async fn clear_auth(&self) -> Result<(), CopilotAuthError> {
         log::info!("[CopilotAuth] 清除所有认证");
 
-        if self.storage_path.exists() {
-            std::fs::remove_file(&self.storage_path).map_err(|e| {
-                CopilotAuthError::IoError(format!(
-                    "failed to remove auth store {}: {e}",
-                    self.storage_path.display()
-                ))
-            })?;
-        }
-
+        // 先清理内存状态，确保即使文件删除失败用户也能看到已登出
         {
             let mut accounts = self.accounts.write().await;
             accounts.clear();
@@ -1008,6 +1004,10 @@ impl CopilotAuthManager {
             tokens.clear();
         }
         {
+            let mut models = self.copilot_models.write().await;
+            models.clear();
+        }
+        {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.clear();
         }
@@ -1015,6 +1015,15 @@ impl CopilotAuthManager {
         {
             let mut api_endpoints = self.api_endpoints.write().await;
             api_endpoints.clear();
+        }
+        {
+            let mut endpoint_locks = self.endpoint_locks.write().await;
+            endpoint_locks.clear();
+        }
+
+        // 最后删除存储文件
+        if self.storage_path.exists() {
+            std::fs::remove_file(&self.storage_path)?;
         }
 
         Ok(())
@@ -1718,10 +1727,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_clear_auth_returns_error_when_storage_file_cannot_be_removed() {
+    async fn test_clear_auth_cleans_memory_even_when_file_removal_fails() {
         let temp_dir = tempdir().unwrap();
         let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
 
+        // Create a directory at storage_path so remove_file fails
         std::fs::create_dir_all(&manager.storage_path).unwrap();
 
         {
@@ -1752,27 +1762,20 @@ mod tests {
         }
 
         let result = manager.clear_auth().await;
-        match result {
-            Err(CopilotAuthError::IoError(message)) => {
-                assert!(message.contains("failed to remove auth store"));
-                assert!(message.contains("copilot_auth.json"));
-            }
-            other => panic!("expected IoError, got {other:?}"),
-        }
+        // Should still return an error for the file deletion failure
+        assert!(result.is_err());
 
+        // But memory state should already be cleaned
         let accounts = manager.accounts.read().await;
-        assert!(accounts.contains_key("12345"));
+        assert!(accounts.is_empty());
         drop(accounts);
 
         let default_account_id = manager.default_account_id.read().await;
-        assert_eq!(default_account_id.as_deref(), Some("12345"));
+        assert!(default_account_id.is_none());
         drop(default_account_id);
 
         let api_endpoints = manager.api_endpoints.read().await;
-        assert_eq!(
-            api_endpoints.get("12345").map(String::as_str),
-            Some("https://copilot-api.enterprise.example.com")
-        );
+        assert!(api_endpoints.is_empty());
     }
 
     #[tokio::test]
