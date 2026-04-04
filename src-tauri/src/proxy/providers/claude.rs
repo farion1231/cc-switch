@@ -672,10 +672,7 @@ mod tests {
     #[test]
     fn test_build_url_preserves_query_for_github_copilot_chat_completions() {
         let adapter = ClaudeAdapter::new();
-        let url = adapter.build_url(
-            "https://api.githubcopilot.com",
-            "/chat/completions?x-id=1",
-        );
+        let url = adapter.build_url("https://api.githubcopilot.com", "/chat/completions?x-id=1");
         assert_eq!(url, "https://api.githubcopilot.com/chat/completions?x-id=1");
     }
 

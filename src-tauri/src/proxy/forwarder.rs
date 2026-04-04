@@ -799,6 +799,11 @@ impl RequestForwarder {
 
         let url = if is_full_url {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
+        } else if adapter.name() == "Claude" && is_copilot {
+            // ClaudeAdapter::build_url 只能看到 base_url，而 Copilot 还支持通过
+            // meta.provider_type = github_copilot 走自定义域名/中继，因此运行时
+            // 需要在 forwarder 这里基于 metadata 做最终 URL 归一。
+            build_claude_runtime_url(&base_url, &effective_endpoint, true)
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
         };
@@ -1458,6 +1463,29 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
     }
 }
 
+fn build_claude_runtime_url(base_url: &str, endpoint: &str, is_copilot: bool) -> String {
+    let base_trimmed = base_url.trim_end_matches('/');
+    let endpoint_trimmed = endpoint.trim_start_matches('/');
+
+    if !is_copilot {
+        return format!("{base_trimmed}/{endpoint_trimmed}");
+    }
+
+    let already_has_v1 = base_trimmed.ends_with("/v1");
+    let copilot_base = base_trimmed.strip_suffix("/v1").unwrap_or(base_trimmed);
+
+    if endpoint_trimmed.starts_with("chat/completions") {
+        format!("{copilot_base}/{endpoint_trimmed}")
+    } else if already_has_v1 && endpoint_trimmed.starts_with("v1/") {
+        format!(
+            "{base_trimmed}/{}",
+            endpoint_trimmed.trim_start_matches("v1/")
+        )
+    } else {
+        format!("{base_trimmed}/{endpoint_trimmed}")
+    }
+}
+
 fn should_force_identity_encoding(
     endpoint: &str,
     body: &Value,
@@ -1610,6 +1638,37 @@ mod tests {
 
         assert_eq!(endpoint, "/v1/responses?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn build_claude_runtime_url_preserves_metadata_copilot_chat_path_for_custom_host() {
+        let url =
+            build_claude_runtime_url("https://relay.example", "/chat/completions?x-id=1", true);
+
+        assert_eq!(url, "https://relay.example/chat/completions?x-id=1");
+    }
+
+    #[test]
+    fn build_claude_runtime_url_strips_v1_for_metadata_copilot_chat_path() {
+        let url =
+            build_claude_runtime_url("https://relay.example/v1", "/chat/completions?x-id=1", true);
+
+        assert_eq!(url, "https://relay.example/chat/completions?x-id=1");
+    }
+
+    #[test]
+    fn build_claude_runtime_url_preserves_metadata_copilot_responses_path_for_custom_host() {
+        let url = build_claude_runtime_url("https://relay.example", "/v1/responses?x-id=1", true);
+
+        assert_eq!(url, "https://relay.example/v1/responses?x-id=1");
+    }
+
+    #[test]
+    fn build_claude_runtime_url_preserves_single_v1_for_metadata_copilot_responses() {
+        let url =
+            build_claude_runtime_url("https://relay.example/v1", "/v1/responses?x-id=1", true);
+
+        assert_eq!(url, "https://relay.example/v1/responses?x-id=1");
     }
 
     #[test]
