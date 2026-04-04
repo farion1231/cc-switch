@@ -16,6 +16,95 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use serde_json::Value;
+
+/// 生成确定性的 request ID（用于 GitHub Copilot）
+///
+/// 参考 caozhiyuan/copilot-api 的实现：
+/// - 基于 session_id + machine_id + 最后一条用户消息内容生成 SHA256 哈希
+/// - 转换为 UUID v4 格式
+/// - 如果无法提取消息内容，则回退到随机 UUID
+fn generate_deterministic_request_id(
+    request_body: Option<&Value>,
+    session_id: Option<&str>,
+    machine_id: Option<&str>,
+) -> String {
+    use sha2::{Digest, Sha256};
+
+    // 尝试从请求体中提取最后一条用户消息
+    let last_user_content = request_body.and_then(|body| {
+        body.get("messages")
+            .and_then(|msgs| msgs.as_array())
+            .and_then(|arr| {
+                // 从后往前找第一条 role=user 的消息
+                arr.iter().rev().find_map(|msg| {
+                    if msg.get("role")?.as_str()? == "user" {
+                        // 提取 content（可能是字符串或数组）
+                        match msg.get("content")? {
+                            Value::String(s) => Some(s.clone()),
+                            Value::Array(arr) => {
+                                // 如果是数组，提取所有 text 类型的内容
+                                let texts: Vec<String> = arr
+                                    .iter()
+                                    .filter_map(|item| {
+                                        if item.get("type")?.as_str()? == "text" {
+                                            item.get("text")?.as_str().map(String::from)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                if texts.is_empty() {
+                                    None
+                                } else {
+                                    Some(texts.join(" "))
+                                }
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                })
+            })
+    });
+
+    // 如果找到了用户消息，生成确定性 UUID
+    if let Some(content) = last_user_content {
+        let input = format!(
+            "{}{}{}",
+            session_id.unwrap_or(""),
+            machine_id.unwrap_or(""),
+            content
+        );
+
+        // SHA256 哈希
+        let mut hasher = Sha256::new();
+        hasher.update(input.as_bytes());
+        let hash = hasher.finalize();
+
+        // 取前 16 字节转换为 UUID v4 格式
+        let mut uuid_bytes = [0u8; 16];
+        uuid_bytes.copy_from_slice(&hash[..16]);
+
+        // 设置 UUID v4 的版本和变体位
+        uuid_bytes[6] = (uuid_bytes[6] & 0x0f) | 0x40; // version 4
+        uuid_bytes[8] = (uuid_bytes[8] & 0x3f) | 0x80; // variant 10
+
+        // 格式化为 UUID 字符串
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            uuid_bytes[0], uuid_bytes[1], uuid_bytes[2], uuid_bytes[3],
+            uuid_bytes[4], uuid_bytes[5],
+            uuid_bytes[6], uuid_bytes[7],
+            uuid_bytes[8], uuid_bytes[9],
+            uuid_bytes[10], uuid_bytes[11], uuid_bytes[12], uuid_bytes[13], uuid_bytes[14], uuid_bytes[15]
+        )
+    } else {
+        // 回退到随机 UUID
+        uuid::Uuid::new_v4().to_string()
+    }
+}
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -336,7 +425,11 @@ impl ProviderAdapter for ClaudeAdapter {
         base
     }
 
-    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+        request_body: Option<&serde_json::Value>,
+    ) -> Vec<(http::HeaderName, http::HeaderValue)> {
         use http::{HeaderName, HeaderValue};
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
         let bearer = format!("Bearer {}", auth.api_key);
@@ -348,9 +441,14 @@ impl ProviderAdapter for ClaudeAdapter {
                 )]
             }
             AuthStrategy::GitHubCopilot => {
-                // 生成请求追踪 ID
-                let request_id = uuid::Uuid::new_v4().to_string();
-                vec![
+                // 生成确定性的 request ID（基于 session_id + machine_id + 最后一条用户消息）
+                let request_id = generate_deterministic_request_id(
+                    request_body,
+                    auth.session_id.as_deref(),
+                    auth.machine_id.as_deref(),
+                );
+
+                let mut headers = vec![
                     (
                         HeaderName::from_static("authorization"),
                         HeaderValue::from_str(&bearer).unwrap(),
@@ -400,7 +498,24 @@ impl ProviderAdapter for ClaudeAdapter {
                         HeaderName::from_static("x-agent-task-id"),
                         HeaderValue::from_str(&request_id).unwrap(),
                     ),
-                ]
+                ];
+
+                // 添加 machine ID 和 session ID（如果存在）
+                if let Some(machine_id) = &auth.machine_id {
+                    headers.push((
+                        HeaderName::from_static("vscode-machineid"),
+                        HeaderValue::from_str(machine_id).unwrap(),
+                    ));
+                }
+
+                if let Some(session_id) = &auth.session_id {
+                    headers.push((
+                        HeaderName::from_static("vscode-sessionid"),
+                        HeaderValue::from_str(session_id).unwrap(),
+                    ));
+                }
+
+                headers
             }
             _ => vec![],
         }

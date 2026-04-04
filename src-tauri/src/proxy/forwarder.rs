@@ -945,10 +945,24 @@ impl RequestForwarder {
 
                     match token_result {
                         Ok(token) => {
-                            auth = AuthInfo::new(token, AuthStrategy::GitHubCopilot);
+                            // 获取 machine ID 和 session ID
+                            let (machine_id, session_id) = copilot_auth
+                                .get_account_ids(account_id.as_deref())
+                                .await;
+
+                            // 使用新的构造函数
+                            auth = AuthInfo::new_with_ids(
+                                token,
+                                AuthStrategy::GitHubCopilot,
+                                machine_id.clone(),
+                                session_id.clone(),
+                            );
+
                             log::debug!(
-                                "[Copilot] 成功获取 Copilot token (account={})",
-                                account_id.as_deref().unwrap_or("default")
+                                "[Copilot] 成功获取 Copilot token (account={}, machine_id={}, session_id={})",
+                                account_id.as_deref().unwrap_or("default"),
+                                machine_id.as_ref().map(|s| &s[..16]).unwrap_or("none"),
+                                session_id.as_ref().map(|s| &s[..16]).unwrap_or("none"),
                             );
                         }
                         Err(e) => {
@@ -968,7 +982,7 @@ impl RequestForwarder {
                     ));
                 }
             }
-            adapter.get_auth_headers(&auth)
+            adapter.get_auth_headers(&auth, Some(&filtered_body))
         } else {
             Vec::new()
         };
@@ -1007,6 +1021,9 @@ impl RequestForwarder {
                 "x-vscode-user-agent-library-version",
                 "x-request-id",
                 "x-agent-task-id",
+                // Machine ID 和 Session ID
+                "vscode-machineid",
+                "vscode-sessionid",
             ]
         } else {
             &[]

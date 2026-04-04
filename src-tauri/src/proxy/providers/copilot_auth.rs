@@ -295,6 +295,15 @@ struct GitHubAccountData {
     pub user: GitHubUser,
     /// 认证时间戳
     pub authenticated_at: i64,
+    /// 机器 ID（基于 MAC 地址的 SHA256 哈希，每个账号独立）
+    #[serde(default)]
+    pub machine_id: Option<String>,
+    /// 会话 ID（UUID + 时间戳，每小时刷新）
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Session ID 上次刷新时间
+    #[serde(default)]
+    pub session_refreshed_at: Option<i64>,
 }
 
 /// 持久化存储结构（v3 多账号 + 默认账号格式）
@@ -340,6 +349,8 @@ pub struct CopilotAuthManager {
     pending_migration: Arc<RwLock<Option<String>>>,
     /// 旧认证数据迁移失败时的状态消息
     migration_error: Arc<RwLock<Option<String>>>,
+    /// Session ID 刷新任务句柄（key = GitHub user ID）
+    session_refresh_tasks: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
 }
 
 impl CopilotAuthManager {
@@ -359,6 +370,7 @@ impl CopilotAuthManager {
             storage_path,
             pending_migration: Arc::new(RwLock::new(None)),
             migration_error: Arc::new(RwLock::new(None)),
+            session_refresh_tasks: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // 尝试从磁盘加载（同步，不发起网络请求）
@@ -367,6 +379,25 @@ impl CopilotAuthManager {
         }
 
         manager
+    }
+
+    /// 启动已加载账号的后台 Session ID 刷新任务。
+    ///
+    /// 这个方法要求调用方已经处于可用的异步运行时中。
+    pub async fn initialize_background_tasks(&self) {
+        let account_ids = {
+            let accounts_guard = self.accounts.read().await;
+            accounts_guard.keys().cloned().collect::<Vec<_>>()
+        };
+
+        for account_id in account_ids {
+            Self::spawn_session_refresh_task(
+                account_id,
+                Arc::clone(&self.accounts),
+                Arc::clone(&self.session_refresh_tasks),
+            )
+            .await;
+        }
     }
 
     // ==================== 多账号管理方法 ====================
@@ -418,6 +449,18 @@ impl CopilotAuthManager {
             endpoint_locks.remove(account_id);
         }
 
+        // 停止 Session ID 刷新任务
+        {
+            let mut tasks = self.session_refresh_tasks.write().await;
+            if let Some(task) = tasks.remove(account_id) {
+                task.abort();
+                log::debug!(
+                    "[CopilotAuth] 已停止账号 {} 的 Session ID 刷新任务",
+                    account_id
+                );
+            }
+        }
+
         {
             let accounts = self.accounts.read().await;
             let mut default_account_id = self.default_account_id.write().await;
@@ -437,14 +480,21 @@ impl CopilotAuthManager {
         &self,
         github_token: String,
         user: GitHubUser,
+        machine_id: String,
     ) -> Result<GitHubAccount, CopilotAuthError> {
         let account_id = user.id.to_string();
         let now = chrono::Utc::now().timestamp();
+
+        // 生成初始 Session ID
+        let session_id = Self::generate_session_id();
 
         let account_data = GitHubAccountData {
             github_token,
             user: user.clone(),
             authenticated_at: now,
+            machine_id: Some(machine_id),
+            session_id: Some(session_id.clone()),
+            session_refreshed_at: Some(now),
         };
 
         let account = GitHubAccount {
@@ -456,7 +506,7 @@ impl CopilotAuthManager {
 
         {
             let mut accounts = self.accounts.write().await;
-            accounts.insert(account_id, account_data);
+            accounts.insert(account_id.clone(), account_data);
         }
 
         {
@@ -470,6 +520,14 @@ impl CopilotAuthManager {
 
         // 持久化
         self.save_to_disk().await?;
+
+        // 启动 Session ID 刷新任务
+        Self::spawn_session_refresh_task(
+            account_id.clone(),
+            Arc::clone(&self.accounts),
+            Arc::clone(&self.session_refresh_tasks),
+        )
+        .await;
 
         log::info!("[CopilotAuth] 添加账号成功: {}", user.login);
 
@@ -584,8 +642,48 @@ impl CopilotAuthManager {
         self.fetch_copilot_token_with_github_token(&access_token, &user.id.to_string())
             .await?;
 
+        let account_id = user.id.to_string();
+
+        // 检查账号是否已存在，以及是否需要重新生成 Machine ID
+        let machine_id = {
+            let accounts = self.accounts.read().await;
+            if let Some(existing_account) = accounts.get(&account_id) {
+                let now = chrono::Utc::now().timestamp();
+                let time_since_auth = now - existing_account.authenticated_at;
+
+                // 如果在 1 小时内重新登录，复用现有的 Machine ID
+                if time_since_auth < 3600 && existing_account.machine_id.is_some() {
+                    log::info!(
+                        "[CopilotAuth] 账号 {} 在 1 小时内重新登录，复用现有 Machine ID",
+                        account_id
+                    );
+                    existing_account.machine_id.clone().unwrap()
+                } else {
+                    // 超过 1 小时，重新生成 Machine ID
+                    let new_machine_id = Self::generate_machine_id(&account_id);
+                    log::info!(
+                        "[CopilotAuth] 账号 {} 超过 1 小时后重新登录，生成新 Machine ID: {}",
+                        account_id,
+                        &new_machine_id[..16]
+                    );
+                    new_machine_id
+                }
+            } else {
+                // 新账号，生成 Machine ID
+                let new_machine_id = Self::generate_machine_id(&account_id);
+                log::info!(
+                    "[CopilotAuth] 为新账号 {} 生成 Machine ID: {}",
+                    account_id,
+                    &new_machine_id[..16]
+                );
+                new_machine_id
+            }
+        };
+
         // 添加账号
-        let account = self.add_account_internal(access_token, user).await?;
+        let account = self
+            .add_account_internal(access_token, user, machine_id)
+            .await?;
 
         Ok(Some(account))
     }
@@ -1069,6 +1167,43 @@ impl CopilotAuthManager {
         Self::fallback_default_account_id(&accounts)
     }
 
+    /// 获取账号的 machine ID 和 session ID（公共方法）
+    pub async fn get_account_ids(
+        &self,
+        account_id: Option<&str>,
+    ) -> (Option<String>, Option<String>) {
+        match account_id {
+            Some(id) => {
+                let accounts = self.accounts.read().await;
+                if let Some(account_data) = accounts.get(id) {
+                    (
+                        account_data.machine_id.clone(),
+                        account_data.session_id.clone(),
+                    )
+                } else {
+                    (None, None)
+                }
+            }
+            None => {
+                // 使用默认账号
+                let default_id = self.resolve_default_account_id().await;
+                if let Some(id) = default_id {
+                    let accounts = self.accounts.read().await;
+                    if let Some(account_data) = accounts.get(&id) {
+                        (
+                            account_data.machine_id.clone(),
+                            account_data.session_id.clone(),
+                        )
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
+                }
+            }
+        }
+    }
+
     async fn get_refresh_lock(&self, account_id: &str) -> Arc<Mutex<()>> {
         {
             let refresh_locks = self.refresh_locks.read().await;
@@ -1083,6 +1218,121 @@ impl CopilotAuthManager {
                 .entry(account_id.to_string())
                 .or_insert_with(|| Arc::new(Mutex::new(()))),
         )
+    }
+
+    /// 生成机器 ID（每个账号独立的 Machine ID）
+    ///
+    /// 为了避免账号间关联，每个账号使用不同的 Machine ID：
+    /// - 基于 MAC 地址（或随机 UUID）+ 账号 ID 生成
+    /// - 对组合值进行 SHA256 哈希
+    fn generate_machine_id(account_id: &str) -> String {
+        use sha2::{Digest, Sha256};
+
+        // 尝试获取 MAC 地址作为基础
+        let base = match mac_address::get_mac_address() {
+            Ok(Some(mac)) => {
+                // MAC 地址格式：AA:BB:CC:DD:EE:FF
+                mac.to_string()
+            }
+            _ => {
+                // 回退：使用固定字符串（保证同一账号在不同启动时 ID 一致）
+                log::warn!("[CopilotAuth] 无法获取 MAC 地址，使用固定基础值");
+                "cc-switch-machine-base".to_string()
+            }
+        };
+
+        // 组合基础值和账号 ID，确保每个账号有不同的 Machine ID
+        let source = format!("{}-{}", base, account_id);
+
+        // SHA256 哈希
+        let mut hasher = Sha256::new();
+        hasher.update(source.as_bytes());
+        let result = hasher.finalize();
+
+        // 转换为十六进制字符串
+        format!("{:x}", result)
+    }
+
+    /// 生成会话 ID（UUID + 时间戳）
+    ///
+    /// 参考 caozhiyuan/copilot-api 的实现：
+    /// state.vsCodeSessionId = randomUUID() + Date.now().toString()
+    fn generate_session_id() -> String {
+        let uuid = uuid::Uuid::new_v4().to_string();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        format!("{}{}", uuid, timestamp)
+    }
+
+    /// 启动 Session ID 定期刷新任务（每小时刷新）
+    ///
+    /// 参考 caozhiyuan/copilot-api 的实现：
+    /// - 基础间隔：1 小时
+    /// - 添加 0-10% 随机抖动避免集中刷新
+    async fn spawn_session_refresh_task(
+        account_id: String,
+        accounts: Arc<RwLock<HashMap<String, GitHubAccountData>>>,
+        session_refresh_tasks: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    ) {
+        use tokio::time::{sleep, Duration};
+
+        const SESSION_REFRESH_BASE_SECS: u64 = 3600; // 1 小时
+
+        // 停止旧任务（如果存在）
+        {
+            let mut tasks = session_refresh_tasks.write().await;
+            if let Some(old_task) = tasks.remove(&account_id) {
+                old_task.abort();
+            }
+        }
+
+        let account_id_clone = account_id.clone();
+        let accounts_clone = Arc::clone(&accounts);
+
+        // 启动新任务
+        let task = tokio::spawn(async move {
+            loop {
+                // 计算下次刷新时间（带随机抖动）
+                // 使用 SystemTime 生成随机抖动，避免 thread_rng 的 Send 问题
+                let jitter_nanos = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos();
+                let jitter_percent = (jitter_nanos % 100) as f64 / 1000.0; // 0-10%
+                let jitter_secs = (SESSION_REFRESH_BASE_SECS as f64 * jitter_percent) as u64;
+                let delay_secs = SESSION_REFRESH_BASE_SECS + jitter_secs;
+
+                sleep(Duration::from_secs(delay_secs)).await;
+
+                // 刷新 Session ID
+                let new_session_id = Self::generate_session_id();
+                let now = chrono::Utc::now().timestamp();
+
+                let mut accounts_guard = accounts_clone.write().await;
+                if let Some(account_data) = accounts_guard.get_mut(&account_id_clone) {
+                    account_data.session_id = Some(new_session_id.clone());
+                    account_data.session_refreshed_at = Some(now);
+                    log::debug!(
+                        "[CopilotAuth] 账号 {} 的 Session ID 已刷新",
+                        account_id_clone
+                    );
+                } else {
+                    // 账号已删除，退出任务
+                    log::debug!(
+                        "[CopilotAuth] 账号 {} 已删除，停止 Session ID 刷新任务",
+                        account_id_clone
+                    );
+                    break;
+                }
+            }
+        });
+
+        // 保存任务句柄
+        let mut tasks = session_refresh_tasks.write().await;
+        tasks.insert(account_id, task);
     }
 
     async fn set_migration_error(&self, message: Option<String>) {
@@ -1239,11 +1489,35 @@ impl CopilotAuthManager {
         }
 
         let content = std::fs::read_to_string(&self.storage_path)?;
-        let store: CopilotAuthStore = serde_json::from_str(&content)
+        let mut store: CopilotAuthStore = serde_json::from_str(&content)
             .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
 
         if store.version >= 2 {
-            // v2 多账号格式
+            // v2/v3 多账号格式
+
+            // 为没有 machine_id 或 session_id 的账号生成
+            let mut needs_save = false;
+            for (account_id, account_data) in store.accounts.iter_mut() {
+                if account_data.machine_id.is_none() {
+                    account_data.machine_id = Some(Self::generate_machine_id(account_id));
+                    log::info!(
+                        "[CopilotAuth] 为现有账号 {} 生成 Machine ID",
+                        account_id
+                    );
+                    needs_save = true;
+                }
+
+                if account_data.session_id.is_none() {
+                    account_data.session_id = Some(Self::generate_session_id());
+                    account_data.session_refreshed_at = Some(chrono::Utc::now().timestamp());
+                    log::info!(
+                        "[CopilotAuth] 为现有账号 {} 生成 Session ID",
+                        account_id
+                    );
+                    needs_save = true;
+                }
+            }
+
             if let Ok(mut accounts) = self.accounts.try_write() {
                 *accounts = store.accounts;
                 log::info!("[CopilotAuth] 从磁盘加载 {} 个账号", accounts.len());
@@ -1254,6 +1528,20 @@ impl CopilotAuthManager {
                     if let Ok(accounts) = self.accounts.try_read() {
                         *default_account_id = Self::fallback_default_account_id(&accounts);
                     }
+                }
+            }
+
+            // 如果有修改，直接同步保存回磁盘，避免在无异步运行时的启动阶段触发 panic
+            if needs_save {
+                let store = CopilotAuthStore {
+                    version: 3,
+                    accounts: self.accounts.blocking_read().clone(),
+                    default_account_id: self.default_account_id.blocking_read().clone(),
+                    github_token: None,
+                    authenticated_at: None,
+                };
+                if let Ok(content) = serde_json::to_string_pretty(&store) {
+                    let _ = std::fs::write(&self.storage_path, content);
                 }
             }
         } else if store.github_token.is_some() {
@@ -1290,8 +1578,18 @@ impl CopilotAuthManager {
                         log::warn!("[CopilotAuth] 迁移时验证 Copilot 订阅失败: {e}");
                     }
 
+                    // 生成 Machine ID（迁移时也需要，基于账号 ID）
+                    let account_id = user.id.to_string();
+                    let machine_id = Self::generate_machine_id(&account_id);
+                    log::info!(
+                        "[CopilotAuth] 为迁移账号 {} 生成 Machine ID: {}",
+                        account_id,
+                        &machine_id[..16]
+                    );
+
                     // 添加账号
-                    self.add_account_internal(legacy_token, user).await?;
+                    self.add_account_internal(legacy_token, user, machine_id)
+                        .await?;
                     self.set_migration_error(None).await;
 
                     log::info!("[CopilotAuth] 旧格式迁移完成");
