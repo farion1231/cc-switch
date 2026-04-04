@@ -365,4 +365,17 @@ requires_openai_auth = true`,
     icon: "openrouter",
     iconColor: "#6566F1",
   },
+  {
+    name: "TheRouter",
+    websiteUrl: "https://therouter.ai",
+    apiKeyUrl: "https://dashboard.therouter.ai",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "therouter",
+      "https://api.therouter.ai/v1",
+      "openai/gpt-5.3-codex",
+    ),
+    endpointCandidates: ["https://api.therouter.ai/v1"],
+    category: "aggregator",
+  },
 ];
