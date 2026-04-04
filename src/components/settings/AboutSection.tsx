@@ -98,8 +98,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [toolVersions, setToolVersions] = useState<ToolVersion[]>([]);
   const [isLoadingTools, setIsLoadingTools] = useState(true);
-  const { hasUpdate, updateInfo, updateHandle, checkUpdate, resetDismiss, isChecking } =
-    useUpdate();
+  const {
+    hasUpdate,
+    updateInfo,
+    updateHandle,
+    checkUpdate,
+    resetDismiss,
+    isChecking,
+  } = useUpdate();
 
   const [wslShellByTool, setWslShellByTool] = useState<
     Record<string, WslShellPreference>
@@ -226,8 +232,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
   const handleOpenReleaseNotes = useCallback(async () => {
     try {
-      const targetVersion =
-        UPDATER_ENABLED ? updateInfo?.availableVersion ?? version ?? "" : version ?? "";
+      const targetVersion = UPDATER_ENABLED
+        ? (updateInfo?.availableVersion ?? version ?? "")
+        : (version ?? "");
       const displayVersion = targetVersion.startsWith("v")
         ? targetVersion
         : targetVersion
