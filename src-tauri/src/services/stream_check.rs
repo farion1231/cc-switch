@@ -339,8 +339,19 @@ impl StreamCheckService {
             .unwrap_or(false);
         let is_openai_chat = effective_api_format == "openai_chat";
         let is_openai_responses = effective_api_format == "openai_responses";
-        let url =
-            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
+        let is_openrouter = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("openrouter")
+            || base.contains("openrouter.ai");
+        let url = Self::resolve_claude_stream_url(
+            base,
+            auth.strategy,
+            effective_api_format,
+            is_full_url,
+            is_openrouter,
+        );
 
         let max_tokens = if is_openai_responses { 16 } else { 1 };
 
@@ -737,6 +748,7 @@ impl StreamCheckService {
         auth_strategy: AuthStrategy,
         api_format: &str,
         is_full_url: bool,
+        is_openrouter: bool,
     ) -> String {
         if is_full_url {
             return base_url.to_string();
@@ -762,7 +774,7 @@ impl StreamCheckService {
         } else if api_format == "openai_responses" {
             if already_has_v1 {
                 format!("{base}/responses")
-            } else if origin_only {
+            } else if is_openrouter || origin_only {
                 format!("{base}/v1/responses")
             } else {
                 format!("{base}/responses")
@@ -770,7 +782,7 @@ impl StreamCheckService {
         } else if api_format == "openai_chat" {
             if already_has_v1 {
                 format!("{base}/chat/completions")
-            } else if origin_only {
+            } else if is_openrouter || origin_only {
                 format!("{base}/v1/chat/completions")
             } else {
                 format!("{base}/chat/completions")
@@ -914,6 +926,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_chat",
             true,
+            false,
         );
 
         assert_eq!(url, "https://relay.example/v1/chat/completions");
@@ -925,6 +938,7 @@ mod tests {
             "https://api.githubcopilot.com",
             AuthStrategy::GitHubCopilot,
             "openai_chat",
+            false,
             false,
         );
 
@@ -938,6 +952,7 @@ mod tests {
             AuthStrategy::GitHubCopilot,
             "openai_chat",
             false,
+            false,
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
@@ -949,6 +964,7 @@ mod tests {
             "https://api.githubcopilot.com",
             AuthStrategy::GitHubCopilot,
             "openai_responses",
+            false,
             false,
         );
 
@@ -962,6 +978,7 @@ mod tests {
             AuthStrategy::GitHubCopilot,
             "openai_responses",
             false,
+            false,
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/v1/responses");
@@ -973,6 +990,7 @@ mod tests {
             "https://example.com/v1",
             AuthStrategy::Bearer,
             "openai_chat",
+            false,
             false,
         );
 
@@ -986,6 +1004,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_responses",
             false,
+            false,
         );
 
         assert_eq!(url, "https://example.com/v1/responses");
@@ -997,6 +1016,7 @@ mod tests {
             "https://example.com/openai",
             AuthStrategy::Bearer,
             "openai_responses",
+            false,
             false,
         );
 
@@ -1010,6 +1030,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_chat",
             false,
+            false,
         );
 
         assert_eq!(url, "https://example.com/openai/chat/completions");
@@ -1022,9 +1043,62 @@ mod tests {
             AuthStrategy::Anthropic,
             "anthropic",
             false,
+            false,
         );
 
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_openrouter_chat_compat() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://openrouter.ai/api",
+            AuthStrategy::Bearer,
+            "openai_chat",
+            false,
+            true,
+        );
+
+        assert_eq!(url, "https://openrouter.ai/api/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_openrouter_responses_compat() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://openrouter.ai/api",
+            AuthStrategy::Bearer,
+            "openai_responses",
+            false,
+            true,
+        );
+
+        assert_eq!(url, "https://openrouter.ai/api/v1/responses");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_metadata_openrouter_chat_compat() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://relay.example",
+            AuthStrategy::Bearer,
+            "openai_chat",
+            false,
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_metadata_openrouter_responses_compat() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://relay.example",
+            AuthStrategy::Bearer,
+            "openai_responses",
+            false,
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/v1/responses");
     }
 
     #[test]

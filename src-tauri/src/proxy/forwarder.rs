@@ -770,6 +770,12 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
+        let is_openrouter = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("openrouter")
+            || base_url.contains("openrouter.ai");
         let resolved_claude_api_format = if adapter.name() == "Claude" {
             Some(
                 self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
@@ -799,11 +805,12 @@ impl RequestForwarder {
 
         let url = if is_full_url {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
-        } else if adapter.name() == "Claude" && is_copilot {
-            // ClaudeAdapter::build_url 只能看到 base_url，而 Copilot 还支持通过
-            // meta.provider_type = github_copilot 走自定义域名/中继，因此运行时
-            // 需要在 forwarder 这里基于 metadata 做最终 URL 归一。
-            build_claude_runtime_url(&base_url, &effective_endpoint, true)
+        } else if adapter.name() == "Claude" && needs_transform {
+            // Claude/OpenAI 兼容路径在运行时还需要结合 provider metadata 做归一：
+            // - Copilot: chat 不带 /v1，responses 保持单个 /v1
+            // - OpenRouter / origin OpenAI: 兼容端点需要补 /v1
+            // - 其他自定义前缀 relay: 保持无额外 /v1
+            build_claude_runtime_url(&base_url, &effective_endpoint, is_copilot, is_openrouter)
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
         };
@@ -1463,27 +1470,50 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
     }
 }
 
-fn build_claude_runtime_url(base_url: &str, endpoint: &str, is_copilot: bool) -> String {
+fn build_claude_runtime_url(
+    base_url: &str,
+    endpoint: &str,
+    is_copilot: bool,
+    is_openrouter: bool,
+) -> String {
     let base_trimmed = base_url.trim_end_matches('/');
     let endpoint_trimmed = endpoint.trim_start_matches('/');
-
-    if !is_copilot {
-        return format!("{base_trimmed}/{endpoint_trimmed}");
-    }
-
     let already_has_v1 = base_trimmed.ends_with("/v1");
+    let origin_only = match base_trimmed.split_once("://") {
+        Some((_scheme, rest)) => !rest.contains('/'),
+        None => !base_trimmed.contains('/'),
+    };
     let copilot_base = base_trimmed.strip_suffix("/v1").unwrap_or(base_trimmed);
+    let endpoint_is_openai_compat = matches!(
+        endpoint_trimmed,
+        value
+            if value.starts_with("chat/completions")
+                || value.starts_with("responses")
+                || value.starts_with("v1/chat/completions")
+                || value.starts_with("v1/responses")
+    );
 
-    if endpoint_trimmed.starts_with("chat/completions") {
+    let mut url = if is_copilot && endpoint_trimmed.starts_with("chat/completions") {
         format!("{copilot_base}/{endpoint_trimmed}")
     } else if already_has_v1 && endpoint_trimmed.starts_with("v1/") {
         format!(
             "{base_trimmed}/{}",
             endpoint_trimmed.trim_start_matches("v1/")
         )
+    } else if (is_openrouter || origin_only) && endpoint_is_openai_compat {
+        format!(
+            "{base_trimmed}/v1/{}",
+            endpoint_trimmed.trim_start_matches("v1/")
+        )
     } else {
         format!("{base_trimmed}/{endpoint_trimmed}")
+    };
+
+    while url.contains("/v1/v1") {
+        url = url.replace("/v1/v1", "/v1");
     }
+
+    url
 }
 
 fn should_force_identity_encoding(
@@ -1642,33 +1672,100 @@ mod tests {
 
     #[test]
     fn build_claude_runtime_url_preserves_metadata_copilot_chat_path_for_custom_host() {
-        let url =
-            build_claude_runtime_url("https://relay.example", "/chat/completions?x-id=1", true);
+        let url = build_claude_runtime_url(
+            "https://relay.example",
+            "/chat/completions?x-id=1",
+            true,
+            false,
+        );
 
         assert_eq!(url, "https://relay.example/chat/completions?x-id=1");
     }
 
     #[test]
     fn build_claude_runtime_url_strips_v1_for_metadata_copilot_chat_path() {
-        let url =
-            build_claude_runtime_url("https://relay.example/v1", "/chat/completions?x-id=1", true);
+        let url = build_claude_runtime_url(
+            "https://relay.example/v1",
+            "/chat/completions?x-id=1",
+            true,
+            false,
+        );
 
         assert_eq!(url, "https://relay.example/chat/completions?x-id=1");
     }
 
     #[test]
     fn build_claude_runtime_url_preserves_metadata_copilot_responses_path_for_custom_host() {
-        let url = build_claude_runtime_url("https://relay.example", "/v1/responses?x-id=1", true);
+        let url =
+            build_claude_runtime_url("https://relay.example", "/v1/responses?x-id=1", true, false);
 
         assert_eq!(url, "https://relay.example/v1/responses?x-id=1");
     }
 
     #[test]
     fn build_claude_runtime_url_preserves_single_v1_for_metadata_copilot_responses() {
-        let url =
-            build_claude_runtime_url("https://relay.example/v1", "/v1/responses?x-id=1", true);
+        let url = build_claude_runtime_url(
+            "https://relay.example/v1",
+            "/v1/responses?x-id=1",
+            true,
+            false,
+        );
 
         assert_eq!(url, "https://relay.example/v1/responses?x-id=1");
+    }
+
+    #[test]
+    fn build_claude_runtime_url_adds_v1_for_openrouter_chat_compat() {
+        let url = build_claude_runtime_url(
+            "https://openrouter.ai/api",
+            "/chat/completions",
+            false,
+            true,
+        );
+
+        assert_eq!(url, "https://openrouter.ai/api/v1/chat/completions");
+    }
+
+    #[test]
+    fn build_claude_runtime_url_adds_v1_for_openrouter_responses_compat() {
+        let url = build_claude_runtime_url("https://openrouter.ai/api", "/responses", false, true);
+
+        assert_eq!(url, "https://openrouter.ai/api/v1/responses");
+    }
+
+    #[test]
+    fn build_claude_runtime_url_adds_v1_for_metadata_openrouter_chat_compat() {
+        let url =
+            build_claude_runtime_url("https://relay.example", "/chat/completions", false, true);
+
+        assert_eq!(url, "https://relay.example/v1/chat/completions");
+    }
+
+    #[test]
+    fn build_claude_runtime_url_adds_v1_for_metadata_openrouter_responses_compat() {
+        let url = build_claude_runtime_url("https://relay.example", "/responses", false, true);
+
+        assert_eq!(url, "https://relay.example/v1/responses");
+    }
+
+    #[test]
+    fn build_claude_runtime_url_preserves_custom_prefix_for_non_copilot_chat() {
+        let url = build_claude_runtime_url(
+            "https://relay.example/openai",
+            "/chat/completions",
+            false,
+            false,
+        );
+
+        assert_eq!(url, "https://relay.example/openai/chat/completions");
+    }
+
+    #[test]
+    fn build_claude_runtime_url_preserves_custom_prefix_for_non_copilot_responses() {
+        let url =
+            build_claude_runtime_url("https://relay.example/openai", "/responses", false, false);
+
+        assert_eq!(url, "https://relay.example/openai/responses");
     }
 
     #[test]

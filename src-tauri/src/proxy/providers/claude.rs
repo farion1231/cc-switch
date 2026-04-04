@@ -318,6 +318,7 @@ impl ProviderAdapter for ClaudeAdapter {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
         let is_github_copilot = base_trimmed.contains("githubcopilot.com");
+        let is_openrouter = base_trimmed.contains("openrouter.ai");
         let copilot_base = base_trimmed.strip_suffix("/v1").unwrap_or(base_trimmed);
 
         // Claude/OpenAI 兼容供应商的 base_url 可能是：
@@ -329,11 +330,24 @@ impl ProviderAdapter for ClaudeAdapter {
             Some((_scheme, rest)) => !rest.contains('/'),
             None => !base_trimmed.contains('/'),
         };
+        let endpoint_is_openai_compat = matches!(
+            endpoint_trimmed,
+            value
+                if value.starts_with("chat/completions")
+                    || value.starts_with("responses")
+                    || value.starts_with("v1/chat/completions")
+                    || value.starts_with("v1/responses")
+        );
 
         let mut base = if is_github_copilot && endpoint_trimmed.starts_with("chat/completions") {
             format!("{copilot_base}/{endpoint_trimmed}")
         } else if already_has_v1 {
             format!("{base_trimmed}/{endpoint_trimmed}")
+        } else if is_openrouter && endpoint_is_openai_compat {
+            format!(
+                "{base_trimmed}/v1/{}",
+                endpoint_trimmed.trim_start_matches("v1/")
+            )
         } else if origin_only {
             format!("{base_trimmed}/v1/{endpoint_trimmed}")
         } else {
@@ -653,6 +667,20 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://relay.example/openai", "/responses");
         assert_eq!(url, "https://relay.example/openai/responses");
+    }
+
+    #[test]
+    fn test_build_url_adds_v1_for_openrouter_chat_compat() {
+        let adapter = ClaudeAdapter::new();
+        let url = adapter.build_url("https://openrouter.ai/api", "/chat/completions");
+        assert_eq!(url, "https://openrouter.ai/api/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_adds_v1_for_openrouter_responses_compat() {
+        let adapter = ClaudeAdapter::new();
+        let url = adapter.build_url("https://openrouter.ai/api", "/responses");
+        assert_eq!(url, "https://openrouter.ai/api/v1/responses");
     }
 
     #[test]
