@@ -197,6 +197,7 @@ jobs:
         shell: bash
         timeout-minutes: 60
         env:
+          MACOSX_DEPLOYMENT_TARGET: '10.15'
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}

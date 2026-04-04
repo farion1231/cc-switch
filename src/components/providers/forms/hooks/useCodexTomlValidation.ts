@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import TOML from "smol-toml";
+import TOML from "@iarna/toml";
 
 /**
  * Codex config.toml 格式校验 Hook

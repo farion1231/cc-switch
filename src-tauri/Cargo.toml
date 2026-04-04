@@ -103,3 +103,12 @@ strip = "symbols"
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"
+
+# Disable debug_assertions for objc2 in dev builds.
+# objc2's define_class! macro panics in debug mode when registering ObjC protocol
+# methods that don't exist on the current macOS version (e.g., WKDownload-related
+# delegate methods introduced in macOS 11.3+). In release mode these checks are
+# already skipped. The methods are still safely registered via the ObjC runtime
+# and will simply never be called by WebKit on older OS versions.
+[profile.dev.package.objc2]
+debug-assertions = false

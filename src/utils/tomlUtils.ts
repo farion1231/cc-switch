@@ -1,4 +1,4 @@
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { parse as parseToml, stringify as stringifyToml } from "@iarna/toml";
 import { normalizeTomlText } from "@/utils/textNormalization";
 import { McpServerSpec } from "../types";
 

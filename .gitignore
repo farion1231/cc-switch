@@ -29,3 +29,5 @@ copilot-api
 .history
 CODEBUDDY.md
 .github
+.playwright-mcp/
+.pnpm-build-allow.json

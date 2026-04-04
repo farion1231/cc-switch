@@ -50,7 +50,7 @@
       }
     },
     "macOS": {
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "10.15"
     }
   },
   "plugins": {

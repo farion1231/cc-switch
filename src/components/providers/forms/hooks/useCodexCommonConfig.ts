@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { parse as parseToml } from "smol-toml";
+import { parse as parseToml } from "@iarna/toml";
 import {
   updateTomlCommonConfigSnippet,
   hasTomlCommonConfigSnippet,

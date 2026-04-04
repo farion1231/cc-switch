@@ -16,6 +16,10 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    target: ["es2020", "safari14"],
+  },
+  esbuild: {
+    target: ["es2020", "safari14"],
   },
   server: {
     port: 3000,

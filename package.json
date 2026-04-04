@@ -51,6 +51,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^5.2.2",
+    "@iarna/toml": "^2.2.5",
     "@lobehub/icons-static-svg": "^1.73.0",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-checkbox": "^1.3.3",
@@ -86,9 +87,13 @@
     "react-hook-form": "^7.65.0",
     "react-i18next": "^16.0.0",
     "recharts": "^3.5.1",
-    "smol-toml": "^1.4.2",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
     "zod": "^4.1.12"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.21.5"
+    }
   }
 }
