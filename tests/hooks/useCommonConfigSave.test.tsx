@@ -29,7 +29,7 @@ describe("common config snippet saving", () => {
     const onConfigChange = vi.fn();
     const { result } = renderHook(() =>
       useCodexCommonConfig({
-        codexConfig: "model = \"gpt-5\"",
+        codexConfig: 'model = "gpt-5"',
         onConfigChange,
       }),
     );
@@ -46,7 +46,7 @@ describe("common config snippet saving", () => {
     expect(saved).toBe(false);
     expect(setCommonConfigSnippetMock).not.toHaveBeenCalled();
     expect(onConfigChange).not.toHaveBeenCalled();
-    expect(result.current.commonConfigError).toContain("invalid value");
+    expect(result.current.commonConfigError).toContain("Unexpected character");
   });
 
   it("does not persist an invalid Gemini common config snippet", async () => {

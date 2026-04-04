@@ -48,6 +48,12 @@ export function useSettingsForm(): UseSettingsFormResult {
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  const hasInitialized = useRef(false);
+  // 始终持有最新的 i18n 实例，避免 useCallback 闭包捕获旧版本
+  const i18nRef = useRef(i18n);
+  useEffect(() => {
+    i18nRef.current = i18n;
+  });
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -56,22 +62,19 @@ export function useSettingsForm(): UseSettingsFormResult {
         return stored as Language;
       }
     }
-    return normalizeLanguage(i18n.language);
-  }, [i18n]);
+    return normalizeLanguage(i18nRef.current.language);
+  }, []);
 
-  const syncLanguage = useCallback(
-    (lang: Language) => {
-      const current = normalizeLanguage(i18n.language);
-      if (current !== lang) {
-        void i18n.changeLanguage(lang);
-      }
-    },
-    [i18n],
-  );
+  const syncLanguage = useCallback((lang: Language) => {
+    const current = normalizeLanguage(i18nRef.current.language);
+    if (current !== lang) {
+      void i18nRef.current.changeLanguage(lang);
+    }
+  }, []);
 
-  // 初始化设置数据
+  // 初始化设置数据（只执行一次，resetSettings 不会触发此逻辑）
   useEffect(() => {
-    if (!data) return;
+    if (!data || hasInitialized.current) return;
 
     const normalizedLanguage = normalizeLanguage(
       data.language ?? readPersistedLanguage(),
@@ -94,6 +97,7 @@ export function useSettingsForm(): UseSettingsFormResult {
 
     setSettingsState(normalized);
     initialLanguageRef.current = normalizedLanguage;
+    hasInitialized.current = true;
     syncLanguage(normalizedLanguage);
   }, [data, readPersistedLanguage, syncLanguage]);
 
@@ -151,9 +155,11 @@ export function useSettingsForm(): UseSettingsFormResult {
       };
 
       setSettingsState(normalized);
-      syncLanguage(initialLanguageRef.current);
+      // 恢复初始语言，通过 ref 确保拿到最新 i18n 实例
+      const targetLang = initialLanguageRef.current;
+      void i18nRef.current.changeLanguage(targetLang);
     },
-    [readPersistedLanguage, syncLanguage],
+    [readPersistedLanguage],
   );
 
   return {
