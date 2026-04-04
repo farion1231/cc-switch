@@ -354,6 +354,8 @@ pub struct CopilotAuthManager {
 }
 
 impl CopilotAuthManager {
+    const SESSION_REFRESH_BASE_SECS: i64 = 3600;
+
     /// 创建新的认证管理器
     pub fn new(data_dir: PathBuf) -> Self {
         let storage_path = data_dir.join("copilot_auth.json");
@@ -660,7 +662,7 @@ impl CopilotAuthManager {
                     existing_account.machine_id.clone().unwrap()
                 } else {
                     // 超过 1 小时，重新生成 Machine ID
-                    let new_machine_id = Self::generate_machine_id(&account_id);
+                    let new_machine_id = self.generate_machine_id(&account_id);
                     log::info!(
                         "[CopilotAuth] 账号 {} 超过 1 小时后重新登录，生成新 Machine ID: {}",
                         account_id,
@@ -670,7 +672,7 @@ impl CopilotAuthManager {
                 }
             } else {
                 // 新账号，生成 Machine ID
-                let new_machine_id = Self::generate_machine_id(&account_id);
+                let new_machine_id = self.generate_machine_id(&account_id);
                 log::info!(
                     "[CopilotAuth] 为新账号 {} 生成 Machine ID: {}",
                     account_id,
@@ -1108,6 +1110,12 @@ impl CopilotAuthManager {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.clear();
         }
+        {
+            let mut session_refresh_tasks = self.session_refresh_tasks.write().await;
+            for (_, task) in session_refresh_tasks.drain() {
+                task.abort();
+            }
+        }
         // 清理 API 端点缓存
         {
             let mut api_endpoints = self.api_endpoints.write().await;
@@ -1220,12 +1228,54 @@ impl CopilotAuthManager {
         )
     }
 
+    fn machine_base_path(&self) -> PathBuf {
+        self.storage_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("copilot_machine_base.txt")
+    }
+
+    fn fallback_machine_base(&self) -> String {
+        let machine_base_path = self.machine_base_path();
+
+        if let Ok(existing) = std::fs::read_to_string(&machine_base_path) {
+            let trimmed = existing.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+
+        let host_hint = std::env::var("HOSTNAME")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("COMPUTERNAME")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            })
+            .unwrap_or_else(|| "unknown-host".to_string());
+        let machine_base = format!("{}-{}", host_hint, uuid::Uuid::new_v4());
+
+        if let Some(parent) = machine_base_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(err) = std::fs::write(&machine_base_path, &machine_base) {
+            log::warn!(
+                "[CopilotAuth] 无法持久化 machine base {}: {}",
+                machine_base_path.display(),
+                err
+            );
+        }
+
+        machine_base
+    }
+
     /// 生成机器 ID（每个账号独立的 Machine ID）
     ///
     /// 为了避免账号间关联，每个账号使用不同的 Machine ID：
     /// - 基于 MAC 地址（或随机 UUID）+ 账号 ID 生成
     /// - 对组合值进行 SHA256 哈希
-    fn generate_machine_id(account_id: &str) -> String {
+    fn generate_machine_id(&self, account_id: &str) -> String {
         use sha2::{Digest, Sha256};
 
         // 尝试获取 MAC 地址作为基础
@@ -1235,9 +1285,9 @@ impl CopilotAuthManager {
                 mac.to_string()
             }
             _ => {
-                // 回退：使用固定字符串（保证同一账号在不同启动时 ID 一致）
-                log::warn!("[CopilotAuth] 无法获取 MAC 地址，使用固定基础值");
-                "cc-switch-machine-base".to_string()
+                // 回退：使用主机唯一且持久化的基础值，避免不同设备碰撞
+                log::warn!("[CopilotAuth] 无法获取 MAC 地址，使用持久化 machine base");
+                self.fallback_machine_base()
             }
         };
 
@@ -1265,6 +1315,13 @@ impl CopilotAuthManager {
             .as_millis();
 
         format!("{}{}", uuid, timestamp)
+    }
+
+    fn should_refresh_session_id(session_refreshed_at: Option<i64>, now: i64) -> bool {
+        match session_refreshed_at {
+            Some(refreshed_at) => now.saturating_sub(refreshed_at) >= Self::SESSION_REFRESH_BASE_SECS,
+            None => true,
+        }
     }
 
     /// 启动 Session ID 定期刷新任务（每小时刷新）
@@ -1495,11 +1552,12 @@ impl CopilotAuthManager {
         if store.version >= 2 {
             // v2/v3 多账号格式
 
-            // 为没有 machine_id 或 session_id 的账号生成
+            // 为没有 machine_id 的账号补齐，并在启动恢复时纠正过期的 session_id
             let mut needs_save = false;
+            let now = chrono::Utc::now().timestamp();
             for (account_id, account_data) in store.accounts.iter_mut() {
                 if account_data.machine_id.is_none() {
-                    account_data.machine_id = Some(Self::generate_machine_id(account_id));
+                    account_data.machine_id = Some(self.generate_machine_id(account_id));
                     log::info!(
                         "[CopilotAuth] 为现有账号 {} 生成 Machine ID",
                         account_id
@@ -1507,13 +1565,23 @@ impl CopilotAuthManager {
                     needs_save = true;
                 }
 
-                if account_data.session_id.is_none() {
+                let had_session_id = account_data.session_id.is_some();
+                if !had_session_id
+                    || Self::should_refresh_session_id(account_data.session_refreshed_at, now)
+                {
                     account_data.session_id = Some(Self::generate_session_id());
-                    account_data.session_refreshed_at = Some(chrono::Utc::now().timestamp());
-                    log::info!(
-                        "[CopilotAuth] 为现有账号 {} 生成 Session ID",
-                        account_id
-                    );
+                    account_data.session_refreshed_at = Some(now);
+                    if had_session_id {
+                        log::info!(
+                            "[CopilotAuth] 为现有账号 {} 刷新过期 Session ID",
+                            account_id
+                        );
+                    } else {
+                        log::info!(
+                            "[CopilotAuth] 为现有账号 {} 生成 Session ID",
+                            account_id
+                        );
+                    }
                     needs_save = true;
                 }
             }
@@ -1580,7 +1648,7 @@ impl CopilotAuthManager {
 
                     // 生成 Machine ID（迁移时也需要，基于账号 ID）
                     let account_id = user.id.to_string();
-                    let machine_id = Self::generate_machine_id(&account_id);
+                    let machine_id = self.generate_machine_id(&account_id);
                     log::info!(
                         "[CopilotAuth] 为迁移账号 {} 生成 Machine ID: {}",
                         account_id,
@@ -1645,6 +1713,27 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn test_account_data(
+        token: &str,
+        login: &str,
+        id: u64,
+        avatar_url: Option<&str>,
+        authenticated_at: i64,
+    ) -> GitHubAccountData {
+        GitHubAccountData {
+            github_token: token.to_string(),
+            user: GitHubUser {
+                login: login.to_string(),
+                id,
+                avatar_url: avatar_url.map(str::to_string),
+            },
+            authenticated_at,
+            machine_id: Some(format!("machine-{id}")),
+            session_id: Some(format!("session-{id}")),
+            session_refreshed_at: Some(authenticated_at),
+        }
+    }
+
     #[test]
     fn test_copilot_token_expiry() {
         let now = chrono::Utc::now().timestamp();
@@ -1704,27 +1793,17 @@ mod tests {
         let mut accounts = HashMap::new();
         accounts.insert(
             "12345".to_string(),
-            GitHubAccountData {
-                github_token: "gho_test_token".to_string(),
-                user: GitHubUser {
-                    login: "alice".to_string(),
-                    id: 12345,
-                    avatar_url: Some("https://example.com/alice.png".to_string()),
-                },
-                authenticated_at: 1700000000,
-            },
+            test_account_data(
+                "gho_test_token",
+                "alice",
+                12345,
+                Some("https://example.com/alice.png"),
+                1700000000,
+            ),
         );
         accounts.insert(
             "67890".to_string(),
-            GitHubAccountData {
-                github_token: "gho_test_token_2".to_string(),
-                user: GitHubUser {
-                    login: "bob".to_string(),
-                    id: 67890,
-                    avatar_url: None,
-                },
-                authenticated_at: 1700000001,
-            },
+            test_account_data("gho_test_token_2", "bob", 67890, None, 1700000001),
         );
 
         let store = CopilotAuthStore {
@@ -1763,15 +1842,13 @@ mod tests {
 
     #[test]
     fn test_github_account_from_data() {
-        let data = GitHubAccountData {
-            github_token: "gho_test".to_string(),
-            user: GitHubUser {
-                login: "testuser".to_string(),
-                id: 99999,
-                avatar_url: Some("https://example.com/avatar.png".to_string()),
-            },
-            authenticated_at: 1700000000,
-        };
+        let data = test_account_data(
+            "gho_test",
+            "testuser",
+            99999,
+            Some("https://example.com/avatar.png"),
+            1700000000,
+        );
 
         let account = GitHubAccount::from(&data);
         assert_eq!(account.id, "99999");
@@ -1788,33 +1865,55 @@ mod tests {
         let mut accounts = HashMap::new();
         accounts.insert(
             "12345".to_string(),
-            GitHubAccountData {
-                github_token: "gho_test_token".to_string(),
-                user: GitHubUser {
-                    login: "alice".to_string(),
-                    id: 12345,
-                    avatar_url: None,
-                },
-                authenticated_at: 1700000000,
-            },
+            test_account_data("gho_test_token", "alice", 12345, None, 1700000000),
         );
         accounts.insert(
             "67890".to_string(),
-            GitHubAccountData {
-                github_token: "gho_test_token_2".to_string(),
-                user: GitHubUser {
-                    login: "bob".to_string(),
-                    id: 67890,
-                    avatar_url: None,
-                },
-                authenticated_at: 1700000001,
-            },
+            test_account_data("gho_test_token_2", "bob", 67890, None, 1700000001),
         );
 
         assert_eq!(
             CopilotAuthManager::fallback_default_account_id(&accounts),
             Some("67890".to_string())
         );
+    }
+
+    #[test]
+    fn test_load_from_disk_refreshes_stale_session_id() {
+        let temp_dir = tempdir().unwrap();
+        let storage_path = temp_dir.path().join("copilot_auth.json");
+        let stale_refreshed_at =
+            chrono::Utc::now().timestamp() - CopilotAuthManager::SESSION_REFRESH_BASE_SECS - 10;
+        let stale_session_id = "stale-session".to_string();
+
+        let mut accounts = HashMap::new();
+        accounts.insert(
+            "12345".to_string(),
+            GitHubAccountData {
+                session_id: Some(stale_session_id.clone()),
+                session_refreshed_at: Some(stale_refreshed_at),
+                ..test_account_data("gho_test", "alice", 12345, None, 1700000000)
+            },
+        );
+
+        let store = CopilotAuthStore {
+            version: 3,
+            accounts,
+            default_account_id: Some("12345".to_string()),
+            github_token: None,
+            authenticated_at: None,
+        };
+        std::fs::write(&storage_path, serde_json::to_string_pretty(&store).unwrap()).unwrap();
+
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        let accounts = manager.accounts.blocking_read();
+        let restored = accounts.get("12345").unwrap();
+        let refreshed_session_id = restored.session_id.as_ref().unwrap();
+        let refreshed_at = restored.session_refreshed_at.unwrap();
+
+        assert_ne!(refreshed_session_id, &stale_session_id);
+        assert!(refreshed_at > stale_refreshed_at);
     }
 
     #[tokio::test]
@@ -1830,15 +1929,7 @@ mod tests {
             let mut accounts = manager.accounts.write().await;
             accounts.insert(
                 "12345".to_string(),
-                GitHubAccountData {
-                    github_token: "gho_test".to_string(),
-                    user: GitHubUser {
-                        login: "alice".to_string(),
-                        id: 12345,
-                        avatar_url: None,
-                    },
-                    authenticated_at: 1700000000,
-                },
+                test_account_data("gho_test", "alice", 12345, None, 1700000000),
             );
         }
         {
@@ -1914,15 +2005,7 @@ mod tests {
             let mut accounts = manager.accounts.write().await;
             accounts.insert(
                 "12345".to_string(),
-                GitHubAccountData {
-                    github_token: "gho_test".to_string(),
-                    user: GitHubUser {
-                        login: "alice".to_string(),
-                        id: 12345,
-                        avatar_url: None,
-                    },
-                    authenticated_at: 1700000000,
-                },
+                test_account_data("gho_test", "alice", 12345, None, 1700000000),
             );
         }
         // 设置 API endpoint 缓存
@@ -1948,15 +2031,7 @@ mod tests {
             let mut accounts = manager.accounts.write().await;
             accounts.insert(
                 "12345".to_string(),
-                GitHubAccountData {
-                    github_token: "gho_test".to_string(),
-                    user: GitHubUser {
-                        login: "alice".to_string(),
-                        id: 12345,
-                        avatar_url: None,
-                    },
-                    authenticated_at: 1700000000,
-                },
+                test_account_data("gho_test", "alice", 12345, None, 1700000000),
             );
         }
         // 设置 API endpoint 缓存
@@ -2018,6 +2093,31 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn test_clear_auth_aborts_session_refresh_tasks() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        let task = tokio::spawn(async {
+            tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+        });
+        let abort_handle = task.abort_handle();
+
+        {
+            let mut session_refresh_tasks = manager.session_refresh_tasks.write().await;
+            session_refresh_tasks.insert("12345".to_string(), task);
+        }
+
+        manager.clear_auth().await.unwrap();
+        tokio::task::yield_now().await;
+
+        {
+            let session_refresh_tasks = manager.session_refresh_tasks.read().await;
+            assert!(session_refresh_tasks.is_empty());
+        }
+        assert!(abort_handle.is_finished());
+    }
+
+    #[tokio::test]
     async fn test_clear_auth_cleans_memory_even_when_file_removal_fails() {
         let temp_dir = tempdir().unwrap();
         let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
@@ -2029,15 +2129,7 @@ mod tests {
             let mut accounts = manager.accounts.write().await;
             accounts.insert(
                 "12345".to_string(),
-                GitHubAccountData {
-                    github_token: "gho_test".to_string(),
-                    user: GitHubUser {
-                        login: "alice".to_string(),
-                        id: 12345,
-                        avatar_url: None,
-                    },
-                    authenticated_at: 1700000000,
-                },
+                test_account_data("gho_test", "alice", 12345, None, 1700000000),
             );
         }
         {
