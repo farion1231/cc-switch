@@ -827,8 +827,6 @@ pub fn run() {
                 } else {
                     // 正常启动模式：显示窗口
                     let _ = window.show();
-                    #[cfg(debug_assertions)]
-                    window.open_devtools();
                     log::info!("正常启动模式：主窗口已显示");
                 }
             }
