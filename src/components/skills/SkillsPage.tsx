@@ -13,6 +13,7 @@ import { RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { SkillCard } from "./SkillCard";
 import { RepoManagerPanel } from "./RepoManagerPanel";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   useDiscoverableSkills,
   useInstalledSkills,
@@ -233,10 +234,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     }, [skills, searchQuery, filterRepo, filterStatus]);
 
     return (
-      <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden bg-background/50">
+      <div className="flex flex-col h-full min-h-0 overflow-hidden bg-background/50">
         {/* 技能网格（可滚动详情区域） */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden animate-fade-in">
-          <div className="py-4">
+        <ScrollArea className="flex-1 animate-fade-in">
+          <div className="py-4 px-6">
             {loading ? (
               <div className="flex items-center justify-center h-64">
                 <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -372,7 +373,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
               </>
             )}
           </div>
-        </div>
+        </ScrollArea>
 
         {/* 仓库管理面板 */}
         {repoManagerOpen && (
