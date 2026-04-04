@@ -65,6 +65,7 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
       provider: Omit<Provider, "id"> & {
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
+        addToLive?: boolean;
       },
     ) => {
       await addProviderMutation.mutateAsync(provider);
@@ -120,8 +121,8 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
 
   // 更新供应商
   const updateProvider = useCallback(
-    async (provider: Provider) => {
-      await updateProviderMutation.mutateAsync(provider);
+    async (provider: Provider, originalId?: string) => {
+      await updateProviderMutation.mutateAsync({ provider, originalId });
 
       // 更新托盘菜单（失败不影响主操作）
       try {

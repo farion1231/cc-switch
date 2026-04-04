@@ -873,7 +873,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               <JsonEditor
                 id="usage-code"
                 value={script.code || ""}
-                onChange={(value) => setScript({ ...script, code: value })}
+                onChange={(value) =>
+                  setScript((prev) => ({ ...prev, code: value }))
+                }
                 height={480}
                 language="javascript"
                 showMinimap={false}

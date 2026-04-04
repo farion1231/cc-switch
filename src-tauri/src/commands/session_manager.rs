@@ -74,3 +74,12 @@ pub async fn delete_session(
     .await
     .map_err(|e| format!("Failed to delete session: {e}"))?
 }
+
+#[tauri::command]
+pub async fn delete_sessions(
+    items: Vec<session_manager::DeleteSessionRequest>,
+) -> Result<Vec<session_manager::DeleteSessionOutcome>, String> {
+    tauri::async_runtime::spawn_blocking(move || session_manager::delete_sessions(&items))
+        .await
+        .map_err(|e| format!("Failed to delete sessions: {e}"))
+}
