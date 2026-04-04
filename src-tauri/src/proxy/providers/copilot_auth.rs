@@ -46,14 +46,17 @@ const TOKEN_REFRESH_BUFFER_SECONDS: i64 = 60;
 const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 
 /// Copilot API Header 常量
-pub const COPILOT_EDITOR_VERSION: &str = "vscode/1.96.0";
-pub const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.26.7";
-pub const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
-pub const COPILOT_API_VERSION: &str = "2025-04-01";
+pub const COPILOT_EDITOR_VERSION: &str = "vscode/1.110.1";
+pub const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.38.2";
+pub const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.38.2";
+pub const COPILOT_API_VERSION: &str = "2025-10-01";
 pub const COPILOT_INTEGRATION_ID: &str = "vscode-chat";
 
 /// Copilot 使用量 API URL
 const COPILOT_USAGE_URL: &str = "https://api.github.com/copilot_internal/user";
+
+/// 默认 Copilot API 端点
+const DEFAULT_COPILOT_API_ENDPOINT: &str = "https://api.githubcopilot.com";
 
 /// Copilot 使用量响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +67,19 @@ pub struct CopilotUsageResponse {
     pub quota_reset_date: String,
     /// 配额快照
     pub quota_snapshots: QuotaSnapshots,
+    /// API 端点信息 (用于动态获取 API URL)
+    #[serde(default)]
+    pub endpoints: Option<CopilotEndpoints>,
+}
+
+/// Copilot API 端点信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotEndpoints {
+    /// API 端点 URL
+    pub api: String,
+    /// Telemetry 端点 URL
+    #[serde(default)]
+    pub telemetry: Option<String>,
 }
 
 /// 配额快照
@@ -312,6 +328,10 @@ pub struct CopilotAuthManager {
     copilot_tokens: Arc<RwLock<HashMap<String, CopilotToken>>>,
     /// Copilot Models 缓存（key = GitHub user ID，仅进程内复用）
     copilot_models: Arc<RwLock<HashMap<String, Vec<CopilotModel>>>>,
+    /// Copilot API 端点缓存（key = GitHub user ID，从 /copilot_internal/user 获取）
+    api_endpoints: Arc<RwLock<HashMap<String, String>>>,
+    /// 每个账号的端点拉取锁，避免并发拉取重复打 GitHub API
+    endpoint_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     /// HTTP 客户端
     http_client: Client,
     /// 存储路径
@@ -333,6 +353,8 @@ impl CopilotAuthManager {
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             copilot_tokens: Arc::new(RwLock::new(HashMap::new())),
             copilot_models: Arc::new(RwLock::new(HashMap::new())),
+            api_endpoints: Arc::new(RwLock::new(HashMap::new())),
+            endpoint_locks: Arc::new(RwLock::new(HashMap::new())),
             http_client: Client::new(),
             storage_path,
             pending_migration: Arc::new(RwLock::new(None)),
@@ -385,6 +407,15 @@ impl CopilotAuthManager {
         {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.remove(account_id);
+        }
+        // 清理 API 端点缓存
+        {
+            let mut api_endpoints = self.api_endpoints.write().await;
+            api_endpoints.remove(account_id);
+        }
+        {
+            let mut endpoint_locks = self.endpoint_locks.write().await;
+            endpoint_locks.remove(account_id);
         }
 
         {
@@ -775,6 +806,14 @@ impl CopilotAuthManager {
             .await
             .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
 
+        // 存储动态 API 端点（如果有）
+        if let Some(ref endpoints) = usage.endpoints {
+            let mut api_endpoints = self.api_endpoints.write().await;
+            api_endpoints.insert(account_id.to_string(), endpoints.api.clone());
+            // 使用 debug 级别避免在日志中暴露企业内部域名
+            log::debug!("[CopilotAuth] 账号 {account_id} 已保存动态 API 端点");
+        }
+
         log::info!(
             "[CopilotAuth] 获取使用量成功，计划: {}, 重置日期: {}",
             usage.copilot_plan,
@@ -793,6 +832,118 @@ impl CopilotAuthManager {
     }
 
     // ==================== 状态查询 ====================
+
+    /// 获取指定账号的 API 端点（缓存命中直接返回，未命中则从 API 惰性拉取）
+    pub async fn get_api_endpoint(&self, account_id: &str) -> String {
+        let _ = self.ensure_migration_complete().await;
+
+        {
+            let endpoints = self.api_endpoints.read().await;
+            if let Some(endpoint) = endpoints.get(account_id) {
+                return endpoint.clone();
+            }
+        }
+
+        // 用锁串行化同一账号的并发拉取，避免对 GitHub API 的重复请求
+        let lock = self.get_endpoint_lock(account_id).await;
+        let _guard = lock.lock().await;
+
+        // 持锁后二次检查：可能已由其他请求填充
+        {
+            let endpoints = self.api_endpoints.read().await;
+            if let Some(endpoint) = endpoints.get(account_id) {
+                return endpoint.clone();
+            }
+        }
+
+        match self.fetch_and_cache_endpoint(account_id).await {
+            Ok(endpoint) => endpoint,
+            Err(e) => {
+                log::debug!(
+                    "[CopilotAuth] 获取账号 {account_id} 动态 API 端点失败: {e}，使用默认值"
+                );
+                DEFAULT_COPILOT_API_ENDPOINT.to_string()
+            }
+        }
+    }
+
+    /// 获取默认账号的 API 端点
+    pub async fn get_default_api_endpoint(&self) -> String {
+        let _ = self.ensure_migration_complete().await;
+
+        match self.resolve_default_account_id().await {
+            Some(id) => self.get_api_endpoint(&id).await,
+            None => DEFAULT_COPILOT_API_ENDPOINT.to_string(),
+        }
+    }
+
+    async fn fetch_and_cache_endpoint(&self, account_id: &str) -> Result<String, CopilotAuthError> {
+        let github_token = {
+            let accounts = self.accounts.read().await;
+            accounts
+                .get(account_id)
+                .map(|a| a.github_token.clone())
+                .ok_or_else(|| CopilotAuthError::AccountNotFound(account_id.to_string()))?
+        };
+
+        log::debug!("[CopilotAuth] 为账号 {account_id} 惰性拉取动态 API 端点");
+
+        let response = self
+            .http_client
+            .get(COPILOT_USAGE_URL)
+            .header("Authorization", format!("token {github_token}"))
+            .header("Content-Type", "application/json")
+            .header("editor-version", COPILOT_EDITOR_VERSION)
+            .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
+            .header("user-agent", COPILOT_USER_AGENT)
+            .header("x-github-api-version", COPILOT_API_VERSION)
+            .send()
+            .await?;
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(CopilotAuthError::GitHubTokenInvalid);
+        }
+
+        if !response.status().is_success() {
+            return Err(CopilotAuthError::CopilotTokenFetchFailed(format!(
+                "获取 API 端点失败: {}",
+                response.status()
+            )));
+        }
+
+        let usage: CopilotUsageResponse = response
+            .json()
+            .await
+            .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
+
+        let endpoint = match usage.endpoints {
+            Some(endpoints) => endpoints.api.clone(),
+            None => DEFAULT_COPILOT_API_ENDPOINT.to_string(),
+        };
+
+        // 缓存端点（包括默认值），避免重复请求
+        let mut api_endpoints = self.api_endpoints.write().await;
+        api_endpoints.insert(account_id.to_string(), endpoint.clone());
+        log::debug!("[CopilotAuth] 账号 {account_id} 已缓存 API 端点");
+
+        Ok(endpoint)
+    }
+
+    async fn get_endpoint_lock(&self, account_id: &str) -> Arc<Mutex<()>> {
+        {
+            let locks = self.endpoint_locks.read().await;
+            if let Some(lock) = locks.get(account_id) {
+                return Arc::clone(lock);
+            }
+        }
+
+        let mut locks = self.endpoint_locks.write().await;
+        Arc::clone(
+            locks
+                .entry(account_id.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(()))),
+        )
+    }
 
     /// 获取认证状态（支持多账号）
     pub async fn get_status(&self) -> CopilotAuthStatus {
@@ -838,6 +989,7 @@ impl CopilotAuthManager {
     pub async fn clear_auth(&self) -> Result<(), CopilotAuthError> {
         log::info!("[CopilotAuth] 清除所有认证");
 
+        // 先清理内存状态，确保即使文件删除失败用户也能看到已登出
         {
             let mut accounts = self.accounts.write().await;
             accounts.clear();
@@ -852,11 +1004,24 @@ impl CopilotAuthManager {
             tokens.clear();
         }
         {
+            let mut models = self.copilot_models.write().await;
+            models.clear();
+        }
+        {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.clear();
         }
+        // 清理 API 端点缓存
+        {
+            let mut api_endpoints = self.api_endpoints.write().await;
+            api_endpoints.clear();
+        }
+        {
+            let mut endpoint_locks = self.endpoint_locks.write().await;
+            endpoint_locks.clear();
+        }
 
-        // 删除存储文件
+        // 最后删除存储文件
         if self.storage_path.exists() {
             std::fs::remove_file(&self.storage_path)?;
         }
@@ -1413,5 +1578,243 @@ mod tests {
 
         let default_vendor = manager.get_model_vendor("claude-sonnet-4").await.unwrap();
         assert_eq!(default_vendor.as_deref(), Some("Anthropic"));
+    }
+
+    #[tokio::test]
+    async fn test_get_api_endpoint_returns_cached_value() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 手动设置 api_endpoints 缓存
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert(
+                "12345".to_string(),
+                "https://copilot-api.enterprise.example.com".to_string(),
+            );
+        }
+
+        let endpoint = manager.get_api_endpoint("12345").await;
+        assert_eq!(endpoint, "https://copilot-api.enterprise.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_get_api_endpoint_returns_default_when_not_cached() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        let endpoint = manager.get_api_endpoint("99999").await;
+        assert_eq!(endpoint, "https://api.githubcopilot.com");
+    }
+
+    #[tokio::test]
+    async fn test_get_default_api_endpoint_uses_default_account() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 设置默认账号
+        {
+            let mut default_account_id = manager.default_account_id.write().await;
+            *default_account_id = Some("12345".to_string());
+        }
+        // 添加账号数据
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "12345".to_string(),
+                GitHubAccountData {
+                    github_token: "gho_test".to_string(),
+                    user: GitHubUser {
+                        login: "alice".to_string(),
+                        id: 12345,
+                        avatar_url: None,
+                    },
+                    authenticated_at: 1700000000,
+                },
+            );
+        }
+        // 设置 API endpoint 缓存
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert(
+                "12345".to_string(),
+                "https://copilot-api.corp.example.com".to_string(),
+            );
+        }
+
+        let endpoint = manager.get_default_api_endpoint().await;
+        assert_eq!(endpoint, "https://copilot-api.corp.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_remove_account_clears_api_endpoint_cache() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 添加账号数据
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "12345".to_string(),
+                GitHubAccountData {
+                    github_token: "gho_test".to_string(),
+                    user: GitHubUser {
+                        login: "alice".to_string(),
+                        id: 12345,
+                        avatar_url: None,
+                    },
+                    authenticated_at: 1700000000,
+                },
+            );
+        }
+        // 设置 API endpoint 缓存
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert(
+                "12345".to_string(),
+                "https://copilot-api.enterprise.example.com".to_string(),
+            );
+        }
+
+        // 确认缓存存在
+        {
+            let api_endpoints = manager.api_endpoints.read().await;
+            assert!(api_endpoints.contains_key("12345"));
+        }
+
+        // 移除账号
+        manager.remove_account("12345").await.unwrap();
+
+        // 确认缓存已清理
+        {
+            let api_endpoints = manager.api_endpoints.read().await;
+            assert!(!api_endpoints.contains_key("12345"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_clear_auth_clears_all_api_endpoint_cache() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 添加多个账号的 API endpoint 缓存
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert(
+                "12345".to_string(),
+                "https://copilot-api.enterprise1.example.com".to_string(),
+            );
+            api_endpoints.insert(
+                "67890".to_string(),
+                "https://copilot-api.enterprise2.example.com".to_string(),
+            );
+        }
+
+        // 确认缓存存在
+        {
+            let api_endpoints = manager.api_endpoints.read().await;
+            assert_eq!(api_endpoints.len(), 2);
+        }
+
+        // 清除所有认证
+        manager.clear_auth().await.unwrap();
+
+        // 确认缓存已清空
+        {
+            let api_endpoints = manager.api_endpoints.read().await;
+            assert!(api_endpoints.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_clear_auth_cleans_memory_even_when_file_removal_fails() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // Create a directory at storage_path so remove_file fails
+        std::fs::create_dir_all(&manager.storage_path).unwrap();
+
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "12345".to_string(),
+                GitHubAccountData {
+                    github_token: "gho_test".to_string(),
+                    user: GitHubUser {
+                        login: "alice".to_string(),
+                        id: 12345,
+                        avatar_url: None,
+                    },
+                    authenticated_at: 1700000000,
+                },
+            );
+        }
+        {
+            let mut default_account_id = manager.default_account_id.write().await;
+            *default_account_id = Some("12345".to_string());
+        }
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert(
+                "12345".to_string(),
+                "https://copilot-api.enterprise.example.com".to_string(),
+            );
+        }
+
+        let result = manager.clear_auth().await;
+        // Should still return an error for the file deletion failure
+        assert!(result.is_err());
+
+        // But memory state should already be cleaned
+        let accounts = manager.accounts.read().await;
+        assert!(accounts.is_empty());
+        drop(accounts);
+
+        let default_account_id = manager.default_account_id.read().await;
+        assert!(default_account_id.is_none());
+        drop(default_account_id);
+
+        let api_endpoints = manager.api_endpoints.read().await;
+        assert!(api_endpoints.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_api_endpoint_cache_hit_skips_fetch() {
+        // 缓存命中时应直接返回，不发起网络请求
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        let enterprise_endpoint = "https://copilot-api.enterprise.example.com".to_string();
+        {
+            let mut api_endpoints = manager.api_endpoints.write().await;
+            api_endpoints.insert("12345".to_string(), enterprise_endpoint.clone());
+        }
+
+        // 即使没有账号数据，缓存命中也应直接返回
+        let endpoint = manager.get_api_endpoint("12345").await;
+        assert_eq!(endpoint, enterprise_endpoint);
+    }
+
+    #[tokio::test]
+    async fn test_get_api_endpoint_returns_default_for_unknown_account() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        let endpoint = manager.get_api_endpoint("12345").await;
+        assert_eq!(endpoint, DEFAULT_COPILOT_API_ENDPOINT);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_and_cache_endpoint_requires_account() {
+        // 账号不存在时 fetch_and_cache_endpoint 应返回 AccountNotFound 错误
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        let result = manager.fetch_and_cache_endpoint("nonexistent").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CopilotAuthError::AccountNotFound(id) => assert_eq!(id, "nonexistent"),
+            other => panic!("期望 AccountNotFound 错误，实际: {other:?}"),
+        }
     }
 }
