@@ -238,6 +238,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         language: "javascript" as const,
         code: "",
         timeout: 10,
+        autoQueryInterval: 5,
         codingPlanProvider: autoDetected,
       };
     }
@@ -249,6 +250,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         language: "javascript" as const,
         code: "",
         timeout: 10,
+        autoQueryInterval: 5,
       };
     }
 
@@ -257,6 +259,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       language: "javascript" as const,
       code: PRESET_TEMPLATES[TEMPLATE_TYPES.GENERAL],
       timeout: 10,
+      autoQueryInterval: 5,
     };
   });
 
@@ -1061,7 +1064,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   onChange={(e) =>
                     setScript({
                       ...script,
-                      timeout: validateTimeout(e.target.value),
+                      timeout:
+                        e.target.value === ""
+                          ? (("" as unknown) as number)
+                          : Number(e.target.value),
                     })
                   }
                   onBlur={(e) =>
@@ -1085,14 +1091,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   min={0}
                   max={1440}
                   value={
-                    script.autoQueryInterval ?? script.autoIntervalMinutes ?? 0
+                    script.autoQueryInterval ?? script.autoIntervalMinutes ?? 5
                   }
                   onChange={(e) =>
                     setScript({
                       ...script,
-                      autoQueryInterval: validateAndClampInterval(
-                        e.target.value,
-                      ),
+                      autoQueryInterval:
+                        e.target.value === ""
+                          ? (("" as unknown) as number)
+                          : Number(e.target.value),
                     })
                   }
                   onBlur={(e) =>
