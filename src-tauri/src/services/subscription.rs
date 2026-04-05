@@ -778,6 +778,7 @@ fn read_gemini_credentials_from_keychain() -> Option<GeminiCredentials> {
 /// ```json
 /// { "token": { "accessToken": "...", "refreshToken": "...", "expiresAt": 1234 }, "updatedAt": ... }
 /// ```
+#[cfg(target_os = "macos")]
 fn parse_gemini_keychain_json(content: &str) -> GeminiCredentials {
     let parsed: serde_json::Value = match serde_json::from_str(content) {
         Ok(v) => v,
