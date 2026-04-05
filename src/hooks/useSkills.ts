@@ -10,6 +10,7 @@ import {
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillUpdateInfo,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 
@@ -283,6 +284,48 @@ export function useInstallSkillsFromZip() {
   });
 }
 
+// ========== 更新检测 ==========
+
+/**
+ * 检查 Skills 更新（手动触发）
+ */
+export function useCheckSkillUpdates() {
+  return useQuery({
+    queryKey: ["skills", "updates"],
+    queryFn: () => skillsApi.checkUpdates(),
+    enabled: false,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
+ * 更新单个 Skill
+ */
+export function useUpdateSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => skillsApi.updateSkill(id),
+    onSuccess: (updatedSkill) => {
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return [updatedSkill];
+          return oldData.map((s) =>
+            s.id === updatedSkill.id ? updatedSkill : s,
+          );
+        },
+      );
+      queryClient.setQueryData<SkillUpdateInfo[]>(
+        ["skills", "updates"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.filter((u) => u.id !== updatedSkill.id);
+        },
+      );
+    },
+  });
+}
+
 // ========== 辅助类型 ==========
 
 export type {
@@ -290,5 +333,6 @@ export type {
   DiscoverableSkill,
   ImportSkillSelection,
   SkillBackupEntry,
+  SkillUpdateInfo,
   AppId,
 };

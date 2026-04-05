@@ -8,7 +8,7 @@ use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, Skill, SkillBackupEntry, SkillRepo, SkillService,
-    SkillUninstallResult,
+    SkillUninstallResult, SkillUpdateInfo,
 };
 use crate::store::AppState;
 use std::sync::Arc;
@@ -130,6 +130,33 @@ pub async fn discover_available_skills(
     service
         .0
         .discover_available(repos)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 检查 Skills 更新
+#[tauri::command]
+pub async fn check_skill_updates(
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<SkillUpdateInfo>, String> {
+    service
+        .0
+        .check_updates(&app_state.db)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 更新单个 Skill
+#[tauri::command]
+pub async fn update_skill(
+    id: String,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<InstalledSkill, String> {
+    service
+        .0
+        .update_skill(&app_state.db, &id)
         .await
         .map_err(|e| e.to_string())
 }

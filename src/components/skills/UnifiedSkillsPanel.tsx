@@ -1,7 +1,14 @@
 import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Sparkles, Trash2, ExternalLink } from "lucide-react";
+import {
+  Sparkles,
+  Trash2,
+  ExternalLink,
+  RefreshCw,
+  Loader2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
@@ -15,7 +22,10 @@ import {
   useScanUnmanagedSkills,
   useImportSkillsFromApps,
   useInstallSkillsFromZip,
+  useCheckSkillUpdates,
+  useUpdateSkill,
   type InstalledSkill,
+  type SkillUpdateInfo,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -44,6 +54,7 @@ export interface UnifiedSkillsPanelHandle {
   openImport: () => void;
   openInstallFromZip: () => void;
   openRestoreFromBackup: () => void;
+  checkUpdates: () => void;
 }
 
 function formatSkillBackupDate(unixSeconds: number): string {
@@ -83,6 +94,22 @@ const UnifiedSkillsPanel = React.forwardRef<
     useScanUnmanagedSkills();
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
+  const {
+    data: skillUpdates,
+    refetch: checkUpdates,
+    isFetching: isCheckingUpdates,
+  } = useCheckSkillUpdates();
+  const updateSkillMutation = useUpdateSkill();
+
+  const updatesMap = useMemo(() => {
+    const map: Record<string, SkillUpdateInfo> = {};
+    if (skillUpdates) {
+      for (const u of skillUpdates) {
+        map[u.id] = u;
+      }
+    }
+    return map;
+  }, [skillUpdates]);
 
   const enabledCounts = useMemo(() => {
     const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0, openclaw: 0 };
@@ -191,6 +218,33 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
+  const handleCheckUpdates = async () => {
+    try {
+      const result = await checkUpdates();
+      const updates = result.data || [];
+      if (updates.length === 0) {
+        toast.success(t("skills.noUpdates"), { closeButton: true });
+      } else {
+        toast.info(t("skills.updatesFound", { count: updates.length }), {
+          closeButton: true,
+        });
+      }
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleUpdateSkill = async (skill: InstalledSkill) => {
+    try {
+      const updated = await updateSkillMutation.mutateAsync(skill.id);
+      toast.success(t("skills.updateSuccess", { name: updated.name }), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("skills.updateFailed"), { description: String(error) });
+    }
+  };
+
   const handleOpenRestoreFromBackup = async () => {
     setRestoreDialogOpen(true);
     try {
@@ -256,15 +310,35 @@ const UnifiedSkillsPanel = React.forwardRef<
     openImport: handleOpenImport,
     openInstallFromZip: handleInstallFromZip,
     openRestoreFromBackup: handleOpenRestoreFromBackup,
+    checkUpdates: handleCheckUpdates,
   }));
 
   return (
     <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-      <AppCountBar
-        totalLabel={t("skills.installed", { count: skills?.length || 0 })}
-        counts={enabledCounts}
-        appIds={MCP_SKILLS_APP_IDS}
-      />
+      <div className="flex items-center justify-between">
+        <AppCountBar
+          totalLabel={t("skills.installed", { count: skills?.length || 0 })}
+          counts={enabledCounts}
+          appIds={MCP_SKILLS_APP_IDS}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          onClick={handleCheckUpdates}
+          disabled={isCheckingUpdates || !skills || skills.length === 0}
+        >
+          {isCheckingUpdates ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <RefreshCw size={12} />
+          )}
+          {isCheckingUpdates
+            ? t("skills.checkingUpdates")
+            : t("skills.checkUpdates")}
+        </Button>
+      </div>
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
@@ -290,8 +364,14 @@ const UnifiedSkillsPanel = React.forwardRef<
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
+                  hasUpdate={!!updatesMap[skill.id]}
+                  isUpdating={
+                    updateSkillMutation.isPending &&
+                    updateSkillMutation.variables === skill.id
+                  }
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
+                  onUpdate={() => handleUpdateSkill(skill)}
                   isLast={index === skills.length - 1}
                 />
               ))}
@@ -339,15 +419,21 @@ UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
+  hasUpdate?: boolean;
+  isUpdating?: boolean;
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
+  onUpdate?: () => void;
   isLast?: boolean;
 }
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   skill,
+  hasUpdate,
+  isUpdating,
   onToggleApp,
   onUninstall,
+  onUpdate,
   isLast,
 }) => {
   const { t } = useTranslation();
@@ -387,6 +473,14 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           <span className="text-xs text-muted-foreground/50 flex-shrink-0">
             {sourceLabel}
           </span>
+          {hasUpdate && (
+            <Badge
+              variant="outline"
+              className="shrink-0 text-[10px] px-1.5 py-0 h-4 border-amber-500 text-amber-600 dark:text-amber-400"
+            >
+              {t("skills.updateAvailable")}
+            </Badge>
+          )}
         </div>
         {skill.description && (
           <p
@@ -404,7 +498,27 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
         appIds={MCP_SKILLS_APP_IDS}
       />
 
-      <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div
+        className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+        style={hasUpdate ? { opacity: 1 } : undefined}
+      >
+        {hasUpdate && onUpdate && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10"
+            onClick={onUpdate}
+            disabled={isUpdating}
+            title={t("skills.update")}
+          >
+            {isUpdating ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} />
+            )}
+          </Button>
+        )}
         <Button
           type="button"
           variant="ghost"
