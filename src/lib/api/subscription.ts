@@ -9,4 +9,9 @@ export const subscriptionApi = {
     apiKey: string,
   ): Promise<SubscriptionQuota> =>
     invoke("get_coding_plan_quota", { baseUrl, apiKey }),
+  getBalance: (
+    baseUrl: string,
+    apiKey: string,
+  ): Promise<import("@/types").UsageResult> =>
+    invoke("get_balance", { baseUrl, apiKey }),
 };
