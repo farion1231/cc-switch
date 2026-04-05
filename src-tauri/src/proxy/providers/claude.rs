@@ -117,10 +117,10 @@ fn last_message_contains_tool_result(message: &Value) -> bool {
 }
 
 fn previous_message_contains_tool_use(message: &Value) -> bool {
-    if !message
+    if message
         .get("role")
         .and_then(|value| value.as_str())
-        .is_some_and(|role| role == "assistant")
+        .is_none_or(|role| role != "assistant")
     {
         return false;
     }

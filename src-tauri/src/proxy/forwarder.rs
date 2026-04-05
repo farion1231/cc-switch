@@ -37,6 +37,20 @@ pub struct ForwardError {
     pub provider: Option<Provider>,
 }
 
+pub struct ForwardRequestInput {
+    pub endpoint: String,
+    pub body: Value,
+    pub headers: axum::http::HeaderMap,
+    pub extensions: Extensions,
+    pub client_session_id: Option<String>,
+}
+
+struct ForwardMetadata<'a> {
+    headers: &'a axum::http::HeaderMap,
+    extensions: &'a Extensions,
+    client_session_id: Option<&'a str>,
+}
+
 pub struct RequestForwarder {
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
@@ -99,13 +113,16 @@ impl RequestForwarder {
     pub async fn forward_with_retry(
         &self,
         app_type: &AppType,
-        endpoint: &str,
-        body: Value,
-        headers: axum::http::HeaderMap,
-        extensions: Extensions,
+        request: ForwardRequestInput,
         providers: Vec<Provider>,
-        client_session_id: Option<&str>,
     ) -> Result<ForwardResult, ForwardError> {
+        let ForwardRequestInput {
+            endpoint,
+            body,
+            headers,
+            extensions,
+            client_session_id,
+        } = request;
         // 获取适配器
         let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
@@ -177,12 +194,14 @@ impl RequestForwarder {
             match self
                 .forward(
                     provider,
-                    endpoint,
+                    &endpoint,
                     &provider_body,
-                    &headers,
-                    &extensions,
+                    ForwardMetadata {
+                        headers: &headers,
+                        extensions: &extensions,
+                        client_session_id: client_session_id.as_deref(),
+                    },
                     adapter.as_ref(),
-                    client_session_id,
                 )
                 .await
             {
@@ -308,12 +327,14 @@ impl RequestForwarder {
                                 match self
                                     .forward(
                                         provider,
-                                        endpoint,
+                                        &endpoint,
                                         &provider_body,
-                                        &headers,
-                                        &extensions,
+                                        ForwardMetadata {
+                                            headers: &headers,
+                                            extensions: &extensions,
+                                            client_session_id: client_session_id.as_deref(),
+                                        },
                                         adapter.as_ref(),
-                                        client_session_id,
                                     )
                                     .await
                                 {
@@ -508,12 +529,14 @@ impl RequestForwarder {
                             match self
                                 .forward(
                                     provider,
-                                    endpoint,
+                                    &endpoint,
                                     &provider_body,
-                                    &headers,
-                                    &extensions,
+                                    ForwardMetadata {
+                                        headers: &headers,
+                                        extensions: &extensions,
+                                        client_session_id: client_session_id.as_deref(),
+                                    },
                                     adapter.as_ref(),
-                                    client_session_id,
                                 )
                                 .await
                             {
@@ -750,11 +773,12 @@ impl RequestForwarder {
         provider: &Provider,
         endpoint: &str,
         body: &Value,
-        headers: &axum::http::HeaderMap,
-        extensions: &Extensions,
+        metadata: ForwardMetadata<'_>,
         adapter: &dyn ProviderAdapter,
-        client_session_id: Option<&str>,
     ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
+        let headers = metadata.headers;
+        let extensions = metadata.extensions;
+        let client_session_id = metadata.client_session_id;
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
