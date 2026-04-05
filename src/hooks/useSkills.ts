@@ -11,6 +11,7 @@ import {
   type ImportSkillSelection,
   type InstalledSkill,
   type SkillUpdateInfo,
+  type SkillsShSearchResult,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 
@@ -326,6 +327,26 @@ export function useUpdateSkill() {
   });
 }
 
+// ========== skills.sh 搜索 ==========
+
+/**
+ * 搜索 skills.sh 公共目录
+ * 使用 300ms staleTime 和 keepPreviousData 实现平滑搜索体验
+ */
+export function useSearchSkillsSh(
+  query: string,
+  limit: number,
+  offset: number,
+) {
+  return useQuery({
+    queryKey: ["skills", "skillssh", query, limit, offset],
+    queryFn: () => skillsApi.searchSkillsSh(query, limit, offset),
+    enabled: query.length >= 2,
+    staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+  });
+}
+
 // ========== 辅助类型 ==========
 
 export type {
@@ -334,5 +355,6 @@ export type {
   ImportSkillSelection,
   SkillBackupEntry,
   SkillUpdateInfo,
+  SkillsShSearchResult,
   AppId,
 };

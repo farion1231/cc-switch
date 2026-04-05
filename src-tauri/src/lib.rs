@@ -966,6 +966,7 @@ pub fn run() {
             commands::check_skill_updates,
             commands::update_skill,
             commands::migrate_skill_storage,
+            commands::search_skills_sh,
             // Skill management (legacy API compatibility)
             commands::get_skills,
             commands::get_skills_for_app,

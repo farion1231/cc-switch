@@ -1650,6 +1650,19 @@
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or repo...",
+    "searchSource": {
+      "repos": "Repos",
+      "skillssh": "skills.sh"
+    },
+    "skillssh": {
+      "searchPlaceholder": "Search skills.sh (min 2 chars)...",
+      "installs": "{{count}} installs",
+      "loadMore": "Load More",
+      "loading": "Searching skills.sh...",
+      "noResults": "No skills found for \"{{query}}\"",
+      "error": "Failed to search skills.sh",
+      "poweredBy": "Powered by skills.sh"
+    },
     "filter": {
       "placeholder": "Filter by status",
       "all": "All",

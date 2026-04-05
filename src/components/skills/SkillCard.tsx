@@ -20,9 +20,15 @@ interface SkillCardProps {
   skill: SkillCardSkill;
   onInstall: (directory: string) => Promise<void>;
   onUninstall: (directory: string) => Promise<void>;
+  installs?: number;
 }
 
-export function SkillCard({ skill, onInstall, onUninstall }: SkillCardProps) {
+export function SkillCard({
+  skill,
+  onInstall,
+  onUninstall,
+  installs,
+}: SkillCardProps) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
 
@@ -79,6 +85,15 @@ export function SkillCard({ skill, onInstall, onUninstall }: SkillCardProps) {
                   className="shrink-0 text-[10px] px-1.5 py-0 h-4 border-border-default"
                 >
                   {skill.repoOwner}/{skill.repoName}
+                </Badge>
+              )}
+              {typeof installs === "number" && (
+                <Badge
+                  variant="secondary"
+                  className="shrink-0 text-[10px] px-1.5 py-0 h-4"
+                >
+                  <Download className="h-2.5 w-2.5 mr-0.5" />
+                  {installs.toLocaleString()}
                 </Badge>
               )}
             </div>

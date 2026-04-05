@@ -1650,6 +1650,19 @@
     },
     "search": "スキルを検索",
     "searchPlaceholder": "スキル名またはリポジトリで検索...",
+    "searchSource": {
+      "repos": "リポジトリ",
+      "skillssh": "skills.sh"
+    },
+    "skillssh": {
+      "searchPlaceholder": "skills.sh を検索（2文字以上）...",
+      "installs": "{{count}} インストール",
+      "loadMore": "さらに読み込む",
+      "loading": "skills.sh を検索中...",
+      "noResults": "\"{{query}}\" に該当するスキルがありません",
+      "error": "skills.sh の検索に失敗しました",
+      "poweredBy": "Powered by skills.sh"
+    },
     "filter": {
       "placeholder": "状態で絞り込み",
       "all": "すべて",

@@ -95,6 +95,25 @@ export interface MigrationResult {
   errors: string[];
 }
 
+/** skills.sh 可发现的技能 */
+export interface SkillsShDiscoverableSkill {
+  key: string;
+  name: string;
+  directory: string;
+  repoOwner: string;
+  repoName: string;
+  repoBranch: string;
+  installs: number;
+  readmeUrl?: string;
+}
+
+/** skills.sh 搜索结果 */
+export interface SkillsShSearchResult {
+  skills: SkillsShDiscoverableSkill[];
+  totalCount: number;
+  query: string;
+}
+
 /** 仓库配置 */
 export interface SkillRepo {
   owner: string;
@@ -181,6 +200,15 @@ export const skillsApi = {
     target: "cc_switch" | "unified",
   ): Promise<MigrationResult> {
     return await invoke("migrate_skill_storage", { target });
+  },
+
+  /** 搜索 skills.sh 公共目录 */
+  async searchSkillsSh(
+    query: string,
+    limit: number,
+    offset: number,
+  ): Promise<SkillsShSearchResult> {
+    return await invoke("search_skills_sh", { query, limit, offset });
   },
 
   // ========== 兼容旧 API ==========

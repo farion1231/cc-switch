@@ -194,6 +194,58 @@ pub struct MigrationResult {
     pub errors: Vec<String>,
 }
 
+// ========== skills.sh API 类型 ==========
+
+/// skills.sh API 原始响应
+///
+/// 注意：API 命名不一致（searchType 是 camelCase，duration_ms 是 snake_case），
+/// 因此不能用 rename_all，需要逐字段指定。
+#[derive(Debug, Clone, Deserialize)]
+struct SkillsShApiResponse {
+    pub query: String,
+    #[serde(rename = "searchType")]
+    #[allow(dead_code)]
+    pub search_type: String,
+    pub skills: Vec<SkillsShApiSkill>,
+    pub count: usize,
+    #[allow(dead_code)]
+    pub duration_ms: u64,
+}
+
+/// skills.sh API 原始技能条目
+#[derive(Debug, Clone, Deserialize)]
+struct SkillsShApiSkill {
+    pub id: String,
+    #[serde(rename = "skillId")]
+    pub skill_id: String,
+    pub name: String,
+    pub installs: u64,
+    pub source: String,
+}
+
+/// skills.sh 搜索结果（返回给前端）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsShSearchResult {
+    pub skills: Vec<SkillsShDiscoverableSkill>,
+    pub total_count: usize,
+    pub query: String,
+}
+
+/// skills.sh 可安装技能（返回给前端）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsShDiscoverableSkill {
+    pub key: String,
+    pub name: String,
+    pub directory: String,
+    pub repo_owner: String,
+    pub repo_name: String,
+    pub repo_branch: String,
+    pub installs: u64,
+    pub readme_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillBackupEntry {
@@ -614,14 +666,28 @@ impl SkillService {
             repo_branch = used_branch;
 
             // 复制到 SSOT
-            let source = temp_dir.join(&source_rel);
+            let mut source = temp_dir.join(&source_rel);
             if !source.exists() {
-                let _ = fs::remove_dir_all(&temp_dir);
-                return Err(anyhow!(format_skill_error(
-                    "SKILL_DIR_NOT_FOUND",
-                    &[("path", &source.display().to_string())],
-                    Some("checkRepoUrl"),
-                )));
+                // 回退：在 temp_dir 中递归查找名称匹配的目录（含 SKILL.md）
+                let target_name = source_rel
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if let Some(found) = Self::find_skill_dir_by_name(&temp_dir, &target_name) {
+                    log::info!(
+                        "Skill directory '{}' not found at direct path, using fallback: {}",
+                        target_name,
+                        found.display()
+                    );
+                    source = found;
+                } else {
+                    let _ = fs::remove_dir_all(&temp_dir);
+                    return Err(anyhow!(format_skill_error(
+                        "SKILL_DIR_NOT_FOUND",
+                        &[("path", &source.display().to_string())],
+                        Some("checkRepoUrl"),
+                    )));
+                }
             }
 
             let canonical_temp = temp_dir.canonicalize().unwrap_or_else(|_| temp_dir.clone());
@@ -1982,6 +2048,38 @@ impl SkillService {
         }
     }
 
+    /// 在目录树中查找名称匹配且包含 SKILL.md 的子目录
+    ///
+    /// 用于 skills.sh 安装回退：API 只返回 skillId（如 "find-skills"），
+    /// 但实际文件可能在仓库子目录中（如 "skills/find-skills"）。
+    fn find_skill_dir_by_name(root: &Path, target_name: &str) -> Option<PathBuf> {
+        fn walk(dir: &Path, target: &str, depth: usize) -> Option<PathBuf> {
+            if depth > 3 {
+                return None;
+            }
+            let entries = fs::read_dir(dir).ok()?;
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with('.') {
+                    continue;
+                }
+                if name_str.eq_ignore_ascii_case(target) && path.join("SKILL.md").exists() {
+                    return Some(path);
+                }
+                if let Some(found) = walk(&path, target, depth + 1) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        walk(root, target_name, 0)
+    }
+
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
     fn deduplicate_discoverable_skills(skills: &mut Vec<DiscoverableSkill>) {
         let mut seen = HashMap::new();
@@ -2588,6 +2686,70 @@ impl SkillService {
             .retain(|r| !(r.owner == owner && r.name == name));
 
         Ok(())
+    }
+
+    // ========== skills.sh 搜索 ==========
+
+    /// 搜索 skills.sh 公共目录
+    pub async fn search_skills_sh(
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<SkillsShSearchResult> {
+        let client = crate::proxy::http_client::get();
+
+        let url = url::Url::parse_with_params(
+            "https://skills.sh/api/search",
+            &[
+                ("q", query),
+                ("limit", &limit.to_string()),
+                ("offset", &offset.to_string()),
+            ],
+        )?;
+
+        let resp = client
+            .get(url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<SkillsShApiResponse>()
+            .await?;
+
+        let skills = resp
+            .skills
+            .into_iter()
+            .filter_map(|s| {
+                let parts: Vec<&str> = s.source.splitn(2, '/').collect();
+                if parts.len() != 2 {
+                    return None;
+                }
+                let (owner, repo) = (parts[0].to_string(), parts[1].to_string());
+                // 过滤非 GitHub 来源（如 "skills.volces.com"、"mcp-hub.momenta.works"）
+                if owner.contains('.') || repo.contains('.') {
+                    return None;
+                }
+                Some(SkillsShDiscoverableSkill {
+                    key: s.id,
+                    name: s.name,
+                    directory: s.skill_id.clone(),
+                    repo_owner: owner.clone(),
+                    repo_name: repo.clone(),
+                    repo_branch: "main".to_string(),
+                    installs: s.installs,
+                    readme_url: Some(format!(
+                        "https://github.com/{}/{}/tree/main/{}",
+                        owner, repo, s.skill_id
+                    )),
+                })
+            })
+            .collect();
+
+        Ok(SkillsShSearchResult {
+            skills,
+            total_count: resp.count,
+            query: resp.query,
+        })
     }
 }
 
