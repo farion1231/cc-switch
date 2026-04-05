@@ -183,7 +183,6 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
               "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
           }),
         );
-        return;
       }
 
       try {
@@ -203,13 +202,14 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
 
         // 根据供应商类型显示不同的成功提示
         if (
+          !proxyRequiredReason &&
           activeApp === "claude" &&
           provider.category !== "official" &&
           (isCopilotProvider ||
             provider.meta?.apiFormat === "openai_chat" ||
             provider.meta?.apiFormat === "openai_responses")
         ) {
-          // OpenAI format provider: show proxy hint
+          // OpenAI format provider: show proxy hint (skip if warning already shown)
           toast.info(
             isCopilotProvider
               ? t("notifications.copilotProxyHint")
