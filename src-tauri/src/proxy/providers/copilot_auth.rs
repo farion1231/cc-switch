@@ -1194,7 +1194,8 @@ impl CopilotAuthManager {
         &self,
         account_id: Option<&str>,
     ) -> (Option<String>, Option<String>) {
-        self.get_account_ids_for_conversation(account_id, None).await
+        self.get_account_ids_for_conversation(account_id, None)
+            .await
     }
 
     /// 获取账号的 machine ID 和对话级 session ID。
@@ -1207,9 +1208,7 @@ impl CopilotAuthManager {
         client_session_id: Option<&str>,
     ) -> (Option<String>, Option<String>) {
         match account_id {
-            Some(id) => {
-                self.resolve_account_ids(id, client_session_id).await
-            }
+            Some(id) => self.resolve_account_ids(id, client_session_id).await,
             None => {
                 // 使用默认账号
                 let default_id = self.resolve_default_account_id().await;
@@ -1238,7 +1237,10 @@ impl CopilotAuthManager {
             return (None, None);
         };
 
-        let session_id = match client_session_id.map(str::trim).filter(|value| !value.is_empty()) {
+        let session_id = match client_session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             Some(client_session_id) => {
                 let key = format!("{account_id}:{client_session_id}");
                 {
@@ -1401,7 +1403,9 @@ impl CopilotAuthManager {
 
     fn should_refresh_session_id(session_refreshed_at: Option<i64>, now: i64) -> bool {
         match session_refreshed_at {
-            Some(refreshed_at) => now.saturating_sub(refreshed_at) >= Self::SESSION_REFRESH_BASE_SECS,
+            Some(refreshed_at) => {
+                now.saturating_sub(refreshed_at) >= Self::SESSION_REFRESH_BASE_SECS
+            }
             None => true,
         }
     }
@@ -1646,10 +1650,7 @@ impl CopilotAuthManager {
             for (account_id, account_data) in store.accounts.iter_mut() {
                 if account_data.machine_id.is_none() {
                     account_data.machine_id = Some(self.generate_machine_id(account_id));
-                    log::info!(
-                        "[CopilotAuth] 为现有账号 {} 生成 Machine ID",
-                        account_id
-                    );
+                    log::info!("[CopilotAuth] 为现有账号 {} 生成 Machine ID", account_id);
                     needs_save = true;
                 }
 
@@ -1665,10 +1666,7 @@ impl CopilotAuthManager {
                             account_id
                         );
                     } else {
-                        log::info!(
-                            "[CopilotAuth] 为现有账号 {} 生成 Session ID",
-                            account_id
-                        );
+                        log::info!("[CopilotAuth] 为现有账号 {} 生成 Session ID", account_id);
                     }
                     needs_save = true;
                 }

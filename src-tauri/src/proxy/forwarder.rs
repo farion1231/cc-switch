@@ -862,8 +862,8 @@ impl RequestForwarder {
                 )
             };
 
-        let is_full_url =
-            has_explicit_full_url || is_legacy_full_url_for_endpoint(&base_url, &effective_endpoint);
+        let is_full_url = has_explicit_full_url
+            || is_legacy_full_url_for_endpoint(&base_url, &effective_endpoint);
         // GitHub Copilot 动态 endpoint 路由
         // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
         if is_copilot && !is_full_url {
