@@ -10,8 +10,8 @@ interface SubscriptionQuotaFooterProps {
   inline?: boolean;
 }
 
-/** 已知 tier 名称的显示映射 */
-const TIER_I18N_KEYS: Record<string, string> = {
+/** 已知 tier 名称的显示映射（官方订阅 + Token Plan 共用） */
+export const TIER_I18N_KEYS: Record<string, string> = {
   five_hour: "subscription.fiveHour",
   seven_day: "subscription.sevenDay",
   seven_day_opus: "subscription.sevenDayOpus",
@@ -20,17 +20,19 @@ const TIER_I18N_KEYS: Record<string, string> = {
   gemini_pro: "subscription.geminiPro",
   gemini_flash: "subscription.geminiFlash",
   gemini_flash_lite: "subscription.geminiFlashLite",
+  // Token Plan（five_hour 已在上方官方映射中）
+  weekly_limit: "subscription.weeklyLimit",
 };
 
 /** 根据使用百分比返回颜色 class */
-function utilizationColor(utilization: number): string {
+export function utilizationColor(utilization: number): string {
   if (utilization >= 90) return "text-red-500 dark:text-red-400";
   if (utilization >= 70) return "text-orange-500 dark:text-orange-400";
   return "text-green-600 dark:text-green-400";
 }
 
 /** 计算倒计时的纯时间字符串，如 "2h30m"、"3d12h" */
-function countdownStr(resetsAt: string | null): string | null {
+export function countdownStr(resetsAt: string | null): string | null {
   if (!resetsAt) return null;
   const diffMs = new Date(resetsAt).getTime() - Date.now();
   if (diffMs <= 0) return null;
@@ -278,7 +280,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
 };
 
 /** inline 模式下的单个 tier 显示 */
-const TierBadge: React.FC<{
+export const TierBadge: React.FC<{
   tier: QuotaTier;
   t: (key: string, options?: Record<string, unknown>) => string;
 }> = ({ tier, t }) => {

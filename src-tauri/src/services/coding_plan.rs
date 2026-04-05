@@ -46,6 +46,28 @@ fn millis_to_iso8601(ms: i64) -> Option<String> {
     chrono::DateTime::from_timestamp(secs, nsecs).map(|dt| dt.to_rfc3339())
 }
 
+/// 从 JSON 值提取重置时间，兼容字符串和数字格式
+/// - 字符串：直接返回（ISO 8601）
+/// - 数字：自动判断秒/毫秒并转为 ISO 8601
+fn extract_reset_time(value: &serde_json::Value) -> Option<String> {
+    if let Some(s) = value.as_str() {
+        return Some(s.to_string());
+    }
+    if let Some(n) = value.as_i64() {
+        // 区分秒和毫秒：秒级时间戳 < 1e12，毫秒 >= 1e12
+        let ms = if n < 1_000_000_000_000 { n * 1000 } else { n };
+        return millis_to_iso8601(ms);
+    }
+    None
+}
+
+/// 解析 JSON 值为 f64，兼容数字和字符串格式（如 `100` 和 `"100"`）
+fn parse_f64(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
+}
+
 fn make_error(msg: String) -> SubscriptionQuota {
     SubscriptionQuota {
         tool: "coding_plan".to_string(),
@@ -103,16 +125,36 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
 
     let mut tiers = Vec::new();
 
+    // 5 小时窗口限额（优先显示）
+    if let Some(limits) = body.get("limits").and_then(|v| v.as_array()) {
+        for limit_item in limits {
+            if let Some(detail) = limit_item.get("detail") {
+                let limit = detail.get("limit").and_then(parse_f64).unwrap_or(1.0);
+                let remaining = detail.get("remaining").and_then(parse_f64).unwrap_or(0.0);
+                let resets_at = detail.get("resetTime").and_then(extract_reset_time);
+
+                let used = (limit - remaining).max(0.0);
+                let utilization = if limit > 0.0 {
+                    (used / limit) * 100.0
+                } else {
+                    0.0
+                };
+                tiers.push(QuotaTier {
+                    name: "five_hour".to_string(),
+                    utilization,
+                    resets_at,
+                });
+            }
+        }
+    }
+
     // 总体用量（周限额）
     if let Some(usage) = body.get("usage") {
-        let used = usage.get("used").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let limit = usage.get("limit").and_then(|v| v.as_f64()).unwrap_or(1.0);
-        let resets_at = usage
-            .get("reset_at")
-            .or_else(|| usage.get("resetAt"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let limit = usage.get("limit").and_then(parse_f64).unwrap_or(1.0);
+        let remaining = usage.get("remaining").and_then(parse_f64).unwrap_or(0.0);
+        let resets_at = usage.get("resetTime").and_then(extract_reset_time);
 
+        let used = (limit - remaining).max(0.0);
         let utilization = if limit > 0.0 {
             (used / limit) * 100.0
         } else {
@@ -123,32 +165,6 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
             utilization,
             resets_at,
         });
-    }
-
-    // 会话限额（5 小时窗口）
-    if let Some(limits) = body.get("limits").and_then(|v| v.as_array()) {
-        for limit_item in limits {
-            if let Some(detail) = limit_item.get("detail") {
-                let used = detail.get("used").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let limit = detail.get("limit").and_then(|v| v.as_f64()).unwrap_or(1.0);
-                let resets_at = detail
-                    .get("reset_at")
-                    .or_else(|| detail.get("resetAt"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                let utilization = if limit > 0.0 {
-                    (used / limit) * 100.0
-                } else {
-                    0.0
-                };
-                tiers.push(QuotaTier {
-                    name: "session_limit".to_string(),
-                    utilization,
-                    resets_at,
-                });
-            }
-        }
     }
 
     SubscriptionQuota {
@@ -238,14 +254,12 @@ async fn query_zhipu(api_key: &str) -> SubscriptionQuota {
                 .and_then(|v| v.as_i64())
                 .and_then(millis_to_iso8601);
 
-            let tier_name = match limit_type {
-                "TOKENS_LIMIT" => "tokens_limit",
-                "TIME_LIMIT" => "mcp_limit",
-                _ => continue,
-            };
+            if limit_type != "TOKENS_LIMIT" {
+                continue;
+            }
 
             tiers.push(QuotaTier {
-                name: tier_name.to_string(),
+                name: "five_hour".to_string(),
                 utilization: percentage,
                 resets_at: next_reset,
             });
@@ -337,33 +351,45 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
     let mut tiers = Vec::new();
 
     if let Some(model_remains) = body.get("model_remains").and_then(|v| v.as_array()) {
-        for item in model_remains {
-            let model_name = item
-                .get("model_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let total = item
+        // 只取第一个模型（MiniMax-M*，主力编程模型）
+        if let Some(item) = model_remains.first() {
+            // 窗口额度（current_interval_usage_count = 已用量，非剩余量）
+            let interval_total = item
                 .get("current_interval_total_count")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
-            // 注意：current_interval_usage_count 名字有误导，实际是"剩余量"
-            let remaining = item
+            let interval_used = item
                 .get("current_interval_usage_count")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
             let end_time = item.get("end_time").and_then(|v| v.as_i64());
 
-            let utilization = if total > 0.0 {
-                ((total - remaining) / total) * 100.0
-            } else {
-                0.0
-            };
+            if interval_total > 0.0 {
+                tiers.push(QuotaTier {
+                    name: "five_hour".to_string(),
+                    utilization: (interval_used / interval_total) * 100.0,
+                    resets_at: end_time.and_then(millis_to_iso8601),
+                });
+            }
 
-            tiers.push(QuotaTier {
-                name: model_name.to_string(),
-                utilization,
-                resets_at: end_time.and_then(millis_to_iso8601),
-            });
+            // 周额度
+            let weekly_total = item
+                .get("current_weekly_total_count")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let weekly_used = item
+                .get("current_weekly_usage_count")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let weekly_end = item.get("weekly_end_time").and_then(|v| v.as_i64());
+
+            if weekly_total > 0.0 {
+                tiers.push(QuotaTier {
+                    name: "weekly_limit".to_string(),
+                    utilization: (weekly_used / weekly_total) * 100.0,
+                    resets_at: weekly_end.and_then(millis_to_iso8601),
+                });
+            }
         }
     }
 

@@ -186,8 +186,10 @@ export function ProviderCard({
     autoQueryInterval,
   });
 
+  const isTokenPlan =
+    provider.meta?.usage_script?.templateType === "token_plan";
   const hasMultiplePlans =
-    usage?.success && usage.data && usage.data.length > 1;
+    usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
 
   const [isExpanded, setIsExpanded] = useState(false);
 
