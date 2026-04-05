@@ -353,12 +353,12 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
     if let Some(model_remains) = body.get("model_remains").and_then(|v| v.as_array()) {
         // 只取第一个模型（MiniMax-M*，主力编程模型）
         if let Some(item) = model_remains.first() {
-            // 窗口额度（current_interval_usage_count = 已用量，非剩余量）
+            // usage_count 是剩余量（满额=total，用完=0），需反转为已用百分比
             let interval_total = item
                 .get("current_interval_total_count")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
-            let interval_used = item
+            let interval_remaining = item
                 .get("current_interval_usage_count")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
@@ -367,7 +367,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
             if interval_total > 0.0 {
                 tiers.push(QuotaTier {
                     name: "five_hour".to_string(),
-                    utilization: (interval_used / interval_total) * 100.0,
+                    utilization: ((interval_total - interval_remaining) / interval_total) * 100.0,
                     resets_at: end_time.and_then(millis_to_iso8601),
                 });
             }
@@ -377,7 +377,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
                 .get("current_weekly_total_count")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
-            let weekly_used = item
+            let weekly_remaining = item
                 .get("current_weekly_usage_count")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
@@ -386,7 +386,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
             if weekly_total > 0.0 {
                 tiers.push(QuotaTier {
                     name: "weekly_limit".to_string(),
-                    utilization: (weekly_used / weekly_total) * 100.0,
+                    utilization: ((weekly_total - weekly_remaining) / weekly_total) * 100.0,
                     resets_at: weekly_end.and_then(millis_to_iso8601),
                 });
             }
