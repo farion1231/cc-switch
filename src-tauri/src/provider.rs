@@ -268,6 +268,7 @@ pub struct ProviderMeta {
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
+    /// - "gemini_chat": Gemini Chat 兼容格式，需要转换，但不注入 prompt_cache_key
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
@@ -282,9 +283,9 @@ pub struct ProviderMeta {
     /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
     #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
     pub is_full_url: Option<bool>,
-    /// Prompt cache key for OpenAI-compatible endpoints.
+    /// Prompt cache key for OpenAI-compatible endpoints that accept it.
     /// When set, injected into converted requests to improve cache hit rate.
-    /// If not set, provider ID is used automatically during format conversion.
+    /// If not set, provider ID is used automatically during openai_chat/openai_responses conversion.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
     /// 累加模式应用中，该 provider 是否已写入 live config。

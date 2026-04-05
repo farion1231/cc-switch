@@ -5,6 +5,7 @@
 //! ## API 格式
 //! - **anthropic** (默认): Anthropic Messages API 格式，直接透传
 //! - **openai_chat**: OpenAI Chat Completions 格式，需要 Anthropic ↔ OpenAI 转换
+//! - **gemini_chat**: Gemini Chat 兼容格式，走 `/chat/completions`，且不注入 `prompt_cache_key`
 //! - **openai_responses**: OpenAI Responses API 格式，需要 Anthropic ↔ Responses 转换
 //!
 //! ## 认证模式
@@ -27,6 +28,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         if let Some(api_format) = meta.api_format.as_deref() {
             return match api_format {
                 "openai_chat" => "openai_chat",
+                "gemini_chat" => "gemini_chat",
                 "openai_responses" => "openai_responses",
                 _ => "anthropic",
             };
@@ -41,6 +43,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
     {
         return match api_format {
             "openai_chat" => "openai_chat",
+            "gemini_chat" => "gemini_chat",
             "openai_responses" => "openai_responses",
             _ => "anthropic",
         };
@@ -66,7 +69,10 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 }
 
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
-    matches!(api_format, "openai_chat" | "openai_responses")
+    matches!(
+        api_format,
+        "openai_chat" | "gemini_chat" | "openai_responses"
+    )
 }
 
 pub fn transform_claude_request_for_api_format(
@@ -85,6 +91,7 @@ pub fn transform_claude_request_for_api_format(
             super::transform_responses::anthropic_to_responses(body, Some(cache_key))
         }
         "openai_chat" => super::transform::anthropic_to_openai(body, Some(cache_key)),
+        "gemini_chat" => super::transform::anthropic_to_openai(body, None),
         _ => Ok(body),
     }
 }
@@ -155,6 +162,7 @@ impl ClaudeAdapter {
     /// 从 provider.meta.api_format 读取格式设置：
     /// - "anthropic" (默认): Anthropic Messages API 格式，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+    /// - "gemini_chat": Gemini Chat 兼容格式，需要格式转换，但不注入 prompt_cache_key
     /// - "openai_responses": OpenAI Responses API 格式，需要格式转换
     fn get_api_format(&self, provider: &Provider) -> &'static str {
         get_claude_api_format(provider)
@@ -415,10 +423,11 @@ impl ProviderAdapter for ClaudeAdapter {
         // 根据 api_format 配置决定是否需要格式转换
         // - "anthropic" (默认): 直接透传，无需转换
         // - "openai_chat": 需要 Anthropic ↔ OpenAI Chat Completions 格式转换
+        // - "gemini_chat": 需要 Anthropic ↔ Gemini Chat 兼容格式转换（不注入 prompt_cache_key）
         // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
         matches!(
             self.get_api_format(provider),
-            "openai_chat" | "openai_responses"
+            "openai_chat" | "gemini_chat" | "openai_responses"
         )
     }
 
@@ -726,6 +735,20 @@ mod tests {
         );
         assert!(adapter.needs_transform(&openai_chat_provider));
 
+        // Gemini Chat format in meta: needs transform
+        let gemini_chat_provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(adapter.needs_transform(&gemini_chat_provider));
+
         // OpenAI Responses format in meta: needs transform
         let openai_responses_provider = create_provider_with_meta(
             json!({
@@ -853,5 +876,32 @@ mod tests {
         assert_eq!(transformed["model"], "gpt-5.4");
         assert!(transformed.get("input").is_some());
         assert!(transformed.get("max_output_tokens").is_some());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_gemini_chat_omits_prompt_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai"
+                }
+            }),
+            ProviderMeta {
+                prompt_cache_key: Some("custom-cache-key".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "gemini_chat").unwrap();
+
+        assert_eq!(transformed["model"], "gemini-2.5-flash");
+        assert!(transformed.get("messages").is_some());
+        assert!(transformed.get("prompt_cache_key").is_none());
     }
 }

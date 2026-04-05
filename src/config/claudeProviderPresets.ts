@@ -48,8 +48,9 @@ export interface ProviderPreset {
   // Claude API 格式（仅 Claude 供应商使用）
   // - "anthropic" (默认): Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+  // - "gemini_chat": Gemini Chat 兼容格式，需要格式转换，但不注入 prompt_cache_key
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
-  apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
+  apiFormat?: "anthropic" | "openai_chat" | "gemini_chat" | "openai_responses";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）

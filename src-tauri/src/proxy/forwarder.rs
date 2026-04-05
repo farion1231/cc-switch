@@ -1544,7 +1544,7 @@ fn rewrite_claude_transform_endpoint(
 
     let target_path = if is_copilot && api_format == "openai_responses" {
         "/v1/responses"
-    } else if is_copilot {
+    } else if is_copilot || api_format == "gemini_chat" {
         "/chat/completions"
     } else if api_format == "openai_responses" {
         "/v1/responses"
@@ -1691,6 +1691,18 @@ mod tests {
         );
 
         assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
+        assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_gemini_chat_path() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&foo=bar",
+            "gemini_chat",
+            false,
+        );
+
+        assert_eq!(endpoint, "/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
     }
 

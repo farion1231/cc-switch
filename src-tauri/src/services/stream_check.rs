@@ -309,6 +309,7 @@ impl StreamCheckService {
     /// 根据供应商的 api_format 选择请求格式：
     /// - "anthropic" (默认): Anthropic Messages API (/v1/messages)
     /// - "openai_chat": OpenAI Chat Completions API (/v1/chat/completions)
+    /// - "gemini_chat": Gemini Chat 兼容 API (/chat/completions, 不注入 prompt_cache_key)
     #[allow(clippy::too_many_arguments)]
     async fn check_claude_stream(
         client: &Client,
@@ -344,6 +345,7 @@ impl StreamCheckService {
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
         let is_openai_chat = effective_api_format == "openai_chat";
+        let is_gemini_chat = effective_api_format == "gemini_chat";
         let is_openai_responses = effective_api_format == "openai_responses";
         let url =
             Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
@@ -359,6 +361,9 @@ impl StreamCheckService {
         });
         let body = if is_openai_responses {
             anthropic_to_responses(anthropic_body, Some(&provider.id))
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else if is_gemini_chat {
+            anthropic_to_openai(anthropic_body, None)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_openai_chat {
             anthropic_to_openai(anthropic_body, Some(&provider.id))
@@ -395,7 +400,7 @@ impl StreamCheckService {
                 .header("x-vscode-user-agent-library-version", "electron-fetch")
                 .header("x-request-id", &request_id)
                 .header("x-agent-task-id", &request_id);
-        } else if is_openai_chat || is_openai_responses {
+        } else if is_openai_chat || is_gemini_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder
                 .header("authorization", format!("Bearer {}", auth.api_key))
@@ -761,7 +766,7 @@ impl StreamCheckService {
 
         if is_github_copilot && api_format == "openai_responses" {
             format!("{base}/v1/responses")
-        } else if is_github_copilot {
+        } else if is_github_copilot || api_format == "gemini_chat" {
             format!("{base}/chat/completions")
         } else if api_format == "openai_responses" {
             if base.ends_with("/v1") {
@@ -953,6 +958,21 @@ mod tests {
         );
 
         assert_eq!(url, "https://example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_chat() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            AuthStrategy::Bearer,
+            "gemini_chat",
+            false,
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        );
     }
 
     #[test]

@@ -158,15 +158,16 @@ export interface ProviderMeta {
   // Claude API 格式（仅 Claude 供应商使用）
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+  // - "gemini_chat": Gemini Chat 兼容格式，需要格式转换，但不注入 prompt_cache_key
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
-  apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
+  apiFormat?: "anthropic" | "openai_chat" | "gemini_chat" | "openai_responses";
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
   apiKeyField?: ClaudeApiKeyField;
   // 是否将 base_url 视为完整 API 端点（代理直接使用此 URL，不拼接路径）
   isFullUrl?: boolean;
-  // Prompt cache key for OpenAI-compatible endpoints (improves cache hit rate)
+  // Prompt cache key for compatible endpoints that accept it (not used by gemini_chat)
   promptCacheKey?: string;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
@@ -180,8 +181,13 @@ export type SkillSyncMethod = "auto" | "symlink" | "copy";
 // Claude API 格式类型
 // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
+// - "gemini_chat": Gemini Chat 兼容格式，需要格式转换，但不注入 prompt_cache_key
 // - "openai_responses": OpenAI Responses API 格式，需要格式转换
-export type ClaudeApiFormat = "anthropic" | "openai_chat" | "openai_responses";
+export type ClaudeApiFormat =
+  | "anthropic"
+  | "openai_chat"
+  | "gemini_chat"
+  | "openai_responses";
 
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";

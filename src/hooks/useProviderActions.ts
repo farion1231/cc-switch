@@ -159,6 +159,13 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
             defaultValue: "使用 OpenAI Chat 接口格式",
           });
         } else if (
+          provider.meta?.apiFormat === "gemini_chat" &&
+          activeApp === "claude"
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonGeminiChat", {
+            defaultValue: "使用 Gemini Chat 兼容接口格式",
+          });
+        } else if (
           provider.meta?.apiFormat === "openai_responses" &&
           activeApp === "claude"
         ) {
@@ -207,6 +214,7 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
           provider.category !== "official" &&
           (isCopilotProvider ||
             provider.meta?.apiFormat === "openai_chat" ||
+            provider.meta?.apiFormat === "gemini_chat" ||
             provider.meta?.apiFormat === "openai_responses")
         ) {
           // OpenAI format provider: show proxy hint (skip if warning already shown)
