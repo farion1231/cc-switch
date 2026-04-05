@@ -478,6 +478,18 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "skillStorage": {
+      "title": "スキル保存場所",
+      "description": "CC Switch がスキルのマスターコピーを保存するディレクトリを選択します",
+      "ccSwitch": "CC Switch",
+      "unified": "~/.agents/skills",
+      "ccSwitchHint": "スキルは ~/.cc-switch/skills/ に保存され、シンボリックリンクまたはコピーで各アプリに同期されます。",
+      "unifiedHint": "スキルは ~/.agents/skills/ に保存されます（Agent Skills オープン標準）。対応ツール（Claude Code、Codex、Gemini CLI など）はこのディレクトリのスキルを直接検出します。",
+      "confirmTitle": "スキル保存場所の移行",
+      "confirmMessage": "{{count}} 個のスキルを新しい場所に移動します。続行しますか？",
+      "migrationSuccess": "{{count}} 個のスキルを移行しました",
+      "migrationPartial": "{{migrated}} 個のスキルを移行、{{errors}} 個のエラー。詳細はログを確認してください。"
+    },
     "skillSync": {
       "title": "スキル同期方式",
       "description": "スキルファイルの同期方法を選択",

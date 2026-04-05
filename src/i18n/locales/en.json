@@ -478,6 +478,18 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "skillStorage": {
+      "title": "Skill Storage Location",
+      "description": "Choose where CC Switch stores the master copies of your skills",
+      "ccSwitch": "CC Switch",
+      "unified": "~/.agents/skills",
+      "ccSwitchHint": "Skills are stored in ~/.cc-switch/skills/ and synced to each app via symlink or copy.",
+      "unifiedHint": "Skills are stored in ~/.agents/skills/, the Agent Skills open standard. Compatible tools (Claude Code, Codex, Gemini CLI, etc.) discover skills here natively.",
+      "confirmTitle": "Migrate Skill Storage",
+      "confirmMessage": "{{count}} skill(s) will be moved to the new location. Continue?",
+      "migrationSuccess": "Successfully migrated {{count}} skill(s)",
+      "migrationPartial": "Migrated {{migrated}} skill(s), {{errors}} error(s). Check logs for details."
+    },
     "skillSync": {
       "title": "Skill Sync Method",
       "description": "Choose how to sync Skills files",

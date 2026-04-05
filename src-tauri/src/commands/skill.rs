@@ -7,8 +7,8 @@
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, Skill, SkillBackupEntry, SkillRepo, SkillService,
-    SkillUninstallResult, SkillUpdateInfo,
+    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
+    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
 };
 use crate::store::AppState;
 use std::sync::Arc;
@@ -159,6 +159,15 @@ pub async fn update_skill(
         .update_skill(&app_state.db, &id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 迁移 Skill 存储位置
+#[tauri::command]
+pub async fn migrate_skill_storage(
+    target: SkillStorageLocation,
+    app_state: State<'_, AppState>,
+) -> Result<MigrationResult, String> {
+    SkillService::migrate_storage(&app_state.db, target).map_err(|e| e.to_string())
 }
 
 // ========== 兼容旧 API 的命令 ==========

@@ -88,6 +88,13 @@ export interface SkillUpdateInfo {
   remoteHash: string;
 }
 
+/** 存储位置迁移结果 */
+export interface MigrationResult {
+  migratedCount: number;
+  skippedCount: number;
+  errors: string[];
+}
+
 /** 仓库配置 */
 export interface SkillRepo {
   owner: string;
@@ -167,6 +174,13 @@ export const skillsApi = {
   /** 更新单个 Skill */
   async updateSkill(id: string): Promise<InstalledSkill> {
     return await invoke("update_skill", { id });
+  },
+
+  /** 迁移 Skill 存储位置 */
+  async migrateStorage(
+    target: "cc_switch" | "unified",
+  ): Promise<MigrationResult> {
+    return await invoke("migrate_skill_storage", { target });
   },
 
   // ========== 兼容旧 API ==========

@@ -34,6 +34,17 @@ pub enum SyncMethod {
     Copy,
 }
 
+/// Skill 存储位置（SSOT 目录选择）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillStorageLocation {
+    /// CC Switch 管理目录 (~/.cc-switch/skills/)
+    #[default]
+    CcSwitch,
+    /// Agent Skills 统一标准目录 (~/.agents/skills/)
+    Unified,
+}
+
 /// 可发现的技能（来自仓库）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoverableSkill {
@@ -172,6 +183,15 @@ pub struct SkillUpdateInfo {
     pub current_hash: Option<String>,
     /// 远程最新哈希
     pub remote_hash: String,
+}
+
+/// Skill 存储位置迁移结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationResult {
+    pub migrated_count: usize,
+    pub skipped_count: usize,
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -403,9 +423,20 @@ impl SkillService {
 
     // ========== 路径管理 ==========
 
-    /// 获取 SSOT 目录（~/.cc-switch/skills/）
+    /// 获取 SSOT 目录（根据设置返回 ~/.cc-switch/skills/ 或 ~/.agents/skills/）
     pub fn get_ssot_dir() -> Result<PathBuf> {
-        let dir = get_app_config_dir().join("skills");
+        let location = crate::settings::get_skill_storage_location();
+        let dir = match location {
+            SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
+            SkillStorageLocation::Unified => {
+                let home = dirs::home_dir().context(format_skill_error(
+                    "GET_HOME_DIR_FAILED",
+                    &[],
+                    Some("checkPermission"),
+                ))?;
+                home.join(".agents").join("skills")
+            }
+        };
         fs::create_dir_all(&dir)?;
         Ok(dir)
     }
@@ -1050,6 +1081,87 @@ impl SkillService {
             log::info!("已为 {count} 个 Skill 补算内容哈希");
         }
         Ok(count)
+    }
+
+    /// 迁移 Skill 存储位置（在两个 SSOT 目录间移动文件）
+    ///
+    /// 安全策略：先移文件，后改设置。中途崩溃时设置仍指向旧目录。
+    pub fn migrate_storage(
+        db: &Arc<Database>,
+        target: SkillStorageLocation,
+    ) -> Result<MigrationResult> {
+        let current = crate::settings::get_skill_storage_location();
+        if current == target {
+            return Ok(MigrationResult {
+                migrated_count: 0,
+                skipped_count: 0,
+                errors: vec![],
+            });
+        }
+
+        // 1. 解析旧目录和新目录（不改设置）
+        let old_dir = Self::get_ssot_dir()?;
+        let new_dir = match target {
+            SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
+            SkillStorageLocation::Unified => {
+                let home = dirs::home_dir().context("Cannot determine home directory")?;
+                home.join(".agents").join("skills")
+            }
+        };
+        fs::create_dir_all(&new_dir)?;
+
+        // 2. 逐个移动 skill 目录
+        let skills = db.get_all_installed_skills()?;
+        let mut result = MigrationResult {
+            migrated_count: 0,
+            skipped_count: 0,
+            errors: vec![],
+        };
+
+        for skill in skills.values() {
+            let src = old_dir.join(&skill.directory);
+            let dst = new_dir.join(&skill.directory);
+
+            if !src.exists() {
+                result.skipped_count += 1;
+                continue;
+            }
+            if dst.exists() {
+                result.skipped_count += 1;
+                continue;
+            }
+
+            // 优先 rename（同文件系统原子操作），失败则 copy+delete
+            match fs::rename(&src, &dst) {
+                Ok(()) => result.migrated_count += 1,
+                Err(_) => match Self::copy_dir_recursive(&src, &dst) {
+                    Ok(()) => {
+                        let _ = fs::remove_dir_all(&src);
+                        result.migrated_count += 1;
+                    }
+                    Err(e) => {
+                        result.errors.push(format!("{}: {e}", skill.directory));
+                    }
+                },
+            }
+        }
+
+        // 3. 文件移动完成后才持久化设置
+        crate::settings::set_skill_storage_location(target)?;
+
+        // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
+        for app in AppType::all() {
+            let _ = Self::sync_to_app(db, &app);
+        }
+
+        log::info!(
+            "Skill 存储迁移完成: {} 迁移, {} 跳过, {} 错误",
+            result.migrated_count,
+            result.skipped_count,
+            result.errors.len()
+        );
+
+        Ok(result)
     }
 
     pub fn list_backups() -> Result<Vec<SkillBackupEntry>> {

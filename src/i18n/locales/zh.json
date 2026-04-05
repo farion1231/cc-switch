@@ -478,6 +478,18 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "skillStorage": {
+      "title": "技能存储位置",
+      "description": "选择 CC Switch 存放技能主副本的目录",
+      "ccSwitch": "CC Switch",
+      "unified": "~/.agents/skills",
+      "ccSwitchHint": "技能存储在 ~/.cc-switch/skills/，由 CC Switch 统一管理并同步到各应用。",
+      "unifiedHint": "技能存储在 ~/.agents/skills/，遵循 Agent Skills 开放标准。兼容的工具（Claude Code、Codex、Gemini CLI 等）可直接发现此目录中的技能。",
+      "confirmTitle": "迁移技能存储",
+      "confirmMessage": "将移动 {{count}} 个技能到新位置，是否继续？",
+      "migrationSuccess": "已成功迁移 {{count}} 个技能",
+      "migrationPartial": "迁移了 {{migrated}} 个技能，{{errors}} 个失败，请查看日志"
+    },
     "skillSync": {
       "title": "Skill 同步方式",
       "description": "选择 Skills 的文件同步策略",
