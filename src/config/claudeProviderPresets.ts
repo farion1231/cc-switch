@@ -707,7 +707,6 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "github",
     iconColor: "#000000",
-    hidden: true, // 临时隐藏：用户反馈消耗速度过快
   },
   {
     name: "Nvidia",
