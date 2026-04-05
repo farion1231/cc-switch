@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_settings_path, get_codex_config_path, read_json_file, write_codex_live_atomic,
+    AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -235,6 +235,145 @@ command = "say"
     assert_eq!(
         legacy_auth_value, "legacy-key",
         "previous provider should be backfilled with live auth"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_backfills_current_provider_when_auth_json_missing() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_config = r#"[mcp_servers.legacy]
+type = "stdio"
+command = "echo"
+"#;
+    let config_path = get_codex_config_path();
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).expect("create codex dir");
+    }
+    std::fs::write(&config_path, live_config).expect("seed codex config without auth.json");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "Legacy".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "db-key"},
+                    "config": "stale-config"
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "Latest".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "fresh-key"},
+                    "config": r#"[mcp_servers.latest]
+type = "stdio"
+command = "say"
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "new-provider")
+        .expect("switch provider should succeed without auth.json");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after switch");
+    let legacy = providers
+        .get("old-provider")
+        .expect("legacy provider should still exist");
+
+    assert_eq!(
+        legacy
+            .settings_config
+            .get("auth")
+            .and_then(|v| v.get("OPENAI_API_KEY"))
+            .and_then(|v| v.as_str()),
+        Some("db-key"),
+        "missing auth.json should fall back to the provider's stored auth during backfill"
+    );
+    assert_eq!(
+        legacy
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str()),
+        Some(live_config),
+        "backfill should still capture the current live config.toml when auth.json is missing"
+    );
+}
+
+#[test]
+fn provider_service_read_live_settings_uses_current_provider_auth_when_auth_json_missing() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_config = r#"[mcp_servers.current]
+type = "stdio"
+command = "echo"
+"#;
+    let config_path = get_codex_config_path();
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).expect("create codex dir");
+    }
+    std::fs::write(&config_path, live_config).expect("seed codex config without auth.json");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "current-provider".to_string();
+        manager.providers.insert(
+            "current-provider".to_string(),
+            Provider::with_id(
+                "current-provider".to_string(),
+                "Current".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "db-key"},
+                    "config": "provider-config"
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    let settings = ProviderService::read_live_settings(&state, AppType::Codex)
+        .expect("should recover codex live settings from provider auth");
+
+    assert_eq!(
+        settings
+            .get("auth")
+            .and_then(|v| v.get("OPENAI_API_KEY"))
+            .and_then(|v| v.as_str()),
+        Some("db-key"),
+        "live settings should reuse stored provider auth when auth.json is missing"
+    );
+    assert_eq!(
+        settings.get("config").and_then(|v| v.as_str()),
+        Some(live_config),
+        "live settings should still read config.toml from disk"
     );
 }
 

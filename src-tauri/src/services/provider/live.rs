@@ -851,6 +851,26 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     Ok(())
 }
 
+fn read_codex_live_settings_with_auth_fallback(
+    fallback_auth: Option<Value>,
+) -> Result<Value, AppError> {
+    let auth_path = get_codex_auth_path();
+    let auth = if auth_path.exists() {
+        read_json_file(&auth_path)?
+    } else if let Some(auth) = fallback_auth {
+        auth
+    } else {
+        return Err(AppError::localized(
+            "codex.auth.missing",
+            "Codex 配置文件不存在：缺少 auth.json",
+            "Codex configuration missing: auth.json not found",
+        ));
+    };
+
+    let cfg_text = crate::codex_config::read_and_validate_codex_config_text()?;
+    Ok(json!({ "auth": auth, "config": cfg_text }))
+}
+
 /// Sync current provider to live configuration
 ///
 /// 使用有效的当前供应商 ID（验证过存在性）。
@@ -895,22 +915,20 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     Ok(())
 }
 
+pub(crate) fn read_live_settings_with_auth_fallback(
+    app_type: AppType,
+    fallback_auth: Option<Value>,
+) -> Result<Value, AppError> {
+    match app_type {
+        AppType::Codex => read_codex_live_settings_with_auth_fallback(fallback_auth),
+        _ => read_live_settings(app_type),
+    }
+}
+
 /// Read current live settings for an app type
 pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
     match app_type {
-        AppType::Codex => {
-            let auth_path = get_codex_auth_path();
-            if !auth_path.exists() {
-                return Err(AppError::localized(
-                    "codex.auth.missing",
-                    "Codex 配置文件不存在：缺少 auth.json",
-                    "Codex configuration missing: auth.json not found",
-                ));
-            }
-            let auth: Value = read_json_file(&auth_path)?;
-            let cfg_text = crate::codex_config::read_and_validate_codex_config_text()?;
-            Ok(json!({ "auth": auth, "config": cfg_text }))
-        }
+        AppType::Codex => read_codex_live_settings_with_auth_fallback(None),
         AppType::Claude => {
             let path = get_claude_settings_path();
             if !path.exists() {

@@ -22,15 +22,16 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings, sync_current_to_live,
+    import_opencode_providers_from_live, sync_current_to_live,
 };
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config,
+    provider_exists_in_live_config, read_live_settings_with_auth_fallback,
+    strip_common_config_from_live_settings, sync_current_provider_for_app_to_live,
+    write_live_with_common_config,
 };
 
 // Internal re-exports
@@ -1473,8 +1474,16 @@ impl ProviderService {
                 // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
                 if !app_type.is_additive_mode() {
                     // Only backfill when switching to a different provider
-                    if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                    if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                        let fallback_auth = if matches!(app_type, AppType::Codex) {
+                            current_provider.settings_config.get("auth").cloned()
+                        } else {
+                            None
+                        };
+
+                        if let Ok(live_config) =
+                            read_live_settings_with_auth_fallback(app_type.clone(), fallback_auth)
+                        {
                             current_provider.settings_config =
                                 strip_common_config_from_live_settings(
                                     state.db.as_ref(),
@@ -1897,8 +1906,21 @@ impl ProviderService {
     }
 
     /// Read current live settings (re-export)
-    pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
-        read_live_settings(app_type)
+    pub fn read_live_settings(state: &AppState, app_type: AppType) -> Result<Value, AppError> {
+        let fallback_auth = if matches!(app_type, AppType::Codex) {
+            let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
+            match current_id {
+                Some(current_id) => state
+                    .db
+                    .get_provider_by_id(&current_id, app_type.as_str())?
+                    .and_then(|provider| provider.settings_config.get("auth").cloned()),
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        read_live_settings_with_auth_fallback(app_type, fallback_auth)
     }
 
     /// Get custom endpoints list (re-export)

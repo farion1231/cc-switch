@@ -307,9 +307,12 @@ pub async fn testUsageScript(
 }
 
 #[tauri::command]
-pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, String> {
+pub fn read_live_provider_settings(
+    state: State<'_, AppState>,
+    app: String,
+) -> Result<serde_json::Value, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::read_live_settings(app_type).map_err(|e| e.to_string())
+    ProviderService::read_live_settings(&state, app_type).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

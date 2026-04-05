@@ -1348,6 +1348,7 @@ fn initialize_common_config_snippets(state: &store::AppState) {
         }
 
         let settings = match crate::services::provider::ProviderService::read_live_settings(
+            state,
             app_type.clone(),
         ) {
             Ok(s) => s,
