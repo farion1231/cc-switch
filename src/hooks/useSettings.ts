@@ -122,6 +122,57 @@ export function useSettings(): UseSettingsResult {
     setRequiresRestart,
   ]);
 
+  // 同步 Claude 插件集成配置到 ~/.claude/settings.json
+  // 返回 true 表示已执行过 syncCurrentProvidersLiveSafe，调用方可跳过重复同步
+  const syncClaudePluginIfChanged = useCallback(
+    async (enabled: boolean | undefined): Promise<boolean> => {
+      if (
+        enabled === undefined ||
+        enabled === data?.enableClaudePluginIntegration
+      )
+        return false;
+      try {
+        if (enabled) {
+          const currentId = await providersApi.getCurrent("claude");
+          let isOfficial = false;
+          if (currentId) {
+            const allProviders = await providersApi.getAll("claude");
+            isOfficial = allProviders[currentId]?.category === "official";
+          }
+          await settingsApi.applyClaudePluginConfig({ official: isOfficial });
+        } else {
+          await settingsApi.applyClaudePluginConfig({ official: true });
+        }
+
+        const syncResult = await syncCurrentProvidersLiveSafe();
+        if (!syncResult.ok) {
+          console.warn(
+            "[useSettings] Failed to sync providers after toggling Claude plugin",
+            syncResult.error,
+          );
+          toast.error(
+            t("notifications.syncClaudePluginFailed", {
+              defaultValue: "同步 Claude 插件失败",
+            }),
+          );
+        }
+        return true;
+      } catch (error) {
+        console.warn(
+          "[useSettings] Failed to sync Claude plugin config",
+          error,
+        );
+        toast.error(
+          t("notifications.syncClaudePluginFailed", {
+            defaultValue: "同步 Claude 插件失败",
+          }),
+        );
+        return false;
+      }
+    },
+    [data?.enableClaudePluginIntegration, t],
+  );
+
   // 即时保存设置（用于 General 标签页的实时更新）
   // 保存基础配置 + 独立的系统 API 调用（开机自启）
   const autoSaveSettings = useCallback(
@@ -202,6 +253,8 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
+        await syncClaudePluginIfChanged(payload.enableClaudePluginIntegration);
+
         // 持久化语言偏好
         try {
           if (typeof window !== "undefined" && updates.language) {
@@ -233,7 +286,7 @@ export function useSettings(): UseSettingsResult {
         throw error;
       }
     },
-    [data, saveMutation, settings, t],
+    [data, saveMutation, settings, syncClaudePluginIfChanged, t],
   );
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）
@@ -323,30 +376,9 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
-        // 只在 Claude 插件集成状态真正改变时调用系统 API
-        if (
-          payload.enableClaudePluginIntegration !== undefined &&
-          payload.enableClaudePluginIntegration !==
-            data?.enableClaudePluginIntegration
-        ) {
-          try {
-            if (payload.enableClaudePluginIntegration) {
-              await settingsApi.applyClaudePluginConfig({ official: false });
-            } else {
-              await settingsApi.applyClaudePluginConfig({ official: true });
-            }
-          } catch (error) {
-            console.warn(
-              "[useSettings] Failed to sync Claude plugin config",
-              error,
-            );
-            toast.error(
-              t("notifications.syncClaudePluginFailed", {
-                defaultValue: "同步 Claude 插件失败",
-              }),
-            );
-          }
-        }
+        const pluginSynced = await syncClaudePluginIfChanged(
+          payload.enableClaudePluginIntegration,
+        );
 
         try {
           if (typeof window !== "undefined") {
@@ -369,6 +401,7 @@ export function useSettings(): UseSettingsResult {
         }
 
         // 如果 Claude/Codex/Gemini/OpenCode/OpenClaw 的目录覆盖发生变化，则立即将"当前使用的供应商"写回对应应用的 live 配置
+        // 如果插件同步已经执行过 syncCurrentProvidersLiveSafe，则跳过避免重复
         const claudeDirChanged = sanitizedClaudeDir !== previousClaudeDir;
         const codexDirChanged = sanitizedCodexDir !== previousCodexDir;
         const geminiDirChanged = sanitizedGeminiDir !== previousGeminiDir;
@@ -376,11 +409,12 @@ export function useSettings(): UseSettingsResult {
         const openclawDirChanged =
           sanitizedOpenclawDir !== previousOpenclawDir;
         if (
-          claudeDirChanged ||
-          codexDirChanged ||
-          geminiDirChanged ||
-          opencodeDirChanged ||
-          openclawDirChanged
+          !pluginSynced &&
+          (claudeDirChanged ||
+            codexDirChanged ||
+            geminiDirChanged ||
+            opencodeDirChanged ||
+            openclawDirChanged)
         ) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {
@@ -422,6 +456,7 @@ export function useSettings(): UseSettingsResult {
       saveMutation,
       settings,
       setRequiresRestart,
+      syncClaudePluginIfChanged,
       t,
     ],
   );

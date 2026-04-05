@@ -11,6 +11,8 @@ const applyClaudeOnboardingSkipMock = vi.fn();
 const clearClaudeOnboardingSkipMock = vi.fn();
 const syncCurrentProvidersLiveMock = vi.fn();
 const updateTrayMenuMock = vi.fn();
+const getCurrentMock = vi.fn();
+const getAllMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastSuccessMock = vi.fn();
 
@@ -61,6 +63,8 @@ vi.mock("@/lib/api", () => ({
   },
   providersApi: {
     updateTrayMenu: (...args: unknown[]) => updateTrayMenuMock(...args),
+    getCurrent: (...args: unknown[]) => getCurrentMock(...args),
+    getAll: (...args: unknown[]) => getAllMock(...args),
   },
 }));
 
@@ -127,6 +131,8 @@ describe("useSettings hook", () => {
     applyClaudeOnboardingSkipMock.mockReset();
     clearClaudeOnboardingSkipMock.mockReset();
     syncCurrentProvidersLiveMock.mockReset();
+    getCurrentMock.mockReset();
+    getAllMock.mockReset();
     toastErrorMock.mockReset();
     toastSuccessMock.mockReset();
     window.localStorage.clear();
@@ -163,6 +169,9 @@ describe("useSettings hook", () => {
     applyClaudePluginConfigMock.mockResolvedValue(true);
     applyClaudeOnboardingSkipMock.mockResolvedValue(true);
     clearClaudeOnboardingSkipMock.mockResolvedValue(true);
+    syncCurrentProvidersLiveMock.mockResolvedValue({ ok: true });
+    getCurrentMock.mockResolvedValue(null);
+    getAllMock.mockResolvedValue({});
   });
 
   it("auto-saves and applies Claude onboarding skip when toggled on", async () => {
@@ -276,7 +285,7 @@ describe("useSettings hook", () => {
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(true);
     expect(window.localStorage.getItem("language")).toBe("en");
     expect(toastErrorMock).not.toHaveBeenCalled();
-    // 目录有变化，应触发一次同步当前供应商到 live
+    // 插件同步已包含 syncCurrentProvidersLiveSafe，目录变更不再重复调用
     expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(1);
   });
 
