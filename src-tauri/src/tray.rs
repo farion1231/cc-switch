@@ -313,11 +313,10 @@ pub fn create_tray_menu(
         if providers.is_empty() {
             // 空供应商：显示禁用的菜单项
             let label = format!("{} {}", section.header_label, tray_texts.no_providers_label);
-            let empty_item =
-                MenuItem::with_id(app, section.empty_id, &label, false, None::<&str>)
-                    .map_err(|e| {
-                        AppError::Message(format!("创建{}空提示失败: {e}", section.log_name))
-                    })?;
+            let empty_item = MenuItem::with_id(app, section.empty_id, &label, false, None::<&str>)
+                .map_err(|e| {
+                    AppError::Message(format!("创建{}空提示失败: {e}", section.log_name))
+                })?;
             menu_builder = menu_builder.item(&empty_item);
         } else {
             // 有供应商：构建子菜单

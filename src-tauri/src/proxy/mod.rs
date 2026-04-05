@@ -5,6 +5,7 @@
 pub mod body_filter;
 pub mod cache_injector;
 pub mod circuit_breaker;
+pub mod copilot_optimizer;
 pub mod error;
 pub mod error_mapper;
 pub(crate) mod failover_switch;
