@@ -100,6 +100,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     isFetching: isCheckingUpdates,
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
+  const [isUpdatingAll, setIsUpdatingAll] = useState(false);
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -245,6 +246,28 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
+  const handleUpdateAll = async () => {
+    if (!skillUpdates || skillUpdates.length === 0) return;
+    setIsUpdatingAll(true);
+    let successCount = 0;
+    for (const update of skillUpdates) {
+      try {
+        await updateSkillMutation.mutateAsync(update.id);
+        successCount++;
+      } catch (error) {
+        toast.error(t("skills.updateFailed"), {
+          description: `${update.name}: ${String(error)}`,
+        });
+      }
+    }
+    setIsUpdatingAll(false);
+    if (successCount > 0) {
+      toast.success(t("skills.updateAllSuccess", { count: successCount }), {
+        closeButton: true,
+      });
+    }
+  };
+
   const handleOpenRestoreFromBackup = async () => {
     setRestoreDialogOpen(true);
     try {
@@ -338,6 +361,25 @@ const UnifiedSkillsPanel = React.forwardRef<
             ? t("skills.checkingUpdates")
             : t("skills.checkUpdates")}
         </Button>
+        {skillUpdates && skillUpdates.length > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={handleUpdateAll}
+            disabled={isUpdatingAll || updateSkillMutation.isPending}
+          >
+            {isUpdatingAll ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
+            {isUpdatingAll
+              ? t("skills.updatingAll")
+              : t("skills.updateAll", { count: skillUpdates.length })}
+          </Button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">

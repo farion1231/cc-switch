@@ -1582,6 +1582,9 @@
     "checkingUpdates": "Checking...",
     "noUpdates": "All skills are up to date",
     "updatesFound": "{{count}} skill(s) have updates available",
+    "updateAll": "Update All ({{count}})",
+    "updatingAll": "Updating...",
+    "updateAllSuccess": "Successfully updated {{count}} skill(s)",
     "error": {
       "skillNotFound": "Skill not found: {{directory}}",
       "missingRepoInfo": "Missing repository info (owner or name)",

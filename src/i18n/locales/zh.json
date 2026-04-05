@@ -1582,6 +1582,9 @@
     "checkingUpdates": "检查中...",
     "noUpdates": "所有技能已是最新版本",
     "updatesFound": "发现 {{count}} 个技能有可用更新",
+    "updateAll": "全部更新 ({{count}})",
+    "updatingAll": "更新中...",
+    "updateAllSuccess": "已成功更新 {{count}} 个技能",
     "error": {
       "skillNotFound": "技能不存在：{{directory}}",
       "missingRepoInfo": "缺少仓库信息（owner 或 name）",
