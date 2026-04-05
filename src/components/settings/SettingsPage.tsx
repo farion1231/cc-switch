@@ -229,10 +229,6 @@ export function SettingsPage({
                       settings={settings}
                       onChange={handleAutoSave}
                     />
-                    <WindowSettings
-                      settings={settings}
-                      onChange={handleAutoSave}
-                    />
                     <SkillStorageLocationSettings
                       value={settings.skillStorageLocation ?? "cc_switch"}
                       installedCount={installedSkills?.length ?? 0}
@@ -245,6 +241,10 @@ export function SettingsPage({
                       onChange={(method) =>
                         handleAutoSave({ skillSyncMethod: method })
                       }
+                    />
+                    <WindowSettings
+                      settings={settings}
+                      onChange={handleAutoSave}
                     />
                     <TerminalSettings
                       value={settings.preferredTerminal}
