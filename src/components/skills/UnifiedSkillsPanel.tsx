@@ -344,42 +344,51 @@ const UnifiedSkillsPanel = React.forwardRef<
           counts={enabledCounts}
           appIds={MCP_SKILLS_APP_IDS}
         />
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs gap-1"
-          onClick={handleCheckUpdates}
-          disabled={isCheckingUpdates || !skills || skills.length === 0}
-        >
-          {isCheckingUpdates ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : (
-            <RefreshCw size={12} />
-          )}
-          {isCheckingUpdates
-            ? t("skills.checkingUpdates")
-            : t("skills.checkUpdates")}
-        </Button>
-        {skillUpdates && skillUpdates.length > 0 && (
+        <div className="flex items-center gap-1.5">
+          <div
+            className="transition-all duration-300 ease-out overflow-hidden"
+            style={{
+              maxWidth:
+                skillUpdates && skillUpdates.length > 0 ? "200px" : "0px",
+              opacity: skillUpdates && skillUpdates.length > 0 ? 1 : 0,
+            }}
+          >
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1 whitespace-nowrap"
+              onClick={handleUpdateAll}
+              disabled={isUpdatingAll || updateSkillMutation.isPending}
+            >
+              {isUpdatingAll ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <RefreshCw size={12} />
+              )}
+              {isUpdatingAll
+                ? t("skills.updatingAll")
+                : t("skills.updateAll", { count: skillUpdates?.length ?? 0 })}
+            </Button>
+          </div>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="sm"
             className="h-7 text-xs gap-1"
-            onClick={handleUpdateAll}
-            disabled={isUpdatingAll || updateSkillMutation.isPending}
+            onClick={handleCheckUpdates}
+            disabled={isCheckingUpdates || !skills || skills.length === 0}
           >
-            {isUpdatingAll ? (
+            {isCheckingUpdates ? (
               <Loader2 size={12} className="animate-spin" />
             ) : (
               <RefreshCw size={12} />
             )}
-            {isUpdatingAll
-              ? t("skills.updatingAll")
-              : t("skills.updateAll", { count: skillUpdates.length })}
+            {isCheckingUpdates
+              ? t("skills.checkingUpdates")
+              : t("skills.checkUpdates")}
           </Button>
-        )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
