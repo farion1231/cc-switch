@@ -2738,8 +2738,8 @@ impl SkillService {
                     repo_branch: "main".to_string(),
                     installs: s.installs,
                     readme_url: Some(format!(
-                        "https://github.com/{}/{}/tree/main/{}",
-                        owner, repo, s.skill_id
+                        "https://github.com/{}/{}",
+                        owner, repo
                     )),
                 })
             })

@@ -108,11 +108,15 @@ export function SkillCard({
           )}
         </div>
       </CardHeader>
-      <CardContent className="flex-1 pt-0">
-        <p className="text-sm text-muted-foreground/90 line-clamp-4 leading-relaxed">
-          {skill.description || t("skills.noDescription")}
-        </p>
-      </CardContent>
+      {skill.description ? (
+        <CardContent className="flex-1 pt-0">
+          <p className="text-sm text-muted-foreground/90 line-clamp-4 leading-relaxed">
+            {skill.description}
+          </p>
+        </CardContent>
+      ) : (
+        <div className="flex-1" />
+      )}
       <CardFooter className="flex gap-2 pt-3 border-t border-border/50 relative z-10">
         {skill.readmeUrl && (
           <Button
