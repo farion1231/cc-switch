@@ -57,6 +57,8 @@ pub struct RequestContext {
     pub app_type: AppType,
     /// Session ID（从客户端请求提取或新生成）
     pub session_id: String,
+    /// 客户端显式提供的 Session ID（仅当请求携带对话连续性线索时存在）
+    pub client_session_id: Option<String>,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -113,6 +115,9 @@ impl RequestContext {
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
         let session_id = session_result.session_id.clone();
+        let client_session_id = session_result
+            .client_provided
+            .then(|| session_result.session_id.clone());
 
         log::debug!(
             "[{}] Session ID: {} (from {:?}, client_provided: {})",
@@ -161,6 +166,7 @@ impl RequestContext {
             app_type_str,
             app_type,
             session_id,
+            client_session_id,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,

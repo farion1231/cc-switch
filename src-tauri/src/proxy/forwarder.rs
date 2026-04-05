@@ -104,6 +104,7 @@ impl RequestForwarder {
         headers: axum::http::HeaderMap,
         extensions: Extensions,
         providers: Vec<Provider>,
+        client_session_id: Option<&str>,
     ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
         let adapter = get_adapter(app_type);
@@ -181,6 +182,7 @@ impl RequestForwarder {
                     &headers,
                     &extensions,
                     adapter.as_ref(),
+                    client_session_id,
                 )
                 .await
             {
@@ -311,6 +313,7 @@ impl RequestForwarder {
                                         &headers,
                                         &extensions,
                                         adapter.as_ref(),
+                                        client_session_id,
                                     )
                                     .await
                                 {
@@ -510,6 +513,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    client_session_id,
                                 )
                                 .await
                             {
@@ -749,11 +753,12 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
+        client_session_id: Option<&str>,
     ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
-        let is_full_url = provider
+        let has_explicit_full_url = provider
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
@@ -830,6 +835,35 @@ impl RequestForwarder {
         } else {
             None
         };
+        let resolved_claude_api_format = if adapter.name() == "Claude" {
+            Some(
+                self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
+                    .await,
+            )
+        } else {
+            None
+        };
+        let needs_transform = match resolved_claude_api_format.as_deref() {
+            Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
+            None => adapter.needs_transform(provider),
+        };
+        let (effective_endpoint, passthrough_query) =
+            if needs_transform && adapter.name() == "Claude" {
+                let api_format = resolved_claude_api_format
+                    .as_deref()
+                    .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot)
+            } else {
+                (
+                    endpoint.to_string(),
+                    split_endpoint_and_query(endpoint)
+                        .1
+                        .map(ToString::to_string),
+                )
+            };
+
+        let is_full_url =
+            has_explicit_full_url || is_legacy_full_url_for_endpoint(&base_url, &effective_endpoint);
         // GitHub Copilot 动态 endpoint 路由
         // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
         if is_copilot && !is_full_url {
@@ -859,32 +893,6 @@ impl RequestForwarder {
                 }
             }
         }
-        let resolved_claude_api_format = if adapter.name() == "Claude" {
-            Some(
-                self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
-                    .await,
-            )
-        } else {
-            None
-        };
-        let needs_transform = match resolved_claude_api_format.as_deref() {
-            Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
-            None => adapter.needs_transform(provider),
-        };
-        let (effective_endpoint, passthrough_query) =
-            if needs_transform && adapter.name() == "Claude" {
-                let api_format = resolved_claude_api_format
-                    .as_deref()
-                    .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot)
-            } else {
-                (
-                    endpoint.to_string(),
-                    split_endpoint_and_query(endpoint)
-                        .1
-                        .map(ToString::to_string),
-                )
-            };
 
         let url = if is_full_url {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
@@ -947,7 +955,10 @@ impl RequestForwarder {
                         Ok(token) => {
                             // 获取 machine ID 和 session ID
                             let (machine_id, session_id) = copilot_auth
-                                .get_account_ids(account_id.as_deref())
+                                .get_account_ids_for_conversation(
+                                    account_id.as_deref(),
+                                    client_session_id,
+                                )
                                 .await;
 
                             // 使用新的构造函数
@@ -1589,6 +1600,23 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
     }
 }
 
+fn is_legacy_full_url_for_endpoint(base_url: &str, endpoint: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(base_url) else {
+        return false;
+    };
+
+    let path = parsed.path().trim_end_matches('/');
+    let endpoint_path = split_endpoint_and_query(endpoint).0.trim_end_matches('/');
+
+    if path.is_empty() || path == "/" || endpoint_path.is_empty() || endpoint_path == "/" {
+        return false;
+    }
+
+    let normalized_endpoint_path = format!("/{}", endpoint_path.trim_start_matches('/'));
+
+    path == endpoint_path || path.ends_with(&normalized_endpoint_path)
+}
+
 fn should_force_identity_encoding(
     endpoint: &str,
     body: &Value,
@@ -1896,5 +1924,25 @@ mod tests {
             let will_replace = is_copilot && !is_full_url;
             assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    #[test]
+    fn legacy_full_url_detection_matches_endpoint_path() {
+        assert!(is_legacy_full_url_for_endpoint(
+            "https://proxy.example.com/chat/completions",
+            "/chat/completions"
+        ));
+        assert!(is_legacy_full_url_for_endpoint(
+            "https://proxy.example.com/api/v1/messages",
+            "/v1/messages"
+        ));
+        assert!(!is_legacy_full_url_for_endpoint(
+            "https://proxy.example.com/api",
+            "/chat/completions"
+        ));
+        assert!(!is_legacy_full_url_for_endpoint(
+            "https://proxy.example.com/v1",
+            "/v1/messages"
+        ));
     }
 }

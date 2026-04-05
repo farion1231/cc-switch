@@ -339,6 +339,8 @@ pub struct CopilotAuthManager {
     copilot_models: Arc<RwLock<HashMap<String, Vec<CopilotModel>>>>,
     /// Copilot API 端点缓存（key = GitHub user ID，从 /copilot_internal/user 获取）
     api_endpoints: Arc<RwLock<HashMap<String, String>>>,
+    /// 运行时对话会话桥接（key = "{account_id}:{client_session_id}"）
+    conversation_sessions: Arc<RwLock<HashMap<String, String>>>,
     /// 每个账号的端点拉取锁，避免并发拉取重复打 GitHub API
     endpoint_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     /// HTTP 客户端
@@ -367,6 +369,7 @@ impl CopilotAuthManager {
             copilot_tokens: Arc::new(RwLock::new(HashMap::new())),
             copilot_models: Arc::new(RwLock::new(HashMap::new())),
             api_endpoints: Arc::new(RwLock::new(HashMap::new())),
+            conversation_sessions: Arc::new(RwLock::new(HashMap::new())),
             endpoint_locks: Arc::new(RwLock::new(HashMap::new())),
             http_client: Client::new(),
             storage_path,
@@ -396,6 +399,7 @@ impl CopilotAuthManager {
             Self::spawn_session_refresh_task(
                 account_id,
                 Arc::clone(&self.accounts),
+                Arc::clone(&self.conversation_sessions),
                 Arc::clone(&self.session_refresh_tasks),
             )
             .await;
@@ -445,6 +449,11 @@ impl CopilotAuthManager {
         {
             let mut api_endpoints = self.api_endpoints.write().await;
             api_endpoints.remove(account_id);
+        }
+        {
+            let mut conversation_sessions = self.conversation_sessions.write().await;
+            let prefix = format!("{account_id}:");
+            conversation_sessions.retain(|key, _| !key.starts_with(&prefix));
         }
         {
             let mut endpoint_locks = self.endpoint_locks.write().await;
@@ -527,6 +536,7 @@ impl CopilotAuthManager {
         Self::spawn_session_refresh_task(
             account_id.clone(),
             Arc::clone(&self.accounts),
+            Arc::clone(&self.conversation_sessions),
             Arc::clone(&self.session_refresh_tasks),
         )
         .await;
@@ -1122,6 +1132,10 @@ impl CopilotAuthManager {
             api_endpoints.clear();
         }
         {
+            let mut conversation_sessions = self.conversation_sessions.write().await;
+            conversation_sessions.clear();
+        }
+        {
             let mut endpoint_locks = self.endpoint_locks.write().await;
             endpoint_locks.clear();
         }
@@ -1180,36 +1194,77 @@ impl CopilotAuthManager {
         &self,
         account_id: Option<&str>,
     ) -> (Option<String>, Option<String>) {
+        self.get_account_ids_for_conversation(account_id, None).await
+    }
+
+    /// 获取账号的 machine ID 和对话级 session ID。
+    ///
+    /// 当 `client_session_id` 存在时，为同一账号 + 客户端会话复用稳定的 upstream session；
+    /// 否则回退到账号级 session_id（向后兼容）。
+    pub async fn get_account_ids_for_conversation(
+        &self,
+        account_id: Option<&str>,
+        client_session_id: Option<&str>,
+    ) -> (Option<String>, Option<String>) {
         match account_id {
             Some(id) => {
-                let accounts = self.accounts.read().await;
-                if let Some(account_data) = accounts.get(id) {
-                    (
-                        account_data.machine_id.clone(),
-                        account_data.session_id.clone(),
-                    )
-                } else {
-                    (None, None)
-                }
+                self.resolve_account_ids(id, client_session_id).await
             }
             None => {
                 // 使用默认账号
                 let default_id = self.resolve_default_account_id().await;
                 if let Some(id) = default_id {
-                    let accounts = self.accounts.read().await;
-                    if let Some(account_data) = accounts.get(&id) {
-                        (
-                            account_data.machine_id.clone(),
-                            account_data.session_id.clone(),
-                        )
-                    } else {
-                        (None, None)
-                    }
+                    self.resolve_account_ids(&id, client_session_id).await
                 } else {
                     (None, None)
                 }
             }
         }
+    }
+
+    async fn resolve_account_ids(
+        &self,
+        account_id: &str,
+        client_session_id: Option<&str>,
+    ) -> (Option<String>, Option<String>) {
+        let machine_id = {
+            let accounts = self.accounts.read().await;
+            accounts
+                .get(account_id)
+                .and_then(|account_data| account_data.machine_id.clone())
+        };
+
+        let Some(machine_id) = machine_id else {
+            return (None, None);
+        };
+
+        let session_id = match client_session_id.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(client_session_id) => {
+                let key = format!("{account_id}:{client_session_id}");
+                {
+                    let conversation_sessions = self.conversation_sessions.read().await;
+                    if let Some(existing) = conversation_sessions.get(&key) {
+                        return (Some(machine_id), Some(existing.clone()));
+                    }
+                }
+
+                let new_session_id = Self::generate_session_id();
+                let mut conversation_sessions = self.conversation_sessions.write().await;
+                let session_id = conversation_sessions
+                    .entry(key)
+                    .or_insert_with(|| new_session_id.clone())
+                    .clone();
+                Some(session_id)
+            }
+            None => {
+                let accounts = self.accounts.read().await;
+                accounts
+                    .get(account_id)
+                    .and_then(|account_data| account_data.session_id.clone())
+            }
+        };
+
+        (Some(machine_id), session_id)
     }
 
     async fn get_refresh_lock(&self, account_id: &str) -> Arc<Mutex<()>> {
@@ -1226,6 +1281,33 @@ impl CopilotAuthManager {
                 .entry(account_id.to_string())
                 .or_insert_with(|| Arc::new(Mutex::new(()))),
         )
+    }
+
+    async fn apply_refreshed_session_id(
+        account_id: &str,
+        new_session_id: String,
+        now: i64,
+        accounts: &Arc<RwLock<HashMap<String, GitHubAccountData>>>,
+        conversation_sessions: &Arc<RwLock<HashMap<String, String>>>,
+    ) -> bool {
+        let mut accounts_guard = accounts.write().await;
+        if let Some(account_data) = accounts_guard.get_mut(account_id) {
+            account_data.session_id = Some(new_session_id.clone());
+            account_data.session_refreshed_at = Some(now);
+        } else {
+            return false;
+        }
+        drop(accounts_guard);
+
+        let prefix = format!("{account_id}:");
+        let mut conversation_sessions_guard = conversation_sessions.write().await;
+        for (key, session_id) in conversation_sessions_guard.iter_mut() {
+            if key.starts_with(&prefix) {
+                *session_id = new_session_id.clone();
+            }
+        }
+
+        true
     }
 
     fn machine_base_path(&self) -> PathBuf {
@@ -1332,6 +1414,7 @@ impl CopilotAuthManager {
     async fn spawn_session_refresh_task(
         account_id: String,
         accounts: Arc<RwLock<HashMap<String, GitHubAccountData>>>,
+        conversation_sessions: Arc<RwLock<HashMap<String, String>>>,
         session_refresh_tasks: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
     ) {
         use tokio::time::{sleep, Duration};
@@ -1368,10 +1451,15 @@ impl CopilotAuthManager {
                 let new_session_id = Self::generate_session_id();
                 let now = chrono::Utc::now().timestamp();
 
-                let mut accounts_guard = accounts_clone.write().await;
-                if let Some(account_data) = accounts_guard.get_mut(&account_id_clone) {
-                    account_data.session_id = Some(new_session_id.clone());
-                    account_data.session_refreshed_at = Some(now);
+                if Self::apply_refreshed_session_id(
+                    &account_id_clone,
+                    new_session_id,
+                    now,
+                    &accounts_clone,
+                    &conversation_sessions,
+                )
+                .await
+                {
                     log::debug!(
                         "[CopilotAuth] 账号 {} 的 Session ID 已刷新",
                         account_id_clone
@@ -1786,6 +1874,73 @@ mod tests {
         assert_eq!(parsed.accounts.len(), 1);
         assert_eq!(parsed.accounts[0].id, "12345");
         assert_eq!(parsed.accounts[0].login, "testuser");
+    }
+
+    #[tokio::test]
+    async fn test_get_account_ids_for_conversation_reuses_session_per_client_session() {
+        let temp = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp.path().to_path_buf());
+
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "12345".to_string(),
+                test_account_data("token", "testuser", 12345, None, 1234567890),
+            );
+        }
+        {
+            let mut default_account_id = manager.default_account_id.write().await;
+            *default_account_id = Some("12345".to_string());
+        }
+
+        let (machine_a, session_a1) = manager
+            .get_account_ids_for_conversation(Some("12345"), Some("conversation-1"))
+            .await;
+        let (machine_b, session_a2) = manager
+            .get_account_ids_for_conversation(Some("12345"), Some("conversation-1"))
+            .await;
+        let (_, session_b) = manager
+            .get_account_ids_for_conversation(Some("12345"), Some("conversation-2"))
+            .await;
+
+        assert_eq!(machine_a, machine_b);
+        assert_eq!(session_a1, session_a2);
+        assert_ne!(session_a1, session_b);
+    }
+
+    #[tokio::test]
+    async fn test_conversation_session_can_follow_refreshed_account_session() {
+        let temp = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp.path().to_path_buf());
+
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "12345".to_string(),
+                test_account_data("token", "testuser", 12345, None, 1234567890),
+            );
+        }
+
+        let (_, original_session) = manager
+            .get_account_ids_for_conversation(Some("12345"), Some("conversation-1"))
+            .await;
+        let refreshed_session = "refreshed-session".to_string();
+        let updated = CopilotAuthManager::apply_refreshed_session_id(
+            "12345",
+            refreshed_session.clone(),
+            chrono::Utc::now().timestamp(),
+            &manager.accounts,
+            &manager.conversation_sessions,
+        )
+        .await;
+
+        let (_, updated_session) = manager
+            .get_account_ids_for_conversation(Some("12345"), Some("conversation-1"))
+            .await;
+
+        assert!(updated);
+        assert_ne!(original_session, updated_session);
+        assert_eq!(updated_session, Some(refreshed_session));
     }
 
     #[test]

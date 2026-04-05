@@ -102,6 +102,7 @@ pub async fn handle_messages(
             headers,
             extensions,
             ctx.get_providers(),
+            ctx.client_session_id.as_deref(),
         )
         .await
     {
@@ -352,6 +353,7 @@ pub async fn handle_chat_completions(
             headers,
             extensions,
             ctx.get_providers(),
+            ctx.client_session_id.as_deref(),
         )
         .await
     {
@@ -406,6 +408,7 @@ pub async fn handle_responses(
             headers,
             extensions,
             ctx.get_providers(),
+            ctx.client_session_id.as_deref(),
         )
         .await
     {
@@ -460,6 +463,7 @@ pub async fn handle_responses_compact(
             headers,
             extensions,
             ctx.get_providers(),
+            ctx.client_session_id.as_deref(),
         )
         .await
     {
@@ -525,6 +529,7 @@ pub async fn handle_gemini(
             headers,
             extensions,
             ctx.get_providers(),
+            ctx.client_session_id.as_deref(),
         )
         .await
     {
