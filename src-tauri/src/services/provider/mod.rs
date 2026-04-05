@@ -435,11 +435,121 @@ base_url = "http://localhost:8080"
             Some("http://127.0.0.1:15721"),
             "proxy base URL should stay intact"
         );
-        assert!(
+        assert_eq!(
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_MODEL"))
-                .is_none(),
-            "model override should be removed in takeover live config"
+                .and_then(|v| v.as_str()),
+            Some("model-updated"),
+            "current provider model should be refreshed into takeover live config"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_current_gemini_provider_syncs_live_when_proxy_takeover_detected_without_backup()
+    {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let original = Provider::with_id(
+            "g1".into(),
+            "Gemini A".into(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "token-a",
+                    "GOOGLE_GEMINI_BASE_URL": "https://gemini.a.example",
+                    "GEMINI_MODEL": "gemini-old"
+                }
+            }),
+            None,
+        );
+        db.save_provider("gemini", &original)
+            .expect("save provider");
+        db.set_current_provider("gemini", "g1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Gemini, Some("g1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("gemini")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        crate::gemini_config::write_gemini_env_atomic(&std::collections::HashMap::from([
+            (
+                "GOOGLE_GEMINI_BASE_URL".to_string(),
+                "http://127.0.0.1:15721".to_string(),
+            ),
+            ("GEMINI_API_KEY".to_string(), "PROXY_MANAGED".to_string()),
+            ("GEMINI_MODEL".to_string(), "stale-model".to_string()),
+        ]))
+        .expect("seed taken-over live env");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        let updated = Provider::with_id(
+            "g1".into(),
+            "Gemini A".into(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "token-updated",
+                    "GOOGLE_GEMINI_BASE_URL": "https://gemini.updated.example",
+                    "GEMINI_MODEL": "gemini-updated"
+                }
+            }),
+            None,
+        );
+
+        ProviderService::update(&state, AppType::Gemini, None, updated.clone())
+            .expect("update current provider");
+
+        let backup = db
+            .get_live_backup("gemini")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored_provider = db
+            .get_provider_by_id("g1", "gemini")
+            .expect("get stored provider")
+            .expect("stored provider exists");
+        let expected_backup =
+            serde_json::to_string(&stored_provider.settings_config).expect("serialize");
+        assert_eq!(backup.original_config, expected_backup);
+
+        let live_env = crate::gemini_config::read_gemini_env().expect("read live env");
+        assert_eq!(
+            live_env.get("GEMINI_API_KEY").map(String::as_str),
+            Some("PROXY_MANAGED"),
+            "takeover placeholder should stay intact"
+        );
+        assert_eq!(
+            live_env.get("GOOGLE_GEMINI_BASE_URL").map(String::as_str),
+            Some("http://127.0.0.1:15721"),
+            "proxy base URL should stay intact"
+        );
+        assert_eq!(
+            live_env.get("GEMINI_MODEL").map(String::as_str),
+            Some("gemini-updated"),
+            "current provider model should be refreshed into Gemini live env"
         );
     }
 
@@ -1197,9 +1307,9 @@ impl ProviderService {
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
 
         if is_current {
-            // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
+            // 如果当前 switch-mode app 处于代理接管状态，并且代理服务正在运行：
             // - 不直接走普通 Live 写入逻辑
-            // - 改为更新 Live 备份，并在 Claude 下同步代理安全的 Live 配置
+            // - 改为更新 Live 备份，并同步代理安全的 Live 配置
             let has_live_backup =
                 futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
                     .ok()
@@ -1215,18 +1325,9 @@ impl ProviderService {
                 futures::executor::block_on(
                     state
                         .proxy_service
-                        .update_live_backup_from_provider(app_type.as_str(), &provider),
+                        .refresh_takeover_state_from_provider(&app_type, &provider),
                 )
-                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-
-                if matches!(app_type, AppType::Claude) {
-                    futures::executor::block_on(
-                        state
-                            .proxy_service
-                            .sync_claude_live_from_provider_while_proxy_active(&provider),
-                    )
-                    .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
-                }
+                .map_err(|e| AppError::Message(format!("同步代理接管态失败: {e}")))?;
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
                 // Sync MCP
