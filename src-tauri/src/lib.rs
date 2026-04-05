@@ -892,6 +892,7 @@ pub fn run() {
             commands::testUsageScript,
             // subscription quota
             commands::get_subscription_quota,
+            commands::get_coding_plan_quota,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
             commands::upsert_mcp_server_in_config,

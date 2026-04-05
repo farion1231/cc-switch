@@ -343,9 +343,7 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div
-          className="flex items-center ml-auto min-w-0 gap-3"
-        >
+        <div className="flex items-center ml-auto min-w-0 gap-3">
           <div className="ml-auto">
             <div className="flex items-center gap-1">
               {isOfficial ? (
@@ -393,9 +391,7 @@ export function ProviderCard({
             </div>
           </div>
 
-          <div
-            className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200"
-          >
+          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}
@@ -406,7 +402,9 @@ export function ProviderCard({
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
-              onTest={onTest && !isOfficial ? () => onTest(provider) : undefined}
+              onTest={
+                onTest && !isOfficial ? () => onTest(provider) : undefined
+              }
               onConfigureUsage={
                 isOfficial ? undefined : () => onConfigureUsage(provider)
               }
