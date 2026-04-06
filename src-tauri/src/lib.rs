@@ -796,6 +796,51 @@ pub fn run() {
                         }
                     }
                 });
+
+                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
+                let db_for_session_sync = state.db.clone();
+                tauri::async_runtime::spawn(async move {
+                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
+
+                    // 首次同步
+                    if let Err(e) =
+                        crate::services::session_usage::sync_claude_session_logs(
+                            &db_for_session_sync,
+                        )
+                    {
+                        log::warn!("Session usage initial sync failed: {e}");
+                    }
+                    if let Err(e) =
+                        crate::services::session_usage_codex::sync_codex_usage(
+                            &db_for_session_sync,
+                        )
+                    {
+                        log::warn!("Codex usage initial sync failed: {e}");
+                    }
+
+                    // 定期同步
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                        SESSION_SYNC_INTERVAL_SECS,
+                    ));
+                    interval.tick().await; // skip immediate first tick
+                    loop {
+                        interval.tick().await;
+                        if let Err(e) =
+                            crate::services::session_usage::sync_claude_session_logs(
+                                &db_for_session_sync,
+                            )
+                        {
+                            log::warn!("Session usage periodic sync failed: {e}");
+                        }
+                        if let Err(e) =
+                            crate::services::session_usage_codex::sync_codex_usage(
+                                &db_for_session_sync,
+                            )
+                        {
+                            log::warn!("Codex usage periodic sync failed: {e}");
+                        }
+                    }
+                });
             });
 
             // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
@@ -1025,6 +1070,9 @@ pub fn run() {
             commands::update_model_pricing,
             commands::delete_model_pricing,
             commands::check_provider_limits,
+            // Session usage sync
+            commands::sync_session_usage,
+            commands::get_usage_data_sources,
             // Stream health check
             commands::stream_check_provider,
             commands::stream_check_all_providers,

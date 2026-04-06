@@ -189,7 +189,8 @@ impl Database {
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
             duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
-            cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL
+            cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL,
+            data_source TEXT NOT NULL DEFAULT 'proxy'
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON proxy_request_logs(provider_id, app_type)", [])
@@ -266,6 +267,18 @@ impl Database {
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (date, app_type, provider_id, model)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 18. Session Log Sync 表 (会话日志同步状态)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL
             )",
             [],
         )
@@ -399,6 +412,11 @@ impl Database {
                         log::info!("迁移数据库从 v6 到 v7（Skills 更新检测支持）");
                         Self::migrate_v6_to_v7(conn)?;
                         Self::set_user_version(conn, 7)?;
+                    }
+                    7 => {
+                        log::info!("迁移数据库从 v7 到 v8（会话日志使用追踪）");
+                        Self::migrate_v7_to_v8(conn)?;
+                        Self::set_user_version(conn, 8)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1057,6 +1075,34 @@ impl Database {
         Self::add_column_if_missing(conn, "skills", "content_hash", "TEXT")?;
         Self::add_column_if_missing(conn, "skills", "updated_at", "INTEGER NOT NULL DEFAULT 0")?;
         log::info!("v6 -> v7 迁移完成：已添加 content_hash 和 updated_at 列");
+        Ok(())
+    }
+
+    /// v7 -> v8: 会话日志使用追踪（无代理模式统计支持）
+    fn migrate_v7_to_v8(conn: &Connection) -> Result<(), AppError> {
+        // 1. 为 proxy_request_logs 添加 data_source 列，区分数据来源
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "data_source",
+                "TEXT NOT NULL DEFAULT 'proxy'",
+            )?;
+        }
+
+        // 2. 创建会话日志同步状态表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 session_log_sync 表失败: {e}")))?;
+
+        log::info!("v7 -> v8 迁移完成：已添加 data_source 列和 session_log_sync 表");
         Ok(())
     }
 

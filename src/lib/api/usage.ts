@@ -9,6 +9,8 @@ import type {
   ModelPricing,
   ProviderLimitStatus,
   PaginatedLogs,
+  SessionSyncResult,
+  DataSourceSummary,
 } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
@@ -114,5 +116,14 @@ export const usageApi = {
     appType: string,
   ): Promise<ProviderLimitStatus> => {
     return invoke("check_provider_limits", { providerId, appType });
+  },
+
+  // Session usage sync
+  syncSessionUsage: async (): Promise<SessionSyncResult> => {
+    return invoke("sync_session_usage");
+  },
+
+  getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {
+    return invoke("get_usage_data_sources");
   },
 };

@@ -166,6 +166,38 @@ pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Res
     Ok(())
 }
 
+/// 手动触发会话日志同步
+#[tauri::command]
+pub fn sync_session_usage(
+    state: State<'_, AppState>,
+) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    // 同步 Claude 会话日志
+    let mut result = crate::services::session_usage::sync_claude_session_logs(&state.db)?;
+
+    // 同步 Codex 使用数据
+    match crate::services::session_usage_codex::sync_codex_usage(&state.db) {
+        Ok(codex_result) => {
+            result.imported += codex_result.imported;
+            result.skipped += codex_result.skipped;
+            result.files_scanned += codex_result.files_scanned;
+            result.errors.extend(codex_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Codex 同步失败: {e}"));
+        }
+    }
+
+    Ok(result)
+}
+
+/// 获取数据来源分布
+#[tauri::command]
+pub fn get_usage_data_sources(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
+    crate::services::session_usage::get_data_source_breakdown(&state.db)
+}
+
 /// 模型定价信息
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

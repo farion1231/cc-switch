@@ -1018,6 +1018,21 @@
     "unknownProvider": "未知供应商",
     "stream": "流",
     "nonStream": "非流",
+    "source": "来源",
+    "dataSources": "数据来源",
+    "dataSource": {
+      "proxy": "代理",
+      "session_log": "会话日志",
+      "codex_db": "Codex 数据库"
+    },
+    "sessionSync": {
+      "trigger": "同步会话日志",
+      "import": "导入会话",
+      "resync": "同步",
+      "imported": "从会话日志导入了 {{count}} 条记录",
+      "upToDate": "会话日志已是最新",
+      "failed": "会话同步失败"
+    },
     "totalRecords": "共 {{total}} 条记录",
     "modelPricing": "模型定价",
     "loadPricingError": "加载定价数据失败",
