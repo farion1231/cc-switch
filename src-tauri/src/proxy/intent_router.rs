@@ -504,7 +504,9 @@ You must respond with ONLY an integer between 1 and {} (no explanation):\n\
 
         // 添加认证头
         if let Some(auth) = adapter.extract_auth(provider) {
-            req = adapter.add_auth_headers(req, &auth);
+            for (name, value) in adapter.get_auth_headers(&auth) {
+                req = req.header(name, value);
+            }
         }
 
         // anthropic-version：沿用 forwarder 默认值

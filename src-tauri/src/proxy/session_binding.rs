@@ -4,10 +4,9 @@
 //! 后续轮次继续使用第一次选定的供应商，避免对话中途切换。
 
 use crate::app_config::AppType;
+use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::settings;
-use crate::database::Database;
 
 /// 根据会话绑定和当前设置，决定本次请求应该使用的供应商列表。
 ///
@@ -28,4 +27,3 @@ pub fn resolve_session_bound_providers<'a>(
     let _ = (session_id, _db); // silence unused warnings for now
     Ok(providers)
 }
-
