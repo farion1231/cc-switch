@@ -1080,7 +1080,6 @@ impl ProviderService {
                     "Only additive-mode providers support changing provider key".to_string(),
                 ));
             }
-            }
 
             let Some(existing_provider) = existing_provider else {
                 return Err(AppError::Message(format!(
