@@ -6,6 +6,7 @@
 //! - **anthropic** (默认): Anthropic Messages API 格式，直接透传
 //! - **openai_chat**: OpenAI Chat Completions 格式，需要 Anthropic ↔ OpenAI 转换
 //! - **openai_responses**: OpenAI Responses API 格式，需要 Anthropic ↔ Responses 转换
+//! - **gemini_native**: Google Gemini Native generateContent 格式，需要 Anthropic ↔ Gemini 转换
 //!
 //! ## 认证模式
 //! - **Claude**: Anthropic 官方 API (x-api-key + anthropic-version)
@@ -28,6 +29,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
             return match api_format {
                 "openai_chat" => "openai_chat",
                 "openai_responses" => "openai_responses",
+                "gemini_native" => "gemini_native",
                 _ => "anthropic",
             };
         }
@@ -42,6 +44,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         return match api_format {
             "openai_chat" => "openai_chat",
             "openai_responses" => "openai_responses",
+            "gemini_native" => "gemini_native",
             _ => "anthropic",
         };
     }
@@ -66,25 +69,33 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 }
 
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
-    matches!(api_format, "openai_chat" | "openai_responses")
+    matches!(
+        api_format,
+        "openai_chat" | "openai_responses" | "gemini_native"
+    )
 }
 
 pub fn transform_claude_request_for_api_format(
     body: serde_json::Value,
     provider: &Provider,
     api_format: &str,
+    session_id: Option<&str>,
+    shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
 ) -> Result<serde_json::Value, ProxyError> {
     let cache_key = provider
         .meta
         .as_ref()
-        .and_then(|m| m.prompt_cache_key.as_deref())
-        .unwrap_or(&provider.id);
+        .and_then(|m| m.prompt_cache_key.as_deref());
 
     match api_format {
-        "openai_responses" => {
-            super::transform_responses::anthropic_to_responses(body, Some(cache_key))
-        }
-        "openai_chat" => super::transform::anthropic_to_openai(body, Some(cache_key)),
+        "openai_responses" => super::transform_responses::anthropic_to_responses(body, cache_key),
+        "openai_chat" => super::transform::anthropic_to_openai(body, cache_key),
+        "gemini_native" => super::transform_gemini::anthropic_to_gemini_with_shadow(
+            body,
+            shadow_store,
+            Some(&provider.id),
+            session_id,
+        ),
         _ => Ok(body),
     }
 }
@@ -105,6 +116,15 @@ impl ClaudeAdapter {
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
+        if self.get_api_format(provider) == "gemini_native" {
+            return match self.extract_key(provider) {
+                Some(key) if key.starts_with("ya29.") || key.starts_with('{') => {
+                    ProviderType::GeminiCli
+                }
+                _ => ProviderType::Gemini,
+            };
+        }
+
         // 检测 GitHub Copilot
         if self.is_github_copilot(provider) {
             return ProviderType::GitHubCopilot;
@@ -304,14 +324,23 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
-        let strategy = match provider_type {
-            ProviderType::OpenRouter => AuthStrategy::Bearer,
-            ProviderType::ClaudeAuth => AuthStrategy::ClaudeAuth,
-            _ => AuthStrategy::Anthropic,
-        };
+        let key = self.extract_key(provider)?;
 
-        self.extract_key(provider)
-            .map(|key| AuthInfo::new(key, strategy))
+        match provider_type {
+            ProviderType::GeminiCli => {
+                if let Some(creds) =
+                    super::gemini::GeminiAdapter::new().parse_oauth_credentials(&key)
+                {
+                    Some(AuthInfo::with_access_token(key, creds.access_token))
+                } else {
+                    Some(AuthInfo::new(key, AuthStrategy::GoogleOAuth))
+                }
+            }
+            ProviderType::Gemini => Some(AuthInfo::new(key, AuthStrategy::Google)),
+            ProviderType::OpenRouter => Some(AuthInfo::new(key, AuthStrategy::Bearer)),
+            ProviderType::ClaudeAuth => Some(AuthInfo::new(key, AuthStrategy::ClaudeAuth)),
+            _ => Some(AuthInfo::new(key, AuthStrategy::Anthropic)),
+        }
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
@@ -346,6 +375,23 @@ impl ProviderAdapter for ClaudeAdapter {
                     HeaderName::from_static("authorization"),
                     HeaderValue::from_str(&bearer).unwrap(),
                 )]
+            }
+            AuthStrategy::Google => vec![(
+                HeaderName::from_static("x-goog-api-key"),
+                HeaderValue::from_str(&auth.api_key).unwrap(),
+            )],
+            AuthStrategy::GoogleOAuth => {
+                let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
+                vec![
+                    (
+                        HeaderName::from_static("authorization"),
+                        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("x-goog-api-client"),
+                        HeaderValue::from_static("GeminiCLI/1.0"),
+                    ),
+                ]
             }
             AuthStrategy::GitHubCopilot => {
                 // 生成请求追踪 ID
@@ -402,7 +448,6 @@ impl ProviderAdapter for ClaudeAdapter {
                     ),
                 ]
             }
-            _ => vec![],
         }
     }
 
@@ -418,7 +463,7 @@ impl ProviderAdapter for ClaudeAdapter {
         // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
         matches!(
             self.get_api_format(provider),
-            "openai_chat" | "openai_responses"
+            "openai_chat" | "openai_responses" | "gemini_native"
         )
     }
 
@@ -427,7 +472,13 @@ impl ProviderAdapter for ClaudeAdapter {
         body: serde_json::Value,
         provider: &Provider,
     ) -> Result<serde_json::Value, ProxyError> {
-        transform_claude_request_for_api_format(body, provider, self.get_api_format(provider))
+        transform_claude_request_for_api_format(
+            body,
+            provider,
+            self.get_api_format(provider),
+            None,
+            None,
+        )
     }
 
     fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
@@ -436,7 +487,9 @@ impl ProviderAdapter for ClaudeAdapter {
         // config, so we can't check api_format here. Instead we rely on the fact that
         // Responses API always returns "output" while Chat Completions returns "choices".
         // This is safe because the two formats are structurally disjoint.
-        if body.get("output").is_some() {
+        if body.get("candidates").is_some() || body.get("promptFeedback").is_some() {
+            super::transform_gemini::gemini_to_anthropic(body)
+        } else if body.get("output").is_some() {
             super::transform_responses::responses_to_anthropic(body)
         } else {
             super::transform::openai_to_anthropic(body)
@@ -740,6 +793,24 @@ mod tests {
         );
         assert!(adapter.needs_transform(&openai_responses_provider));
 
+        let gemini_native_provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(adapter.needs_transform(&gemini_native_provider));
+        assert_eq!(
+            adapter.provider_type(&gemini_native_provider),
+            ProviderType::Gemini
+        );
+
         // meta takes precedence over legacy settings_config fields
         let meta_precedence_over_settings = create_provider_with_meta(
             json!({
@@ -847,11 +918,106 @@ mod tests {
             "max_tokens": 128
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_responses").unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(transformed["model"], "gpt-5.4");
         assert!(transformed.get("input").is_some());
         assert!(transformed.get("max_output_tokens").is_some());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_gemini_native() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gemini-2.5-pro",
+            "system": "You are helpful.",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "gemini_native", None, None)
+                .unwrap();
+
+        assert!(transformed.get("contents").is_some());
+        assert_eq!(
+            transformed["systemInstruction"]["parts"][0]["text"],
+            "You are helpful."
+        );
+        assert_eq!(transformed["generationConfig"]["maxOutputTokens"], 64);
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_openai_chat_skips_prompt_cache_key_by_default()
+    {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert!(transformed.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_openai_chat_keeps_explicit_prompt_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                prompt_cache_key: Some("claude-cache-route".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "claude-cache-route");
     }
 }

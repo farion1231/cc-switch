@@ -15,8 +15,9 @@ use super::{
     handler_context::RequestContext,
     providers::{
         get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
+        streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
-        transform_responses,
+        transform_gemini, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
@@ -157,6 +158,13 @@ async fn handle_claude_transform(
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
             Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
+        } else if api_format == "gemini_native" {
+            Box::new(Box::pin(create_anthropic_sse_stream_from_gemini(
+                stream,
+                Some(state.gemini_shadow.clone()),
+                Some(ctx.provider.id.clone()),
+                Some(ctx.session_id.clone()),
+            )))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
@@ -245,6 +253,13 @@ async fn handle_claude_transform(
     // 根据 api_format 选择非流式转换器
     let anthropic_response = if api_format == "openai_responses" {
         transform_responses::responses_to_anthropic(upstream_response)
+    } else if api_format == "gemini_native" {
+        transform_gemini::gemini_to_anthropic_with_shadow(
+            upstream_response,
+            Some(state.gemini_shadow.as_ref()),
+            Some(&ctx.provider.id),
+            Some(&ctx.session_id),
+        )
     } else {
         transform::openai_to_anthropic(upstream_response)
     }

@@ -12,8 +12,10 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::gemini_url::resolve_gemini_native_url;
 use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
+use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
@@ -309,6 +311,8 @@ impl StreamCheckService {
     /// 根据供应商的 api_format 选择请求格式：
     /// - "anthropic" (默认): Anthropic Messages API (/v1/messages)
     /// - "openai_chat": OpenAI Chat Completions API (/v1/chat/completions)
+    /// - "openai_responses": OpenAI Responses API (/v1/responses)
+    /// - "gemini_native": Gemini Native streamGenerateContent
     #[allow(clippy::too_many_arguments)]
     async fn check_claude_stream(
         client: &Client,
@@ -345,8 +349,14 @@ impl StreamCheckService {
             .unwrap_or(false);
         let is_openai_chat = effective_api_format == "openai_chat";
         let is_openai_responses = effective_api_format == "openai_responses";
-        let url =
-            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
+        let is_gemini_native = effective_api_format == "gemini_native";
+        let url = Self::resolve_claude_stream_url(
+            base,
+            auth.strategy,
+            effective_api_format,
+            is_full_url,
+            model,
+        );
 
         let max_tokens = if is_openai_responses { 16 } else { 1 };
 
@@ -359,6 +369,9 @@ impl StreamCheckService {
         });
         let body = if is_openai_responses {
             anthropic_to_responses(anthropic_body, Some(&provider.id))
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else if is_gemini_native {
+            anthropic_to_gemini(anthropic_body)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_openai_chat {
             anthropic_to_openai(anthropic_body, Some(&provider.id))
@@ -395,6 +408,23 @@ impl StreamCheckService {
                 .header("x-vscode-user-agent-library-version", "electron-fetch")
                 .header("x-request-id", &request_id)
                 .header("x-agent-task-id", &request_id);
+        } else if is_gemini_native {
+            request_builder = match auth.strategy {
+                AuthStrategy::GoogleOAuth => {
+                    let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
+                    request_builder
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("x-goog-api-client", "GeminiCLI/1.0")
+                        .header("content-type", "application/json")
+                        .header("accept", "text/event-stream")
+                        .header("accept-encoding", "identity")
+                }
+                _ => request_builder
+                    .header("x-goog-api-key", &auth.api_key)
+                    .header("content-type", "application/json")
+                    .header("accept", "text/event-stream")
+                    .header("accept-encoding", "identity"),
+            };
         } else if is_openai_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder
@@ -751,7 +781,13 @@ impl StreamCheckService {
         auth_strategy: AuthStrategy,
         api_format: &str,
         is_full_url: bool,
+        model: &str,
     ) -> String {
+        if api_format == "gemini_native" {
+            let endpoint = format!("/v1beta/models/{model}:streamGenerateContent?alt=sse");
+            return resolve_gemini_native_url(base_url, &endpoint, is_full_url);
+        }
+
         if is_full_url {
             return base_url.to_string();
         }
@@ -914,6 +950,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_chat",
             true,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://relay.example/v1/chat/completions");
@@ -926,6 +963,7 @@ mod tests {
             AuthStrategy::GitHubCopilot,
             "openai_chat",
             false,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
@@ -938,6 +976,7 @@ mod tests {
             AuthStrategy::GitHubCopilot,
             "openai_responses",
             false,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/v1/responses");
@@ -950,6 +989,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_chat",
             false,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://example.com/v1/chat/completions");
@@ -962,6 +1002,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_responses",
             false,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://example.com/v1/responses");
@@ -974,9 +1015,55 @@ mod tests {
             AuthStrategy::Anthropic,
             "anthropic",
             false,
+            "claude-sonnet-4-6",
         );
 
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://generativelanguage.googleapis.com",
+            AuthStrategy::Google,
+            "gemini_native",
+            false,
+            "gemini-2.5-flash",
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native_full_url_openai_compat_base() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            AuthStrategy::Google,
+            "gemini_native",
+            true,
+            "gemini-2.5-flash",
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native_opaque_full_url() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://relay.example/custom/generate-content",
+            AuthStrategy::Google,
+            "gemini_native",
+            true,
+            "gemini-2.5-flash",
+        );
+
+        assert_eq!(url, "https://relay.example/custom/generate-content?alt=sse");
     }
 
     #[test]
