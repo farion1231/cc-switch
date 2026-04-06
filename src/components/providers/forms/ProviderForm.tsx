@@ -384,9 +384,15 @@ export function ProviderForm({
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
+  // Only reset form when defaultValues changes in NEW mode (not edit mode)
+  // In edit mode, resetting on every provider data change would cause blinking
+  // and discard user's ongoing edits when providers refetch periodically
   useEffect(() => {
+    if (isEditMode && initialData) {
+      return;
+    }
     form.reset(defaultValues);
-  }, [defaultValues, form]);
+  }, [defaultValues, form, isEditMode, initialData]);
 
   const presetCategoryLabels: Record<string, string> = useMemo(
     () => ({
