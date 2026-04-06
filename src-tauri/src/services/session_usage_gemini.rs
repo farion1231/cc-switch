@@ -104,7 +104,12 @@ fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
 
         for file_entry in chat_files.flatten() {
             let path = file_entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            let is_session = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("session-") && n.ends_with(".json"))
+                .unwrap_or(false);
+            if is_session {
                 files.push(path);
             }
         }
@@ -170,7 +175,7 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
         };
 
         let tokens = parse_gemini_tokens(tokens_obj);
-        if tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 {
+        if tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 && tokens.cached == 0 {
             continue; // 跳过全零的空 token 消息
         }
 
@@ -247,19 +252,6 @@ fn insert_gemini_session_entry(
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
-    // 检查是否已存在
-    let exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = ?1",
-            rusqlite::params![request_id],
-            |row| row.get::<_, i64>(0).map(|c| c > 0),
-        )
-        .unwrap_or(false);
-
-    if exists {
-        return Ok(false);
-    }
-
     // 解析时间戳
     let created_at = timestamp
         .and_then(|ts| {
@@ -309,14 +301,29 @@ fn insert_gemini_session_entry(
         ),
     };
 
+    // 使用 UPSERT：新记录插入，已存在记录更新 token 和费用（Gemini 全量重读可能携带更新值）
     conn.execute(
-        "INSERT OR IGNORE INTO proxy_request_logs (
+        "INSERT INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+        ON CONFLICT(request_id) DO UPDATE SET
+            model = excluded.model,
+            input_tokens = excluded.input_tokens,
+            output_tokens = excluded.output_tokens,
+            cache_read_tokens = excluded.cache_read_tokens,
+            input_cost_usd = excluded.input_cost_usd,
+            output_cost_usd = excluded.output_cost_usd,
+            cache_read_cost_usd = excluded.cache_read_cost_usd,
+            cache_creation_cost_usd = excluded.cache_creation_cost_usd,
+            total_cost_usd = excluded.total_cost_usd
+        WHERE input_tokens != excluded.input_tokens
+           OR output_tokens != excluded.output_tokens
+           OR cache_read_tokens != excluded.cache_read_tokens
+           OR model != excluded.model",
         rusqlite::params![
             request_id,
             "_gemini_session",   // provider_id
@@ -346,7 +353,8 @@ fn insert_gemini_session_entry(
     )
     .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
 
-    Ok(true)
+    // changes() > 0 表示新插入或已更新，== 0 表示值完全相同（无实际变更）
+    Ok(conn.changes() > 0)
 }
 
 /// 获取文件的同步状态
@@ -485,6 +493,23 @@ mod tests {
         let tokens = parse_gemini_tokens(&json);
         assert_eq!(tokens.input, 0);
         assert_eq!(tokens.output, 0);
-        // 全零会被 sync 逻辑跳过
+        // 全零（包括 cached=0）会被 sync 逻辑跳过
+        assert!(tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 && tokens.cached == 0);
+    }
+
+    #[test]
+    fn test_parse_gemini_tokens_cache_only_not_skipped() {
+        // 纯缓存命中消息（input/output/thoughts=0 但 cached>0）不应被跳过
+        let json: serde_json::Value = serde_json::json!({
+            "input": 0,
+            "output": 0,
+            "cached": 5000,
+            "thoughts": 0
+        });
+        let tokens = parse_gemini_tokens(&json);
+        assert_eq!(tokens.cached, 5000);
+        // 跳过条件：所有四个字段都为 0 才跳过
+        let should_skip = tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 && tokens.cached == 0;
+        assert!(!should_skip, "纯缓存命中记录不应被跳过");
     }
 }
