@@ -311,7 +311,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
     }
 
     match app_type {
-        AppType::Claude => match serde_json::from_str::<Value>(trimmed) {
+        AppType::Claude | AppType::Qwen => match serde_json::from_str::<Value>(trimmed) {
             Ok(source) if source.is_object() => json_is_subset(settings, &source),
             _ => false,
         },
@@ -333,19 +333,6 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             toml_item_is_subset(target_doc.as_item(), source_doc.as_item())
         }
         AppType::Gemini => match serde_json::from_str::<Value>(trimmed) {
-            Ok(Value::Object(source_map)) => {
-                let Some(target_map) = settings.get("env").and_then(Value::as_object) else {
-                    return false;
-                };
-                source_map.iter().all(|(key, source_value)| {
-                    target_map
-                        .get(key)
-                        .is_some_and(|target_value| json_is_subset(target_value, source_value))
-                })
-            }
-            _ => false,
-        },
-        AppType::Qwen => match serde_json::from_str::<Value>(trimmed) {
             Ok(Value::Object(source_map)) => {
                 let Some(target_map) = settings.get("env").and_then(Value::as_object) else {
                     return false;
@@ -390,9 +377,14 @@ pub(crate) fn remove_common_config_from_settings(
     }
 
     match app_type {
-        AppType::Claude => {
+        AppType::Claude | AppType::Qwen => {
             let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+                .map_err(|e| {
+                    AppError::Message(format!(
+                        "Invalid {} common config: {e}",
+                        app_type.as_str()
+                    ))
+                })?;
             let mut result = settings.clone();
             json_deep_remove(&mut result, &source);
             Ok(result)
@@ -428,15 +420,6 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::Qwen => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Qwen common config: {e}")))?;
-            let mut result = settings.clone();
-            if let Some(env) = result.get_mut("env") {
-                json_deep_remove(env, &source);
-            }
-            Ok(result)
-        }
         AppType::OpenCode | AppType::OpenClaw => Ok(settings.clone()),
     }
 }
@@ -452,9 +435,14 @@ fn apply_common_config_to_settings(
     }
 
     match app_type {
-        AppType::Claude => {
+        AppType::Claude | AppType::Qwen => {
             let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+                .map_err(|e| {
+                    AppError::Message(format!(
+                        "Invalid {} common config: {e}",
+                        app_type.as_str()
+                    ))
+                })?;
             let mut result = settings.clone();
             json_deep_merge(&mut result, &source);
             Ok(result)
@@ -484,17 +472,6 @@ fn apply_common_config_to_settings(
         AppType::Gemini => {
             let source = serde_json::from_str::<Value>(trimmed)
                 .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
-            let mut result = settings.clone();
-            if let Some(env) = result.get_mut("env") {
-                json_deep_merge(env, &source);
-            } else if let Some(obj) = result.as_object_mut() {
-                obj.insert("env".to_string(), source);
-            }
-            Ok(result)
-        }
-        AppType::Qwen => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Qwen common config: {e}")))?;
             let mut result = settings.clone();
             if let Some(env) = result.get_mut("env") {
                 json_deep_merge(env, &source);

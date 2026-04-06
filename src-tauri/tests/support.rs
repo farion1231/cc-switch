@@ -33,6 +33,7 @@ pub fn reset_test_fs() {
         ".codex",
         ".cc-switch",
         ".gemini",
+        ".qwen",
         ".config",
         ".openclaw",
     ] {

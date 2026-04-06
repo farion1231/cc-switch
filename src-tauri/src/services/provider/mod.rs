@@ -1701,7 +1701,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
-            AppType::Qwen => Ok(String::new()), // Qwen 暂不支持通用配置片段
+            AppType::Qwen => Self::extract_qwen_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
         }
     }
@@ -1716,7 +1716,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
-            AppType::Qwen => Ok(String::new()), // Qwen 暂不支持通用配置片段
+            AppType::Qwen => Self::extract_qwen_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
         }
     }
@@ -1848,6 +1848,65 @@ impl ProviderService {
         }
 
         serde_json::to_string_pretty(&Value::Object(snippet))
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// Extract common config for Qwen (JSON format)
+    ///
+    /// Qwen provider storage uses `{ env, config }` where:
+    /// - `env` contains OpenAI-compatible auth/endpoint/model fields
+    /// - `config` contains provider-owned Qwen settings
+    ///
+    /// Common config should keep only shared app-level settings and strip provider-specific
+    /// fields so the snippet can be merged across Qwen providers.
+    fn extract_qwen_common_config(settings: &Value) -> Result<String, AppError> {
+        let mut config = settings.clone();
+
+        if let Some(env) = config.get_mut("env").and_then(Value::as_object_mut) {
+            env.remove("OPENAI_API_KEY");
+            env.remove("OPENAI_BASE_URL");
+            env.remove("OPENAI_MODEL");
+            if env.is_empty() {
+                config.as_object_mut().map(|obj| obj.remove("env"));
+            }
+        }
+
+        if let Some(provider_config) = config.get_mut("config").and_then(Value::as_object_mut) {
+            provider_config.remove("modelProviders");
+
+            if let Some(security) = provider_config
+                .get_mut("security")
+                .and_then(Value::as_object_mut)
+            {
+                if let Some(auth) = security.get_mut("auth").and_then(Value::as_object_mut) {
+                    auth.remove("selectedType");
+                    if auth.is_empty() {
+                        security.remove("auth");
+                    }
+                }
+
+                if security.is_empty() {
+                    provider_config.remove("security");
+                }
+            }
+
+            if let Some(model) = provider_config.get_mut("model").and_then(Value::as_object_mut) {
+                model.remove("name");
+                if model.is_empty() {
+                    provider_config.remove("model");
+                }
+            }
+
+            if provider_config.is_empty() {
+                config.as_object_mut().map(|obj| obj.remove("config"));
+            }
+        }
+
+        if config.as_object().is_none_or(|obj| obj.is_empty()) {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&config)
             .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
     }
 

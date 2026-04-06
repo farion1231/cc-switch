@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::fs;
 
 use cc_switch_lib::{
     get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
@@ -692,6 +693,232 @@ fn provider_service_switch_missing_provider_returns_error() {
         }
         other => panic!("expected Message error for provider not found, got {other:?}"),
     }
+}
+
+#[test]
+fn extract_qwen_common_config_strips_provider_specific_fields() {
+    let snippet = ProviderService::extract_common_config_snippet_from_settings(
+        AppType::Qwen,
+        &json!({
+            "env": {
+                "OPENAI_API_KEY": "provider-key",
+                "OPENAI_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "OPENAI_MODEL": "qwen3-coder-plus",
+                "QWEN_TRACE": "1"
+            },
+            "config": {
+                "modelProviders": {
+                    "dashscope": {
+                        "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    }
+                },
+                "security": {
+                    "auth": {
+                        "selectedType": "openai"
+                    }
+                },
+                "model": {
+                    "name": "qwen3-coder-plus"
+                },
+                "ui": {
+                    "locale": "zh-CN"
+                },
+                "telemetry": {
+                    "enabled": false
+                }
+            }
+        }),
+    )
+    .expect("extract qwen common config");
+
+    let value: serde_json::Value = serde_json::from_str(&snippet).expect("parse qwen snippet");
+    assert_eq!(
+        value,
+        json!({
+            "env": {
+                "QWEN_TRACE": "1"
+            },
+            "config": {
+                "ui": {
+                    "locale": "zh-CN"
+                },
+                "telemetry": {
+                    "enabled": false
+                }
+            }
+        })
+    );
+}
+
+#[test]
+fn provider_service_switch_qwen_applies_common_config_and_preserves_shared_settings() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let qwen_dir = home.join(".qwen");
+    fs::create_dir_all(&qwen_dir).expect("create qwen dir");
+
+    fs::write(
+        qwen_dir.join(".env"),
+        "OPENAI_API_KEY=old-live-key\nOPENAI_BASE_URL=https://old.example/v1\nOPENAI_MODEL=qwen-old\n",
+    )
+    .expect("write qwen env");
+    fs::write(
+        qwen_dir.join("settings.json"),
+        serde_json::to_string_pretty(&json!({
+            "env": {
+                "OPENAI_API_KEY": "old-live-key",
+                "OPENAI_BASE_URL": "https://old.example/v1",
+                "OPENAI_MODEL": "qwen-old"
+            },
+            "modelProviders": {
+                "old": {
+                    "baseURL": "https://old.example/v1"
+                }
+            },
+            "security": {
+                "auth": {
+                    "selectedType": "openai"
+                }
+            },
+            "model": {
+                "name": "qwen-old"
+            },
+            "mcpServers": {
+                "shared": {
+                    "command": "uvx"
+                }
+            },
+            "theme": "dark"
+        }))
+        .expect("serialize qwen settings"),
+    )
+    .expect("write qwen settings");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Qwen)
+            .expect("qwen manager");
+        manager.current = "old-provider".to_string();
+
+        let mut old_provider = Provider::with_id(
+            "old-provider".to_string(),
+            "Old Qwen".to_string(),
+            json!({
+                "env": {
+                    "OPENAI_API_KEY": "old-live-key",
+                    "OPENAI_BASE_URL": "https://old.example/v1",
+                    "OPENAI_MODEL": "qwen-old"
+                },
+                "config": {
+                    "modelProviders": {
+                        "old": {
+                            "baseURL": "https://old.example/v1"
+                        }
+                    },
+                    "security": {
+                        "auth": {
+                            "selectedType": "openai"
+                        }
+                    },
+                    "model": {
+                        "name": "qwen-old"
+                    }
+                }
+            }),
+            None,
+        );
+        old_provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        let mut new_provider = Provider::with_id(
+            "new-provider".to_string(),
+            "New Qwen".to_string(),
+            json!({
+                "env": {
+                    "OPENAI_API_KEY": "new-key",
+                    "OPENAI_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "OPENAI_MODEL": "qwen3-coder-plus"
+                },
+                "config": {
+                    "modelProviders": {
+                        "dashscope": {
+                            "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                        }
+                    },
+                    "security": {
+                        "auth": {
+                            "selectedType": "openai"
+                        }
+                    },
+                    "model": {
+                        "name": "qwen3-coder-plus"
+                    }
+                }
+            }),
+            None,
+        );
+        new_provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        manager.providers.insert("old-provider".to_string(), old_provider);
+        manager.providers.insert("new-provider".to_string(), new_provider);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Qwen.as_str(),
+            Some(
+                r#"{
+  "config": {
+    "ui": {
+      "locale": "zh-CN"
+    }
+  }
+}"#
+                .to_string(),
+            ),
+        )
+        .expect("set qwen common config snippet");
+
+    ProviderService::switch(&state, AppType::Qwen, "new-provider")
+        .expect("switch qwen provider should succeed");
+
+    let live_after: serde_json::Value =
+        read_json_file(&qwen_dir.join("settings.json")).expect("read qwen settings after switch");
+    assert_eq!(
+        live_after["model"]["name"],
+        json!("qwen3-coder-plus"),
+        "live settings should reflect the newly selected provider model"
+    );
+    assert_eq!(
+        live_after["security"]["auth"]["selectedType"],
+        json!("openai"),
+        "live settings should reflect the newly selected provider auth mode"
+    );
+    assert_eq!(
+        live_after["ui"]["locale"],
+        json!("zh-CN"),
+        "qwen common config should be applied during switch"
+    );
+    assert_eq!(
+        live_after["mcpServers"]["shared"]["command"],
+        json!("uvx"),
+        "shared live settings should remain intact after switch"
+    );
+    assert_eq!(
+        live_after["theme"],
+        json!("dark"),
+        "unrelated shared settings should remain intact after switch"
+    );
 }
 
 #[test]
