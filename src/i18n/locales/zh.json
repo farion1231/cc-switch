@@ -1019,6 +1019,14 @@
     "stream": "流",
     "nonStream": "非流",
     "source": "来源",
+    "requestsLabel": "次请求",
+    "costLabel": "总成本",
+    "appFilter": {
+      "all": "全部",
+      "claude": "Claude Code",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    },
     "dataSources": "数据来源",
     "dataSource": {
       "proxy": "代理",

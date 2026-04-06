@@ -50,23 +50,25 @@ export const usageApi = {
   getUsageSummary: async (
     startDate?: number,
     endDate?: number,
+    appType?: string,
   ): Promise<UsageSummary> => {
-    return invoke("get_usage_summary", { startDate, endDate });
+    return invoke("get_usage_summary", { startDate, endDate, appType });
   },
 
   getUsageTrends: async (
     startDate?: number,
     endDate?: number,
+    appType?: string,
   ): Promise<DailyStats[]> => {
-    return invoke("get_usage_trends", { startDate, endDate });
+    return invoke("get_usage_trends", { startDate, endDate, appType });
   },
 
-  getProviderStats: async (): Promise<ProviderStats[]> => {
-    return invoke("get_provider_stats");
+  getProviderStats: async (appType?: string): Promise<ProviderStats[]> => {
+    return invoke("get_provider_stats", { appType });
   },
 
-  getModelStats: async (): Promise<ModelStats[]> => {
-    return invoke("get_model_stats");
+  getModelStats: async (appType?: string): Promise<ModelStats[]> => {
+    return invoke("get_model_stats", { appType });
   },
 
   getRequestLogs: async (

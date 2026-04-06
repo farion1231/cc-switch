@@ -1019,6 +1019,14 @@
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
     "source": "ソース",
+    "requestsLabel": "リクエスト",
+    "costLabel": "合計コスト",
+    "appFilter": {
+      "all": "すべて",
+      "claude": "Claude Code",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    },
     "dataSources": "データソース",
     "dataSource": {
       "proxy": "プロキシ",

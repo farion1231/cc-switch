@@ -1019,6 +1019,14 @@
     "stream": "Stream",
     "nonStream": "Non-stream",
     "source": "Source",
+    "requestsLabel": "requests",
+    "costLabel": "total cost",
+    "appFilter": {
+      "all": "All",
+      "claude": "Claude Code",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    },
     "dataSources": "Data Sources",
     "dataSource": {
       "proxy": "Proxy",
