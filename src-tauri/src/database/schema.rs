@@ -414,7 +414,7 @@ impl Database {
                         Self::set_user_version(conn, 7)?;
                     }
                     7 => {
-                        log::info!("迁移数据库从 v7 到 v8（会话日志使用追踪）");
+                        log::info!("迁移数据库从 v7 到 v8（会话日志使用追踪 + 修正模型定价）");
                         Self::migrate_v7_to_v8(conn)?;
                         Self::set_user_version(conn, 8)?;
                     }
@@ -1102,7 +1102,38 @@ impl Database {
         )
         .map_err(|e| AppError::Database(format!("创建 session_log_sync 表失败: {e}")))?;
 
-        log::info!("v7 -> v8 迁移完成：已添加 data_source 列和 session_log_sync 表");
+        // 3. 修正国产模型定价：之前误将 CNY 值存为 USD 字段，统一转换为 USD
+        let pricing_fixes: &[(&str, &str, &str, &str, &str)] = &[
+            ("deepseek-v3.2", "0.28", "0.42", "0.028", "0"),
+            ("deepseek-v3.1", "0.55", "1.67", "0.055", "0"),
+            ("deepseek-v3", "0.28", "1.11", "0.028", "0"),
+            ("doubao-seed-code", "0.17", "1.11", "0.02", "0"),
+            ("kimi-k2-thinking", "0.55", "2.20", "0.10", "0"),
+            ("kimi-k2-0905", "0.55", "2.20", "0.10", "0"),
+            ("kimi-k2-turbo", "1.11", "8.06", "0.14", "0"),
+            ("minimax-m2.1", "0.27", "0.95", "0.03", "0"),
+            ("minimax-m2.1-lightning", "0.27", "2.33", "0.03", "0"),
+            ("minimax-m2", "0.27", "0.95", "0.03", "0"),
+            ("glm-4.7", "0.39", "1.75", "0.04", "0"),
+            ("glm-4.6", "0.28", "1.11", "0.03", "0"),
+            ("mimo-v2-flash", "0.09", "0.29", "0.009", "0"),
+        ];
+        for (model_id, input, output, cache_read, cache_creation) in pricing_fixes {
+            conn.execute(
+                "UPDATE model_pricing SET
+                    input_cost_per_million = ?2,
+                    output_cost_per_million = ?3,
+                    cache_read_cost_per_million = ?4,
+                    cache_creation_cost_per_million = ?5
+                 WHERE model_id = ?1",
+                rusqlite::params![model_id, input, output, cache_read, cache_creation],
+            )
+            .map_err(|e| {
+                AppError::Database(format!("更新模型 {model_id} 定价失败: {e}"))
+            })?;
+        }
+
+        log::info!("v7 -> v8 迁移完成：data_source 列、session_log_sync 表、修正 13 个模型定价");
         Ok(())
     }
 
@@ -1195,6 +1226,10 @@ impl Database {
                 "0.30",
                 "3.75",
             ),
+            // GPT-5.4 系列
+            ("gpt-5.4", "GPT-5.4", "2.50", "15", "0.25", "0"),
+            ("gpt-5.4-mini", "GPT-5.4 Mini", "0.75", "4.50", "0.075", "0"),
+            ("gpt-5.4-nano", "GPT-5.4 Nano", "0.20", "1.25", "0.02", "0"),
             // GPT-5.2 系列
             ("gpt-5.2", "GPT-5.2", "1.75", "14", "0.175", "0"),
             ("gpt-5.2-low", "GPT-5.2", "1.75", "14", "0.175", "0"),
@@ -1355,6 +1390,30 @@ impl Database {
                 "0.125",
                 "0",
             ),
+            // OpenAI Reasoning 系列
+            ("o3", "OpenAI o3", "2", "8", "0.50", "0"),
+            ("o4-mini", "OpenAI o4-mini", "1.10", "4.40", "0.275", "0"),
+            // GPT-4.1 系列
+            ("gpt-4.1", "GPT-4.1", "2", "8", "0.50", "0"),
+            ("gpt-4.1-mini", "GPT-4.1 Mini", "0.40", "1.60", "0.10", "0"),
+            ("gpt-4.1-nano", "GPT-4.1 Nano", "0.10", "0.40", "0.025", "0"),
+            // Gemini 3.1 系列
+            (
+                "gemini-3.1-pro-preview",
+                "Gemini 3.1 Pro Preview",
+                "2",
+                "12",
+                "0.20",
+                "0",
+            ),
+            (
+                "gemini-3.1-flash-lite-preview",
+                "Gemini 3.1 Flash Lite Preview",
+                "0.25",
+                "1.50",
+                "0.025",
+                "0",
+            ),
             // Gemini 3 系列
             (
                 "gemini-3-pro-preview",
@@ -1389,6 +1448,16 @@ impl Database {
                 "0.03",
                 "0",
             ),
+            (
+                "gemini-2.5-flash-lite",
+                "Gemini 2.5 Flash Lite",
+                "0.10",
+                "0.40",
+                "0.01",
+                "0",
+            ),
+            // Gemini 2.0 系列
+            ("gemini-2.0-flash", "Gemini 2.0 Flash", "0.10", "0.40", "0.025", "0"),
             // StepFun 系列
             (
                 "step-3.5-flash",
@@ -1398,68 +1467,36 @@ impl Database {
                 "0.02",
                 "0",
             ),
-            // ====== 国产模型 (CNY/1M tokens) ======
+            // ====== 国产模型 (USD/1M tokens) ======
             // Doubao (字节跳动)
-            (
-                "doubao-seed-code",
-                "Doubao Seed Code",
-                "1.20",
-                "8.00",
-                "0.24",
-                "0",
-            ),
+            ("doubao-seed-code", "Doubao Seed Code", "0.17", "1.11", "0.02", "0"),
             // DeepSeek 系列
-            (
-                "deepseek-v3.2",
-                "DeepSeek V3.2",
-                "2.00",
-                "3.00",
-                "0.40",
-                "0",
-            ),
-            (
-                "deepseek-v3.1",
-                "DeepSeek V3.1",
-                "4.00",
-                "12.00",
-                "0.80",
-                "0",
-            ),
-            ("deepseek-v3", "DeepSeek V3", "2.00", "8.00", "0.40", "0"),
+            ("deepseek-v3.2", "DeepSeek V3.2", "0.28", "0.42", "0.028", "0"),
+            ("deepseek-v3.1", "DeepSeek V3.1", "0.55", "1.67", "0.055", "0"),
+            ("deepseek-v3", "DeepSeek V3", "0.28", "1.11", "0.028", "0"),
+            ("deepseek-chat", "DeepSeek Chat", "0.28", "0.42", "0.028", "0"),
+            ("deepseek-reasoner", "DeepSeek Reasoner", "0.28", "0.42", "0.028", "0"),
             // Kimi (月之暗面)
-            (
-                "kimi-k2-thinking",
-                "Kimi K2 Thinking",
-                "4.00",
-                "16.00",
-                "1.00",
-                "0",
-            ),
-            ("kimi-k2-0905", "Kimi K2", "4.00", "16.00", "1.00", "0"),
-            (
-                "kimi-k2-turbo",
-                "Kimi K2 Turbo",
-                "8.00",
-                "58.00",
-                "1.00",
-                "0",
-            ),
+            ("kimi-k2-thinking", "Kimi K2 Thinking", "0.55", "2.20", "0.10", "0"),
+            ("kimi-k2-0905", "Kimi K2", "0.55", "2.20", "0.10", "0"),
+            ("kimi-k2-turbo", "Kimi K2 Turbo", "1.11", "8.06", "0.14", "0"),
+            ("kimi-k2.5", "Kimi K2.5", "0.60", "3.00", "0.10", "0"),
             // MiniMax 系列
-            ("minimax-m2.1", "MiniMax M2.1", "2.10", "8.40", "0.21", "0"),
+            ("minimax-m2.1", "MiniMax M2.1", "0.27", "0.95", "0.03", "0"),
             (
                 "minimax-m2.1-lightning",
                 "MiniMax M2.1 Lightning",
-                "2.10",
-                "16.80",
-                "0.21",
+                "0.27",
+                "2.33",
+                "0.03",
                 "0",
             ),
-            ("minimax-m2", "MiniMax M2", "2.10", "8.40", "0.21", "0"),
+            ("minimax-m2", "MiniMax M2", "0.27", "0.95", "0.03", "0"),
             // GLM (智谱)
-            ("glm-4.7", "GLM-4.7", "2.00", "8.00", "0.40", "0"),
-            ("glm-4.6", "GLM-4.6", "2.00", "8.00", "0.40", "0"),
+            ("glm-4.7", "GLM-4.7", "0.39", "1.75", "0.04", "0"),
+            ("glm-4.6", "GLM-4.6", "0.28", "1.11", "0.03", "0"),
             // Mimo (小米)
-            ("mimo-v2-flash", "Mimo V2 Flash", "0", "0", "0", "0"),
+            ("mimo-v2-flash", "Mimo V2 Flash", "0.09", "0.29", "0.009", "0"),
         ];
 
         for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data {
