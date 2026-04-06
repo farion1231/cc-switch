@@ -145,11 +145,13 @@ async fn handle_claude_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
-    _original_body: &Value,
+    original_body: &Value,
     is_stream: bool,
     api_format: &str,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
+    let tool_schema_hints = transform_gemini::extract_anthropic_tool_schema_hints(original_body);
+    let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
 
     if is_stream {
         // 根据 api_format 选择流式转换器
@@ -164,6 +166,7 @@ async fn handle_claude_transform(
                 Some(state.gemini_shadow.clone()),
                 Some(ctx.provider.id.clone()),
                 Some(ctx.session_id.clone()),
+                tool_schema_hints.clone(),
             )))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
@@ -254,11 +257,12 @@ async fn handle_claude_transform(
     let anthropic_response = if api_format == "openai_responses" {
         transform_responses::responses_to_anthropic(upstream_response)
     } else if api_format == "gemini_native" {
-        transform_gemini::gemini_to_anthropic_with_shadow(
+        transform_gemini::gemini_to_anthropic_with_shadow_and_hints(
             upstream_response,
             Some(state.gemini_shadow.as_ref()),
             Some(&ctx.provider.id),
             Some(&ctx.session_id),
+            tool_schema_hints.as_ref(),
         )
     } else {
         transform::openai_to_anthropic(upstream_response)

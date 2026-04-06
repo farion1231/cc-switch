@@ -4,6 +4,7 @@
 //! SSE events for Claude-compatible clients.
 
 use super::gemini_shadow::{GeminiShadowStore, GeminiToolCallMeta};
+use super::transform_gemini::{rectify_tool_call_parts, AnthropicToolSchemaHints};
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
@@ -69,8 +70,14 @@ fn extract_visible_text(parts: &[Value]) -> String {
         .collect::<String>()
 }
 
-fn extract_tool_calls(parts: &[Value]) -> Vec<GeminiToolCallMeta> {
-    parts
+fn extract_tool_calls(
+    parts: &[Value],
+    tool_schema_hints: Option<&AnthropicToolSchemaHints>,
+) -> Vec<GeminiToolCallMeta> {
+    let mut rectified_parts = parts.to_vec();
+    rectify_tool_call_parts(&mut rectified_parts, tool_schema_hints);
+
+    rectified_parts
         .iter()
         .filter_map(|part| {
             let function_call = part.get("functionCall")?;
@@ -174,6 +181,7 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
     shadow_store: Option<Arc<GeminiShadowStore>>,
     provider_id: Option<String>,
     session_id: Option<String>,
+    tool_schema_hints: Option<AnthropicToolSchemaHints>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -278,14 +286,16 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
                                 .and_then(|value| value.get("parts"))
                                 .and_then(|value| value.as_array())
                             {
+                                let mut rectified_parts = parts.clone();
+                                rectify_tool_call_parts(&mut rectified_parts, tool_schema_hints.as_ref());
                                 if let Some(signature) = extract_text_thought_signature(parts) {
                                     text_thought_signature = Some(signature);
                                 }
                                 merge_tool_call_snapshots(
                                     &mut tool_call_snapshots,
-                                    extract_tool_calls(parts),
+                                    extract_tool_calls(&rectified_parts, tool_schema_hints.as_ref()),
                                 );
-                                let visible_text = extract_visible_text(parts);
+                                let visible_text = extract_visible_text(&rectified_parts);
                                 if !visible_text.is_empty() {
                                     let is_cumulative = visible_text.starts_with(&accumulated_text);
                                     let delta = if is_cumulative {
@@ -491,7 +501,7 @@ mod tests {
                 .into_iter()
                 .map(|chunk| Ok::<Bytes, std::io::Error>(Bytes::from(chunk))),
         );
-        let converted = create_anthropic_sse_stream_from_gemini(stream, None, None, None);
+        let converted = create_anthropic_sse_stream_from_gemini(stream, None, None, None, None);
         futures::executor::block_on(async move {
             converted
                 .collect::<Vec<_>>()
@@ -520,6 +530,7 @@ mod tests {
             Some(store),
             Some(provider_id.to_string()),
             Some(session_id.to_string()),
+            None,
         );
         futures::executor::block_on(async move {
             converted
@@ -615,5 +626,43 @@ mod tests {
             second_turn["contents"][1]["parts"][0]["thoughtSignature"],
             "sig-1"
         );
+    }
+
+    #[test]
+    fn rectifies_streamed_tool_call_args_from_tool_schema_hints() {
+        let owned_chunks = vec![
+            "data: {\"responseId\":\"resp_5\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call_1\",\"name\":\"Bash\",\"args\":{\"args\":\"git status\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":5,\"totalTokenCount\":8}}\n\n".to_string(),
+        ];
+        let stream = futures::stream::iter(
+            owned_chunks
+                .into_iter()
+                .map(|chunk| Ok::<Bytes, std::io::Error>(Bytes::from(chunk))),
+        );
+        let hints = super::super::transform_gemini::extract_anthropic_tool_schema_hints(&json!({
+            "tools": [{
+                "name": "Bash",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string" },
+                        "timeout": { "type": "number" }
+                    },
+                    "required": ["command"]
+                }
+            }]
+        }));
+        let converted =
+            create_anthropic_sse_stream_from_gemini(stream, None, None, None, Some(hints));
+        let output = futures::executor::block_on(async move {
+            converted
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(|item| String::from_utf8(item.unwrap().to_vec()).unwrap())
+                .collect::<Vec<_>>()
+                .join("")
+        });
+
+        assert!(output.contains("\"partial_json\":\"{\\\"command\\\":\\\"git status\\\"}\""));
     }
 }

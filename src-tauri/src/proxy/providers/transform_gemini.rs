@@ -8,6 +8,15 @@ use super::gemini_schema::build_gemini_function_declaration;
 use super::gemini_shadow::{GeminiAssistantTurn, GeminiShadowStore, GeminiToolCallMeta};
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Map, Value};
+use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnthropicToolSchemaHint {
+    expected_keys: Vec<String>,
+    required_keys: Vec<String>,
+}
+
+pub type AnthropicToolSchemaHints = HashMap<String, AnthropicToolSchemaHint>;
 
 pub fn anthropic_to_gemini(body: Value) -> Result<Value, ProxyError> {
     anthropic_to_gemini_with_shadow(body, None, None, None)
@@ -78,6 +87,16 @@ pub fn gemini_to_anthropic_with_shadow(
     provider_id: Option<&str>,
     session_id: Option<&str>,
 ) -> Result<Value, ProxyError> {
+    gemini_to_anthropic_with_shadow_and_hints(body, shadow_store, provider_id, session_id, None)
+}
+
+pub fn gemini_to_anthropic_with_shadow_and_hints(
+    body: Value,
+    shadow_store: Option<&GeminiShadowStore>,
+    provider_id: Option<&str>,
+    session_id: Option<&str>,
+    tool_schema_hints: Option<&AnthropicToolSchemaHints>,
+) -> Result<Value, ProxyError> {
     if let Some(block_reason) = body
         .get("promptFeedback")
         .and_then(|value| value.get("blockReason"))
@@ -111,10 +130,13 @@ pub fn gemini_to_anthropic_with_shadow(
         .cloned()
         .unwrap_or_default();
 
+    let mut rectified_parts = parts.clone();
+    rectify_tool_call_parts(&mut rectified_parts, tool_schema_hints);
+
     let mut content = Vec::new();
     let mut has_tool_use = false;
 
-    for part in &parts {
+    for part in &rectified_parts {
         if part.get("thought").and_then(|value| value.as_bool()) == Some(true) {
             continue;
         }
@@ -164,11 +186,15 @@ pub fn gemini_to_anthropic_with_shadow(
         session_id,
         candidate.get("content"),
     ) {
+        let mut shadow_content = content.clone();
+        if let Some(parts_value) = shadow_content.get_mut("parts") {
+            *parts_value = json!(rectified_parts.clone());
+        }
         store.record_assistant_turn(
             provider_id,
             session_id,
-            content.clone(),
-            extract_tool_call_meta(&parts),
+            shadow_content,
+            extract_tool_call_meta(&rectified_parts),
         );
     }
 
@@ -242,7 +268,7 @@ fn convert_messages_to_contents(
     shadow_turns: &[GeminiAssistantTurn],
 ) -> Result<Vec<Value>, ProxyError> {
     let mut contents = Vec::new();
-    let mut tool_name_by_id = std::collections::HashMap::<String, String>::new();
+    let mut tool_name_by_id = build_tool_name_map_from_shadow_turns(shadow_turns);
     let total_assistant_messages = messages
         .iter()
         .filter(|message| message.get("role").and_then(|value| value.as_str()) == Some("assistant"))
@@ -286,6 +312,10 @@ fn convert_messages_to_contents(
         } else {
             convert_message_content_to_parts(message.get("content"), role, &mut tool_name_by_id)?
         };
+
+        if role == "assistant" {
+            merge_tool_names_from_parts(&parts, &mut tool_name_by_id);
+        }
 
         contents.push(json!({
             "role": gemini_role,
@@ -410,7 +440,11 @@ fn convert_message_content_to_parts(
                 let name = tool_name_by_id
                     .get(tool_use_id)
                     .cloned()
-                    .unwrap_or_default();
+                    .ok_or_else(|| {
+                        ProxyError::TransformError(format!(
+                            "Unable to resolve Gemini functionResponse.name for tool_use_id `{tool_use_id}`"
+                        ))
+                    })?;
 
                 parts.push(json!({
                     "functionResponse": {
@@ -457,13 +491,171 @@ fn shadow_parts(content: &Value) -> Option<Vec<Value>> {
         .or_else(|| content.as_array().cloned())
 }
 
+pub fn extract_anthropic_tool_schema_hints(body: &Value) -> AnthropicToolSchemaHints {
+    body.get("tools")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| {
+            let name = tool.get("name").and_then(|value| value.as_str())?;
+            let input_schema = tool
+                .get("input_schema")
+                .and_then(|value| value.as_object())?;
+            let properties = input_schema
+                .get("properties")
+                .and_then(|value| value.as_object())?;
+            if properties.is_empty() {
+                return None;
+            }
+
+            let expected_keys = properties.keys().cloned().collect::<Vec<_>>();
+            let required_keys = input_schema
+                .get("required")
+                .and_then(|value| value.as_array())
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(ToString::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            Some((
+                name.to_string(),
+                AnthropicToolSchemaHint {
+                    expected_keys,
+                    required_keys,
+                },
+            ))
+        })
+        .collect()
+}
+
+pub fn rectify_tool_call_parts(
+    parts: &mut [Value],
+    tool_schema_hints: Option<&AnthropicToolSchemaHints>,
+) {
+    for part in parts {
+        let Some(function_call) = part
+            .get_mut("functionCall")
+            .and_then(|value| value.as_object_mut())
+        else {
+            continue;
+        };
+        let Some(name) = function_call
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string)
+        else {
+            continue;
+        };
+        let Some(args) = function_call.get_mut("args") else {
+            continue;
+        };
+
+        if rectify_tool_call_args(&name, args, tool_schema_hints) {
+            log::info!("[Claude/Gemini] Rectified tool args for `{name}`");
+        }
+    }
+}
+
+pub fn rectify_tool_call_args(
+    tool_name: &str,
+    args: &mut Value,
+    tool_schema_hints: Option<&AnthropicToolSchemaHints>,
+) -> bool {
+    let Some(tool_schema_hints) = tool_schema_hints else {
+        return false;
+    };
+    let Some(hint) = tool_schema_hints.get(tool_name) else {
+        return false;
+    };
+    let Some(args_object) = args.as_object_mut() else {
+        return false;
+    };
+    if args_object.is_empty() || hint.expected_keys.is_empty() {
+        return false;
+    }
+
+    let expected_key_set = hint
+        .expected_keys
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let unexpected_keys = args_object
+        .keys()
+        .filter(|key| !expected_key_set.contains(key.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if unexpected_keys.len() != 1 {
+        return false;
+    }
+
+    let target_key = hint
+        .required_keys
+        .iter()
+        .find(|key| !args_object.contains_key(key.as_str()))
+        .cloned()
+        .or_else(|| {
+            if hint.expected_keys.len() == 1 && args_object.len() == 1 {
+                hint.expected_keys.first().cloned()
+            } else {
+                None
+            }
+        });
+    let Some(target_key) = target_key else {
+        return false;
+    };
+    if args_object.contains_key(&target_key) {
+        return false;
+    }
+
+    let source_key = &unexpected_keys[0];
+    let Some(value) = args_object.remove(source_key) else {
+        return false;
+    };
+    args_object.insert(target_key, value);
+    true
+}
+
 fn merge_tool_names_from_shadow(
     turn: &GeminiAssistantTurn,
-    tool_name_by_id: &mut std::collections::HashMap<String, String>,
+    tool_name_by_id: &mut HashMap<String, String>,
 ) {
     for tool_call in &turn.tool_calls {
         if let Some(id) = &tool_call.id {
             tool_name_by_id.insert(id.clone(), tool_call.name.clone());
+        }
+    }
+
+    if let Some(parts) = shadow_parts(&turn.assistant_content) {
+        merge_tool_names_from_parts(&parts, tool_name_by_id);
+    }
+}
+
+fn build_tool_name_map_from_shadow_turns(
+    shadow_turns: &[GeminiAssistantTurn],
+) -> HashMap<String, String> {
+    let mut tool_name_by_id = HashMap::new();
+    for turn in shadow_turns {
+        merge_tool_names_from_shadow(turn, &mut tool_name_by_id);
+    }
+    tool_name_by_id
+}
+
+fn merge_tool_names_from_parts(parts: &[Value], tool_name_by_id: &mut HashMap<String, String>) {
+    for part in parts {
+        let Some(function_call) = part.get("functionCall") else {
+            continue;
+        };
+        let Some(id) = function_call.get("id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let Some(name) = function_call.get("name").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if !id.is_empty() && !name.is_empty() {
+            tool_name_by_id.insert(id.to_string(), name.to_string());
         }
     }
 }
@@ -677,6 +869,68 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_to_gemini_resolves_tool_result_name_from_shadow_content() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "provider-a",
+            "session-1",
+            json!({
+                "parts": [{
+                    "functionCall": {
+                        "id": "call_1",
+                        "name": "get_weather",
+                        "args": { "city": "Tokyo" }
+                    }
+                }]
+            }),
+            vec![],
+        );
+
+        let input = json!({
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini_with_shadow(
+            input,
+            Some(&store),
+            Some("provider-a"),
+            Some("session-1"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result["contents"][0]["parts"][0]["functionResponse"]["name"],
+            "get_weather"
+        );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_rejects_tool_result_without_resolvable_name() {
+        let input = json!({
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" }
+                    ]
+                }
+            ]
+        });
+
+        let error = anthropic_to_gemini(input).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Unable to resolve Gemini functionResponse.name"));
+    }
+
+    #[test]
     fn anthropic_to_gemini_uses_parameters_json_schema_for_rich_tool_schema() {
         let input = json!({
             "tools": [
@@ -763,6 +1017,46 @@ mod tests {
         assert_eq!(result["content"][0]["type"], "tool_use");
         assert_eq!(result["content"][0]["id"], "call_1");
         assert_eq!(result["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn gemini_to_anthropic_rectifies_tool_args_from_schema_hints() {
+        let input = json!({
+            "responseId": "resp_2",
+            "modelVersion": "gemini-2.5-pro",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "id": "call_1",
+                            "name": "Skill",
+                            "args": { "name": "git-commit" }
+                        }
+                    }]
+                }
+            }]
+        });
+        let hints = extract_anthropic_tool_schema_hints(&json!({
+            "tools": [{
+                "name": "Skill",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "skill": { "type": "string" },
+                        "args": { "type": "string" }
+                    },
+                    "required": ["skill"]
+                }
+            }]
+        }));
+
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, Some(&hints))
+                .unwrap();
+
+        assert_eq!(result["content"][0]["input"]["skill"], "git-commit");
+        assert!(result["content"][0]["input"].get("name").is_none());
     }
 
     #[test]
