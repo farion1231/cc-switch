@@ -55,6 +55,51 @@ struct FileParseState {
     event_index: u32,
 }
 
+/// 归一化 Codex 模型名
+///
+/// 处理规则（按顺序）：
+/// 1. 转小写：`GLM-4.6` → `glm-4.6`
+/// 2. 剥离 provider 前缀：`openai/gpt-5.4` → `gpt-5.4`
+/// 3. 剥离 ISO 日期后缀：`gpt-5.4-2026-03-05` → `gpt-5.4`
+/// 4. 剥离紧凑日期后缀：`gpt-5.4-20260305` → `gpt-5.4`
+fn normalize_codex_model(raw: &str) -> String {
+    // Step 1: 小写
+    let mut name = raw.to_lowercase();
+
+    // Step 2: 剥离 "provider/" 前缀（如 openai/, azure/）
+    if let Some(pos) = name.rfind('/') {
+        name = name[pos + 1..].to_string();
+    }
+
+    // Step 3: 剥离 ISO 日期后缀 -YYYY-MM-DD（正好 11 字符）
+    if name.len() > 11 {
+        let suffix = &name[name.len() - 11..];
+        if suffix.as_bytes()[0] == b'-'
+            && suffix[1..5].chars().all(|c| c.is_ascii_digit())
+            && suffix.as_bytes()[5] == b'-'
+            && suffix[6..8].chars().all(|c| c.is_ascii_digit())
+            && suffix.as_bytes()[8] == b'-'
+            && suffix[9..11].chars().all(|c| c.is_ascii_digit())
+        {
+            name.truncate(name.len() - 11);
+        }
+    }
+
+    // Step 4: 剥离紧凑日期后缀 -YYYYMMDD（正好 9 字符）
+    if name.len() > 9 {
+        let parts: Vec<&str> = name.rsplitn(2, '-').collect();
+        if parts.len() == 2 {
+            if let Some(suffix) = parts.first() {
+                if suffix.len() == 8 && suffix.chars().all(|c| c.is_ascii_digit()) {
+                    name = parts[1].to_string();
+                }
+            }
+        }
+    }
+
+    name
+}
+
 /// 计算两次累计值之间的 delta
 fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) -> DeltaTokens {
     match prev {
@@ -273,7 +318,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                         .or_else(|| payload.get("info").and_then(|info| info.get("model")))
                         .and_then(|v| v.as_str())
                     {
-                        state.current_model = model.to_string();
+                        state.current_model = normalize_codex_model(model);
                     }
                 }
             }
@@ -300,7 +345,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     .or_else(|| payload.get("model"))
                     .and_then(|v| v.as_str())
                 {
-                    state.current_model = model.to_string();
+                    state.current_model = normalize_codex_model(model);
                 }
 
                 // 优先用 total_token_usage（累计值），fallback 到 last_token_usage（增量值）
@@ -329,6 +374,12 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                         cached_input: cumulative.cached_input as u32,
                         output: cumulative.output as u32,
                     }
+                };
+
+                // 钳制：cached 不应超过 input（防护异常数据）
+                let delta = DeltaTokens {
+                    cached_input: delta.cached_input.min(delta.input),
+                    ..delta
                 };
 
                 if delta.is_zero() {
@@ -521,10 +572,38 @@ fn update_sync_state(
     Ok(())
 }
 
-/// 查找 Codex 模型定价
+/// ��找 Codex 模型定价（带归一化）
 fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
-    // 精确匹��
-    let result = conn.query_row(
+    let normalized = normalize_codex_model(model_id);
+
+    // 1. 精确匹配（归一化后的名称）
+    if let Some(pricing) = try_find_pricing(conn, &normalized) {
+        return Some(pricing);
+    }
+
+    // 2. LIKE 模糊匹配（兜底）
+    let pattern = format!("{normalized}%");
+    conn.query_row(
+        "SELECT input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+         FROM model_pricing WHERE model_id LIKE ?1 LIMIT 1",
+        rusqlite::params![pattern],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        },
+    )
+    .ok()
+    .and_then(|(i, o, cr, cc)| ModelPricing::from_strings(&i, &o, &cr, &cc).ok())
+}
+
+/// 精确匹配定价查询
+fn try_find_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
+    conn.query_row(
         "SELECT input_cost_per_million, output_cost_per_million,
                 cache_read_cost_per_million, cache_creation_cost_per_million
          FROM model_pricing WHERE model_id = ?1",
@@ -537,33 +616,9 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
                 row.get::<_, String>(3)?,
             ))
         },
-    );
-
-    match result {
-        Ok((input, output, cache_read, cache_creation)) => {
-            ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation).ok()
-        }
-        Err(_) => {
-            // 尝试 LIKE 匹配
-            let pattern = format!("{model_id}%");
-            conn.query_row(
-                "SELECT input_cost_per_million, output_cost_per_million,
-                        cache_read_cost_per_million, cache_creation_cost_per_million
-                 FROM model_pricing WHERE model_id LIKE ?1 LIMIT 1",
-                rusqlite::params![pattern],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                },
-            )
-            .ok()
-            .and_then(|(i, o, cr, cc)| ModelPricing::from_strings(&i, &o, &cr, &cc).ok())
-        }
-    }
+    )
+    .ok()
+    .and_then(|(i, o, cr, cc)| ModelPricing::from_strings(&i, &o, &cr, &cc).ok())
 }
 
 #[cfg(test)]
@@ -677,5 +732,83 @@ mod tests {
     fn test_collect_codex_session_files_nonexistent() {
         let files = collect_codex_session_files(Path::new("/nonexistent/path"));
         assert!(files.is_empty());
+    }
+
+    // ── 模型名归一化测试 ──
+
+    #[test]
+    fn test_normalize_codex_model_lowercase() {
+        assert_eq!(normalize_codex_model("GLM-4.6"), "glm-4.6");
+        assert_eq!(normalize_codex_model("DeepSeek-Chat"), "deepseek-chat");
+        assert_eq!(normalize_codex_model("GPT-5.4"), "gpt-5.4");
+    }
+
+    #[test]
+    fn test_normalize_codex_model_strip_prefix() {
+        assert_eq!(normalize_codex_model("openai/gpt-5.4"), "gpt-5.4");
+        assert_eq!(normalize_codex_model("azure/gpt-5.2-codex"), "gpt-5.2-codex");
+        assert_eq!(normalize_codex_model("OPENAI/GPT-5.4"), "gpt-5.4");
+    }
+
+    #[test]
+    fn test_normalize_codex_model_strip_iso_date() {
+        assert_eq!(normalize_codex_model("gpt-5.4-2026-03-05"), "gpt-5.4");
+        assert_eq!(
+            normalize_codex_model("gpt-5.4-pro-2026-03-05"),
+            "gpt-5.4-pro"
+        );
+    }
+
+    #[test]
+    fn test_normalize_codex_model_strip_compact_date() {
+        assert_eq!(normalize_codex_model("gpt-5.4-20260305"), "gpt-5.4");
+        assert_eq!(
+            normalize_codex_model("claude-opus-4-6-20260206"),
+            "claude-opus-4-6"
+        );
+    }
+
+    #[test]
+    fn test_normalize_codex_model_no_change() {
+        assert_eq!(normalize_codex_model("gpt-5.4"), "gpt-5.4");
+        assert_eq!(normalize_codex_model("gpt-5.2-codex"), "gpt-5.2-codex");
+        assert_eq!(normalize_codex_model("o3"), "o3");
+        assert_eq!(normalize_codex_model("deepseek-chat"), "deepseek-chat");
+    }
+
+    #[test]
+    fn test_normalize_codex_model_combined() {
+        // prefix + uppercase + ISO date
+        assert_eq!(
+            normalize_codex_model("openai/GPT-5.4-2026-03-05"),
+            "gpt-5.4"
+        );
+        // prefix + compact date
+        assert_eq!(
+            normalize_codex_model("openai/gpt-5.4-20260305"),
+            "gpt-5.4"
+        );
+    }
+
+    #[test]
+    fn test_cached_clamped_to_input() {
+        // cached > input 的异常场景应被 min() 钳制
+        let prev = Some(CumulativeTokens {
+            input: 100,
+            cached_input: 0,
+            output: 50,
+        });
+        let current = CumulativeTokens {
+            input: 110,   // delta = 10
+            cached_input: 80, // delta = 80（异常：大于 input delta）
+            output: 60,
+        };
+        let delta = compute_delta(&prev, &current);
+        // 钳制前：cached_input = 80, input = 10
+        assert_eq!(delta.cached_input, 80);
+        assert_eq!(delta.input, 10);
+        // 实际钳制在调用侧：delta.cached_input.min(delta.input)
+        let clamped = delta.cached_input.min(delta.input);
+        assert_eq!(clamped, 10);
     }
 }
