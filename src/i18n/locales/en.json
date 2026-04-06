@@ -1024,7 +1024,8 @@
       "proxy": "Proxy",
       "session_log": "Session Log",
       "codex_db": "Codex DB",
-      "codex_session": "Codex Session"
+      "codex_session": "Codex Session",
+      "gemini_session": "Gemini Session"
     },
     "sessionSync": {
       "trigger": "Sync session logs",

@@ -11,6 +11,7 @@ pub mod provider;
 pub mod proxy;
 pub mod session_usage;
 pub mod session_usage_codex;
+pub mod session_usage_gemini;
 pub mod skill;
 pub mod speedtest;
 pub mod stream_check;

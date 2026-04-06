@@ -187,6 +187,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 Gemini 使用数据
+    match crate::services::session_usage_gemini::sync_gemini_usage(&state.db) {
+        Ok(gemini_result) => {
+            result.imported += gemini_result.imported;
+            result.skipped += gemini_result.skipped;
+            result.files_scanned += gemini_result.files_scanned;
+            result.errors.extend(gemini_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Gemini 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 
