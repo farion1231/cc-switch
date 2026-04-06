@@ -268,12 +268,17 @@ fn convert_messages_to_contents(
     shadow_turns: &[GeminiAssistantTurn],
 ) -> Result<Vec<Value>, ProxyError> {
     let mut contents = Vec::new();
-    let mut tool_name_by_id = build_tool_name_map_from_shadow_turns(shadow_turns);
     let total_assistant_messages = messages
         .iter()
         .filter(|message| message.get("role").and_then(|value| value.as_str()) == Some("assistant"))
         .count();
-    let shadow_start_index = total_assistant_messages.saturating_sub(shadow_turns.len());
+    let effective_shadow_turns = if shadow_turns.len() > total_assistant_messages {
+        &shadow_turns[shadow_turns.len() - total_assistant_messages..]
+    } else {
+        shadow_turns
+    };
+    let mut tool_name_by_id = build_tool_name_map_from_shadow_turns(shadow_turns);
+    let shadow_start_index = total_assistant_messages.saturating_sub(effective_shadow_turns.len());
     let mut assistant_seen_index = 0usize;
 
     for message in messages {
@@ -287,11 +292,11 @@ fn convert_messages_to_contents(
         let parts = if role == "assistant" {
             let shadow_index = assistant_seen_index
                 .checked_sub(shadow_start_index)
-                .filter(|index| *index < shadow_turns.len());
+                .filter(|index| *index < effective_shadow_turns.len());
             assistant_seen_index += 1;
 
             if let Some(index) = shadow_index {
-                let shadow_turn = &shadow_turns[index];
+                let shadow_turn = &effective_shadow_turns[index];
                 merge_tool_names_from_shadow(shadow_turn, &mut tool_name_by_id);
                 if let Some(parts) = shadow_parts(&shadow_turn.assistant_content) {
                     parts
@@ -1123,5 +1128,72 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("SAFETY"));
+    }
+
+    #[test]
+    fn shadow_replay_aligns_to_latest_turns_after_client_truncation() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        // Record 3 shadow turns (assistant messages 0, 1, 2)
+        for i in 0..3 {
+            store.record_assistant_turn(
+                "prov",
+                "sess",
+                json!({
+                    "parts": [{
+                        "functionCall": {
+                            "id": format!("call_{i}"),
+                            "name": format!("tool_{i}"),
+                            "args": {}
+                        }
+                    }]
+                }),
+                vec![],
+            );
+        }
+
+        // Client truncates history: only sends assistant messages 1 and 2
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "tool_1", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "ok" }
+                    ]
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_2", "name": "tool_2", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_2", "content": "ok" }
+                    ]
+                }
+            ]
+        });
+
+        let result =
+            anthropic_to_gemini_with_shadow(input, Some(&store), Some("prov"), Some("sess"))
+                .unwrap();
+
+        // Shadow turns[1] (tool_1) should align with first assistant message,
+        // shadow turns[2] (tool_2) with the second — not turns[0] and turns[1].
+        assert_eq!(
+            result["contents"][0]["parts"][0]["functionCall"]["name"],
+            "tool_1"
+        );
+        assert_eq!(
+            result["contents"][2]["parts"][0]["functionCall"]["name"],
+            "tool_2"
+        );
     }
 }

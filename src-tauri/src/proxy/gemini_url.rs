@@ -65,7 +65,7 @@ fn should_normalize_gemini_full_url(base_url: &str) -> bool {
     let path = path.trim_end_matches('/');
     path.contains("/v1beta/models/")
         || path.contains("/v1/models/")
-        || path.contains("/models/")
+        || matches_bare_gemini_models_path(path)
         || path.ends_with("/v1beta")
         || path.ends_with("/v1")
         || path.ends_with("/v1beta/models")
@@ -147,6 +147,15 @@ fn normalize_prefix(prefix: &str) -> String {
         String::new()
     } else {
         prefix.to_string()
+    }
+}
+
+fn matches_bare_gemini_models_path(path: &str) -> bool {
+    if let Some(idx) = path.find("/models/") {
+        let after = &path[idx + "/models/".len()..];
+        after.contains(":generateContent") || after.contains(":streamGenerateContent")
+    } else {
+        false
     }
 }
 
@@ -244,5 +253,16 @@ mod tests {
         );
 
         assert_eq!(url, "https://relay.example/custom/generate-content?alt=sse");
+    }
+
+    #[test]
+    fn preserves_opaque_full_url_containing_models_segment() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/custom/models/invoke",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/custom/models/invoke?alt=sse");
     }
 }
