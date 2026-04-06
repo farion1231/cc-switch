@@ -40,7 +40,8 @@ export const qwenProviderPresets: QwenProviderPreset[] = [
     settingsConfig: {
       env: {
         OPENAI_API_KEY: "",
-        OPENAI_BASE_URL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        OPENAI_BASE_URL:
+          "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         OPENAI_MODEL: "qwen3-coder-plus",
       },
     },
