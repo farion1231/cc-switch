@@ -252,6 +252,7 @@ impl Database {
         &self,
         config: AppProxyConfig,
     ) -> Result<(), AppError> {
+        self.ensure_proxy_config_row_exists(&config.app_type)?;
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -304,6 +305,7 @@ impl Database {
                 "claude" => (6, 90, 180, 8, 3, 90, 0.7, 15),
                 "codex" => (3, 60, 120, 4, 2, 60, 0.6, 10),
                 "gemini" => (5, 60, 120, 4, 2, 60, 0.6, 10),
+                "qwen" => (3, 60, 120, 4, 2, 60, 0.6, 10),
                 _ => (3, 60, 120, 4, 2, 60, 0.6, 10), // 默认值
             };
 
@@ -331,7 +333,7 @@ impl Database {
         Ok(())
     }
 
-    /// 初始化 proxy_config 表的三行数据
+    /// 初始化 proxy_config 表的应用默认数据
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
     async fn init_proxy_config_rows(&self) -> Result<(), AppError> {
@@ -370,6 +372,18 @@ impl Database {
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests
             ) VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // qwen: OpenAI-compatible 默认配置
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (
+                app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests
+            ) VALUES ('qwen', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -807,6 +821,10 @@ impl Database {
     /// 用于托盘菜单构建等同步场景
     /// 返回 (enabled, auto_failover_enabled)
     pub fn get_proxy_flags_sync(&self, app_type: &str) -> (bool, bool) {
+        if self.ensure_proxy_config_row_exists(app_type).is_err() {
+            return (false, false);
+        }
+
         let conn = match self.conn.lock() {
             Ok(c) => c,
             Err(_) => return (false, false),
@@ -829,6 +847,7 @@ impl Database {
         enabled: bool,
         auto_failover_enabled: bool,
     ) -> Result<(), AppError> {
+        self.ensure_proxy_config_row_exists(app_type)?;
         let conn = self
             .conn
             .lock()
@@ -910,6 +929,31 @@ mod tests {
                 ..
             }
         ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_qwen_proxy_config_round_trip() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        let mut config = db.get_proxy_config_for_app("qwen").await?;
+        assert_eq!(config.app_type, "qwen");
+        assert!(
+            !config.enabled,
+            "fresh Qwen proxy config should default to disabled"
+        );
+
+        config.enabled = true;
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await?;
+
+        let updated = db.get_proxy_config_for_app("qwen").await?;
+        assert!(updated.enabled, "Qwen enabled state should persist");
+        assert!(
+            updated.auto_failover_enabled,
+            "Qwen auto-failover state should persist"
+        );
 
         Ok(())
     }

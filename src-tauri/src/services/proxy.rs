@@ -680,8 +680,7 @@ impl ProxyService {
                         .map_err(|e| format!("获取 Qwen 当前供应商失败: {e}"))?;
 
                 if let Some(provider_id) = provider_id {
-                    if let Ok(Some(mut provider)) =
-                        self.db.get_provider_by_id(&provider_id, "qwen")
+                    if let Ok(Some(mut provider)) = self.db.get_provider_by_id(&provider_id, "qwen")
                     {
                         if let Some(token) = live_config
                             .get("env")
@@ -720,9 +719,7 @@ impl ProxyService {
                             ) {
                                 log::warn!("同步 Qwen Token 到数据库失败: {e}");
                             } else {
-                                log::info!(
-                                    "已同步 Qwen Token 到数据库 (provider: {provider_id})"
-                                );
+                                log::info!("已同步 Qwen Token 到数据库 (provider: {provider_id})");
                             }
                         }
                     }
@@ -907,6 +904,16 @@ impl ProxyService {
                 .map_err(|e| format!("备份 Gemini 配置失败: {e}"))?;
         }
 
+        // Qwen
+        if let Ok(config) = self.read_qwen_live() {
+            let json_str =
+                serde_json::to_string(&config).map_err(|e| format!("序列化 Qwen 配置失败: {e}"))?;
+            self.db
+                .save_live_backup("qwen", &json_str)
+                .await
+                .map_err(|e| format!("备份 Qwen 配置失败: {e}"))?;
+        }
+
         log::info!("已备份所有应用的 Live 配置");
         Ok(())
     }
@@ -1017,6 +1024,21 @@ impl ProxyService {
             }
             self.write_gemini_live(&live_config)?;
             log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
+        }
+
+        // Qwen: 修改 OPENAI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
+        if let Ok(mut live_config) = self.read_qwen_live() {
+            if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
+                env.insert("OPENAI_BASE_URL".to_string(), json!(&proxy_url));
+                env.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+            } else {
+                live_config["env"] = json!({
+                    "OPENAI_BASE_URL": &proxy_url,
+                    "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                });
+            }
+            self.write_qwen_live(&live_config)?;
+            log::info!("Qwen Live 配置已接管，代理地址: {proxy_url}");
         }
 
         Ok(())
@@ -1220,7 +1242,12 @@ impl ProxyService {
     async fn restore_live_configs(&self) -> Result<(), String> {
         let mut errors = Vec::new();
 
-        for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini, AppType::Qwen] {
+        for app_type in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::Qwen,
+        ] {
             if let Err(e) = self
                 .restore_live_config_for_app_with_fallback(&app_type)
                 .await
@@ -1670,17 +1697,8 @@ impl ProxyService {
                 serde_json::to_string(&env_backup)
                     .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?
             }
-            AppType::Qwen => {
-                // Qwen: 只提取 env 字段（与原始备份格式一致）
-                // proxy.rs 的 read_qwen_live() 返回 {"env": {...}}
-                let env_backup = if let Some(env) = provider.settings_config.get("env") {
-                    json!({ "env": env })
-                } else {
-                    json!({ "env": {} })
-                };
-                serde_json::to_string(&env_backup)
-                    .map_err(|e| format!("序列化 Qwen 配置失败: {e}"))?
-            }
+            AppType::Qwen => serde_json::to_string(&effective_settings)
+                .map_err(|e| format!("序列化 Qwen 配置失败: {e}"))?,
             AppType::OpenCode | AppType::OpenClaw => {
                 return Err(format!("未知的应用类型: {app_type}"));
             }
@@ -1947,23 +1965,17 @@ impl ProxyService {
     }
 
     fn read_qwen_live(&self) -> Result<Value, String> {
-        use crate::qwen_config::{env_to_json, get_qwen_env_path, read_qwen_env};
+        crate::qwen_config::read_qwen_live_config().map_err(|e| format!("读取 Qwen 配置失败: {e}"))
+    }
 
-        let env_path = get_qwen_env_path();
-        if !env_path.exists() {
-            return Err("Qwen .env 文件不存在".to_string());
-        }
-
-        let env_map = read_qwen_env().map_err(|e| format!("读取 Qwen env 失败: {e}"))?;
-        Ok(env_to_json(&env_map))
+    #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
+    pub fn read_qwen_live_test_hook(&self) -> Result<Value, String> {
+        self.read_qwen_live()
     }
 
     fn write_qwen_live(&self, config: &Value) -> Result<(), String> {
-        use crate::qwen_config::{json_to_env, write_qwen_env_atomic};
-
-        let env_map = json_to_env(config).map_err(|e| format!("转换 Qwen 配置失败: {e}"))?;
-        write_qwen_env_atomic(&env_map).map_err(|e| format!("写入 Qwen env 失败: {e}"))?;
-        Ok(())
+        crate::qwen_config::write_qwen_live_settings(config)
+            .map_err(|e| format!("写入 Qwen 配置失败: {e}"))
     }
 
     fn write_gemini_live(&self, config: &Value) -> Result<(), String> {
