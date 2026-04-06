@@ -7,7 +7,7 @@ use super::{
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::ProxyResponse,
     server::ProxyState,
-    sse::strip_sse_field,
+    sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -623,10 +623,7 @@ pub fn create_logged_passthrough_stream(
                     buffer.push_str(&text);
 
                     // 尝试解析并记录完整的 SSE 事件
-                    while let Some(pos) = buffer.find("\n\n") {
-                        let event_text = buffer[..pos].to_string();
-                        buffer = buffer[pos + 2..].to_string();
-
+                    while let Some(event_text) = take_sse_block(&mut buffer) {
                         if !event_text.trim().is_empty() {
                             // 提取 data 部分并尝试解析为 JSON
                             for line in event_text.lines() {
