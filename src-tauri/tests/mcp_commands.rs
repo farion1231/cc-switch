@@ -464,6 +464,206 @@ fn import_mcp_from_gemini_sse_url_only_is_valid() {
 }
 
 #[test]
+fn enabling_qwen_mcp_writes_settings_json_and_preserves_existing_fields() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let qwen_dir = home.join(".qwen");
+    fs::create_dir_all(&qwen_dir).expect("create qwen dir");
+    let settings_path = qwen_dir.join("settings.json");
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "theme": "dark",
+            "mcp": {
+                "allowed": ["trusted-server"]
+            }
+        }))
+        .expect("serialize qwen settings"),
+    )
+    .expect("seed qwen settings");
+
+    let state = support::create_test_state().expect("create test state");
+
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "qwen-http".to_string(),
+            name: "Qwen HTTP".to_string(),
+            server: json!({
+                "type": "http",
+                "url": "https://example.com/mcp",
+                "headers": {
+                    "Authorization": "Bearer token"
+                }
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                qwen: false,
+                opencode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("insert qwen server without syncing");
+
+    McpService::toggle_app(&state, "qwen-http", AppType::Qwen, true)
+        .expect("toggle qwen should succeed");
+
+    let value: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&settings_path).expect("read qwen settings"),
+    )
+    .expect("parse qwen settings");
+
+    assert_eq!(value["theme"], json!("dark"));
+    assert_eq!(value["mcp"]["allowed"], json!(["trusted-server"]));
+    assert_eq!(
+        value["mcpServers"]["qwen-http"]["httpUrl"],
+        json!("https://example.com/mcp")
+    );
+    assert_eq!(
+        value["mcpServers"]["qwen-http"]["headers"]["Authorization"],
+        json!("Bearer token")
+    );
+    assert!(
+        value["mcpServers"]["qwen-http"].get("type").is_none(),
+        "Qwen settings.json should persist transport via field names instead of type"
+    );
+}
+
+#[test]
+fn upsert_mcp_server_disabling_qwen_removes_from_live_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let qwen_dir = home.join(".qwen");
+    fs::create_dir_all(&qwen_dir).expect("create qwen dir");
+    let settings_path = qwen_dir.join("settings.json");
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "theme": "dark"
+        }))
+        .expect("serialize qwen settings"),
+    )
+    .expect("seed qwen settings");
+
+    let state = support::create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "echo".to_string(),
+            name: "echo".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                qwen: true,
+                opencode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("upsert should sync to qwen live config");
+
+    let text = fs::read_to_string(&settings_path).expect("read qwen settings");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse qwen settings");
+    assert!(
+        value.pointer("/mcpServers/echo").is_some(),
+        "echo should exist in Qwen live config after enabling"
+    );
+
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "echo".to_string(),
+            name: "echo".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                qwen: false,
+                opencode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("upsert disabling qwen should remove from live config");
+
+    let text = fs::read_to_string(&settings_path).expect("read qwen settings after disable");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse qwen settings");
+    assert_eq!(value["theme"], json!("dark"));
+    assert!(
+        value.pointer("/mcpServers/echo").is_none(),
+        "echo should be removed from Qwen live config after disabling"
+    );
+}
+
+#[test]
+fn import_mcp_from_qwen_http_url_only_is_valid() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let qwen_dir = home.join(".qwen");
+    fs::create_dir_all(&qwen_dir).expect("create qwen dir");
+    let settings_path = qwen_dir.join("settings.json");
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                "http-server": {
+                    "httpUrl": "https://example.com/mcp",
+                    "headers": {
+                        "Authorization": "Bearer token"
+                    }
+                }
+            }
+        }))
+        .expect("serialize qwen settings"),
+    )
+    .expect("seed qwen settings");
+
+    let state = support::create_test_state().expect("create test state");
+    let changed = McpService::import_from_qwen(&state).expect("import from qwen");
+    assert!(changed > 0, "should import at least 1 server");
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("http-server").expect("http-server exists");
+    assert!(entry.apps.qwen, "imported server should enable Qwen");
+    assert_eq!(
+        entry.server.get("type").and_then(|v| v.as_str()),
+        Some("http"),
+        "Qwen httpUrl server should be normalized to type=http in unified structure"
+    );
+    assert_eq!(
+        entry.server.get("url").and_then(|v| v.as_str()),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
 fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
     use support::create_test_state;
 

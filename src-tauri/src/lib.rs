@@ -23,6 +23,7 @@ mod provider;
 mod provider_defaults;
 mod proxy;
 mod qwen_config;
+mod qwen_mcp;
 mod services;
 mod session_manager;
 mod settings;
