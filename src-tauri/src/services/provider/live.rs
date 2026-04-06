@@ -666,7 +666,24 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
+
+            if path.exists() {
+                if let Ok(existing) = read_json_file::<Value>(&path) {
+                    if let (Some(existing_obj), Some(settings_obj)) =
+                        (existing.as_object(), settings.as_object_mut())
+                    {
+                        for key in ["hooks", "includeCoAuthoredBy"] {
+                            if !settings_obj.contains_key(key) {
+                                if let Some(value) = existing_obj.get(key) {
+                                    settings_obj.insert(key.to_string(), value.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             write_json_file(&path, &settings)?;
         }
         AppType::Codex => {

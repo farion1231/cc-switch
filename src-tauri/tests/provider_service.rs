@@ -594,7 +594,11 @@ fn provider_service_switch_claude_updates_live_and_state() {
         },
         "workspace": {
             "path": "/tmp/workspace"
-        }
+        },
+        "hooks": {
+            "before": ["echo hello"]
+        },
+        "includeCoAuthoredBy": false
     });
     std::fs::write(
         &settings_path,
@@ -647,6 +651,20 @@ fn provider_service_switch_claude_updates_live_and_state() {
             .and_then(|key| key.as_str()),
         Some("fresh-key"),
         "live settings.json should reflect new provider auth"
+    );
+
+    assert_eq!(
+        live_after.get("hooks"),
+        legacy_live.get("hooks"),
+        "hooks should be preserved when switching providers"
+    );
+
+    assert_eq!(
+        live_after
+            .get("includeCoAuthoredBy")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+        "includeCoAuthoredBy should be preserved when switching providers"
     );
 
     let providers = state
