@@ -159,7 +159,12 @@ export interface ProviderMeta {
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
-  apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
+  // - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
+  apiFormat?:
+    | "anthropic"
+    | "openai_chat"
+    | "openai_responses"
+    | "gemini_native";
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -181,7 +186,12 @@ export type SkillSyncMethod = "auto" | "symlink" | "copy";
 // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
 // - "openai_responses": OpenAI Responses API 格式，需要格式转换
-export type ClaudeApiFormat = "anthropic" | "openai_chat" | "openai_responses";
+// - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
+export type ClaudeApiFormat =
+  | "anthropic"
+  | "openai_chat"
+  | "openai_responses"
+  | "gemini_native";
 
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
