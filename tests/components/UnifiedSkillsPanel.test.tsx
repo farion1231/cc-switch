@@ -285,7 +285,7 @@ describe("UnifiedSkillsPanel", () => {
 
   it("discards pending changes when leaving batch mode after confirmation", async () => {
     renderWithQueryClient(
-      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} />,
+      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} currentApp="claude" />,
     );
 
     fireEvent.click(screen.getByRole("switch", { name: "Batch mode" }));
@@ -314,7 +314,7 @@ describe("UnifiedSkillsPanel", () => {
       .mockRejectedValueOnce(new Error("uninstall failed"));
 
     renderWithQueryClient(
-      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} />,
+      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} currentApp="claude" />,
     );
 
     fireEvent.click(screen.getAllByRole("checkbox")[0]);
@@ -344,7 +344,7 @@ describe("UnifiedSkillsPanel", () => {
     });
 
     renderWithQueryClient(
-      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} />,
+      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} currentApp="claude" />,
     );
 
     fireEvent.click(screen.getAllByRole("checkbox")[0]);
@@ -374,7 +374,7 @@ describe("UnifiedSkillsPanel", () => {
     ]);
 
     renderWithQueryClient(
-      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} />,
+      <UnifiedSkillsPanel onOpenDiscovery={vi.fn()} currentApp="claude" />,
     );
 
     fireEvent.click(
