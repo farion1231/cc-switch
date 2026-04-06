@@ -880,25 +880,37 @@ impl SkillService {
         let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
         for (scan_dir, label) in &scan_sources {
-            let entries = match fs::read_dir(scan_dir) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_dir() {
+            let skill_dirs = match Self::scan_skills_in_dir(scan_dir) {
+                Ok(dirs) => dirs,
+                Err(err) => {
+                    log::warn!("Failed to scan skills in {}: {err}", scan_dir.display());
                     continue;
                 }
-                let dir_name = entry.file_name().to_string_lossy().to_string();
+            };
+
+            for skill_dir in skill_dirs {
+                let rel = match skill_dir.strip_prefix(scan_dir) {
+                    Ok(path) => path,
+                    Err(_) => continue,
+                };
+                if rel.components().next().is_none() {
+                    continue;
+                }
+                let dir_name = rel.to_string_lossy().to_string();
                 if dir_name.starts_with('.') || managed_dirs.contains(&dir_name) {
                     continue;
                 }
 
-                let skill_md = path.join("SKILL.md");
+                let skill_md = skill_dir.join("SKILL.md");
                 if !skill_md.exists() {
                     continue;
                 }
-                let (name, description) = Self::read_skill_name_desc(&skill_md, &dir_name);
+
+                let fallback_name = skill_dir
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| dir_name.clone());
+                let (name, description) = Self::read_skill_name_desc(&skill_md, &fallback_name);
 
                 unmanaged
                     .entry(dir_name.clone())
@@ -908,7 +920,7 @@ impl SkillService {
                         name,
                         description,
                         found_in: vec![label.clone()],
-                        path: path.display().to_string(),
+                        path: skill_dir.display().to_string(),
                     });
             }
         }
