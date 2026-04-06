@@ -117,6 +117,19 @@ pub struct RequestLogDetail {
     pub data_source: Option<String>,
 }
 
+/// SQL fragment: resolve provider_name with fallback for session-based entries.
+/// Session logs use placeholder provider_ids (_session, _codex_session, _gemini_session)
+/// that don't exist in the providers table — this COALESCE gives them readable names.
+fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
+    format!(
+        "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
+         WHEN '_session' THEN 'Claude (Session)' \
+         WHEN '_codex_session' THEN 'Codex (Session)' \
+         WHEN '_gemini_session' THEN 'Gemini (Session)' \
+         ELSE {log_alias}.provider_id END)"
+    )
+}
+
 impl Database {
     /// 获取使用量汇总
     pub fn get_usage_summary(
@@ -448,6 +461,8 @@ impl Database {
         };
 
         // UNION detail logs + rollup data, then aggregate
+        let detail_pname = provider_name_coalesce("l", "p");
+        let rollup_pname = provider_name_coalesce("r", "p2");
         let sql = format!(
             "SELECT
                 provider_id, app_type, provider_name,
@@ -460,7 +475,7 @@ impl Database {
                     ELSE 0 END as avg_latency
             FROM (
                 SELECT l.provider_id, l.app_type,
-                    p.name as provider_name,
+                    {detail_pname} as provider_name,
                     COUNT(*) as request_count,
                     COALESCE(SUM(l.input_tokens + l.output_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
@@ -472,7 +487,7 @@ impl Database {
                 GROUP BY l.provider_id, l.app_type
                 UNION ALL
                 SELECT r.provider_id, r.app_type,
-                    p2.name as provider_name,
+                    {rollup_pname} as provider_name,
                     COALESCE(SUM(r.request_count), 0),
                     COALESCE(SUM(r.input_tokens + r.output_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
@@ -499,9 +514,7 @@ impl Database {
 
             Ok(ProviderStats {
                 provider_id: row.get(0)?,
-                provider_name: row
-                    .get::<_, Option<String>>(2)?
-                    .unwrap_or_else(|| "Unknown".to_string()),
+                provider_name: row.get(2)?,
                 request_count: request_count as u64,
                 total_tokens: row.get::<_, i64>(4)? as u64,
                 total_cost: format!("{:.6}", row.get::<_, f64>(5)?),
@@ -654,8 +667,9 @@ impl Database {
         params.push(Box::new(page_size as i64));
         params.push(Box::new(offset as i64));
 
+        let logs_pname = provider_name_coalesce("l", "p");
         let sql = format!(
-            "SELECT l.request_id, l.provider_id, p.name as provider_name, l.app_type, l.model,
+            "SELECT l.request_id, l.provider_id, {logs_pname} as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
@@ -731,8 +745,9 @@ impl Database {
     ) -> Result<Option<RequestLogDetail>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let result = conn.query_row(
-            "SELECT l.request_id, l.provider_id, p.name as provider_name, l.app_type, l.model,
+        let detail_pname = provider_name_coalesce("l", "p");
+        let detail_sql = format!(
+            "SELECT l.request_id, l.provider_id, {detail_pname} as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
@@ -740,7 +755,10 @@ impl Database {
                     status_code, error_message, created_at, l.data_source
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
-             WHERE l.request_id = ?",
+             WHERE l.request_id = ?"
+        );
+        let result = conn.query_row(
+            &detail_sql,
             [request_id],
             |row| {
                 Ok(RequestLogDetail {
