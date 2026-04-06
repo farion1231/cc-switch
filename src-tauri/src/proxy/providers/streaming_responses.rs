@@ -96,8 +96,8 @@ fn resolve_content_index(
 ///
 /// 状态机跟踪: message_id, current_model, has_sent_message_start, item/content index map
 /// SSE 解析支持 named events (event: + data: 行)
-pub fn create_anthropic_sse_stream_from_responses(
-    stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -800,7 +800,9 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":3}}}\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream_from_responses(upstream);
         let chunks: Vec<_> = converted.collect().await;
 
@@ -842,7 +844,9 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}}\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream_from_responses(upstream);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
@@ -913,7 +917,9 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":10}}}\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream_from_responses(upstream);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
@@ -968,7 +974,9 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream_from_responses(upstream);
         let chunks: Vec<_> = converted.collect().await;
         let events: Vec<Value> = chunks
@@ -991,12 +999,17 @@ mod tests {
             .iter()
             .filter(|event| {
                 event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
-                    && event.pointer("/content_block/type").and_then(|v| v.as_str()) == Some("text")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("text")
             })
             .count();
         let text_stops = events
             .iter()
-            .filter(|event| event.get("type").and_then(|v| v.as_str()) == Some("content_block_stop"))
+            .filter(|event| {
+                event.get("type").and_then(|v| v.as_str()) == Some("content_block_stop")
+            })
             .count();
         let text_deltas: Vec<String> = events
             .iter()
@@ -1005,7 +1018,8 @@ mod tests {
                     && event.pointer("/delta/type").and_then(|v| v.as_str()) == Some("text_delta")
             })
             .filter_map(|event| {
-                event.pointer("/delta/text")
+                event
+                    .pointer("/delta/text")
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
             })

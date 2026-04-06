@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,15 +24,20 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField } from "./shared";
+import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
 } from "@/lib/api/copilot";
 import type { CopilotModel } from "@/lib/api/copilot";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import type {
   ProviderCategory,
   ClaudeApiFormat,
@@ -166,8 +171,7 @@ export function ClaudeFormFields({
     apiFormat !== "anthropic" ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN"
   );
-  const [advancedExpanded, setAdvancedExpanded] =
-    useState(hasAnyAdvancedValue);
+  const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
@@ -179,6 +183,37 @@ export function ClaudeFormFields({
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+
+  // 通用模型获取（非 Copilot 供应商）
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+
+  const handleFetchModels = useCallback(() => {
+    if (!baseUrl || !apiKey) {
+      showFetchModelsError(null, t, {
+        hasApiKey: !!apiKey,
+        hasBaseUrl: !!baseUrl,
+      });
+      return;
+    }
+    setIsFetchingModels(true);
+    fetchModelsForConfig(baseUrl, apiKey, isFullUrl)
+      .then((models) => {
+        setFetchedModels(models);
+        if (models.length === 0) {
+          toast.info(t("providerForm.fetchModelsEmpty"));
+        } else {
+          toast.success(
+            t("providerForm.fetchModelsSuccess", { count: models.length }),
+          );
+        }
+      })
+      .catch((err) => {
+        console.warn("[ModelFetch] Failed:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => setIsFetchingModels(false));
+  }, [baseUrl, apiKey, isFullUrl, t]);
 
   // 当 Copilot 预设且已认证时，加载可用模型
   useEffect(() => {
@@ -299,14 +334,15 @@ export function ClaudeFormFields({
       );
     }
 
+    // 非 Copilot 供应商: 使用 ModelInputWithFetch（获取按钮在 section 标题旁）
     return (
-      <Input
+      <ModelInputWithFetch
         id={id}
-        type="text"
         value={value}
-        onChange={(e) => onModelChange(field, e.target.value)}
+        onChange={(v) => onModelChange(field, v)}
         placeholder={placeholder}
-        autoComplete="off"
+        fetchedModels={fetchedModels}
+        isLoading={isFetchingModels}
       />
     );
   };
@@ -409,10 +445,7 @@ export function ClaudeFormFields({
 
       {/* 高级选项（API 格式 + 认证字段 + 模型映射） */}
       {shouldShowModelSelector && (
-        <Collapsible
-          open={advancedExpanded}
-          onOpenChange={setAdvancedExpanded}
-        >
+        <Collapsible open={advancedExpanded} onOpenChange={setAdvancedExpanded}>
           <CollapsibleTrigger asChild>
             <Button
               type="button"
@@ -506,7 +539,26 @@ export function ClaudeFormFields({
 
             {/* 模型映射 */}
             <div className="space-y-1 pt-2 border-t">
-              <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
+              <div className="flex items-center justify-between">
+                <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
+                {!isCopilotPreset && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFetchModels}
+                    disabled={isFetchingModels}
+                    className="h-7 gap-1"
+                  >
+                    {isFetchingModels ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
+                    {t("providerForm.fetchModels")}
+                  </Button>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
                 {t("providerForm.modelMappingHint")}
               </p>

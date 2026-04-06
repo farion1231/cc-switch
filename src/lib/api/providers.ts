@@ -21,6 +21,10 @@ export interface SwitchResult {
   warnings: string[];
 }
 
+export interface OpenTerminalOptions {
+  cwd?: string;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -30,12 +34,24 @@ export const providersApi = {
     return await invoke("get_current_provider", { app: appId });
   },
 
-  async add(provider: Provider, appId: AppId): Promise<boolean> {
-    return await invoke("add_provider", { provider, app: appId });
+  async add(
+    provider: Provider,
+    appId: AppId,
+    addToLive?: boolean,
+  ): Promise<boolean> {
+    return await invoke("add_provider", { provider, app: appId, addToLive });
   },
 
-  async update(provider: Provider, appId: AppId): Promise<boolean> {
-    return await invoke("update_provider", { provider, app: appId });
+  async update(
+    provider: Provider,
+    appId: AppId,
+    originalId?: string,
+  ): Promise<boolean> {
+    return await invoke("update_provider", {
+      provider,
+      app: appId,
+      originalId,
+    });
   },
 
   async delete(id: string, appId: AppId): Promise<boolean> {
@@ -83,8 +99,17 @@ export const providersApi = {
    * 任何提供商都可以打开终端，不受是否为当前激活提供商的限制
    * 终端会使用该提供商特定的 API 配置，不影响全局设置
    */
-  async openTerminal(providerId: string, appId: AppId): Promise<boolean> {
-    return await invoke("open_provider_terminal", { providerId, app: appId });
+  async openTerminal(
+    providerId: string,
+    appId: AppId,
+    options?: OpenTerminalOptions,
+  ): Promise<boolean> {
+    const { cwd } = options ?? {};
+    return await invoke("open_provider_terminal", {
+      providerId,
+      app: appId,
+      cwd,
+    });
   },
 
   /**

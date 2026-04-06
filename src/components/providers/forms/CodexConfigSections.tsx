@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
 import {
@@ -175,10 +181,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         }
       } else {
         toml = removeCodexTopLevelField(toml, "model_context_window");
-        toml = removeCodexTopLevelField(
-          toml,
-          "model_auto_compact_token_limit",
-        );
+        toml = removeCodexTopLevelField(toml, "model_auto_compact_token_limit");
       }
       handleLocalChange(toml);
     },

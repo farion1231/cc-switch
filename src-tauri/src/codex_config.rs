@@ -141,7 +141,7 @@ pub fn read_and_validate_codex_config_text() -> Result<String, AppError> {
 ///
 /// Supported fields:
 /// - `"base_url"`: writes to `[model_providers.<current>].base_url` if `model_provider` exists,
-///    otherwise falls back to top-level `base_url`.
+///   otherwise falls back to top-level `base_url`.
 /// - `"model"`: writes to top-level `model` field.
 ///
 /// Empty value removes the field.

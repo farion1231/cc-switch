@@ -65,6 +65,7 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
       provider: Omit<Provider, "id"> & {
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
+        addToLive?: boolean;
       },
     ) => {
       await addProviderMutation.mutateAsync(provider);
@@ -120,8 +121,8 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
 
   // 更新供应商
   const updateProvider = useCallback(
-    async (provider: Provider) => {
-      await updateProviderMutation.mutateAsync(provider);
+    async (provider: Provider, originalId?: string) => {
+      await updateProviderMutation.mutateAsync({ provider, originalId });
 
       // 更新托盘菜单（失败不影响主操作）
       try {
@@ -142,23 +143,46 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
-      const requiresProxyForSwitch =
-        !isProxyRunning &&
-        provider.category !== "official" &&
-        ((activeApp === "claude" &&
-          (isCopilotProvider ||
-            provider.meta?.isFullUrl ||
-            provider.meta?.apiFormat === "openai_chat" ||
-            provider.meta?.apiFormat === "openai_responses")) ||
-          (activeApp === "codex" && provider.meta?.isFullUrl));
 
-      if (requiresProxyForSwitch) {
+      // Determine why this provider requires the proxy
+      let proxyRequiredReason: string | null = null;
+      if (!isProxyRunning && provider.category !== "official") {
+        if (isCopilotProvider) {
+          proxyRequiredReason = t("notifications.proxyReasonCopilot", {
+            defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
+          });
+        } else if (
+          provider.meta?.apiFormat === "openai_chat" &&
+          activeApp === "claude"
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
+            defaultValue: "使用 OpenAI Chat 接口格式",
+          });
+        } else if (
+          provider.meta?.apiFormat === "openai_responses" &&
+          activeApp === "claude"
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonOpenAIResponses", {
+            defaultValue: "使用 OpenAI Responses 接口格式",
+          });
+        } else if (
+          provider.meta?.isFullUrl &&
+          (activeApp === "claude" || activeApp === "codex")
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
+            defaultValue: "开启了完整 URL 连接模式",
+          });
+        }
+      }
+
+      if (proxyRequiredReason) {
         toast.warning(
           t("notifications.proxyRequiredForSwitch", {
-            defaultValue: "此供应商需要代理服务，请先启动代理",
+            reason: proxyRequiredReason,
+            defaultValue:
+              "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
           }),
         );
-        return;
       }
 
       try {
@@ -178,13 +202,14 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
 
         // 根据供应商类型显示不同的成功提示
         if (
+          !proxyRequiredReason &&
           activeApp === "claude" &&
           provider.category !== "official" &&
           (isCopilotProvider ||
             provider.meta?.apiFormat === "openai_chat" ||
             provider.meta?.apiFormat === "openai_responses")
         ) {
-          // OpenAI format provider: show proxy hint
+          // OpenAI format provider: show proxy hint (skip if warning already shown)
           toast.info(
             isCopilotProvider
               ? t("notifications.copilotProxyHint")

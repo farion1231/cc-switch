@@ -12,8 +12,8 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::copilot_auth;
+use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
@@ -88,6 +88,7 @@ impl StreamCheckService {
         provider: &Provider,
         config: &StreamCheckConfig,
         auth_override: Option<AuthInfo>,
+        base_url_override: Option<String>,
         claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         // 合并供应商单独配置和全局配置
@@ -95,15 +96,15 @@ impl StreamCheckService {
         let mut last_result = None;
 
         for attempt in 0..=effective_config.max_retries {
-            let result =
-                Self::check_once(
-                    app_type,
-                    provider,
-                    &effective_config,
-                    auth_override.clone(),
-                    claude_api_format_override.clone(),
-                )
-                .await;
+            let result = Self::check_once(
+                app_type,
+                provider,
+                &effective_config,
+                auth_override.clone(),
+                base_url_override.clone(),
+                claude_api_format_override.clone(),
+            )
+            .await;
 
             match &result {
                 Ok(r) if r.success => {
@@ -192,14 +193,18 @@ impl StreamCheckService {
         provider: &Provider,
         config: &StreamCheckConfig,
         auth_override: Option<AuthInfo>,
+        base_url_override: Option<String>,
         claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
         let adapter = get_adapter(app_type);
 
-        let base_url = adapter
-            .extract_base_url(provider)
-            .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}")))?;
+        let base_url = match base_url_override {
+            Some(base_url) => base_url,
+            None => adapter
+                .extract_base_url(provider)
+                .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}")))?,
+        };
 
         let auth = auth_override
             .or_else(|| adapter.extract_auth(provider))
@@ -304,6 +309,7 @@ impl StreamCheckService {
     /// 根据供应商的 api_format 选择请求格式：
     /// - "anthropic" (默认): Anthropic Messages API (/v1/messages)
     /// - "openai_chat": OpenAI Chat Completions API (/v1/chat/completions)
+    #[allow(clippy::too_many_arguments)]
     async fn check_claude_stream(
         client: &Client,
         base_url: &str,
@@ -339,12 +345,8 @@ impl StreamCheckService {
             .unwrap_or(false);
         let is_openai_chat = effective_api_format == "openai_chat";
         let is_openai_responses = effective_api_format == "openai_responses";
-        let url = Self::resolve_claude_stream_url(
-            base,
-            auth.strategy,
-            effective_api_format,
-            is_full_url,
-        );
+        let url =
+            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
 
         let max_tokens = if is_openai_responses { 16 } else { 1 };
 
@@ -368,6 +370,8 @@ impl StreamCheckService {
         let mut request_builder = client.post(&url);
 
         if is_github_copilot {
+            // 生成请求追踪 ID
+            let request_id = uuid::Uuid::new_v4().to_string();
             request_builder = request_builder
                 .header("authorization", format!("Bearer {}", auth.api_key))
                 .header("content-type", "application/json")
@@ -375,10 +379,22 @@ impl StreamCheckService {
                 .header("accept-encoding", "identity")
                 .header("user-agent", copilot_auth::COPILOT_USER_AGENT)
                 .header("editor-version", copilot_auth::COPILOT_EDITOR_VERSION)
-                .header("editor-plugin-version", copilot_auth::COPILOT_PLUGIN_VERSION)
-                .header("copilot-integration-id", copilot_auth::COPILOT_INTEGRATION_ID)
+                .header(
+                    "editor-plugin-version",
+                    copilot_auth::COPILOT_PLUGIN_VERSION,
+                )
+                .header(
+                    "copilot-integration-id",
+                    copilot_auth::COPILOT_INTEGRATION_ID,
+                )
                 .header("x-github-api-version", copilot_auth::COPILOT_API_VERSION)
-                .header("openai-intent", "conversation-panel");
+                // 260401 新增copilot 的关键 headers
+                .header("openai-intent", "conversation-agent")
+                .header("x-initiator", "user")
+                .header("x-interaction-type", "conversation-agent")
+                .header("x-vscode-user-agent-library-version", "electron-fetch")
+                .header("x-request-id", &request_id)
+                .header("x-agent-task-id", &request_id);
         } else if is_openai_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder

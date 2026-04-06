@@ -957,7 +957,7 @@ impl SkillService {
                     if source_path.is_none() {
                         source_path = Some(skill_path);
                     }
-                    log::debug!("Skill '{}' found in source '{}'", dir_name, label);
+                    log::debug!("Skill '{dir_name}' found in source '{label}'");
                 }
             }
 
