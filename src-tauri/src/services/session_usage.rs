@@ -155,8 +155,8 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     }
 
     // 从上次偏移位置开始增量解析
-    let file = fs::File::open(file_path)
-        .map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
+    let file =
+        fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let reader = BufReader::new(file);
 
     let mut line_offset: i64 = 0;
@@ -272,7 +272,7 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
 
-    for (_, msg) in &messages {
+    for msg in messages.values() {
         // 只导入有 stop_reason 的最终条目（完整的 API 调用）
         if msg.stop_reason.is_none() {
             continue;
@@ -383,26 +383,26 @@ fn insert_session_log_entry(
 
     let pricing = find_model_pricing_for_session(&conn, &msg.model);
     let multiplier = Decimal::from(1);
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
-        match pricing {
-            Some(p) => {
-                let cost = CostCalculator::calculate(&usage, &p, multiplier);
-                (
-                    cost.input_cost.to_string(),
-                    cost.output_cost.to_string(),
-                    cost.cache_read_cost.to_string(),
-                    cost.cache_creation_cost.to_string(),
-                    cost.total_cost.to_string(),
-                )
-            }
-            None => (
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-            ),
-        };
+    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
+    {
+        Some(p) => {
+            let cost = CostCalculator::calculate(&usage, &p, multiplier);
+            (
+                cost.input_cost.to_string(),
+                cost.output_cost.to_string(),
+                cost.cache_read_cost.to_string(),
+                cost.cache_creation_cost.to_string(),
+                cost.total_cost.to_string(),
+            )
+        }
+        None => (
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+        ),
+    };
 
     conn.execute(
         "INSERT OR IGNORE INTO proxy_request_logs (

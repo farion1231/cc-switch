@@ -1128,9 +1128,7 @@ impl Database {
                  WHERE model_id = ?1",
                 rusqlite::params![model_id, input, output, cache_read, cache_creation],
             )
-            .map_err(|e| {
-                AppError::Database(format!("更新模型 {model_id} 定价失败: {e}"))
-            })?;
+            .map_err(|e| AppError::Database(format!("更新模型 {model_id} 定价失败: {e}")))?;
         }
 
         log::info!("v7 -> v8 迁移完成：data_source 列、session_log_sync 表、修正 13 个模型定价");
@@ -1457,7 +1455,14 @@ impl Database {
                 "0",
             ),
             // Gemini 2.0 系列
-            ("gemini-2.0-flash", "Gemini 2.0 Flash", "0.10", "0.40", "0.025", "0"),
+            (
+                "gemini-2.0-flash",
+                "Gemini 2.0 Flash",
+                "0.10",
+                "0.40",
+                "0.025",
+                "0",
+            ),
             // StepFun 系列
             (
                 "step-3.5-flash",
@@ -1469,17 +1474,66 @@ impl Database {
             ),
             // ====== 国产模型 (USD/1M tokens) ======
             // Doubao (字节跳动)
-            ("doubao-seed-code", "Doubao Seed Code", "0.17", "1.11", "0.02", "0"),
+            (
+                "doubao-seed-code",
+                "Doubao Seed Code",
+                "0.17",
+                "1.11",
+                "0.02",
+                "0",
+            ),
             // DeepSeek 系列
-            ("deepseek-v3.2", "DeepSeek V3.2", "0.28", "0.42", "0.028", "0"),
-            ("deepseek-v3.1", "DeepSeek V3.1", "0.55", "1.67", "0.055", "0"),
+            (
+                "deepseek-v3.2",
+                "DeepSeek V3.2",
+                "0.28",
+                "0.42",
+                "0.028",
+                "0",
+            ),
+            (
+                "deepseek-v3.1",
+                "DeepSeek V3.1",
+                "0.55",
+                "1.67",
+                "0.055",
+                "0",
+            ),
             ("deepseek-v3", "DeepSeek V3", "0.28", "1.11", "0.028", "0"),
-            ("deepseek-chat", "DeepSeek Chat", "0.28", "0.42", "0.028", "0"),
-            ("deepseek-reasoner", "DeepSeek Reasoner", "0.28", "0.42", "0.028", "0"),
+            (
+                "deepseek-chat",
+                "DeepSeek Chat",
+                "0.28",
+                "0.42",
+                "0.028",
+                "0",
+            ),
+            (
+                "deepseek-reasoner",
+                "DeepSeek Reasoner",
+                "0.28",
+                "0.42",
+                "0.028",
+                "0",
+            ),
             // Kimi (月之暗面)
-            ("kimi-k2-thinking", "Kimi K2 Thinking", "0.55", "2.20", "0.10", "0"),
+            (
+                "kimi-k2-thinking",
+                "Kimi K2 Thinking",
+                "0.55",
+                "2.20",
+                "0.10",
+                "0",
+            ),
             ("kimi-k2-0905", "Kimi K2", "0.55", "2.20", "0.10", "0"),
-            ("kimi-k2-turbo", "Kimi K2 Turbo", "1.11", "8.06", "0.14", "0"),
+            (
+                "kimi-k2-turbo",
+                "Kimi K2 Turbo",
+                "1.11",
+                "8.06",
+                "0.14",
+                "0",
+            ),
             ("kimi-k2.5", "Kimi K2.5", "0.60", "3.00", "0.10", "0"),
             // MiniMax 系列
             ("minimax-m2.1", "MiniMax M2.1", "0.27", "0.95", "0.03", "0"),
@@ -1496,7 +1550,14 @@ impl Database {
             ("glm-4.7", "GLM-4.7", "0.39", "1.75", "0.04", "0"),
             ("glm-4.6", "GLM-4.6", "0.28", "1.11", "0.03", "0"),
             // Mimo (小米)
-            ("mimo-v2-flash", "Mimo V2 Flash", "0.09", "0.29", "0.009", "0"),
+            (
+                "mimo-v2-flash",
+                "Mimo V2 Flash",
+                "0.09",
+                "0.29",
+                "0.009",
+                "0",
+            ),
         ];
 
         for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data {

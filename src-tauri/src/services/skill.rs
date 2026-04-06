@@ -854,6 +854,7 @@ impl SkillService {
     }
 
     /// 递归收集目录下所有非隐藏文件
+    #[allow(clippy::only_used_in_recursion)]
     fn collect_files_for_hash(base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
         let entries = fs::read_dir(current)
             .with_context(|| format!("读取目录失败: {}", current.display()))?;
@@ -2737,10 +2738,7 @@ impl SkillService {
                     repo_name: repo.clone(),
                     repo_branch: "main".to_string(),
                     installs: s.installs,
-                    readme_url: Some(format!(
-                        "https://github.com/{}/{}",
-                        owner, repo
-                    )),
+                    readme_url: Some(format!("https://github.com/{}/{}", owner, repo)),
                 })
             })
             .collect();

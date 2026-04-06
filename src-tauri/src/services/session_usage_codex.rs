@@ -746,7 +746,10 @@ mod tests {
     #[test]
     fn test_normalize_codex_model_strip_prefix() {
         assert_eq!(normalize_codex_model("openai/gpt-5.4"), "gpt-5.4");
-        assert_eq!(normalize_codex_model("azure/gpt-5.2-codex"), "gpt-5.2-codex");
+        assert_eq!(
+            normalize_codex_model("azure/gpt-5.2-codex"),
+            "gpt-5.2-codex"
+        );
         assert_eq!(normalize_codex_model("OPENAI/GPT-5.4"), "gpt-5.4");
     }
 
@@ -784,10 +787,7 @@ mod tests {
             "gpt-5.4"
         );
         // prefix + compact date
-        assert_eq!(
-            normalize_codex_model("openai/gpt-5.4-20260305"),
-            "gpt-5.4"
-        );
+        assert_eq!(normalize_codex_model("openai/gpt-5.4-20260305"), "gpt-5.4");
     }
 
     #[test]
@@ -799,7 +799,7 @@ mod tests {
             output: 50,
         });
         let current = CumulativeTokens {
-            input: 110,   // delta = 10
+            input: 110,       // delta = 10
             cached_input: 80, // delta = 80（异常：大于 input delta）
             output: 60,
         };

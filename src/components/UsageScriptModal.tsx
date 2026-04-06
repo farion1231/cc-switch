@@ -1066,7 +1066,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       ...script,
                       timeout:
                         e.target.value === ""
-                          ? (("" as unknown) as number)
+                          ? ("" as unknown as number)
                           : Number(e.target.value),
                     })
                   }
@@ -1098,7 +1098,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       ...script,
                       autoQueryInterval:
                         e.target.value === ""
-                          ? (("" as unknown) as number)
+                          ? ("" as unknown as number)
                           : Number(e.target.value),
                     })
                   }

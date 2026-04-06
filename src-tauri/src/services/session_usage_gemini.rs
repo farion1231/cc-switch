@@ -182,10 +182,7 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
         gemini_msg_count += 1;
 
         // 提取消息 ID 和模型
-        let message_id = msg
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+        let message_id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
         let model = msg
             .get("model")
             .and_then(|v| v.as_str())
@@ -222,22 +219,10 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
 /// 从 tokens JSON 对象中提取 token 数据
 fn parse_gemini_tokens(tokens: &serde_json::Value) -> GeminiTokens {
     GeminiTokens {
-        input: tokens
-            .get("input")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32,
-        output: tokens
-            .get("output")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32,
-        cached: tokens
-            .get("cached")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32,
-        thoughts: tokens
-            .get("thoughts")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32,
+        input: tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        output: tokens.get("output").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        cached: tokens.get("cached").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        thoughts: tokens.get("thoughts").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
     }
 }
 
@@ -494,7 +479,9 @@ mod tests {
         assert_eq!(tokens.input, 0);
         assert_eq!(tokens.output, 0);
         // 全零（包括 cached=0）会被 sync 逻辑跳过
-        assert!(tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 && tokens.cached == 0);
+        assert!(
+            tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 && tokens.cached == 0
+        );
     }
 
     #[test]
@@ -509,7 +496,8 @@ mod tests {
         let tokens = parse_gemini_tokens(&json);
         assert_eq!(tokens.cached, 5000);
         // 跳过条件：所有四个字段都为 0 才跳过
-        let should_skip = tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 && tokens.cached == 0;
+        let should_skip =
+            tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 && tokens.cached == 0;
         assert!(!should_skip, "纯缓存命中记录不应被跳过");
     }
 }

@@ -383,7 +383,10 @@ impl Database {
 
             let mut rstmt = conn.prepare(&rollup_sql)?;
             let rrows = if let Some(at) = app_type {
-                rstmt.query_map(params![start_ts, end_ts, bucket_seconds, at], rollup_row_mapper)?
+                rstmt.query_map(
+                    params![start_ts, end_ts, bucket_seconds, at],
+                    rollup_row_mapper,
+                )?
             } else {
                 rstmt.query_map(params![start_ts, end_ts, bucket_seconds], rollup_row_mapper)?
             };
@@ -757,38 +760,36 @@ impl Database {
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
         );
-        let result = conn.query_row(
-            &detail_sql,
-            [request_id],
-            |row| {
-                Ok(RequestLogDetail {
-                    request_id: row.get(0)?,
-                    provider_id: row.get(1)?,
-                    provider_name: row.get(2)?,
-                    app_type: row.get(3)?,
-                    model: row.get(4)?,
-                    request_model: row.get(5)?,
-                    cost_multiplier: row.get::<_, Option<String>>(6)?.unwrap_or_else(|| "1".to_string()),
-                    input_tokens: row.get::<_, i64>(7)? as u32,
-                    output_tokens: row.get::<_, i64>(8)? as u32,
-                    cache_read_tokens: row.get::<_, i64>(9)? as u32,
-                    cache_creation_tokens: row.get::<_, i64>(10)? as u32,
-                    input_cost_usd: row.get(11)?,
-                    output_cost_usd: row.get(12)?,
-                    cache_read_cost_usd: row.get(13)?,
-                    cache_creation_cost_usd: row.get(14)?,
-                    total_cost_usd: row.get(15)?,
-                    is_streaming: row.get::<_, i64>(16)? != 0,
-                    latency_ms: row.get::<_, i64>(17)? as u64,
-                    first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
-                    duration_ms: row.get::<_, Option<i64>>(19)?.map(|v| v as u64),
-                    status_code: row.get::<_, i64>(20)? as u16,
-                    error_message: row.get(21)?,
-                    created_at: row.get(22)?,
-                    data_source: row.get(23)?,
-                })
-            },
-        );
+        let result = conn.query_row(&detail_sql, [request_id], |row| {
+            Ok(RequestLogDetail {
+                request_id: row.get(0)?,
+                provider_id: row.get(1)?,
+                provider_name: row.get(2)?,
+                app_type: row.get(3)?,
+                model: row.get(4)?,
+                request_model: row.get(5)?,
+                cost_multiplier: row
+                    .get::<_, Option<String>>(6)?
+                    .unwrap_or_else(|| "1".to_string()),
+                input_tokens: row.get::<_, i64>(7)? as u32,
+                output_tokens: row.get::<_, i64>(8)? as u32,
+                cache_read_tokens: row.get::<_, i64>(9)? as u32,
+                cache_creation_tokens: row.get::<_, i64>(10)? as u32,
+                input_cost_usd: row.get(11)?,
+                output_cost_usd: row.get(12)?,
+                cache_read_cost_usd: row.get(13)?,
+                cache_creation_cost_usd: row.get(14)?,
+                total_cost_usd: row.get(15)?,
+                is_streaming: row.get::<_, i64>(16)? != 0,
+                latency_ms: row.get::<_, i64>(17)? as u64,
+                first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
+                duration_ms: row.get::<_, Option<i64>>(19)?.map(|v| v as u64),
+                status_code: row.get::<_, i64>(20)? as u16,
+                error_message: row.get(21)?,
+                created_at: row.get(22)?,
+                data_source: row.get(23)?,
+            })
+        });
 
         match result {
             Ok(mut detail) => {
