@@ -23,7 +23,7 @@
 //!     └── settings.rs
 //! ```
 
-mod backup;
+pub(crate) mod backup;
 mod dao;
 mod migration;
 mod schema;
@@ -36,18 +36,15 @@ pub use dao::FailoverQueueItem;
 
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
-use rusqlite::Connection;
+use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
 use std::sync::Mutex;
 
 // DAO 方法通过 impl Database 提供，无需额外导出
 
-/// 数据库备份保留数量
-const DB_BACKUP_RETAIN: usize = 10;
-
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 6;
+pub(crate) const SCHEMA_VERSION: i32 = 7;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -75,12 +72,24 @@ pub struct Database {
     pub(crate) conn: Mutex<Connection>,
 }
 
+fn register_db_change_hook(conn: &Connection) {
+    conn.update_hook(Some(
+        |action: Action, _database: &str, table: &str, _row_id: i64| match action {
+            Action::SQLITE_INSERT | Action::SQLITE_UPDATE | Action::SQLITE_DELETE => {
+                crate::services::webdav_auto_sync::notify_db_changed(table);
+            }
+            _ => {}
+        },
+    ));
+}
+
 impl Database {
     /// 初始化数据库连接并创建表
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
     pub fn init() -> Result<Self, AppError> {
         let db_path = get_app_config_dir().join("cc-switch.db");
+        let db_exists = db_path.exists();
 
         // 确保父目录存在
         if let Some(parent) = db_path.parent() {
@@ -92,13 +101,54 @@ impl Database {
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
+        if !db_exists {
+            // For a brand-new database, configure incremental auto-vacuum
+            // before creating any tables so no rebuild is needed later.
+            conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        register_db_change_hook(&conn);
 
         let db = Self {
             conn: Mutex::new(conn),
         };
         db.create_tables()?;
+
+        // Pre-migration backup: only when upgrading from an existing database
+        {
+            let conn = lock_conn!(db.conn);
+            let version = Self::get_user_version(&conn)?;
+            drop(conn);
+            if version > 0 && version < SCHEMA_VERSION {
+                log::info!(
+                    "Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})"
+                );
+                if let Err(e) = db.backup_database_file() {
+                    log::warn!("Pre-migration backup failed, continuing migration: {e}");
+                }
+            }
+        }
+
         db.apply_schema_migrations()?;
+        if let Err(e) = db.ensure_incremental_auto_vacuum() {
+            log::warn!("Failed to ensure incremental auto-vacuum: {e}");
+        }
         db.ensure_model_pricing_seeded()?;
+
+        // Startup cleanup: prune old logs and reclaim space
+        if let Err(e) = db.cleanup_old_stream_check_logs(7) {
+            log::warn!("Startup stream_check_logs cleanup failed: {e}");
+        }
+        if let Err(e) = db.rollup_and_prune(30) {
+            log::warn!("Startup rollup_and_prune failed: {e}");
+        }
+        // Reclaim disk space after cleanup
+        {
+            let conn = lock_conn!(db.conn);
+            if let Err(e) = conn.execute_batch("PRAGMA incremental_vacuum;") {
+                log::warn!("Startup incremental vacuum failed: {e}");
+            }
+        }
 
         Ok(db)
     }
@@ -110,6 +160,9 @@ impl Database {
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        register_db_change_hook(&conn);
 
         let db = Self {
             conn: Mutex::new(conn),
@@ -118,6 +171,79 @@ impl Database {
         db.ensure_model_pricing_seeded()?;
 
         Ok(db)
+    }
+
+    pub(crate) fn get_auto_vacuum_mode(conn: &Connection) -> Result<i32, AppError> {
+        conn.query_row("PRAGMA auto_vacuum;", [], |row| row.get(0))
+            .map_err(|e| AppError::Database(format!("读取 auto_vacuum 失败: {e}")))
+    }
+
+    fn has_user_tables(conn: &Connection) -> Result<bool, AppError> {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(format!("读取表数量失败: {e}")))?;
+        Ok(count > 0)
+    }
+
+    pub(crate) fn ensure_incremental_auto_vacuum_on_conn(
+        conn: &Connection,
+    ) -> Result<bool, AppError> {
+        let mode = Self::get_auto_vacuum_mode(conn)?;
+        if mode == 2 {
+            return Ok(false);
+        }
+
+        let has_tables = Self::has_user_tables(conn)?;
+        conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
+            .map_err(|e| AppError::Database(format!("设置 auto_vacuum 失败: {e}")))?;
+
+        if !has_tables {
+            return Ok(false);
+        }
+
+        conn.execute("VACUUM;", [])
+            .map_err(|e| AppError::Database(format!("执行 VACUUM 失败: {e}")))?;
+        conn.execute("PRAGMA foreign_keys = ON;", [])
+            .map_err(|e| AppError::Database(format!("恢复 foreign_keys 失败: {e}")))?;
+        Ok(true)
+    }
+
+    pub(crate) fn ensure_incremental_auto_vacuum(&self) -> Result<bool, AppError> {
+        let mode = {
+            let conn = lock_conn!(self.conn);
+            Self::get_auto_vacuum_mode(&conn)?
+        };
+        if mode == 2 {
+            return Ok(false);
+        }
+
+        let has_tables = {
+            let conn = lock_conn!(self.conn);
+            Self::has_user_tables(&conn)?
+        };
+        if has_tables {
+            log::info!(
+                "Detected auto_vacuum={mode}, rebuilding database to enable incremental vacuum"
+            );
+            self.backup_database_file()?;
+        }
+
+        let rebuilt = {
+            let conn = lock_conn!(self.conn);
+            Self::ensure_incremental_auto_vacuum_on_conn(&conn)?
+        };
+
+        if rebuilt {
+            log::info!("Incremental auto-vacuum enabled after database rebuild");
+        } else {
+            log::info!("Incremental auto-vacuum configured for new database");
+        }
+
+        Ok(rebuilt)
     }
 
     /// 检查 MCP 服务器表是否为空

@@ -12,6 +12,9 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::providers::copilot_auth;
+use crate::proxy::providers::transform::anthropic_to_openai;
+use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
 /// 健康状态枚举
@@ -84,13 +87,24 @@ impl StreamCheckService {
         app_type: &AppType,
         provider: &Provider,
         config: &StreamCheckConfig,
+        auth_override: Option<AuthInfo>,
+        base_url_override: Option<String>,
+        claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         // 合并供应商单独配置和全局配置
         let effective_config = Self::merge_provider_config(provider, config);
         let mut last_result = None;
 
         for attempt in 0..=effective_config.max_retries {
-            let result = Self::check_once(app_type, provider, &effective_config).await;
+            let result = Self::check_once(
+                app_type,
+                provider,
+                &effective_config,
+                auth_override.clone(),
+                base_url_override.clone(),
+                claude_api_format_override.clone(),
+            )
+            .await;
 
             match &result {
                 Ok(r) if r.success => {
@@ -178,16 +192,22 @@ impl StreamCheckService {
         app_type: &AppType,
         provider: &Provider,
         config: &StreamCheckConfig,
+        auth_override: Option<AuthInfo>,
+        base_url_override: Option<String>,
+        claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
         let adapter = get_adapter(app_type);
 
-        let base_url = adapter
-            .extract_base_url(provider)
-            .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}")))?;
+        let base_url = match base_url_override {
+            Some(base_url) => base_url,
+            None => adapter
+                .extract_base_url(provider)
+                .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}")))?,
+        };
 
-        let auth = adapter
-            .extract_auth(provider)
+        let auth = auth_override
+            .or_else(|| adapter.extract_auth(provider))
             .ok_or_else(|| AppError::Message("API Key not found".to_string()))?;
 
         // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
@@ -207,6 +227,8 @@ impl StreamCheckService {
                     &model_to_test,
                     test_prompt,
                     request_timeout,
+                    provider,
+                    claude_api_format_override.as_deref(),
                 )
                 .await
             }
@@ -218,6 +240,7 @@ impl StreamCheckService {
                     &model_to_test,
                     test_prompt,
                     request_timeout,
+                    provider,
                 )
                 .await
             }
@@ -249,8 +272,17 @@ impl StreamCheckService {
                     &model_to_test,
                     test_prompt,
                     request_timeout,
+                    provider,
                 )
                 .await
+            }
+            AppType::OpenClaw => {
+                // OpenClaw doesn't support stream check yet
+                return Err(AppError::localized(
+                    "openclaw_no_stream_check",
+                    "OpenClaw 暂不支持健康检查",
+                    "OpenClaw does not support health check yet",
+                ));
             }
         };
 
@@ -287,7 +319,10 @@ impl StreamCheckService {
 
     /// Claude 流式检查
     ///
-    /// 严格按照 Claude CLI 真实请求格式构建请求
+    /// 根据供应商的 api_format 选择请求格式：
+    /// - "anthropic" (默认): Anthropic Messages API (/v1/messages)
+    /// - "openai_chat": OpenAI Chat Completions API (/v1/chat/completions)
+    #[allow(clippy::too_many_arguments)]
     async fn check_claude_stream(
         client: &Client,
         base_url: &str,
@@ -295,65 +330,135 @@ impl StreamCheckService {
         model: &str,
         test_prompt: &str,
         timeout: std::time::Duration,
+        provider: &Provider,
+        claude_api_format_override: Option<&str>,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
-        // URL 必须包含 ?beta=true 参数（某些中转服务依赖此参数验证请求来源）
-        let url = if base.ends_with("/v1") {
-            format!("{base}/messages?beta=true")
-        } else {
-            format!("{base}/v1/messages?beta=true")
-        };
+        let is_github_copilot = auth.strategy == AuthStrategy::GitHubCopilot;
 
-        let body = json!({
+        // Detect api_format: meta.api_format > settings_config.api_format > default "anthropic"
+        let api_format = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.api_format.as_deref())
+            .or_else(|| {
+                provider
+                    .settings_config
+                    .get("api_format")
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or("anthropic");
+
+        let effective_api_format = claude_api_format_override.unwrap_or(api_format);
+
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+        let is_openai_chat = effective_api_format == "openai_chat";
+        let is_openai_responses = effective_api_format == "openai_responses";
+        let url =
+            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
+
+        let max_tokens = if is_openai_responses { 16 } else { 1 };
+
+        // Build from Anthropic-native shape first, then convert for configured targets.
+        let anthropic_body = json!({
             "model": model,
-            "max_tokens": 1,
+            "max_tokens": max_tokens,
             "messages": [{ "role": "user", "content": test_prompt }],
             "stream": true
         });
+        let body = if is_openai_responses {
+            anthropic_to_responses(anthropic_body, Some(&provider.id))
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else if is_openai_chat {
+            anthropic_to_openai(anthropic_body, Some(&provider.id))
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else {
+            anthropic_body
+        };
 
-        // 获取本地系统信息
-        let os_name = Self::get_os_name();
-        let arch_name = Self::get_arch_name();
+        let mut request_builder = client.post(&url);
 
-        // 根据 auth.strategy 构建认证 headers
-        let mut request_builder = client
-            .post(&url)
-            .header("authorization", format!("Bearer {}", auth.api_key));
+        if is_github_copilot {
+            // 生成请求追踪 ID
+            let request_id = uuid::Uuid::new_v4().to_string();
+            request_builder = request_builder
+                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity")
+                .header("user-agent", copilot_auth::COPILOT_USER_AGENT)
+                .header("editor-version", copilot_auth::COPILOT_EDITOR_VERSION)
+                .header(
+                    "editor-plugin-version",
+                    copilot_auth::COPILOT_PLUGIN_VERSION,
+                )
+                .header(
+                    "copilot-integration-id",
+                    copilot_auth::COPILOT_INTEGRATION_ID,
+                )
+                .header("x-github-api-version", copilot_auth::COPILOT_API_VERSION)
+                // 260401 新增copilot 的关键 headers
+                .header("openai-intent", "conversation-agent")
+                .header("x-initiator", "user")
+                .header("x-interaction-type", "conversation-agent")
+                .header("x-vscode-user-agent-library-version", "electron-fetch")
+                .header("x-request-id", &request_id)
+                .header("x-agent-task-id", &request_id);
+        } else if is_openai_chat || is_openai_responses {
+            // OpenAI-compatible targets: Bearer auth + SSE headers only
+            request_builder = request_builder
+                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity");
+        } else {
+            // Anthropic native: full Claude CLI headers
+            let os_name = Self::get_os_name();
+            let arch_name = Self::get_arch_name();
 
-        // 只有 Anthropic 官方策略才添加 x-api-key
-        if auth.strategy == AuthStrategy::Anthropic {
-            request_builder = request_builder.header("x-api-key", &auth.api_key);
+            request_builder =
+                request_builder.header("authorization", format!("Bearer {}", auth.api_key));
+
+            // Only Anthropic official strategy adds x-api-key
+            if auth.strategy == AuthStrategy::Anthropic {
+                request_builder = request_builder.header("x-api-key", &auth.api_key);
+            }
+
+            request_builder = request_builder
+                // Anthropic required headers
+                .header("anthropic-version", "2023-06-01")
+                .header(
+                    "anthropic-beta",
+                    "claude-code-20250219,interleaved-thinking-2025-05-14",
+                )
+                .header("anthropic-dangerous-direct-browser-access", "true")
+                // Content type headers
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .header("accept-encoding", "identity")
+                .header("accept-language", "*")
+                // Client identification headers
+                .header("user-agent", "claude-cli/2.1.2 (external, cli)")
+                .header("x-app", "cli")
+                // x-stainless SDK headers (dynamic local system info)
+                .header("x-stainless-lang", "js")
+                .header("x-stainless-package-version", "0.70.0")
+                .header("x-stainless-os", os_name)
+                .header("x-stainless-arch", arch_name)
+                .header("x-stainless-runtime", "node")
+                .header("x-stainless-runtime-version", "v22.20.0")
+                .header("x-stainless-retry-count", "0")
+                .header("x-stainless-timeout", "600")
+                // Other headers
+                .header("sec-fetch-mode", "cors")
+                .header("connection", "keep-alive");
         }
 
-        // 严格按照 Claude CLI 请求格式设置其他 headers
         let response = request_builder
-            // Anthropic 必需 headers
-            .header("anthropic-version", "2023-06-01")
-            .header(
-                "anthropic-beta",
-                "claude-code-20250219,interleaved-thinking-2025-05-14",
-            )
-            .header("anthropic-dangerous-direct-browser-access", "true")
-            // 内容类型 headers
-            .header("content-type", "application/json")
-            .header("accept", "application/json")
-            .header("accept-encoding", "identity")
-            .header("accept-language", "*")
-            // 客户端标识 headers
-            .header("user-agent", "claude-cli/2.1.2 (external, cli)")
-            .header("x-app", "cli")
-            // x-stainless SDK headers（动态获取本地系统信息）
-            .header("x-stainless-lang", "js")
-            .header("x-stainless-package-version", "0.70.0")
-            .header("x-stainless-os", os_name)
-            .header("x-stainless-arch", arch_name)
-            .header("x-stainless-runtime", "node")
-            .header("x-stainless-runtime-version", "v22.20.0")
-            .header("x-stainless-retry-count", "0")
-            .header("x-stainless-timeout", "600")
-            // 其他 headers
-            .header("sec-fetch-mode", "cors")
-            .header("connection", "keep-alive")
             .timeout(timeout)
             .json(&body)
             .send()
@@ -389,18 +494,14 @@ impl StreamCheckService {
         model: &str,
         test_prompt: &str,
         timeout: std::time::Duration,
+        provider: &Provider,
     ) -> Result<(u16, String), AppError> {
-        let base = base_url.trim_end_matches('/');
-        // Codex CLI 的 base_url 语义：base_url 是 API base（可能已包含 /v1 或其他自定义前缀），
-        // Responses 端点为 `/responses`。
-        //
-        // 兼容：如果 base_url 配成纯 origin（如 https://api.openai.com），则需要补 `/v1`。
-        // 优先尝试 `{base}/responses`，若 404 再回退 `{base}/v1/responses`。
-        let urls = if base.ends_with("/v1") {
-            vec![format!("{base}/responses")]
-        } else {
-            vec![format!("{base}/responses"), format!("{base}/v1/responses")]
-        };
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+        let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
 
         // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
         let (actual_model, reasoning_effort) = Self::parse_model_with_effort(model);
@@ -584,6 +685,11 @@ impl StreamCheckService {
                 Self::extract_env_model(provider, "OPENAI_MODEL")
                     .unwrap_or_else(|| "qwen3-coder-plus".to_string())
             }
+            AppType::OpenClaw => {
+                // OpenClaw uses models array in settings_config
+                // Try to extract first model from the models array
+                Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
         }
     }
 
@@ -595,6 +701,21 @@ impl StreamCheckService {
 
         // Return the first model ID from the models map
         models.keys().next().map(|s| s.to_string())
+    }
+
+    fn extract_openclaw_model(provider: &Provider) -> Option<String> {
+        // OpenClaw uses models array: [{ "id": "model-id", "name": "Model Name" }]
+        let models = provider
+            .settings_config
+            .get("models")
+            .and_then(|m| m.as_array())?;
+
+        // Return the first model ID from the models array
+        models
+            .first()
+            .and_then(|m| m.get("id"))
+            .and_then(|id| id.as_str())
+            .map(|s| s.to_string())
     }
 
     fn extract_env_model(provider: &Provider, key: &str) -> Option<String> {
@@ -641,6 +762,65 @@ impl StreamCheckService {
             "x86" => "x86",
             other => other,
         }
+    }
+
+    fn resolve_claude_stream_url(
+        base_url: &str,
+        auth_strategy: AuthStrategy,
+        api_format: &str,
+        is_full_url: bool,
+    ) -> String {
+        if is_full_url {
+            return base_url.to_string();
+        }
+
+        let base = base_url.trim_end_matches('/');
+        let is_github_copilot = auth_strategy == AuthStrategy::GitHubCopilot;
+
+        if is_github_copilot && api_format == "openai_responses" {
+            format!("{base}/v1/responses")
+        } else if is_github_copilot {
+            format!("{base}/chat/completions")
+        } else if api_format == "openai_responses" {
+            if base.ends_with("/v1") {
+                format!("{base}/responses")
+            } else {
+                format!("{base}/v1/responses")
+            }
+        } else if api_format == "openai_chat" {
+            if base.ends_with("/v1") {
+                format!("{base}/chat/completions")
+            } else {
+                format!("{base}/v1/chat/completions")
+            }
+        } else if base.ends_with("/v1") {
+            format!("{base}/messages")
+        } else {
+            format!("{base}/v1/messages")
+        }
+    }
+
+    fn resolve_codex_stream_urls(base_url: &str, is_full_url: bool) -> Vec<String> {
+        if is_full_url {
+            return vec![base_url.to_string()];
+        }
+
+        let base = base_url.trim_end_matches('/');
+
+        if base.ends_with("/v1") {
+            vec![format!("{base}/responses")]
+        } else {
+            vec![format!("{base}/responses"), format!("{base}/v1/responses")]
+        }
+    }
+
+    pub(crate) fn resolve_effective_test_model(
+        app_type: &AppType,
+        provider: &Provider,
+        config: &StreamCheckConfig,
+    ) -> String {
+        let effective_config = Self::merge_provider_config(provider, config);
+        Self::resolve_test_model(app_type, provider, &effective_config)
     }
 }
 
@@ -743,5 +923,108 @@ mod tests {
         assert_eq!(anthropic, AuthStrategy::Anthropic);
         assert_eq!(claude_auth, AuthStrategy::ClaudeAuth);
         assert_eq!(bearer, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_full_url_mode() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://relay.example/v1/chat/completions",
+            AuthStrategy::Bearer,
+            "openai_chat",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_github_copilot() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.githubcopilot.com",
+            AuthStrategy::GitHubCopilot,
+            "openai_chat",
+            false,
+        );
+
+        assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_github_copilot_responses() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.githubcopilot.com",
+            AuthStrategy::GitHubCopilot,
+            "openai_responses",
+            false,
+        );
+
+        assert_eq!(url, "https://api.githubcopilot.com/v1/responses");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_openai_chat() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://example.com/v1",
+            AuthStrategy::Bearer,
+            "openai_chat",
+            false,
+        );
+
+        assert_eq!(url, "https://example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_openai_responses() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://example.com/v1",
+            AuthStrategy::Bearer,
+            "openai_responses",
+            false,
+        );
+
+        assert_eq!(url, "https://example.com/v1/responses");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_anthropic() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://api.anthropic.com",
+            AuthStrategy::Anthropic,
+            "anthropic",
+            false,
+        );
+
+        assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_for_full_url_mode() {
+        let urls = StreamCheckService::resolve_codex_stream_urls(
+            "https://relay.example/custom/responses",
+            true,
+        );
+
+        assert_eq!(urls, vec!["https://relay.example/custom/responses"]);
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_for_v1_base() {
+        let urls =
+            StreamCheckService::resolve_codex_stream_urls("https://api.openai.com/v1", false);
+
+        assert_eq!(urls, vec!["https://api.openai.com/v1/responses"]);
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_for_origin_base() {
+        let urls = StreamCheckService::resolve_codex_stream_urls("https://api.openai.com", false);
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://api.openai.com/responses",
+                "https://api.openai.com/v1/responses",
+            ]
+        );
     }
 }

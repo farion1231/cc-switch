@@ -164,10 +164,20 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const handleAddRepo = async (repo: SkillRepo) => {
       try {
         await addRepoMutation.mutateAsync(repo);
+        // Await discovery so we can report the real count
+        const { data: freshSkills } = await refetchDiscoverable();
+        const count =
+          freshSkills?.filter(
+            (s) =>
+              s.repoOwner === repo.owner &&
+              s.repoName === repo.name &&
+              (s.repoBranch || "main") === (repo.branch || "main"),
+          ).length ?? 0;
         toast.success(
           t("skills.repo.addSuccess", {
             owner: repo.owner,
             name: repo.name,
+            count,
           }),
           { closeButton: true },
         );
@@ -213,19 +223,17 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       const query = searchQuery.toLowerCase();
       return byStatus.filter((skill) => {
         const name = skill.name?.toLowerCase() || "";
-        const description = skill.description?.toLowerCase() || "";
-        const directory = skill.directory?.toLowerCase() || "";
+        const repo =
+          skill.repoOwner && skill.repoName
+            ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
+            : "";
 
-        return (
-          name.includes(query) ||
-          description.includes(query) ||
-          directory.includes(query)
-        );
+        return name.includes(query) || repo.includes(query);
       });
     }, [skills, searchQuery, filterRepo, filterStatus]);
 
     return (
-      <div className="px-6 flex flex-col h-[calc(100vh-8rem)] overflow-hidden bg-background/50">
+      <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden bg-background/50">
         {/* 技能网格（可滚动详情区域） */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden animate-fade-in">
           <div className="py-4">

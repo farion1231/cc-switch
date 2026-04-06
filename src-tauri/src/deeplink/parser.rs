@@ -79,9 +79,12 @@ fn parse_provider_deeplink(
         .clone();
 
     // Validate app type
-    if app != "claude" && app != "codex" && app != "gemini" {
+    if !matches!(
+        app.as_str(),
+        "claude" | "codex" | "gemini" | "opencode" | "openclaw"
+    ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', or 'gemini', got '{app}'"
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', or 'openclaw', got '{app}'"
         )));
     }
 
@@ -185,9 +188,12 @@ fn parse_prompt_deeplink(
         .clone();
 
     // Validate app type
-    if app != "claude" && app != "codex" && app != "gemini" {
+    if !matches!(
+        app.as_str(),
+        "claude" | "codex" | "gemini" | "opencode" | "openclaw"
+    ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', or 'gemini', got '{app}'"
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', or 'openclaw', got '{app}'"
         )));
     }
 
@@ -254,9 +260,12 @@ fn parse_mcp_deeplink(
     // Validate apps format
     for app in apps.split(',') {
         let trimmed = app.trim();
-        if trimmed != "claude" && trimmed != "codex" && trimmed != "gemini" {
+        if !matches!(
+            trimmed,
+            "claude" | "codex" | "gemini" | "opencode" | "openclaw"
+        ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', or 'gemini', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'opencode', or 'openclaw', got '{trimmed}'"
             )));
         }
     }

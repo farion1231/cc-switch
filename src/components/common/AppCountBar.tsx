@@ -5,12 +5,14 @@ import { APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
 
 interface AppCountBarProps {
   totalLabel: string;
-  counts: Record<AppId, number>;
+  counts: Partial<Record<AppId, number>>;
+  appIds?: readonly AppId[];
 }
 
 export const AppCountBar: React.FC<AppCountBarProps> = ({
   totalLabel,
   counts,
+  appIds = APP_IDS,
 }) => {
   return (
     <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6 flex items-center justify-between gap-4">
@@ -18,14 +20,14 @@ export const AppCountBar: React.FC<AppCountBarProps> = ({
         {totalLabel}
       </Badge>
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-        {APP_IDS.map((app) => (
+        {appIds.map((app) => (
           <Badge
             key={app}
             variant="secondary"
             className={APP_ICON_MAP[app].badgeClass}
           >
             <span className="opacity-75">{APP_ICON_MAP[app].label}:</span>
-            <span className="font-bold ml-1">{counts[app]}</span>
+            <span className="font-bold ml-1">{counts[app] ?? 0}</span>
           </Badge>
         ))}
       </div>

@@ -38,7 +38,7 @@ export function DirectorySettings({
   const { t } = useTranslation();
 
   return (
-    <>
+    <div className="space-y-6">
       {/* CC Switch 配置目录 - 独立区块 */}
       <section className="space-y-4">
         <header className="space-y-1">
@@ -131,7 +131,7 @@ export function DirectorySettings({
           onReset={() => onResetDirectory("opencode")}
         />
       </section>
-    </>
+    </div>
   );
 }
 

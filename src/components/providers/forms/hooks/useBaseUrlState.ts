@@ -4,9 +4,10 @@ import {
   setCodexBaseUrl as setCodexBaseUrlInConfig,
 } from "@/utils/providerConfigUtils";
 import type { ProviderCategory } from "@/types";
+import type { AppId } from "@/lib/api";
 
 interface UseBaseUrlStateProps {
-  appType: "claude" | "codex" | "gemini" | "opencode" | "qwen";
+  appType: AppId;
   category: ProviderCategory | undefined;
   settingsConfig: string;
   codexConfig?: string;
@@ -59,10 +60,8 @@ export function useBaseUrlState({
     if (!codexConfig) return;
 
     const extracted = extractCodexBaseUrl(codexConfig) || "";
-    if (extracted !== codexBaseUrl) {
-      setCodexBaseUrl(extracted);
-    }
-  }, [appType, category, codexConfig, codexBaseUrl]);
+    setCodexBaseUrl((prev) => (prev === extracted ? prev : extracted));
+  }, [appType, category, codexConfig]);
 
   // 从Claude配置同步到 state（Gemini）
   useEffect(() => {
@@ -115,7 +114,7 @@ export function useBaseUrlState({
       const sanitized = url.trim();
       setCodexBaseUrl(sanitized);
 
-      if (!sanitized || !onCodexConfigChange) {
+      if (!onCodexConfigChange) {
         return;
       }
 

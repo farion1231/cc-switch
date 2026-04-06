@@ -1,6 +1,11 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
-import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  GeminiIcon,
+  OpenClawIcon,
+} from "@/components/BrandIcons";
 import { ProviderIcon } from "@/components/ProviderIcon";
 
 export interface AppConfig {
@@ -10,7 +15,23 @@ export interface AppConfig {
   badgeClass: string;
 }
 
-export const APP_IDS: AppId[] = ["claude", "codex", "gemini", "opencode", "qwen"];
+export const APP_IDS = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "qwen",
+  "openclaw",
+] as const satisfies readonly AppId[];
+
+/** App IDs shown in MCP & Skills panels (excludes OpenClaw) */
+export const MCP_SKILLS_APP_IDS = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "qwen",
+] as const satisfies readonly AppId[];
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {
@@ -54,8 +75,20 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   },
   qwen: {
     label: "Qwen",
-    icon: <ProviderIcon icon="qwen" name="Qwen" size={14} showFallback={false} />,
-    activeClass: "bg-purple-500/10 ring-1 ring-purple-500/20 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400",
-    badgeClass: "bg-purple-500/10 text-purple-700 dark:text-purple-300 hover:bg-purple-500/20 border-0 gap-1.5",
+    icon: (
+      <ProviderIcon icon="qwen" name="Qwen" size={14} showFallback={false} />
+    ),
+    activeClass:
+      "bg-purple-500/10 ring-1 ring-purple-500/20 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400",
+    badgeClass:
+      "bg-purple-500/10 text-purple-700 dark:text-purple-300 hover:bg-purple-500/20 border-0 gap-1.5",
+  },
+  openclaw: {
+    label: "OpenClaw",
+    icon: <OpenClawIcon size={14} />,
+    activeClass:
+      "bg-rose-500/10 ring-1 ring-rose-500/20 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400",
+    badgeClass:
+      "bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 border-0 gap-1.5",
   },
 };

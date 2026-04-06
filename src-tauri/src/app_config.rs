@@ -28,6 +28,7 @@ impl McpApps {
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::Qwen => self.qwen,
+            AppType::OpenClaw => false, // OpenClaw doesn't support MCP
         }
     }
 
@@ -39,6 +40,7 @@ impl McpApps {
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::Qwen => self.qwen = enabled,
+            AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
         }
     }
 
@@ -93,6 +95,7 @@ impl SkillApps {
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::Qwen => self.qwen,
+            AppType::OpenClaw => false, // OpenClaw doesn't support Skills
         }
     }
 
@@ -104,6 +107,7 @@ impl SkillApps {
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::Qwen => self.qwen = enabled,
+            AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
         }
     }
 
@@ -137,6 +141,20 @@ impl SkillApps {
     pub fn only(app: &AppType) -> Self {
         let mut apps = Self::default();
         apps.set_enabled_for(app, true);
+        apps
+    }
+
+    /// 从来源标签列表构建启用状态
+    ///
+    /// 标签与 AppType::as_str() 一致时启用对应应用，
+    /// 其他标签（如 "agents", "cc-switch"）忽略。
+    pub fn from_labels(labels: &[String]) -> Self {
+        let mut apps = Self::default();
+        for label in labels {
+            if let Ok(app) = label.parse::<AppType>() {
+                apps.set_enabled_for(&app, true);
+            }
+        }
         apps
     }
 }
@@ -185,6 +203,8 @@ pub struct UnmanagedSkill {
     pub description: Option<String>,
     /// 在哪些应用目录中发现（如 ["claude", "codex"]）
     pub found_in: Vec<String>,
+    /// 发现路径（首个匹配的完整路径）
+    pub path: String,
 }
 
 /// MCP 服务器定义（v3.7.0 统一结构）
@@ -239,6 +259,9 @@ pub struct McpRoot {
     /// Qwen MCP 配置
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub qwen: McpConfig,
+    /// OpenClaw MCP 配置（v4.1.0+，实际使用 openclaw.json）
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub openclaw: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -252,6 +275,7 @@ impl Default for McpRoot {
             gemini: McpConfig::default(),
             opencode: McpConfig::default(),
             qwen: McpConfig::default(),
+            openclaw: McpConfig::default(),
         }
     }
 }
@@ -276,6 +300,7 @@ pub struct PromptRoot {
     pub opencode: PromptConfig,
     #[serde(default)]
     pub qwen: PromptConfig,
+    pub openclaw: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -292,6 +317,7 @@ pub enum AppType {
     Gemini,
     OpenCode,
     Qwen,
+    OpenClaw,
 }
 
 impl AppType {
@@ -302,15 +328,16 @@ impl AppType {
             AppType::Gemini => "gemini",
             AppType::OpenCode => "opencode",
             AppType::Qwen => "qwen",
+            AppType::OpenClaw => "openclaw",
         }
     }
 
     /// Check if this app uses additive mode
     ///
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
-    /// - Additive mode (true): All providers are written to live config (OpenCode)
+    /// - Additive mode (true): All providers are written to live config (OpenCode, OpenClaw)
     pub fn is_additive_mode(&self) -> bool {
-        matches!(self, AppType::OpenCode)
+        matches!(self, AppType::OpenCode | AppType::OpenClaw)
     }
 
     /// Return an iterator over all app types
@@ -321,6 +348,7 @@ impl AppType {
             AppType::Gemini,
             AppType::OpenCode,
             AppType::Qwen,
+            AppType::OpenClaw,
         ]
         .into_iter()
     }
@@ -337,10 +365,11 @@ impl FromStr for AppType {
             "gemini" => Ok(AppType::Gemini),
             "opencode" => Ok(AppType::OpenCode),
             "qwen" => Ok(AppType::Qwen),
+            "openclaw" => Ok(AppType::OpenClaw),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, qwen。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, qwen."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, qwen, openclaw。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, qwen, openclaw."),
             )),
         }
     }
@@ -363,6 +392,7 @@ pub struct CommonConfigSnippets {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qwen: Option<String>,
+    pub openclaw: Option<String>,
 }
 
 impl CommonConfigSnippets {
@@ -374,6 +404,7 @@ impl CommonConfigSnippets {
             AppType::Gemini => self.gemini.as_ref(),
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::Qwen => self.qwen.as_ref(),
+            AppType::OpenClaw => self.openclaw.as_ref(),
         }
     }
 
@@ -385,6 +416,7 @@ impl CommonConfigSnippets {
             AppType::Gemini => self.gemini = snippet,
             AppType::OpenCode => self.opencode = snippet,
             AppType::Qwen => self.qwen = snippet,
+            AppType::OpenClaw => self.openclaw = snippet,
         }
     }
 }
@@ -425,6 +457,8 @@ impl Default for MultiAppConfig {
         apps.insert("codex".to_string(), ProviderManager::default());
         apps.insert("gemini".to_string(), ProviderManager::default());
         apps.insert("opencode".to_string(), ProviderManager::default());
+        apps.insert("qwen".to_string(), ProviderManager::default());
+        apps.insert("openclaw".to_string(), ProviderManager::default());
 
         Self {
             version: 2,
@@ -585,6 +619,7 @@ impl MultiAppConfig {
             AppType::Gemini => &self.mcp.gemini,
             AppType::OpenCode => &self.mcp.opencode,
             AppType::Qwen => &self.mcp.qwen,
+            AppType::OpenClaw => &self.mcp.openclaw,
         }
     }
 
@@ -596,6 +631,7 @@ impl MultiAppConfig {
             AppType::Gemini => &mut self.mcp.gemini,
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::Qwen => &mut self.mcp.qwen,
+            AppType::OpenClaw => &mut self.mcp.openclaw,
         }
     }
 
@@ -611,6 +647,7 @@ impl MultiAppConfig {
         Self::auto_import_prompt_if_exists(&mut config, AppType::Gemini)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenCode)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::Qwen)?;
+        Self::auto_import_prompt_if_exists(&mut config, AppType::OpenClaw)?;
 
         Ok(config)
     }
@@ -632,6 +669,8 @@ impl MultiAppConfig {
             || !self.prompts.gemini.prompts.is_empty()
             || !self.prompts.opencode.prompts.is_empty()
             || !self.prompts.qwen.prompts.is_empty()
+            || !self.prompts.qwen.prompts.is_empty()
+            || !self.prompts.openclaw.prompts.is_empty()
         {
             return Ok(false);
         }
@@ -645,6 +684,7 @@ impl MultiAppConfig {
             AppType::Gemini,
             AppType::OpenCode,
             AppType::Qwen,
+            AppType::OpenClaw,
         ] {
             // 复用已有的单应用导入逻辑
             if Self::auto_import_prompt_if_exists(self, app)? {
@@ -716,6 +756,7 @@ impl MultiAppConfig {
             AppType::Gemini => &mut config.prompts.gemini.prompts,
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::Qwen => &mut config.prompts.qwen.prompts,
+            AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
         };
 
         prompts.insert(id, prompt);
@@ -744,13 +785,20 @@ impl MultiAppConfig {
         let mut conflicts = Vec::new();
 
         // 收集所有应用的 MCP
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+            AppType::Qwen,
+        ] {
             let old_servers = match app {
                 AppType::Claude => &self.mcp.claude.servers,
                 AppType::Codex => &self.mcp.codex.servers,
                 AppType::Gemini => &self.mcp.gemini.servers,
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::Qwen => &self.mcp.qwen.servers,
+                AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
             };
 
             for (id, entry) in old_servers {
@@ -871,6 +919,7 @@ mod tests {
         dir: TempDir,
         original_home: Option<String>,
         original_userprofile: Option<String>,
+        original_test_home: Option<String>,
     }
 
     impl TempHome {
@@ -878,14 +927,17 @@ mod tests {
             let dir = TempDir::new().expect("failed to create temp home");
             let original_home = env::var("HOME").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
 
             env::set_var("HOME", dir.path());
             env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
 
             Self {
                 dir,
                 original_home,
                 original_userprofile,
+                original_test_home,
             }
         }
     }
@@ -900,6 +952,11 @@ mod tests {
             match &self.original_userprofile {
                 Some(value) => env::set_var("USERPROFILE", value),
                 None => env::remove_var("USERPROFILE"),
+            }
+
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
     }

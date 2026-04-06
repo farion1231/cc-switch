@@ -1,0 +1,49 @@
+name: Close Stale Issues
+
+on:
+  schedule:
+    # Run daily at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  issues: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          # --- Timing ---
+          days-before-stale: 60
+          days-before-close: 14
+
+          # --- Stale label ---
+          stale-issue-label: 'stale'
+
+          # --- Messages (bilingual) ---
+          stale-issue-message: |
+            此 issue 已超过 60 天没有活动，已被标记为 `stale`。
+            如果此问题仍然存在，请回复以保持 issue 打开状态，否则将在 14 天后自动关闭。
+
+            This issue has been automatically marked as `stale` because it has not had activity for 60 days.
+            Please reply to keep it open, otherwise it will be automatically closed in 14 days.
+          close-issue-message: |
+            此 issue 因长时间无活动已被自动关闭。如果问题仍然存在，欢迎重新打开。
+
+            This issue has been automatically closed due to inactivity. If the problem persists, feel free to reopen it.
+
+          # --- Exemptions ---
+          # Issues with these labels will NEVER be marked stale
+          exempt-issue-labels: 'security,performance'
+          # Issues with 3+ reactions are likely popular requests, exempt them
+          exempt-issue-created-after: '2020-01-01'
+
+          # --- Processing limits ---
+          # Process up to 100 issues per run to avoid API rate limits
+          operations-per-run: 100
+
+          # --- Only issues, not PRs ---
+          days-before-pr-stale: -1
+          days-before-pr-close: -1

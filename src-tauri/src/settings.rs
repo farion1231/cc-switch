@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
@@ -35,6 +36,7 @@ pub struct VisibleApps {
     pub opencode: bool,
     #[serde(default = "default_true")]
     pub qwen: bool,
+    pub openclaw: bool,
 }
 
 impl Default for VisibleApps {
@@ -45,6 +47,7 @@ impl Default for VisibleApps {
             gemini: true,
             opencode: true,
             qwen: true,
+            openclaw: true,
         }
     }
 }
@@ -58,7 +61,108 @@ impl VisibleApps {
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::Qwen => self.qwen,
+            AppType::OpenClaw => self.openclaw,
         }
+    }
+}
+
+/// WebDAV 同步状态（持久化同步进度信息）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavSyncStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_remote_etag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_local_manifest_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_remote_manifest_hash: Option<String>,
+}
+
+fn default_remote_root() -> String {
+    "cc-switch-sync".to_string()
+}
+fn default_profile() -> String {
+    "default".to_string()
+}
+
+/// WebDAV 同步设置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavSyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_sync: bool,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default = "default_remote_root")]
+    pub remote_root: String,
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    #[serde(default)]
+    pub status: WebDavSyncStatus,
+}
+
+impl Default for WebDavSyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_sync: false,
+            base_url: String::new(),
+            username: String::new(),
+            password: String::new(),
+            remote_root: default_remote_root(),
+            profile: default_profile(),
+            status: WebDavSyncStatus::default(),
+        }
+    }
+}
+
+impl WebDavSyncSettings {
+    pub fn validate(&self) -> Result<(), crate::error::AppError> {
+        if self.base_url.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "webdav.base_url.required",
+                "WebDAV 地址不能为空",
+                "WebDAV URL is required.",
+            ));
+        }
+        if self.username.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "webdav.username.required",
+                "WebDAV 用户名不能为空",
+                "WebDAV username is required.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn normalize(&mut self) {
+        self.base_url = self.base_url.trim().to_string();
+        self.username = self.username.trim().to_string();
+        self.remote_root = self.remote_root.trim().to_string();
+        self.profile = self.profile.trim().to_string();
+        if self.remote_root.is_empty() {
+            self.remote_root = default_remote_root();
+        }
+        if self.profile.is_empty() {
+            self.profile = default_profile();
+        }
+    }
+
+    /// Returns true if all credential fields are blank (no config to persist).
+    fn is_empty(&self) -> bool {
+        self.base_url.is_empty() && self.username.is_empty() && self.password.is_empty()
     }
 }
 
@@ -86,6 +190,24 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    /// 是否在主页面启用本地代理功能（默认关闭）
+    #[serde(default)]
+    pub enable_local_proxy: bool,
+    /// User has confirmed the local proxy first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_confirmed: Option<bool>,
+    /// User has confirmed the usage query first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_confirmed: Option<bool>,
+    /// User has confirmed the stream check first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_check_confirmed: Option<bool>,
+    /// Whether to show the failover toggle independently on the main page
+    #[serde(default)]
+    pub enable_failover_toggle: bool,
+    /// User has confirmed the failover toggle first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
@@ -104,6 +226,7 @@ pub struct AppSettings {
     pub opencode_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qwen_config_dir: Option<String>,
+    pub openclaw_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -121,11 +244,30 @@ pub struct AppSettings {
     /// 当前 Qwen 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_qwen: Option<String>,
+    /// 当前 OpenClaw 供应商 ID（本地存储，对 OpenClaw 可能无意义，但保持结构一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_openclaw: Option<String>,
 
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
     #[serde(default)]
     pub skill_sync_method: SyncMethod,
+
+    // ===== WebDAV 同步设置 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webdav_sync: Option<WebDavSyncSettings>,
+
+    // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webdav_backup: Option<serde_json::Value>,
+
+    // ===== 备份策略设置 =====
+    /// Auto-backup interval in hours (default 24, 0 = disabled)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_interval_hours: Option<u32>,
+    /// Maximum number of backup files to retain (default 10)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_retain_count: Option<u32>,
 
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
@@ -153,6 +295,12 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            enable_local_proxy: false,
+            proxy_confirmed: None,
+            usage_confirmed: None,
+            stream_check_confirmed: None,
+            enable_failover_toggle: false,
+            failover_confirmed: None,
             language: None,
             visible_apps: None,
             claude_config_dir: None,
@@ -160,12 +308,18 @@ impl Default for AppSettings {
             gemini_config_dir: None,
             opencode_config_dir: None,
             qwen_config_dir: None,
+            openclaw_config_dir: None,
             current_provider_claude: None,
             current_provider_codex: None,
             current_provider_gemini: None,
             current_provider_opencode: None,
             current_provider_qwen: None,
+            current_provider_openclaw: None,
             skill_sync_method: SyncMethod::default(),
+            webdav_sync: None,
+            webdav_backup: None,
+            backup_interval_hours: None,
+            backup_retain_count: None,
             preferred_terminal: None,
         }
     }
@@ -217,12 +371,26 @@ impl AppSettings {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
+        self.openclaw_config_dir = self
+            .openclaw_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
         self.language = self
             .language
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "ja"))
             .map(|s| s.to_string());
+
+        if let Some(sync) = &mut self.webdav_sync {
+            sync.normalize();
+            if sync.is_empty() {
+                self.webdav_sync = None;
+            }
+        }
     }
 
     fn load_from_file() -> Self {
@@ -263,7 +431,27 @@ fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
 
     let json = serde_json::to_string_pretty(&normalized)
         .map_err(|e| AppError::JsonSerialize { source: e })?;
-    fs::write(&path, json).map_err(|e| AppError::io(&path, e))?;
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| AppError::io(&path, e))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| AppError::io(&path, e))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::write(&path, json).map_err(|e| AppError::io(&path, e))?;
+    }
+
     Ok(())
 }
 
@@ -301,6 +489,15 @@ pub fn get_settings() -> AppSettings {
         .clone()
 }
 
+pub fn get_settings_for_frontend() -> AppSettings {
+    let mut settings = get_settings();
+    if let Some(sync) = &mut settings.webdav_sync {
+        sync.password.clear();
+    }
+    settings.webdav_backup = None;
+    settings
+}
+
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
     save_settings_file(&new_settings)?;
@@ -310,6 +507,22 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
         e.into_inner()
     });
     *guard = new_settings;
+    Ok(())
+}
+
+fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
+where
+    F: FnOnce(&mut AppSettings),
+{
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let mut next = guard.clone();
+    mutator(&mut next);
+    next.normalize_paths();
+    save_settings_file(&next)?;
+    *guard = next;
     Ok(())
 }
 
@@ -365,6 +578,14 @@ pub fn get_qwen_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn get_openclaw_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .openclaw_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
@@ -379,6 +600,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Gemini => settings.current_provider_gemini.clone(),
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::Qwen => settings.current_provider_qwen.clone(),
+        AppType::OpenClaw => settings.current_provider_openclaw.clone(),
     }
 }
 
@@ -387,17 +609,15 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
 /// 这是设备级别的设置，不随数据库同步。
 /// 传入 `None` 会清除当前供应商设置。
 pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), AppError> {
-    let mut settings = get_settings();
-
-    match app_type {
-        AppType::Claude => settings.current_provider_claude = id.map(|s| s.to_string()),
-        AppType::Codex => settings.current_provider_codex = id.map(|s| s.to_string()),
-        AppType::Gemini => settings.current_provider_gemini = id.map(|s| s.to_string()),
-        AppType::OpenCode => settings.current_provider_opencode = id.map(|s| s.to_string()),
-        AppType::Qwen => settings.current_provider_qwen = id.map(|s| s.to_string()),
-    }
-
-    update_settings(settings)
+    let id_owned = id.map(|s| s.to_string());
+    mutate_settings(|settings| match app_type {
+        AppType::Claude => settings.current_provider_claude = id_owned.clone(),
+        AppType::Codex => settings.current_provider_codex = id_owned.clone(),
+        AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
+        AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
+        AppType::Qwen => settings.current_provider_qwen = id_owned.clone(),
+        AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
+    })
 }
 
 /// 获取有效的当前供应商 ID（验证存在性）
@@ -448,6 +668,33 @@ pub fn get_skill_sync_method() -> SyncMethod {
         .skill_sync_method
 }
 
+// ===== 备份策略管理函数 =====
+
+/// Get the effective auto-backup interval in hours (default 24)
+pub fn effective_backup_interval_hours() -> u32 {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .backup_interval_hours
+        .unwrap_or(24)
+}
+
+/// Get the effective backup retain count (default 10, minimum 1)
+pub fn effective_backup_retain_count() -> usize {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .backup_retain_count
+        .map(|n| (n as usize).max(1))
+        .unwrap_or(10)
+}
+
 // ===== 终端设置管理函数 =====
 
 /// 获取首选终端应用
@@ -460,4 +707,27 @@ pub fn get_preferred_terminal() -> Option<String> {
         })
         .preferred_terminal
         .clone()
+}
+
+// ===== WebDAV 同步设置管理函数 =====
+
+/// 获取 WebDAV 同步设置
+pub fn get_webdav_sync_settings() -> Option<WebDavSyncSettings> {
+    settings_store().read().ok()?.webdav_sync.clone()
+}
+
+/// 保存 WebDAV 同步设置
+pub fn set_webdav_sync_settings(settings: Option<WebDavSyncSettings>) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.webdav_sync = settings;
+    })
+}
+
+/// 仅更新 WebDAV 同步状态，避免覆写 credentials/root/profile 等字段
+pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        if let Some(sync) = current.webdav_sync.as_mut() {
+            sync.status = status;
+        }
+    })
 }

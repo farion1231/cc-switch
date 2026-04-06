@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -53,6 +53,107 @@ export function CommonConfigEditor({
     return () => observer.disconnect();
   }, []);
 
+  // Mirror value prop to local state so checkbox toggles and JsonEditor stay in sync
+  // (parent uses form.getValues which doesn't trigger re-renders)
+  const [localValue, setLocalValue] = useState(value);
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const handleLocalChange = useCallback(
+    (newValue: string) => {
+      setLocalValue(newValue);
+      onChange(newValue);
+    },
+    [onChange],
+  );
+
+  const toggleStates = useMemo(() => {
+    try {
+      const config = JSON.parse(localValue);
+      return {
+        hideAttribution:
+          config?.attribution?.commit === "" && config?.attribution?.pr === "",
+        teammates:
+          config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === "1" ||
+          config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 1,
+        enableToolSearch:
+          config?.env?.ENABLE_TOOL_SEARCH === "true" ||
+          config?.env?.ENABLE_TOOL_SEARCH === "1",
+        effortHigh: config?.effortLevel === "high",
+        disableAutoUpgrade:
+          config?.env?.DISABLE_AUTOUPDATER === "1" ||
+          config?.env?.DISABLE_AUTOUPDATER === 1,
+      };
+    } catch {
+      return {
+        hideAttribution: false,
+        teammates: false,
+        enableToolSearch: false,
+        effortHigh: false,
+        disableAutoUpgrade: false,
+      };
+    }
+  }, [localValue]);
+
+  const handleToggle = useCallback(
+    (toggleKey: string, checked: boolean) => {
+      try {
+        const config = JSON.parse(localValue || "{}");
+
+        switch (toggleKey) {
+          case "hideAttribution":
+            if (checked) {
+              config.attribution = { commit: "", pr: "" };
+            } else {
+              delete config.attribution;
+            }
+            break;
+          case "teammates":
+            if (!config.env) config.env = {};
+            if (checked) {
+              config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+            } else {
+              delete config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
+              if (Object.keys(config.env).length === 0) delete config.env;
+            }
+            break;
+          case "enableToolSearch":
+            if (!config.env) config.env = {};
+            if (checked) {
+              config.env.ENABLE_TOOL_SEARCH = "true";
+            } else {
+              delete config.env.ENABLE_TOOL_SEARCH;
+              if (Object.keys(config.env).length === 0) delete config.env;
+            }
+            break;
+          case "effortHigh":
+            if (checked) {
+              config.effortLevel = "high";
+            } else {
+              delete config.effortLevel;
+            }
+            break;
+          case "disableAutoUpgrade":
+            if (!config.env) config.env = {};
+            if (checked) {
+              config.env.DISABLE_AUTOUPDATER = "1";
+            } else {
+              delete config.env.DISABLE_AUTOUPDATER;
+              if (Object.keys(config.env).length === 0) delete config.env;
+            }
+            break;
+        }
+
+        handleLocalChange(JSON.stringify(config, null, 2));
+      } catch {
+        // Don't modify if JSON is invalid
+      }
+    },
+    [localValue, handleLocalChange],
+  );
+
   return (
     <>
       <div className="space-y-2">
@@ -91,9 +192,62 @@ export function CommonConfigEditor({
             {commonConfigError}
           </p>
         )}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.hideAttribution}
+              onChange={(e) =>
+                handleToggle("hideAttribution", e.target.checked)
+              }
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.hideAttribution")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.teammates}
+              onChange={(e) => handleToggle("teammates", e.target.checked)}
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.enableTeammates")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.enableToolSearch}
+              onChange={(e) =>
+                handleToggle("enableToolSearch", e.target.checked)
+              }
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.enableToolSearch")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.effortHigh}
+              onChange={(e) => handleToggle("effortHigh", e.target.checked)}
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.effortHigh")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.disableAutoUpgrade}
+              onChange={(e) =>
+                handleToggle("disableAutoUpgrade", e.target.checked)
+              }
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.disableAutoUpgrade")}</span>
+          </label>
+        </div>
         <JsonEditor
-          value={value}
-          onChange={onChange}
+          value={localValue}
+          onChange={handleLocalChange}
           placeholder={`{
   "env": {
     "ANTHROPIC_BASE_URL": "https://your-api-endpoint.com",

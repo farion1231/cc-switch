@@ -10,7 +10,7 @@ const KEEP_LIST = [
     'openai', 'anthropic', 'claude', 'google', 'gemini', 'gemma', 'palm',
     'microsoft', 'azure', 'copilot', 'meta', 'llama',
     'alibaba', 'qwen', 'tencent', 'hunyuan', 'baidu', 'wenxin',
-    'bytedance', 'doubao', 'deepseek', 'moonshot', 'kimi',
+    'bytedance', 'doubao', 'deepseek', 'moonshot', 'kimi', 'stepfun',
     'zhipu', 'chatglm', 'glm', 'minimax', 'mistral', 'cohere',
     'perplexity', 'huggingface', 'midjourney', 'stability',
     'xai', 'grok', 'yi', 'zeroone', 'ollama',

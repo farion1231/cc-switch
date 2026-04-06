@@ -129,6 +129,11 @@ impl McpService {
             AppType::Qwen => {
                 // Qwen doesn't support MCP servers
             }
+            AppType::OpenClaw => {
+                // OpenClaw MCP support is still in development (Issue #4834)
+                // Skip for now
+                log::debug!("OpenClaw MCP support is still in development, skipping sync");
+            }
         }
         Ok(())
     }
@@ -157,6 +162,10 @@ impl McpService {
             AppType::Qwen => {
                 // Qwen doesn't support MCP servers
             }
+            AppType::OpenClaw => {
+                // OpenClaw MCP support is still in development
+                log::debug!("OpenClaw MCP support is still in development, skipping remove");
+            }
         }
         Ok(())
     }
@@ -165,8 +174,18 @@ impl McpService {
     pub fn sync_all_enabled(state: &AppState) -> Result<(), AppError> {
         let servers = Self::get_all_servers(state)?;
 
-        for server in servers.values() {
-            Self::sync_server_to_apps(state, server)?;
+        for app in AppType::all() {
+            if matches!(app, AppType::OpenClaw) {
+                continue;
+            }
+
+            for server in servers.values() {
+                if server.apps.is_enabled_for(&app) {
+                    Self::sync_server_to_app(state, server, &app)?;
+                } else {
+                    Self::remove_server_from_app(state, &server.id, &app)?;
+                }
+            }
         }
 
         Ok(())

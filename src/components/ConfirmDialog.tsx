@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 interface ConfirmDialogProps {
@@ -16,6 +16,8 @@ interface ConfirmDialogProps {
   message: string;
   confirmText?: string;
   cancelText?: string;
+  variant?: "destructive" | "info";
+  zIndex?: "base" | "nested" | "alert" | "top";
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -26,10 +28,16 @@ export function ConfirmDialog({
   message,
   confirmText,
   cancelText,
+  variant = "destructive",
+  zIndex = "alert",
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const { t } = useTranslation();
+
+  const IconComponent = variant === "info" ? Info : AlertTriangle;
+  const iconClass =
+    variant === "info" ? "h-5 w-5 text-blue-500" : "h-5 w-5 text-destructive";
 
   return (
     <Dialog
@@ -40,10 +48,10 @@ export function ConfirmDialog({
         }
       }}
     >
-      <DialogContent className="max-w-sm" zIndex="alert">
+      <DialogContent className="max-w-sm" zIndex={zIndex}>
         <DialogHeader className="space-y-3 border-b-0 bg-transparent pb-0">
           <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
-            <AlertTriangle className="h-5 w-5 text-destructive" />
+            <IconComponent className={iconClass} />
             {title}
           </DialogTitle>
           <DialogDescription className="whitespace-pre-line text-sm leading-relaxed">
@@ -54,7 +62,10 @@ export function ConfirmDialog({
           <Button variant="outline" onClick={onCancel}>
             {cancelText || t("common.cancel")}
           </Button>
-          <Button variant="destructive" onClick={onConfirm}>
+          <Button
+            variant={variant === "info" ? "default" : "destructive"}
+            onClick={onConfirm}
+          >
             {confirmText || t("common.confirm")}
           </Button>
         </DialogFooter>

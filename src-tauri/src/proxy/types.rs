@@ -113,6 +113,8 @@ pub struct ProxyTakeoverStatus {
     pub claude: bool,
     pub codex: bool,
     pub gemini: bool,
+    pub opencode: bool,
+    pub openclaw: bool,
     pub qwen: bool,
 }
 
@@ -196,17 +198,22 @@ pub struct AppProxyConfig {
 /// 整流器配置
 ///
 /// 存储在 settings 表中
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RectifierConfig {
-    /// 总开关：是否启用整流器
-    #[serde(default)]
+    /// 总开关：是否启用整流器（默认开启）
+    #[serde(default = "default_true")]
     pub enabled: bool,
-    /// 请求整流：启用 thinking 签名整流器
+    /// 请求整流：启用 thinking 签名整流器（默认开启）
     ///
     /// 处理错误：Invalid 'signature' in 'thinking' block
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub request_thinking_signature: bool,
+    /// 请求整流：启用 thinking budget 整流器（默认开启）
+    ///
+    /// 处理错误：budget_tokens + thinking 相关约束
+    #[serde(default = "default_true")]
+    pub request_thinking_budget: bool,
 }
 
 fn default_true() -> bool {
@@ -215,6 +222,100 @@ fn default_true() -> bool {
 
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+impl Default for RectifierConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            request_thinking_signature: true,
+            request_thinking_budget: true,
+        }
+    }
+}
+
+/// 请求优化器配置
+///
+/// 存储在 settings 表中，key = "optimizer_config"
+/// 仅对 Bedrock provider 生效（CLAUDE_CODE_USE_BEDROCK = "1"）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OptimizerConfig {
+    /// 总开关（默认关闭，用户需手动启用）
+    #[serde(default)]
+    pub enabled: bool,
+    /// Thinking 优化子开关（总开关开启后默认生效）
+    #[serde(default = "default_true")]
+    pub thinking_optimizer: bool,
+    /// Cache 注入子开关（总开关开启后默认生效）
+    #[serde(default = "default_true")]
+    pub cache_injection: bool,
+    /// Cache TTL: "5m" | "1h"（默认 "1h"）
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl: String,
+}
+
+fn default_cache_ttl() -> String {
+    "1h".to_string()
+}
+
+impl Default for OptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            thinking_optimizer: true,
+            cache_injection: true,
+            cache_ttl: "1h".to_string(),
+        }
+    }
+}
+
+/// Copilot 优化器配置
+///
+/// 存储在 settings 表中，key = "copilot_optimizer_config"
+/// 解决 Copilot 代理消耗量异常问题（Issue #1813）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotOptimizerConfig {
+    /// 总开关（默认开启 — 对 Copilot 用户至关重要）
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// x-initiator 请求分类（默认开启，P0 优先级）
+    #[serde(default = "default_true")]
+    pub request_classification: bool,
+    /// Tool result 消息合并（默认开启，P1 优先级）
+    #[serde(default = "default_true")]
+    pub tool_result_merging: bool,
+    /// Compact 请求识别（默认开启，P2 优先级）
+    #[serde(default = "default_true")]
+    pub compact_detection: bool,
+    /// 确定性 Request ID（默认开启，P3 优先级）
+    #[serde(default = "default_true")]
+    pub deterministic_request_id: bool,
+    /// Warmup 小模型降级（默认关闭，P4 优先级，opt-in）
+    #[serde(default)]
+    pub warmup_downgrade: bool,
+    /// Warmup 降级使用的模型（默认 "gpt-4o-mini"）
+    #[serde(default = "default_warmup_model")]
+    pub warmup_model: String,
+}
+
+fn default_warmup_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+impl Default for CopilotOptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            request_classification: true,
+            tool_result_merging: true,
+            compact_detection: true,
+            deterministic_request_id: true,
+            warmup_downgrade: false,
+            warmup_model: "gpt-4o-mini".to_string(),
+        }
+    }
 }
 
 /// 日志配置
@@ -262,32 +363,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rectifier_config_default_disabled() {
-        // 验证 RectifierConfig::default() 返回全禁用状态
+    fn test_rectifier_config_default_enabled() {
+        // 验证 RectifierConfig::default() 返回全开启状态
         let config = RectifierConfig::default();
-        assert!(!config.enabled, "整流器总开关默认应为 false");
+        assert!(config.enabled, "整流器总开关默认应为 true");
         assert!(
-            !config.request_thinking_signature,
-            "thinking 签名整流器默认应为 false"
+            config.request_thinking_signature,
+            "thinking 签名整流器默认应为 true"
+        );
+        assert!(
+            config.request_thinking_budget,
+            "thinking budget 整流器默认应为 true"
         );
     }
 
     #[test]
     fn test_rectifier_config_serde_default() {
-        // 验证反序列化缺字段时使用默认值 false
+        // 验证反序列化缺字段时使用默认值 true
         let json = "{}";
         let config: RectifierConfig = serde_json::from_str(json).unwrap();
-        assert!(!config.enabled);
-        assert!(!config.request_thinking_signature);
+        assert!(config.enabled);
+        assert!(config.request_thinking_signature);
+        assert!(config.request_thinking_budget);
     }
 
     #[test]
     fn test_rectifier_config_serde_explicit_true() {
         // 验证显式设置 true 时正确反序列化
-        let json = r#"{"enabled": true, "requestThinkingSignature": true}"#;
+        let json =
+            r#"{"enabled": true, "requestThinkingSignature": true, "requestThinkingBudget": true}"#;
         let config: RectifierConfig = serde_json::from_str(json).unwrap();
         assert!(config.enabled);
         assert!(config.request_thinking_signature);
+        assert!(config.request_thinking_budget);
+    }
+
+    #[test]
+    fn test_rectifier_config_serde_partial_fields() {
+        // 验证只设置部分字段时，缺失字段使用默认值 true
+        let json = r#"{"enabled": true, "requestThinkingSignature": false}"#;
+        let config: RectifierConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert!(!config.request_thinking_signature);
+        assert!(config.request_thinking_budget);
     }
 
     #[test]

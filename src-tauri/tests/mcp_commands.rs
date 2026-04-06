@@ -10,7 +10,9 @@ use cc_switch_lib::{
 
 #[path = "support.rs"]
 mod support;
-use support::{create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
+use support::{
+    create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
+};
 
 #[test]
 fn import_default_config_claude_persists_provider() {
@@ -558,5 +560,98 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
     assert!(
         !home.join(".claude.json").exists(),
         "~/.claude.json should still not exist after skipped sync"
+    );
+}
+
+#[test]
+fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let mcp_path = get_claude_mcp_path();
+    fs::write(
+        &mcp_path,
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                "managed-disabled": {
+                    "type": "stdio",
+                    "command": "echo"
+                },
+                "external-only": {
+                    "type": "stdio",
+                    "command": "external"
+                }
+            }
+        }))
+        .expect("serialize claude mcp"),
+    )
+    .expect("seed claude mcp");
+
+    let state = create_test_state().expect("create test state");
+
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "managed-disabled".to_string(),
+            name: "Managed Disabled".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("save disabled server");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "managed-enabled".to_string(),
+            name: "Managed Enabled".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "managed"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("save enabled server");
+
+    McpService::sync_all_enabled(&state).expect("reconcile mcp");
+
+    let text = fs::read_to_string(&mcp_path).expect("read claude mcp");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse claude mcp");
+    let servers = value
+        .get("mcpServers")
+        .and_then(|entry| entry.as_object())
+        .expect("mcpServers object");
+
+    assert!(
+        !servers.contains_key("managed-disabled"),
+        "DB-known disabled server should be removed from live config"
+    );
+    assert!(
+        servers.contains_key("managed-enabled"),
+        "DB-known enabled server should be present in live config"
+    );
+    assert!(
+        servers.contains_key("external-only"),
+        "live entries unknown to DB should be preserved"
     );
 }

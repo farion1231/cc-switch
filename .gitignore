@@ -26,3 +26,8 @@ flatpak-repo/
 
 # Git worktrees
 .worktrees/
+.spec-workflow/
+copilot-api
+.history
+CODEBUDDY.md
+.github

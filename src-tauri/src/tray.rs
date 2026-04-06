@@ -2,7 +2,7 @@
 //!
 //! 负责系统托盘图标和菜单的创建、更新和事件处理。
 
-use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 
 use crate::app_config::AppType;
@@ -13,9 +13,10 @@ use crate::store::AppState;
 #[derive(Clone, Copy)]
 pub struct TrayTexts {
     pub show_main: &'static str,
-    pub no_provider_hint: &'static str,
+    pub no_providers_label: &'static str,
+    pub lightweight_mode: &'static str,
     pub quit: &'static str,
-    pub auto_label: &'static str,
+    pub _auto_label: &'static str,
 }
 
 impl TrayTexts {
@@ -23,22 +24,24 @@ impl TrayTexts {
         match language {
             "en" => Self {
                 show_main: "Open main window",
-                no_provider_hint: "  (No providers yet, please add them from the main window)",
+                no_providers_label: "(no providers)",
+                lightweight_mode: "Lightweight Mode",
                 quit: "Quit",
-                auto_label: "Auto (Failover)",
+                _auto_label: "Auto (Failover)",
             },
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
-                no_provider_hint:
-                    "  (プロバイダーがまだありません。メイン画面から追加してください)",
+                no_providers_label: "(プロバイダーなし)",
+                lightweight_mode: "軽量モード",
                 quit: "終了",
-                auto_label: "自動 (フェイルオーバー)",
+                _auto_label: "自動 (フェイルオーバー)",
             },
             _ => Self {
                 show_main: "打开主界面",
-                no_provider_hint: "  (无供应商，请在主界面添加)",
+                no_providers_label: "(无供应商)",
+                lightweight_mode: "轻量模式",
                 quit: "退出",
-                auto_label: "自动 (故障转移)",
+                _auto_label: "自动 (故障转移)",
             },
         }
     }
@@ -48,7 +51,6 @@ impl TrayTexts {
 pub struct TrayAppSection {
     pub app_type: AppType,
     pub prefix: &'static str,
-    pub header_id: &'static str,
     pub empty_id: &'static str,
     pub header_label: &'static str,
     pub log_name: &'static str,
@@ -61,7 +63,6 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
     TrayAppSection {
         app_type: AppType::Claude,
         prefix: "claude_",
-        header_id: "claude_header",
         empty_id: "claude_empty",
         header_label: "Claude",
         log_name: "Claude",
@@ -69,7 +70,6 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
     TrayAppSection {
         app_type: AppType::Codex,
         prefix: "codex_",
-        header_id: "codex_header",
         empty_id: "codex_empty",
         header_label: "Codex",
         log_name: "Codex",
@@ -77,7 +77,6 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
     TrayAppSection {
         app_type: AppType::Gemini,
         prefix: "gemini_",
-        header_id: "gemini_header",
         empty_id: "gemini_empty",
         header_label: "Gemini",
         log_name: "Gemini",
@@ -85,67 +84,18 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
     TrayAppSection {
         app_type: AppType::Qwen,
         prefix: "qwen_",
-        header_id: "qwen_header",
         empty_id: "qwen_empty",
         header_label: "Qwen",
         log_name: "Qwen",
     },
 ];
 
-/// 添加供应商分区到菜单
-fn append_provider_section<'a>(
-    app: &'a tauri::AppHandle,
-    mut menu_builder: MenuBuilder<'a, tauri::Wry, tauri::AppHandle<tauri::Wry>>,
-    manager: Option<&crate::provider::ProviderManager>,
-    section: &TrayAppSection,
-    tray_texts: &TrayTexts,
-    app_state: &AppState,
-) -> Result<MenuBuilder<'a, tauri::Wry, tauri::AppHandle<tauri::Wry>>, AppError> {
-    let Some(manager) = manager else {
-        return Ok(menu_builder);
-    };
-
-    let header = MenuItem::with_id(
-        app,
-        section.header_id,
-        section.header_label,
-        false,
-        None::<&str>,
-    )
-    .map_err(|e| AppError::Message(format!("创建{}标题失败: {e}", section.log_name)))?;
-    menu_builder = menu_builder.item(&header);
-
-    if manager.providers.is_empty() {
-        let empty_hint = MenuItem::with_id(
-            app,
-            section.empty_id,
-            tray_texts.no_provider_hint,
-            false,
-            None::<&str>,
-        )
-        .map_err(|e| AppError::Message(format!("创建{}空提示失败: {e}", section.log_name)))?;
-        return Ok(menu_builder.item(&empty_hint));
-    }
-
-    // 获取 proxy 状态，决定 Auto 是否选中
-    let (proxy_enabled, auto_failover) =
-        app_state.db.get_proxy_flags_sync(section.app_type.as_str());
-    let auto_mode = proxy_enabled && auto_failover;
-
-    // 添加 Auto 菜单项（始终显示在供应商列表前）
-    let auto_item = CheckMenuItem::with_id(
-        app,
-        format!("{}{}", section.prefix, AUTO_SUFFIX),
-        tray_texts.auto_label,
-        true,
-        auto_mode,
-        None::<&str>,
-    )
-    .map_err(|e| AppError::Message(format!("创建{}Auto菜单项失败: {e}", section.log_name)))?;
-    menu_builder = menu_builder.item(&auto_item);
-
-    let mut sorted_providers: Vec<_> = manager.providers.iter().collect();
-    sorted_providers.sort_by(|(_, a), (_, b)| {
+/// 对供应商列表排序：sort_index → created_at → name
+fn sort_providers(
+    providers: &indexmap::IndexMap<String, crate::provider::Provider>,
+) -> Vec<(&String, &crate::provider::Provider)> {
+    let mut sorted: Vec<_> = providers.iter().collect();
+    sorted.sort_by(|(_, a), (_, b)| {
         match (a.sort_index, b.sort_index) {
             (Some(idx_a), Some(idx_b)) => return idx_a.cmp(&idx_b),
             (Some(_), None) => return std::cmp::Ordering::Less,
@@ -162,23 +112,7 @@ fn append_provider_section<'a>(
 
         a.name.cmp(&b.name)
     });
-
-    for (id, provider) in sorted_providers {
-        // Auto 模式下所有供应商都不选中
-        let is_current = !auto_mode && manager.current == *id;
-        let item = CheckMenuItem::with_id(
-            app,
-            format!("{}{}", section.prefix, id),
-            &provider.name,
-            true,
-            is_current,
-            None::<&str>,
-        )
-        .map_err(|e| AppError::Message(format!("创建{}菜单项失败: {e}", section.log_name)))?;
-        menu_builder = menu_builder.item(&item);
-    }
-
-    Ok(menu_builder)
+    sorted
 }
 
 /// 处理供应商托盘事件
@@ -370,10 +304,8 @@ pub fn create_tray_menu(
             .map_err(|e| AppError::Message(format!("创建打开主界面菜单失败: {e}")))?;
     menu_builder = menu_builder.item(&show_main_item).separator();
 
-    // 直接添加所有供应商到主菜单（扁平化结构，更简单可靠）
-    // Only add visible app sections
+    // 每个应用类型折叠为子菜单，避免供应商过多时菜单过长
     for section in TRAY_SECTIONS.iter() {
-        // Skip hidden apps
         if !visible_apps.is_visible(&section.app_type) {
             continue;
         }
@@ -381,28 +313,65 @@ pub fn create_tray_menu(
         let app_type_str = section.app_type.as_str();
         let providers = app_state.db.get_all_providers(app_type_str)?;
 
-        // 使用有效的当前供应商 ID（验证存在性，自动清理失效 ID）
         let current_id =
             crate::settings::get_effective_current_provider(&app_state.db, &section.app_type)?
                 .unwrap_or_default();
 
-        let manager = crate::provider::ProviderManager {
-            providers,
-            current: current_id,
-        };
+        if providers.is_empty() {
+            // 空供应商：显示禁用的菜单项
+            let label = format!("{} {}", section.header_label, tray_texts.no_providers_label);
+            let empty_item = MenuItem::with_id(app, section.empty_id, &label, false, None::<&str>)
+                .map_err(|e| {
+                    AppError::Message(format!("创建{}空提示失败: {e}", section.log_name))
+                })?;
+            menu_builder = menu_builder.item(&empty_item);
+        } else {
+            // 有供应商：构建子菜单
+            let current_name = providers.get(&current_id).map(|p| p.name.as_str());
+            let submenu_label = match current_name {
+                Some(name) => format!("{} · {}", section.header_label, name),
+                None => section.header_label.to_string(),
+            };
+            let submenu_id = format!("submenu_{}", app_type_str);
 
-        menu_builder = append_provider_section(
-            app,
-            menu_builder,
-            Some(&manager),
-            section,
-            &tray_texts,
-            app_state,
-        )?;
+            let mut submenu_builder = SubmenuBuilder::with_id(app, &submenu_id, &submenu_label);
 
-        // 在每个 section 后添加分隔符
+            for (id, provider) in sort_providers(&providers) {
+                let is_current = current_id == *id;
+                let item = CheckMenuItem::with_id(
+                    app,
+                    format!("{}{}", section.prefix, id),
+                    &provider.name,
+                    true,
+                    is_current,
+                    None::<&str>,
+                )
+                .map_err(|e| {
+                    AppError::Message(format!("创建{}菜单项失败: {e}", section.log_name))
+                })?;
+                submenu_builder = submenu_builder.item(&item);
+            }
+
+            let submenu = submenu_builder.build().map_err(|e| {
+                AppError::Message(format!("构建{}子菜单失败: {e}", section.log_name))
+            })?;
+            menu_builder = menu_builder.item(&submenu);
+        }
+
         menu_builder = menu_builder.separator();
     }
+
+    let lightweight_item = CheckMenuItem::with_id(
+        app,
+        "lightweight_mode",
+        tray_texts.lightweight_mode,
+        true,
+        crate::lightweight::is_lightweight_mode(),
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
+
+    menu_builder = menu_builder.item(&lightweight_item).separator();
 
     // 退出菜单（分隔符已在上面的 section 循环中添加）
     let quit_item = MenuItem::with_id(app, "quit", tray_texts.quit, true, None::<&str>)
@@ -413,6 +382,20 @@ pub fn create_tray_menu(
     menu_builder
         .build()
         .map_err(|e| AppError::Message(format!("构建菜单失败: {e}")))
+}
+
+pub fn refresh_tray_menu(app: &tauri::AppHandle) {
+    use crate::store::AppState;
+
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(new_menu) = create_tray_menu(app, state.inner()) {
+            if let Some(tray) = app.tray_by_id("main") {
+                if let Err(e) = tray.set_menu(Some(new_menu)) {
+                    log::error!("刷新托盘菜单失败: {e}");
+                }
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -452,6 +435,19 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 {
                     apply_tray_policy(app, true);
                 }
+            } else if crate::lightweight::is_lightweight_mode() {
+                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+                    log::error!("退出轻量模式重建窗口失败: {e}");
+                }
+            }
+        }
+        "lightweight_mode" => {
+            if crate::lightweight::is_lightweight_mode() {
+                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+                    log::error!("退出轻量模式失败: {e}");
+                }
+            } else if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
+                log::error!("进入轻量模式失败: {e}");
             }
         }
         "quit" => {

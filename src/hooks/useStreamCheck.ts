@@ -26,8 +26,8 @@ export function useStreamCheck(appId: AppId) {
         if (result.status === "operational") {
           toast.success(
             t("streamCheck.operational", {
-              name: providerName,
-              time: result.responseTimeMs,
+              providerName: providerName,
+              responseTimeMs: result.responseTimeMs,
               defaultValue: `${providerName} 运行正常 (${result.responseTimeMs}ms)`,
             }),
             { closeButton: true },
@@ -38,8 +38,8 @@ export function useStreamCheck(appId: AppId) {
         } else if (result.status === "degraded") {
           toast.warning(
             t("streamCheck.degraded", {
-              name: providerName,
-              time: result.responseTimeMs,
+              providerName: providerName,
+              responseTimeMs: result.responseTimeMs,
               defaultValue: `${providerName} 响应较慢 (${result.responseTimeMs}ms)`,
             }),
           );
@@ -49,8 +49,8 @@ export function useStreamCheck(appId: AppId) {
         } else {
           toast.error(
             t("streamCheck.failed", {
-              name: providerName,
-              error: result.message,
+              providerName: providerName,
+              message: result.message,
               defaultValue: `${providerName} 检查失败: ${result.message}`,
             }),
           );
@@ -60,7 +60,7 @@ export function useStreamCheck(appId: AppId) {
       } catch (e) {
         toast.error(
           t("streamCheck.error", {
-            name: providerName,
+            providerName: providerName,
             error: String(e),
             defaultValue: `${providerName} 检查出错: ${String(e)}`,
           }),

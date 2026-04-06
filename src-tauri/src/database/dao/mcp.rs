@@ -13,7 +13,8 @@ impl Database {
     pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode
+            "SELECT id, name, server_config, description, homepage, docs, tags,
+                    enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_qwen
              FROM mcp_servers
              ORDER BY name ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
@@ -72,8 +73,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_opencode
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_qwen
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 server.id,
                 server.name,
@@ -89,6 +90,7 @@ impl Database {
                 server.apps.codex,
                 server.apps.gemini,
                 server.apps.opencode,
+                server.apps.qwen,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
