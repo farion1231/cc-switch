@@ -1,7 +1,9 @@
 import type { ProviderCategory } from "@/types";
+import type { PresetTheme } from "./claudeProviderPresets";
 
 export interface QwenProviderPreset {
   name: string;
+  nameKey?: string;
   websiteUrl: string;
   apiKeyUrl?: string;
   settingsConfig: {
@@ -17,8 +19,18 @@ export interface QwenProviderPreset {
   partnerPromotionKey?: string;
   icon: string;
   iconColor?: string;
+  theme?: PresetTheme;
   endpointCandidates?: string[];
 }
+
+export const QWEN_DEFAULT_CONFIG = JSON.stringify(
+  {
+    env: {},
+    config: {},
+  },
+  null,
+  2,
+);
 
 export const qwenProviderPresets: QwenProviderPreset[] = [
   {

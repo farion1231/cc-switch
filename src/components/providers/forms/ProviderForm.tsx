@@ -30,6 +30,11 @@ import {
   type GeminiProviderPreset,
 } from "@/config/geminiProviderPresets";
 import {
+  qwenProviderPresets,
+  QWEN_DEFAULT_CONFIG,
+  type QwenProviderPreset,
+} from "@/config/qwenProviderPresets";
+import {
   opencodeProviderPresets,
   type OpenCodeProviderPreset,
 } from "@/config/opencodeProviderPresets";
@@ -43,7 +48,9 @@ import { OpenClawFormFields } from "./OpenClawFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
+  extractQwenModelName,
   hasApiKeyField,
+  setQwenModelName,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
@@ -57,6 +64,7 @@ import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
+import { QwenFormFields } from "./QwenFormFields";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
@@ -100,6 +108,7 @@ type PresetEntry = {
     | ProviderPreset
     | CodexProviderPreset
     | GeminiProviderPreset
+    | QwenProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset;
 };
@@ -235,6 +244,8 @@ export function ProviderForm({
           ? CODEX_DEFAULT_CONFIG
           : appId === "gemini"
             ? GEMINI_DEFAULT_CONFIG
+            : appId === "qwen"
+              ? QWEN_DEFAULT_CONFIG
             : appId === "opencode"
               ? OPENCODE_DEFAULT_CONFIG
               : appId === "openclaw"
@@ -289,14 +300,15 @@ export function ProviderForm({
     apiKeyField: appId === "claude" ? localApiKeyField : undefined,
   });
 
-  const { baseUrl, handleClaudeBaseUrlChange } = useBaseUrlState({
-    appType: appId,
-    category,
-    settingsConfig: form.getValues("settingsConfig"),
-    codexConfig: "",
-    onSettingsConfigChange: handleSettingsConfigChange,
-    onCodexConfigChange: () => {},
-  });
+  const { baseUrl, handleClaudeBaseUrlChange, handleQwenBaseUrlChange } =
+    useBaseUrlState({
+      appType: appId,
+      category,
+      settingsConfig: form.getValues("settingsConfig"),
+      codexConfig: "",
+      onSettingsConfigChange: handleSettingsConfigChange,
+      onCodexConfigChange: () => {},
+    });
 
   const {
     claudeModel,
@@ -416,6 +428,11 @@ export function ProviderForm({
     } else if (appId === "gemini") {
       return geminiProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `gemini-${index}`,
+        preset,
+      }));
+    } else if (appId === "qwen") {
+      return qwenProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `qwen-${index}`,
         preset,
       }));
     } else if (appId === "opencode") {
@@ -550,6 +567,18 @@ export function ProviderForm({
       updateGeminiEnvField("GEMINI_MODEL", model.trim());
     },
     [originalHandleGeminiModelChange, updateGeminiEnvField],
+  );
+
+  const handleQwenModelChange = useCallback(
+    (model: string) => {
+      const updated = setQwenModelName(
+        form.getValues("settingsConfig") || "{}",
+        model.trim(),
+      );
+      form.setValue("settingsConfig", updated);
+      handleSettingsConfigChange(updated);
+    },
+    [form, handleSettingsConfigChange],
   );
 
   const {
@@ -844,6 +873,23 @@ export function ProviderForm({
           );
           return;
         }
+      } else if (appId === "qwen") {
+        if (!baseUrl.trim()) {
+          toast.error(
+            t("providerForm.endpointRequired", {
+              defaultValue: "非官方供应商请填写 API 端点",
+            }),
+          );
+          return;
+        }
+        if (!apiKey.trim()) {
+          toast.error(
+            t("providerForm.apiKeyRequired", {
+              defaultValue: "非官方供应商请填写 API Key",
+            }),
+          );
+          return;
+        }
       }
     }
 
@@ -1117,6 +1163,19 @@ export function ProviderForm({
   });
 
   const {
+    shouldShowApiKeyLink: shouldShowQwenApiKeyLink,
+    websiteUrl: qwenWebsiteUrl,
+    isPartner: isQwenPartner,
+    partnerPromotionKey: qwenPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "qwen",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
+  const {
     shouldShowApiKeyLink: shouldShowOpencodeApiKeyLink,
     websiteUrl: opencodeWebsiteUrl,
     isPartner: isOpencodePartner,
@@ -1212,6 +1271,19 @@ export function ProviderForm({
       const config = (preset.settingsConfig as any)?.config ?? {};
 
       resetGeminiConfig(env, config);
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(preset.settingsConfig, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    if (appId === "qwen") {
+      const preset = entry.preset as QwenProviderPreset;
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -1591,6 +1663,26 @@ export function ProviderForm({
           />
         )}
 
+        {appId === "qwen" && (
+          <QwenFormFields
+            shouldShowApiKey={shouldShowApiKey(
+              form.getValues("settingsConfig"),
+              isEditMode,
+            )}
+            apiKey={apiKey}
+            onApiKeyChange={handleApiKeyChange}
+            category={category}
+            shouldShowApiKeyLink={shouldShowQwenApiKeyLink}
+            websiteUrl={qwenWebsiteUrl}
+            isPartner={isQwenPartner}
+            partnerPromotionKey={qwenPartnerPromotionKey}
+            baseUrl={baseUrl}
+            onBaseUrlChange={handleQwenBaseUrlChange}
+            model={extractQwenModelName(form.getValues("settingsConfig")) || ""}
+            onModelChange={handleQwenModelChange}
+          />
+        )}
+
         {appId === "opencode" && !isAnyOmoCategory && (
           <OpenCodeFormFields
             npm={opencodeForm.opencodeNpm}
@@ -1693,6 +1785,28 @@ export function ProviderForm({
               onExtract={handleGeminiExtract}
               isExtracting={isGeminiExtracting}
             />
+            {settingsConfigErrorField}
+          </>
+        ) : appId === "qwen" ? (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="settingsConfig">{t("provider.configJson")}</Label>
+              <JsonEditor
+                value={form.getValues("settingsConfig")}
+                onChange={(config) => form.setValue("settingsConfig", config)}
+                placeholder={`{
+  "env": {
+    "OPENAI_API_KEY": "",
+    "OPENAI_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "OPENAI_MODEL": "qwen3-coder-plus"
+  },
+  "config": {}
+}`}
+                rows={14}
+                showValidation={true}
+                language="json"
+              />
+            </div>
             {settingsConfigErrorField}
           </>
         ) : appId === "opencode" &&

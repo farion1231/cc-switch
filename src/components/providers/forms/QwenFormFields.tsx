@@ -1,77 +1,74 @@
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { FormLabel } from "@/components/ui/form";
 import { useTranslation } from "react-i18next";
-
-/** Qwen 环境变量配置 */
-interface QwenEnvConfig {
-  OPENAI_API_KEY?: string;
-  OPENAI_BASE_URL?: string;
-  OPENAI_MODEL?: string;
-}
-
-/** Qwen 配置结构 */
-interface QwenSettingsConfig {
-  env: QwenEnvConfig;
-}
+import type { ProviderCategory } from "@/types";
+import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 
 interface QwenFormFieldsProps {
-  settingsConfig: QwenSettingsConfig;
-  onChange: (config: QwenSettingsConfig) => void;
+  shouldShowApiKey: boolean;
+  apiKey: string;
+  onApiKeyChange: (key: string) => void;
+  category?: ProviderCategory;
+  shouldShowApiKeyLink: boolean;
+  websiteUrl: string;
+  isPartner?: boolean;
+  partnerPromotionKey?: string;
+  baseUrl: string;
+  onBaseUrlChange: (url: string) => void;
+  model: string;
+  onModelChange: (value: string) => void;
 }
 
-export function QwenFormFields({ settingsConfig, onChange }: QwenFormFieldsProps) {
+export function QwenFormFields({
+  shouldShowApiKey,
+  apiKey,
+  onApiKeyChange,
+  category,
+  shouldShowApiKeyLink,
+  websiteUrl,
+  isPartner,
+  partnerPromotionKey,
+  baseUrl,
+  onBaseUrlChange,
+  model,
+  onModelChange,
+}: QwenFormFieldsProps) {
   const { t } = useTranslation();
-  const env: QwenEnvConfig = settingsConfig.env || {};
-
-  const handleEnvChange = (key: string, value: string) => {
-    onChange({
-      ...settingsConfig,
-      env: {
-        ...env,
-        [key]: value,
-      },
-    });
-  };
 
   return (
     <div className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="qwen-api-key">
-          {t("provider.openaiApiKey", "OpenAI API Key")}
-        </Label>
-        <Input
+      {shouldShowApiKey && (
+        <ApiKeySection
           id="qwen-api-key"
-          type="password"
-          value={env.OPENAI_API_KEY || ""}
-          onChange={(e) => handleEnvChange("OPENAI_API_KEY", e.target.value)}
-          placeholder="sk-..."
+          value={apiKey}
+          onChange={onApiKeyChange}
+          category={category}
+          shouldShowLink={shouldShowApiKeyLink}
+          websiteUrl={websiteUrl}
+          isPartner={isPartner}
+          partnerPromotionKey={partnerPromotionKey}
         />
-        <p className="text-xs text-muted-foreground">
-          {t("provider.qwenApiKeyHint", "Your Qwen/DashScope API key")}
-        </p>
-      </div>
+      )}
+
+      <EndpointField
+        id="qwen-base-url"
+        label={t("providerForm.apiEndpoint", { defaultValue: "API 端点" })}
+        value={baseUrl}
+        onChange={onBaseUrlChange}
+        placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+        showManageButton={false}
+      />
 
       <div className="space-y-2">
-        <Label htmlFor="qwen-base-url">
-          {t("provider.baseUrl", "Base URL")}
-        </Label>
-        <Input
-          id="qwen-base-url"
-          value={env.OPENAI_BASE_URL || ""}
-          onChange={(e) => handleEnvChange("OPENAI_BASE_URL", e.target.value)}
-          placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="qwen-model">
-          {t("provider.model", "Model")}
-        </Label>
-        <Input
+        <FormLabel htmlFor="qwen-model">
+          {t("provider.form.qwen.model", { defaultValue: "模型" })}
+        </FormLabel>
+        <ModelInputWithFetch
           id="qwen-model"
-          value={env.OPENAI_MODEL || ""}
-          onChange={(e) => handleEnvChange("OPENAI_MODEL", e.target.value)}
+          value={model}
+          onChange={onModelChange}
           placeholder="qwen3-coder-plus"
+          fetchedModels={[]}
+          isLoading={false}
         />
       </div>
     </div>

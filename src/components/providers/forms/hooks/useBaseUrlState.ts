@@ -1,7 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   extractCodexBaseUrl,
+  extractQwenBaseUrl,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
+  setQwenBaseUrl as setQwenBaseUrlInConfig,
 } from "@/utils/providerConfigUtils";
 import type { ProviderCategory } from "@/types";
 import type { AppId } from "@/lib/api";
@@ -83,6 +85,18 @@ export function useBaseUrlState({
     }
   }, [appType, category, settingsConfig, geminiBaseUrl]);
 
+  // 从配置同步到 state（Qwen）
+  useEffect(() => {
+    if (appType !== "qwen") return;
+    if (category === "official") return;
+    if (isUpdatingRef.current) return;
+
+    const nextUrl = extractQwenBaseUrl(settingsConfig) || "";
+    if (nextUrl !== baseUrl) {
+      setBaseUrl(nextUrl);
+    }
+  }, [appType, category, settingsConfig, baseUrl]);
+
   // 处理 Claude Base URL 变化
   const handleClaudeBaseUrlChange = useCallback(
     (url: string) => {
@@ -158,6 +172,23 @@ export function useBaseUrlState({
     [settingsConfig, onSettingsConfigChange],
   );
 
+  const handleQwenBaseUrlChange = useCallback(
+    (url: string) => {
+      const sanitized = url.trim().replace(/\/+$/, "");
+      setBaseUrl(sanitized);
+      isUpdatingRef.current = true;
+
+      onSettingsConfigChange(
+        setQwenBaseUrlInConfig(settingsConfig || "{}", sanitized),
+      );
+
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 0);
+    },
+    [settingsConfig, onSettingsConfigChange],
+  );
+
   return {
     baseUrl,
     setBaseUrl,
@@ -168,5 +199,6 @@ export function useBaseUrlState({
     handleClaudeBaseUrlChange,
     handleCodexBaseUrlChange,
     handleGeminiBaseUrlChange,
+    handleQwenBaseUrlChange,
   };
 }
