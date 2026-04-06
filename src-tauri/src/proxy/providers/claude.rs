@@ -11,11 +11,11 @@
 //! - **Claude**: Anthropic 官方 API (x-api-key + anthropic-version)
 //! - **ClaudeAuth**: 中转服务 (仅 Bearer 认证，无 x-api-key)
 //! - **OpenRouter**: 已支持 Claude Code 兼容接口，默认透传
+//! - **GitHubCopilot**: GitHub Copilot (OAuth + Copilot Token)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
-use reqwest::RequestBuilder;
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -65,6 +65,30 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
     }
 }
 
+pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
+    matches!(api_format, "openai_chat" | "openai_responses")
+}
+
+pub fn transform_claude_request_for_api_format(
+    body: serde_json::Value,
+    provider: &Provider,
+    api_format: &str,
+) -> Result<serde_json::Value, ProxyError> {
+    let cache_key = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.prompt_cache_key.as_deref())
+        .unwrap_or(&provider.id);
+
+    match api_format {
+        "openai_responses" => {
+            super::transform_responses::anthropic_to_responses(body, Some(cache_key))
+        }
+        "openai_chat" => super::transform::anthropic_to_openai(body, Some(cache_key)),
+        _ => Ok(body),
+    }
+}
+
 /// Claude 适配器
 pub struct ClaudeAdapter;
 
@@ -76,10 +100,16 @@ impl ClaudeAdapter {
     /// 获取供应商类型
     ///
     /// 根据 base_url 和 auth_mode 检测具体的供应商类型：
+    /// - GitHubCopilot: meta.provider_type 为 github_copilot 或 base_url 包含 githubcopilot.com
     /// - OpenRouter: base_url 包含 openrouter.ai
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
+        // 检测 GitHub Copilot
+        if self.is_github_copilot(provider) {
+            return ProviderType::GitHubCopilot;
+        }
+
         // 检测 OpenRouter
         if self.is_openrouter(provider) {
             return ProviderType::OpenRouter;
@@ -91,6 +121,25 @@ impl ClaudeAdapter {
         }
 
         ProviderType::Claude
+    }
+
+    /// 检测是否为 GitHub Copilot 供应商
+    fn is_github_copilot(&self, provider: &Provider) -> bool {
+        // 方式1: 检查 meta.provider_type
+        if let Some(meta) = provider.meta.as_ref() {
+            if meta.provider_type.as_deref() == Some("github_copilot") {
+                return true;
+            }
+        }
+
+        // 方式2: 检查 base_url（兼容旧数据的 fallback，后续应优先依赖 providerType）
+        if let Ok(base_url) = self.extract_base_url(provider) {
+            if base_url.contains("githubcopilot.com") {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// 检测是否使用 OpenRouter
@@ -244,6 +293,17 @@ impl ProviderAdapter for ClaudeAdapter {
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
         let provider_type = self.provider_type(provider);
+
+        // GitHub Copilot 使用特殊的认证策略
+        // 实际的 token 会在代理请求时动态获取
+        if provider_type == ProviderType::GitHubCopilot {
+            // 返回一个占位符，实际 token 由 CopilotAuthManager 动态提供
+            return Some(AuthInfo::new(
+                "copilot_placeholder".to_string(),
+                AuthStrategy::GitHubCopilot,
+            ));
+        }
+
         let strategy = match provider_type {
             ProviderType::OpenRouter => AuthStrategy::Bearer,
             ProviderType::ClaudeAuth => AuthStrategy::ClaudeAuth,
@@ -261,7 +321,7 @@ impl ProviderAdapter for ClaudeAdapter {
         //
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
         // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
-
+        //
         let mut base = format!(
             "{}/{}",
             base_url.trim_end_matches('/'),
@@ -273,42 +333,85 @@ impl ProviderAdapter for ClaudeAdapter {
             base = base.replace("/v1/v1", "/v1");
         }
 
-        // 为 Claude 原生 /v1/messages 端点添加 ?beta=true 参数
-        // 这是某些上游服务（如 DuckCoding）验证请求来源的关键参数
-        // 注意：不要为 OpenAI Chat Completions (/v1/chat/completions) 添加此参数
-        //       当 apiFormat="openai_chat" 时，请求会转发到 /v1/chat/completions，
-        //       但该端点是 OpenAI 标准，不支持 ?beta=true 参数
-        if endpoint.contains("/v1/messages")
-            && !endpoint.contains("/v1/chat/completions")
-            && !endpoint.contains('?')
-        {
-            format!("{base}?beta=true")
-        } else {
-            base
-        }
+        base
     }
 
-    fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
+    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        use http::{HeaderName, HeaderValue};
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
-        // 这里不再设置 anthropic-version，避免 header 重复
+        let bearer = format!("Bearer {}", auth.api_key);
         match auth.strategy {
-            // Anthropic 官方: Authorization Bearer + x-api-key
-            AuthStrategy::Anthropic => request
-                .header("Authorization", format!("Bearer {}", auth.api_key))
-                .header("x-api-key", &auth.api_key),
-            // ClaudeAuth 中转服务: 仅 Bearer，无 x-api-key
-            AuthStrategy::ClaudeAuth => {
-                request.header("Authorization", format!("Bearer {}", auth.api_key))
+            AuthStrategy::Anthropic | AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
+                vec![(
+                    HeaderName::from_static("authorization"),
+                    HeaderValue::from_str(&bearer).unwrap(),
+                )]
             }
-            // OpenRouter: Bearer
-            AuthStrategy::Bearer => {
-                request.header("Authorization", format!("Bearer {}", auth.api_key))
+            AuthStrategy::GitHubCopilot => {
+                // 生成请求追踪 ID
+                let request_id = uuid::Uuid::new_v4().to_string();
+                vec![
+                    (
+                        HeaderName::from_static("authorization"),
+                        HeaderValue::from_str(&bearer).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("editor-version"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_EDITOR_VERSION),
+                    ),
+                    (
+                        HeaderName::from_static("editor-plugin-version"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_PLUGIN_VERSION),
+                    ),
+                    (
+                        HeaderName::from_static("copilot-integration-id"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_INTEGRATION_ID),
+                    ),
+                    (
+                        HeaderName::from_static("user-agent"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_USER_AGENT),
+                    ),
+                    (
+                        HeaderName::from_static("x-github-api-version"),
+                        HeaderValue::from_static(super::copilot_auth::COPILOT_API_VERSION),
+                    ),
+                    // 26-04-01新增的copilot关键 headers
+                    (
+                        HeaderName::from_static("openai-intent"),
+                        HeaderValue::from_static("conversation-agent"),
+                    ),
+                    (
+                        HeaderName::from_static("x-initiator"),
+                        HeaderValue::from_static("user"),
+                    ),
+                    (
+                        HeaderName::from_static("x-interaction-type"),
+                        HeaderValue::from_static("conversation-agent"),
+                    ),
+                    (
+                        HeaderName::from_static("x-vscode-user-agent-library-version"),
+                        HeaderValue::from_static("electron-fetch"),
+                    ),
+                    (
+                        HeaderName::from_static("x-request-id"),
+                        HeaderValue::from_str(&request_id).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("x-agent-task-id"),
+                        HeaderValue::from_str(&request_id).unwrap(),
+                    ),
+                ]
             }
-            _ => request,
+            _ => vec![],
         }
     }
 
     fn needs_transform(&self, provider: &Provider) -> bool {
+        // GitHub Copilot 总是需要格式转换 (Anthropic → OpenAI)
+        if self.is_github_copilot(provider) {
+            return true;
+        }
+
         // 根据 api_format 配置决定是否需要格式转换
         // - "anthropic" (默认): 直接透传，无需转换
         // - "openai_chat": 需要 Anthropic ↔ OpenAI Chat Completions 格式转换
@@ -324,19 +427,7 @@ impl ProviderAdapter for ClaudeAdapter {
         body: serde_json::Value,
         provider: &Provider,
     ) -> Result<serde_json::Value, ProxyError> {
-        // Use meta.prompt_cache_key if set by user, otherwise fall back to provider.id
-        let cache_key = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.prompt_cache_key.as_deref())
-            .unwrap_or(&provider.id);
-
-        match self.get_api_format(provider) {
-            "openai_responses" => {
-                super::transform_responses::anthropic_to_responses(body, Some(cache_key))
-            }
-            _ => super::transform::anthropic_to_openai(body, Some(cache_key)),
-        }
+        transform_claude_request_for_api_format(body, provider, self.get_api_format(provider))
     }
 
     fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
@@ -522,23 +613,20 @@ mod tests {
     #[test]
     fn test_build_url_anthropic() {
         let adapter = ClaudeAdapter::new();
-        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
-        assert_eq!(url, "https://api.anthropic.com/v1/messages?beta=true");
+        assert_eq!(url, "https://api.anthropic.com/v1/messages");
     }
 
     #[test]
     fn test_build_url_openrouter() {
         let adapter = ClaudeAdapter::new();
-        // /v1/messages 端点会自动添加 ?beta=true 参数
         let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages");
-        assert_eq!(url, "https://openrouter.ai/api/v1/messages?beta=true");
+        assert_eq!(url, "https://openrouter.ai/api/v1/messages");
     }
 
     #[test]
     fn test_build_url_no_beta_for_other_endpoints() {
         let adapter = ClaudeAdapter::new();
-        // 非 /v1/messages 端点不添加 ?beta=true
         let url = adapter.build_url("https://api.anthropic.com", "/v1/complete");
         assert_eq!(url, "https://api.anthropic.com/v1/complete");
     }
@@ -546,16 +634,20 @@ mod tests {
     #[test]
     fn test_build_url_preserve_existing_query() {
         let adapter = ClaudeAdapter::new();
-        // 已有查询参数时不重复添加
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
         assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
     }
 
     #[test]
+    fn test_build_url_no_beta_for_github_copilot() {
+        let adapter = ClaudeAdapter::new();
+        let url = adapter.build_url("https://api.githubcopilot.com", "/v1/messages");
+        assert_eq!(url, "https://api.githubcopilot.com/v1/messages");
+    }
+
+    #[test]
     fn test_build_url_no_beta_for_openai_chat_completions() {
         let adapter = ClaudeAdapter::new();
-        // OpenAI Chat Completions 端点不添加 ?beta=true
-        // 这是 Nvidia 等 apiFormat="openai_chat" 供应商使用的端点
         let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
         assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
     }
@@ -677,5 +769,89 @@ mod tests {
             },
         );
         assert!(!adapter.needs_transform(&unknown_format));
+    }
+
+    #[test]
+    fn test_github_copilot_detection_by_url() {
+        let adapter = ClaudeAdapter::new();
+
+        // GitHub Copilot by base_url
+        let copilot = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+            }
+        }));
+        assert_eq!(adapter.provider_type(&copilot), ProviderType::GitHubCopilot);
+    }
+
+    #[test]
+    fn test_github_copilot_detection_by_meta() {
+        let adapter = ClaudeAdapter::new();
+
+        // GitHub Copilot by meta.provider_type
+        let copilot_meta = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            adapter.provider_type(&copilot_meta),
+            ProviderType::GitHubCopilot
+        );
+    }
+
+    #[test]
+    fn test_github_copilot_auth() {
+        let adapter = ClaudeAdapter::new();
+
+        let copilot = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&copilot).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
+    }
+
+    #[test]
+    fn test_github_copilot_needs_transform() {
+        let adapter = ClaudeAdapter::new();
+
+        let copilot = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+            }
+        }));
+
+        // GitHub Copilot always needs transform
+        assert!(adapter.needs_transform(&copilot));
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_responses() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+            }
+        }));
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_responses").unwrap();
+
+        assert_eq!(transformed["model"], "gpt-5.4");
+        assert!(transformed.get("input").is_some());
+        assert!(transformed.get("max_output_tokens").is_some());
     }
 }

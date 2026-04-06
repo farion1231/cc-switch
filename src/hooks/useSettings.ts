@@ -197,44 +197,6 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
-        // Tool Search bypass: apply/restore patch when toggled
-        const nextToolSearchBypass = updates.toolSearchBypass;
-        if (
-          nextToolSearchBypass !== undefined &&
-          nextToolSearchBypass !== (data?.toolSearchBypass ?? false)
-        ) {
-          try {
-            const results = nextToolSearchBypass
-              ? await settingsApi.applyToolSearchPatch()
-              : await settingsApi.restoreToolSearchPatch();
-            const failed = results.find((r) => !r.success);
-            if (failed) {
-              throw new Error(failed.error ?? "Tool Search patch failed");
-            }
-          } catch (error) {
-            console.warn(
-              "[useSettings] Failed to sync Tool Search bypass",
-              error,
-            );
-            // Rollback: revert the setting we already saved
-            const rolledBack = {
-              ...payload,
-              toolSearchBypass: !nextToolSearchBypass,
-            };
-            await saveMutation.mutateAsync(rolledBack);
-            updateSettings({ toolSearchBypass: !nextToolSearchBypass });
-            toast.error(
-              nextToolSearchBypass
-                ? t("notifications.toolSearchPatchFailed", {
-                    defaultValue: "Tool Search 补丁操作失败",
-                  })
-                : t("notifications.toolSearchRestoreFailed", {
-                    defaultValue: "Tool Search 恢复操作失败",
-                  }),
-            );
-          }
-        }
-
         // 持久化语言偏好
         try {
           if (typeof window !== "undefined" && updates.language) {
@@ -266,7 +228,7 @@ export function useSettings(): UseSettingsResult {
         throw error;
       }
     },
-    [data, saveMutation, settings, t, updateSettings],
+    [data, saveMutation, settings, t],
   );
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）

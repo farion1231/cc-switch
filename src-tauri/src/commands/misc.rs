@@ -6,7 +6,7 @@ use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tauri::AppHandle;
 use tauri::State;
@@ -32,6 +32,22 @@ pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> 
         .map_err(|e| format!("打开链接失败: {e}"))?;
 
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
+    // Use spawn_blocking to avoid blocking the async runtime
+    // Clipboard access can block on some platforms and may have thread/loop constraints
+    tokio::task::spawn_blocking(move || {
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| format!("访问系统剪贴板失败: {e}"))?;
+        clipboard
+            .set_text(text)
+            .map_err(|e| format!("写入系统剪贴板失败: {e}"))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
 }
 
 /// 检查更新
@@ -500,7 +516,8 @@ fn extend_from_path_list(
 
 /// OpenCode install.sh 路径优先级（见 https://github.com/anomalyco/opencode README）:
 ///   $OPENCODE_INSTALL_DIR > $XDG_BIN_DIR > $HOME/bin > $HOME/.opencode/bin
-/// 额外扫描 Go 安装路径（~/go/bin、$GOPATH/*/bin）。
+/// 额外扫描 Bun 默认全局安装路径（~/.bun/bin）
+/// 和 Go 安装路径（~/go/bin、$GOPATH/*/bin）。
 fn opencode_extra_search_paths(
     home: &Path,
     opencode_install_dir: Option<std::ffi::OsString>,
@@ -515,6 +532,7 @@ fn opencode_extra_search_paths(
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut paths, home.join("bin"));
         push_unique_path(&mut paths, home.join(".opencode").join("bin"));
+        push_unique_path(&mut paths, home.join(".bun").join("bin"));
         push_unique_path(&mut paths, home.join("go").join("bin"));
     }
 
@@ -718,8 +736,10 @@ pub async fn open_provider_terminal(
     state: State<'_, crate::store::AppState>,
     app: String,
     #[allow(non_snake_case)] providerId: String,
+    cwd: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let launch_cwd = resolve_launch_cwd(cwd)?;
 
     // 获取提供商配置
     let providers = ProviderService::list(state.inner(), app_type.clone())
@@ -734,7 +754,8 @@ pub async fn open_provider_terminal(
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId).map_err(|e| format!("启动终端失败: {e}"))?;
+    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+        .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
 }
@@ -789,11 +810,49 @@ fn extract_env_vars_from_config(
     env_vars
 }
 
+fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
+    let Some(raw_path) = cwd.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+
+    if raw_path.contains('\n') || raw_path.contains('\r') {
+        return Err("目录路径包含非法换行符".to_string());
+    }
+
+    let path = Path::new(&raw_path);
+    if !path.exists() {
+        return Err(format!("目录不存在: {raw_path}"));
+    }
+
+    let resolved = std::fs::canonicalize(path).map_err(|e| format!("解析目录失败: {e}"))?;
+    if !resolved.is_dir() {
+        return Err(format!("选择的路径不是文件夹: {}", resolved.display()));
+    }
+
+    // Strip Windows extended-length prefix that canonicalize produces,
+    // as it can break batch scripts and other shell commands.
+    // Special-case \\?\UNC\server\share -> \\server\share for network/WSL paths.
+    #[cfg(target_os = "windows")]
+    let resolved = {
+        let s = resolved.to_string_lossy();
+        if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+            PathBuf::from(format!(r"\\{unc}"))
+        } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            PathBuf::from(stripped)
+        } else {
+            resolved
+        }
+    };
+
+    Ok(Some(resolved))
+}
+
 /// 创建临时配置文件并启动 claude 终端
 /// 使用 --settings 参数传入提供商特定的 API 配置
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
+    cwd: Option<&Path>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let config_file = temp_dir.join(format!(
@@ -807,19 +866,19 @@ fn launch_terminal_with_env(
 
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file)?;
+        launch_macos_terminal(&config_file, cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file)?;
+        launch_linux_terminal(&config_file, cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file)?;
+        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
         return Ok(());
     }
 
@@ -849,7 +908,7 @@ fn write_claude_config(
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path) -> Result<(), String> {
+fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -858,18 +917,21 @@ fn launch_macos_terminal(config_file: &std::path::Path) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
+    let cd_command = build_shell_cd_command(cwd);
 
     // Write the shell script to a temp file
     let script_content = format!(
         r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
+{cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
-        script_file = script_file.display()
+        script_file = script_file.display(),
+        cd_command = cd_command,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1005,7 +1067,7 @@ fn launch_macos_open_app(
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path) -> Result<(), String> {
+fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -1027,17 +1089,20 @@ fn launch_linux_terminal(config_file: &std::path::Path) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
+    let cd_command = build_shell_cd_command(cwd);
 
     let script_content = format!(
         r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
+{cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
-        script_file = script_file.display()
+        script_file = script_file.display(),
+        cd_command = cd_command,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1051,21 +1116,21 @@ exec bash --norc --noprofile
         let pref_args = default_terminals
             .iter()
             .find(|(name, _)| *name == pref.as_str())
-            .map(|(_, args)| args.iter().map(|s| *s).collect::<Vec<&str>>())
+            .map(|(_, args)| args.to_vec())
             .unwrap_or_else(|| vec!["-e"]); // Default args for unknown terminals
 
         let mut list = vec![(pref.as_str(), pref_args)];
         // Add remaining terminals as fallbacks
         for (name, args) in &default_terminals {
             if *name != pref.as_str() {
-                list.push((*name, args.iter().map(|s| *s).collect()));
+                list.push((*name, args.to_vec()));
             }
         }
         list
     } else {
         default_terminals
             .iter()
-            .map(|(name, args)| (*name, args.iter().map(|s| *s).collect()))
+            .map(|(name, args)| (*name, args.to_vec()))
             .collect()
     };
 
@@ -1116,22 +1181,28 @@ fn which_command(cmd: &str) -> bool {
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
+    cwd: Option<&Path>,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    let config_path_for_batch = config_file.to_string_lossy().replace('&', "^&");
+    let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
+    let cwd_command = build_windows_cwd_command(cwd);
 
     let content = format!(
         "@echo off
+{cwd_command}
 echo Using provider-specific claude config:
 echo {}
 claude --settings \"{}\"
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
 ",
-        config_path_for_batch, config_path_for_batch, config_path_for_batch
+        config_path_for_batch,
+        config_path_for_batch,
+        config_path_for_batch,
+        cwd_command = cwd_command,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -1162,6 +1233,55 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
+fn build_shell_cd_command(cwd: Option<&Path>) -> String {
+    cwd.map(|dir| {
+        format!(
+            "cd {} || exit 1\n",
+            shell_single_quote(&dir.to_string_lossy())
+        )
+    })
+    .unwrap_or_default()
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_windows_unc_path(path: &str) -> bool {
+    path.starts_with(r"\\")
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_cwd_command_str(path: &str) -> String {
+    let escaped = escape_windows_batch_value(path);
+
+    if is_windows_unc_path(path) {
+        // `cmd.exe` cannot make a UNC path current via `cd`; `pushd` maps it first.
+        format!("pushd \"{escaped}\" || exit /b 1\r\n")
+    } else {
+        format!("cd /d \"{escaped}\" || exit /b 1\r\n")
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_cwd_command(cwd: Option<&Path>) -> String {
+    cwd.map(|dir| build_windows_cwd_command_str(&dir.to_string_lossy()))
+        .unwrap_or_default()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn escape_windows_batch_value(value: &str) -> String {
+    value
+        .replace('^', "^^")
+        .replace('%', "%%")
+        .replace('&', "^&")
+        .replace('|', "^|")
+        .replace('<', "^<")
+        .replace('>', "^>")
+        .replace('(', "^(")
+        .replace(')', "^)")
+}
 /// Windows: Run a start command with common error handling
 #[cfg(target_os = "windows")]
 fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
@@ -1280,6 +1400,7 @@ mod tests {
         assert_eq!(paths[1], PathBuf::from("/xdg/bin"));
         assert!(paths.contains(&PathBuf::from("/home/tester/bin")));
         assert!(paths.contains(&PathBuf::from("/home/tester/.opencode/bin")));
+        assert!(paths.contains(&PathBuf::from("/home/tester/.bun/bin")));
         assert!(paths.contains(&PathBuf::from("/home/tester/go/bin")));
         assert!(paths.contains(&PathBuf::from("/go/path1/bin")));
         assert!(paths.contains(&PathBuf::from("/go/path2/bin")));
@@ -1290,11 +1411,23 @@ mod tests {
         let home = PathBuf::from("/home/tester");
         let same_dir = Some(std::ffi::OsString::from("/same/path"));
 
-        let paths = opencode_extra_search_paths(&home, same_dir.clone(), same_dir.clone(), None);
+        let paths = opencode_extra_search_paths(&home, same_dir.clone(), same_dir, None);
 
         let count = paths
             .iter()
             .filter(|path| **path == PathBuf::from("/same/path"))
+            .count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn opencode_extra_search_paths_deduplicates_bun_default_dir() {
+        let home = PathBuf::from("/home/tester");
+        let paths = opencode_extra_search_paths(&home, None, None, None);
+
+        let count = paths
+            .iter()
+            .filter(|path| **path == PathBuf::from("/home/tester/.bun/bin"))
             .count();
         assert_eq!(count, 1);
     }
@@ -1321,6 +1454,64 @@ mod tests {
                 PathBuf::from("C:\\tools\\opencode.exe"),
                 PathBuf::from("C:\\tools\\opencode"),
             ]
+        );
+    }
+
+    #[test]
+    fn resolve_launch_cwd_accepts_existing_directory() {
+        let resolved =
+            resolve_launch_cwd(Some(std::env::temp_dir().to_string_lossy().into_owned()))
+                .expect("temp dir should resolve")
+                .expect("temp dir should be present");
+
+        assert!(resolved.is_dir());
+    }
+
+    #[test]
+    fn resolve_launch_cwd_rejects_missing_directory() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let missing = std::env::temp_dir().join(format!("cc-switch-missing-{unique}"));
+
+        let error = resolve_launch_cwd(Some(missing.to_string_lossy().into_owned()))
+            .expect_err("missing directory should fail");
+
+        assert!(error.contains("目录不存在"));
+    }
+
+    #[test]
+    fn build_shell_cd_command_quotes_spaces_and_single_quotes() {
+        let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
+
+        assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
+    }
+
+    #[test]
+    fn build_windows_cwd_command_str_uses_cd_for_drive_paths() {
+        let command = build_windows_cwd_command_str(r"C:\work\repo");
+
+        assert_eq!(command, "cd /d \"C:\\work\\repo\" || exit /b 1\r\n");
+    }
+
+    #[test]
+    fn build_windows_cwd_command_str_uses_pushd_for_unc_paths() {
+        let command = build_windows_cwd_command_str(r"\\wsl$\Ubuntu\home\coder\repo");
+
+        assert_eq!(
+            command,
+            "pushd \"\\\\wsl$\\Ubuntu\\home\\coder\\repo\" || exit /b 1\r\n"
+        );
+    }
+
+    #[test]
+    fn build_windows_cwd_command_str_escapes_batch_metacharacters() {
+        let command = build_windows_cwd_command_str(r"\\server\share\100%&(test)");
+
+        assert_eq!(
+            command,
+            "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
         );
     }
 }

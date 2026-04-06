@@ -9,6 +9,7 @@
 //! 与 Chat Completions 的 delta chunk 模型完全不同，需要独立的状态机处理。
 
 use super::transform_responses::{build_anthropic_usage_from_responses, map_responses_stop_reason};
+use crate::proxy::sse::strip_sse_field;
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
@@ -95,8 +96,8 @@ fn resolve_content_index(
 ///
 /// 状态机跟踪: message_id, current_model, has_sent_message_start, item/content index map
 /// SSE 解析支持 named events (event: + data: 行)
-pub fn create_anthropic_sse_stream_from_responses(
-    stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -108,6 +109,7 @@ pub fn create_anthropic_sse_stream_from_responses(
         let mut index_by_key: HashMap<String, u32> = HashMap::new();
         let mut open_indices: HashSet<u32> = HashSet::new();
         let mut fallback_open_index: Option<u32> = None;
+        let mut current_text_index: Option<u32> = None;
         let mut tool_index_by_item_id: HashMap<String, u32> = HashMap::new();
         let mut last_tool_index: Option<u32> = None;
 
@@ -133,9 +135,9 @@ pub fn create_anthropic_sse_stream_from_responses(
                         let mut data_parts: Vec<String> = Vec::new();
 
                         for line in block.lines() {
-                            if let Some(evt) = line.strip_prefix("event: ") {
+                            if let Some(evt) = strip_sse_field(line, "event") {
                                 event_type = Some(evt.trim().to_string());
-                            } else if let Some(d) = line.strip_prefix("data: ") {
+                            } else if let Some(d) = strip_sse_field(line, "data") {
                                 data_parts.push(d.to_string());
                             }
                         }
@@ -217,12 +219,18 @@ pub fn create_anthropic_sse_stream_from_responses(
                                 if let Some(part) = data.get("part") {
                                     let part_type = part.get("type").and_then(|t| t.as_str());
                                     if matches!(part_type, Some("output_text") | Some("refusal")) {
-                                        let index = resolve_content_index(
-                                            &data,
-                                            &mut next_content_index,
-                                            &mut index_by_key,
-                                            &mut fallback_open_index,
-                                        );
+                                        let index = if let Some(index) = current_text_index {
+                                            index
+                                        } else {
+                                            let index = resolve_content_index(
+                                                &data,
+                                                &mut next_content_index,
+                                                &mut index_by_key,
+                                                &mut fallback_open_index,
+                                            );
+                                            current_text_index = Some(index);
+                                            index
+                                        };
 
                                         if open_indices.contains(&index) {
                                             continue;
@@ -249,12 +257,18 @@ pub fn create_anthropic_sse_stream_from_responses(
                             // ================================================
                             "response.output_text.delta" => {
                                 if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                    let index = resolve_content_index(
-                                        &data,
-                                        &mut next_content_index,
-                                        &mut index_by_key,
-                                        &mut fallback_open_index,
-                                    );
+                                    let index = if let Some(index) = current_text_index {
+                                        index
+                                    } else {
+                                        let index = resolve_content_index(
+                                            &data,
+                                            &mut next_content_index,
+                                            &mut index_by_key,
+                                            &mut fallback_open_index,
+                                        );
+                                        current_text_index = Some(index);
+                                        index
+                                    };
 
                                     if !open_indices.contains(&index) {
                                         let start_event = json!({
@@ -289,12 +303,18 @@ pub fn create_anthropic_sse_stream_from_responses(
                             // ================================================
                             "response.refusal.delta" => {
                                 if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                    let index = resolve_content_index(
-                                        &data,
-                                        &mut next_content_index,
-                                        &mut index_by_key,
-                                        &mut fallback_open_index,
-                                    );
+                                    let index = if let Some(index) = current_text_index {
+                                        index
+                                    } else {
+                                        let index = resolve_content_index(
+                                            &data,
+                                            &mut next_content_index,
+                                            &mut index_by_key,
+                                            &mut fallback_open_index,
+                                        );
+                                        current_text_index = Some(index);
+                                        index
+                                    };
 
                                     if !open_indices.contains(&index) {
                                         let start_event = json!({
@@ -328,29 +348,7 @@ pub fn create_anthropic_sse_stream_from_responses(
                             // ================================================
                             // response.content_part.done → content_block_stop
                             // ================================================
-                            "response.content_part.done" => {
-                                let key = content_part_key(&data);
-                                let index = if let Some(k) = key {
-                                    index_by_key.get(&k).copied()
-                                } else {
-                                    fallback_open_index
-                                };
-                                if let Some(index) = index {
-                                    if !open_indices.remove(&index) {
-                                        continue;
-                                    }
-                                    let event = json!({
-                                        "type": "content_block_stop",
-                                        "index": index
-                                    });
-                                    let sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                        serde_json::to_string(&event).unwrap_or_default());
-                                    yield Ok(Bytes::from(sse));
-                                    if fallback_open_index == Some(index) {
-                                        fallback_open_index = None;
-                                    }
-                                }
-                            }
+                            "response.content_part.done" => {}
 
                             // ================================================
                             // response.output_item.added (function_call) → content_block_start (tool_use)
@@ -360,6 +358,20 @@ pub fn create_anthropic_sse_stream_from_responses(
                                     let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
                                     if item_type == "function_call" {
                                         has_tool_use = true;
+                                        if let Some(index) = current_text_index.take() {
+                                            if open_indices.remove(&index) {
+                                                let stop_event = json!({
+                                                    "type": "content_block_stop",
+                                                    "index": index
+                                                });
+                                                let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                                    serde_json::to_string(&stop_event).unwrap_or_default());
+                                                yield Ok(Bytes::from(stop_sse));
+                                            }
+                                            if fallback_open_index == Some(index) {
+                                                fallback_open_index = None;
+                                            }
+                                        }
                                         // 确保 message_start 已发送
                                         if !has_sent_message_start {
                                             let start_event = json!({
@@ -520,12 +532,14 @@ pub fn create_anthropic_sse_stream_from_responses(
                             // response.refusal.done → content_block_stop
                             // ================================================
                             "response.refusal.done" => {
-                                let key = content_part_key(&data);
-                                let index = if let Some(k) = key {
-                                    index_by_key.get(&k).copied()
-                                } else {
-                                    fallback_open_index
-                                };
+                                let index = current_text_index.take().or_else(|| {
+                                    let key = content_part_key(&data);
+                                    if let Some(k) = key {
+                                        index_by_key.get(&k).copied()
+                                    } else {
+                                        fallback_open_index
+                                    }
+                                });
                                 if let Some(index) = index {
                                     if !open_indices.remove(&index) {
                                         continue;
@@ -552,6 +566,20 @@ pub fn create_anthropic_sse_stream_from_responses(
                                     .or_else(|| data.get("text"))
                                     .and_then(|d| d.as_str())
                                 {
+                                    if let Some(index) = current_text_index.take() {
+                                        if open_indices.remove(&index) {
+                                            let stop_event = json!({
+                                                "type": "content_block_stop",
+                                                "index": index
+                                            });
+                                            let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                                serde_json::to_string(&stop_event).unwrap_or_default());
+                                            yield Ok(Bytes::from(stop_sse));
+                                        }
+                                        if fallback_open_index == Some(index) {
+                                            fallback_open_index = None;
+                                        }
+                                    }
                                     let index = resolve_content_index(
                                         &data,
                                         &mut next_content_index,
@@ -673,8 +701,23 @@ pub fn create_anthropic_sse_stream_from_responses(
 
                             // Lifecycle events that don't need Anthropic counterparts.
                             // Listed explicitly so new events trigger a match-completeness review.
-                            "response.output_text.done"
-                            | "response.output_item.done"
+                            "response.output_text.done" => {
+                                if let Some(index) = current_text_index.take() {
+                                    if open_indices.remove(&index) {
+                                        let stop_event = json!({
+                                            "type": "content_block_stop",
+                                            "index": index
+                                        });
+                                        let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                            serde_json::to_string(&stop_event).unwrap_or_default());
+                                        yield Ok(Bytes::from(stop_sse));
+                                    }
+                                    if fallback_open_index == Some(index) {
+                                        fallback_open_index = None;
+                                    }
+                                }
+                            }
+                            "response.output_item.done"
                             | "response.in_progress" => {}
 
                             // Any other unknown/future events — silently skip.
@@ -757,7 +800,9 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":3}}}\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream_from_responses(upstream);
         let chunks: Vec<_> = converted.collect().await;
 
@@ -799,7 +844,9 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}}\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream_from_responses(upstream);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
@@ -810,7 +857,9 @@ mod tests {
         let events: Vec<Value> = merged
             .split("\n\n")
             .filter_map(|block| {
-                let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
                 serde_json::from_str::<Value>(data).ok()
             })
             .collect();
@@ -868,7 +917,9 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":10}}}\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream_from_responses(upstream);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
@@ -898,5 +949,84 @@ mod tests {
             "should contain text delta"
         );
         assert!(merged.contains("\"stop_reason\":\"end_turn\""));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_text_parts_are_merged_into_one_text_block() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_merge\",\"model\":\"gpt-5.4\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"},\"output_index\":0,\"content_index\":0}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你\",\"output_index\":0,\"content_index\":0}\n\n",
+            "event: response.content_part.done\n",
+            "data: {\"type\":\"response.content_part.done\",\"output_index\":0,\"content_index\":0}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"},\"output_index\":0,\"content_index\":1}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"好\",\"output_index\":0,\"content_index\":1}\n\n",
+            "event: response.content_part.done\n",
+            "data: {\"type\":\"response.content_part.done\",\"output_index\":0,\"content_index\":1}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"output_index\":0,\"content_index\":1}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        let events: Vec<Value> = chunks
+            .into_iter()
+            .flat_map(|chunk| {
+                let bytes = chunk.unwrap();
+                let text = String::from_utf8_lossy(bytes.as_ref()).to_string();
+                text.split("\n\n")
+                    .filter_map(|block| {
+                        block.lines().find_map(|line| {
+                            strip_sse_field(line, "data")
+                                .and_then(|payload| serde_json::from_str::<Value>(payload).ok())
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        let text_starts = events
+            .iter()
+            .filter(|event| {
+                event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("text")
+            })
+            .count();
+        let text_stops = events
+            .iter()
+            .filter(|event| {
+                event.get("type").and_then(|v| v.as_str()) == Some("content_block_stop")
+            })
+            .count();
+        let text_deltas: Vec<String> = events
+            .iter()
+            .filter(|event| {
+                event.get("type").and_then(|v| v.as_str()) == Some("content_block_delta")
+                    && event.pointer("/delta/type").and_then(|v| v.as_str()) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_starts, 1);
+        assert_eq!(text_stops, 1);
+        assert_eq!(text_deltas, vec!["你".to_string(), "好".to_string()]);
     }
 }

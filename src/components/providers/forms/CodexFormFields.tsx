@@ -1,6 +1,15 @@
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { Download, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField } from "./shared";
+import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import type { ProviderCategory } from "@/types";
 
 interface EndpointCandidate {
@@ -22,6 +31,8 @@ interface CodexFormFieldsProps {
   shouldShowSpeedTest: boolean;
   codexBaseUrl: string;
   onBaseUrlChange: (url: string) => void;
+  isFullUrl: boolean;
+  onFullUrlChange: (value: boolean) => void;
   isEndpointModalOpen: boolean;
   onEndpointModalToggle: (open: boolean) => void;
   onCustomEndpointsChange?: (endpoints: string[]) => void;
@@ -49,6 +60,8 @@ export function CodexFormFields({
   shouldShowSpeedTest,
   codexBaseUrl,
   onBaseUrlChange,
+  isFullUrl,
+  onFullUrlChange,
   isEndpointModalOpen,
   onEndpointModalToggle,
   onCustomEndpointsChange,
@@ -60,6 +73,36 @@ export function CodexFormFields({
   speedTestEndpoints,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
+
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+
+  const handleFetchModels = useCallback(() => {
+    if (!codexBaseUrl || !codexApiKey) {
+      showFetchModelsError(null, t, {
+        hasApiKey: !!codexApiKey,
+        hasBaseUrl: !!codexBaseUrl,
+      });
+      return;
+    }
+    setIsFetchingModels(true);
+    fetchModelsForConfig(codexBaseUrl, codexApiKey, isFullUrl)
+      .then((models) => {
+        setFetchedModels(models);
+        if (models.length === 0) {
+          toast.info(t("providerForm.fetchModelsEmpty"));
+        } else {
+          toast.success(
+            t("providerForm.fetchModelsSuccess", { count: models.length }),
+          );
+        }
+      })
+      .catch((err) => {
+        console.warn("[ModelFetch] Failed:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => setIsFetchingModels(false));
+  }, [codexBaseUrl, codexApiKey, isFullUrl, t]);
 
   return (
     <>
@@ -93,6 +136,9 @@ export function CodexFormFields({
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.codexApiEndpointPlaceholder")}
           hint={t("providerForm.codexApiHint")}
+          showFullUrlToggle
+          isFullUrl={isFullUrl}
+          onFullUrlChange={onFullUrlChange}
           onManageClick={() => onEndpointModalToggle(true)}
         />
       )}
@@ -100,21 +146,38 @@ export function CodexFormFields({
       {/* Codex Model Name 输入框 */}
       {shouldShowModelField && onModelNameChange && (
         <div className="space-y-2">
-          <label
-            htmlFor="codexModelName"
-            className="block text-sm font-medium text-foreground"
-          >
-            {t("codexConfig.modelName", { defaultValue: "模型名称" })}
-          </label>
-          <input
+          <div className="flex items-center justify-between">
+            <label
+              htmlFor="codexModelName"
+              className="block text-sm font-medium text-foreground"
+            >
+              {t("codexConfig.modelName", { defaultValue: "模型名称" })}
+            </label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleFetchModels}
+              disabled={isFetchingModels}
+              className="h-7 gap-1"
+            >
+              {isFetchingModels ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              {t("providerForm.fetchModels")}
+            </Button>
+          </div>
+          <ModelInputWithFetch
             id="codexModelName"
-            type="text"
             value={modelName}
-            onChange={(e) => onModelNameChange(e.target.value)}
+            onChange={(v) => onModelNameChange!(v)}
             placeholder={t("codexConfig.modelNamePlaceholder", {
               defaultValue: "例如: gpt-5.4",
             })}
-            className="w-full px-3 py-2 border border-border-default bg-background text-foreground rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 transition-colors"
+            fetchedModels={fetchedModels}
+            isLoading={isFetchingModels}
           />
           <p className="text-xs text-muted-foreground">
             {modelName.trim()

@@ -2,6 +2,7 @@
 //!
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
+use crate::proxy::sse::strip_sse_field;
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -87,8 +88,8 @@ struct ToolBlockState {
 }
 
 /// 创建 Anthropic SSE 流
-pub fn create_anthropic_sse_stream(
-    stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -118,7 +119,7 @@ pub fn create_anthropic_sse_stream(
                         }
 
                         for l in line.lines() {
-                            if let Some(data) = l.strip_prefix("data: ") {
+                            if let Some(data) = strip_sse_field(l, "data") {
                                 if data.trim() == "[DONE]" {
                                     log::debug!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
                                     let event = json!({"type": "message_stop"});
@@ -597,7 +598,9 @@ mod tests {
             "data: [DONE]\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream(upstream);
         let chunks: Vec<_> = converted.collect().await;
 
@@ -609,7 +612,9 @@ mod tests {
         let events: Vec<Value> = merged
             .split("\n\n")
             .filter_map(|block| {
-                let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
                 serde_json::from_str::<Value>(data).ok()
             })
             .collect();
@@ -683,7 +688,9 @@ mod tests {
             "data: [DONE]\n\n"
         );
 
-        let upstream = stream::iter(vec![Ok(Bytes::from(input.as_bytes().to_vec()))]);
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
         let converted = create_anthropic_sse_stream(upstream);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
@@ -694,7 +701,9 @@ mod tests {
         let events: Vec<Value> = merged
             .split("\n\n")
             .filter_map(|block| {
-                let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
                 serde_json::from_str::<Value>(data).ok()
             })
             .collect();

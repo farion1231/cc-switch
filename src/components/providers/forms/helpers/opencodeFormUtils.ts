@@ -28,6 +28,7 @@ export const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
     options: {
       baseURL: "",
       apiKey: "",
+      setCacheKey: true,
     },
     models: {},
   },
