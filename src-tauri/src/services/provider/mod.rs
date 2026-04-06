@@ -36,6 +36,7 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
+    write_qwen_live,
 };
 use usage::validate_usage_script;
 
@@ -2003,6 +2004,10 @@ impl ProviderService {
 
     pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
         write_gemini_live(provider)
+    }
+
+    pub(crate) fn write_qwen_live(provider: &Provider) -> Result<(), AppError> {
+        write_qwen_live(provider)
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {

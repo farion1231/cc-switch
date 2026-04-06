@@ -1,18 +1,32 @@
-use crate::config::{get_home_dir, write_text_file};
+use crate::config::{get_home_dir, read_json_file, write_json_file, write_text_file};
 use crate::error::AppError;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
 /// 获取 Qwen 配置目录路径
 pub fn get_qwen_dir() -> PathBuf {
+    if let Some(custom) = crate::settings::get_qwen_override_dir() {
+        return custom;
+    }
+
     get_home_dir().join(".qwen")
 }
 
 /// 获取 Qwen .env 文件路径
 pub fn get_qwen_env_path() -> PathBuf {
     get_qwen_dir().join(".env")
+}
+
+/// 获取 Qwen settings.json 文件路径
+pub fn get_qwen_settings_path() -> PathBuf {
+    get_qwen_dir().join("settings.json")
+}
+
+/// 是否存在任一可用的 Qwen live 配置
+pub fn has_qwen_live_config() -> bool {
+    get_qwen_env_path().exists() || get_qwen_settings_path().exists()
 }
 
 /// 解析 .env 文件内容为键值对
@@ -75,25 +89,19 @@ pub fn read_qwen_env() -> Result<HashMap<String, String>, AppError> {
     Ok(parse_env_file(&content))
 }
 
+/// 读取 Qwen settings.json（不存在时返回空对象）
+pub fn read_qwen_settings() -> Result<Value, AppError> {
+    let settings_path = get_qwen_settings_path();
+    if !settings_path.exists() {
+        return Ok(json!({}));
+    }
+
+    read_json_file(&settings_path)
+}
+
 /// 写入 Qwen .env 配置
 pub fn write_qwen_env(env_map: &HashMap<String, String>) -> Result<(), AppError> {
     write_qwen_env_atomic(env_map)
-}
-
-/// 写入 Qwen live 配置（切换 provider 时使用）
-///
-/// 保留现有 .env 文件中的其他配置，仅更新指定的三个字段
-pub fn write_qwen_live(
-    openai_api_key: &str,
-    openai_base_url: &str,
-    openai_model: &str,
-) -> Result<(), AppError> {
-    // 先读取现有配置，保留用户可能添加的其他环境变量
-    let mut env_map = read_qwen_env().unwrap_or_default();
-    env_map.insert("OPENAI_API_KEY".to_string(), openai_api_key.to_string());
-    env_map.insert("OPENAI_BASE_URL".to_string(), openai_base_url.to_string());
-    env_map.insert("OPENAI_MODEL".to_string(), openai_model.to_string());
-    write_qwen_env(&env_map)
 }
 
 /// 清空 Qwen live 配置
@@ -125,6 +133,152 @@ pub fn json_to_env(settings: &Value) -> Result<HashMap<String, String>, AppError
     }
 
     Ok(env_map)
+}
+
+fn merge_json(target: &mut Value, source: &Value) {
+    match (target, source) {
+        (Value::Object(target_map), Value::Object(source_map)) => {
+            for (key, source_value) in source_map {
+                match target_map.get_mut(key) {
+                    Some(target_value) => merge_json(target_value, source_value),
+                    None => {
+                        target_map.insert(key.clone(), source_value.clone());
+                    }
+                }
+            }
+        }
+        (target_value, source_value) => {
+            *target_value = source_value.clone();
+        }
+    }
+}
+
+fn extract_settings_env(settings: &Value) -> HashMap<String, String> {
+    let mut env_map = HashMap::new();
+
+    if let Some(env_obj) = settings.get("env").and_then(Value::as_object) {
+        for (key, value) in env_obj {
+            if let Some(val_str) = value.as_str() {
+                env_map.insert(key.clone(), val_str.to_string());
+            }
+        }
+    }
+
+    env_map
+}
+
+fn normalize_qwen_provider_config(settings: &Value) -> Value {
+    let mut normalized = serde_json::Map::new();
+
+    if let Some(model_providers) = settings.get("modelProviders") {
+        normalized.insert("modelProviders".to_string(), model_providers.clone());
+    }
+
+    if let Some(selected_type) = settings
+        .get("security")
+        .and_then(|v| v.get("auth"))
+        .and_then(|v| v.get("selectedType"))
+    {
+        normalized.insert(
+            "security".to_string(),
+            json!({
+                "auth": {
+                    "selectedType": selected_type.clone()
+                }
+            }),
+        );
+    }
+
+    if let Some(model_name) = settings.get("model").and_then(|v| v.get("name")) {
+        normalized.insert(
+            "model".to_string(),
+            json!({
+                "name": model_name.clone()
+            }),
+        );
+    }
+
+    Value::Object(normalized)
+}
+
+/// 读取当前 Qwen live 配置并归一化为 Provider.settings_config 结构
+///
+/// 返回结构：
+/// `{ "env": {...}, "config": {...} }`
+///
+/// 规则：
+/// - `settings.json` 中的 `env` 优先
+/// - `.env` 仅为缺失字段提供回退
+/// - `config` 只保留供应商相关字段，避免把共享设置直接吸收到 provider 中
+pub fn read_qwen_live_config() -> Result<Value, AppError> {
+    let settings = read_qwen_settings()?;
+
+    let mut env_map = extract_settings_env(&settings);
+    for (key, value) in read_qwen_env()? {
+        env_map.entry(key).or_insert(value);
+    }
+
+    let mut live = env_to_json(&env_map);
+    if let Some(obj) = live.as_object_mut() {
+        obj.insert(
+            "config".to_string(),
+            normalize_qwen_provider_config(&settings),
+        );
+    }
+
+    Ok(live)
+}
+
+/// 写入 Qwen live 配置，优先更新 settings.json，并同步 .env 作为兼容回退
+pub fn write_qwen_live_settings(settings: &Value) -> Result<(), AppError> {
+    let settings_obj = settings.as_object().ok_or_else(|| {
+        AppError::localized(
+            "qwen.validation.invalid_settings",
+            "Qwen 配置必须是 JSON 对象",
+            "Qwen config must be a JSON object",
+        )
+    })?;
+
+    let provider_env = json_to_env(settings)?;
+    let mut merged_settings = read_qwen_settings()?;
+    if !merged_settings.is_object() {
+        merged_settings = json!({});
+    }
+
+    let mut merged_env = extract_settings_env(&merged_settings);
+    for (key, value) in read_qwen_env()? {
+        merged_env.entry(key).or_insert(value);
+    }
+    for (key, value) in provider_env {
+        merged_env.insert(key, value);
+    }
+
+    if let Some(obj) = merged_settings.as_object_mut() {
+        obj.insert(
+            "env".to_string(),
+            env_to_json(&merged_env)
+                .get("env")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        );
+    }
+
+    if let Some(config_value) = settings_obj.get("config") {
+        if config_value.is_object() {
+            merge_json(&mut merged_settings, config_value);
+        } else if !config_value.is_null() {
+            return Err(AppError::localized(
+                "qwen.validation.invalid_config",
+                "Qwen 配置格式错误: config 必须是对象或 null",
+                "Qwen config invalid: config must be an object or null",
+            ));
+        }
+    }
+
+    write_json_file(&get_qwen_settings_path(), &merged_settings)?;
+    write_qwen_env_atomic(&merged_env)?;
+
+    Ok(())
 }
 
 /// 写入 Qwen .env 文件（原子操作）
@@ -162,4 +316,169 @@ pub fn write_qwen_env_atomic(map: &HashMap<String, String>) -> Result<(), AppErr
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::{Mutex, OnceLock};
+
+    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+    }
+
+    fn with_test_home<T>(test: impl FnOnce() -> T) -> T {
+        let _guard = test_guard();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let old_home = std::env::var_os("HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        std::env::set_var("HOME", temp.path());
+        let result = test();
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match old_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        result
+    }
+
+    #[test]
+    fn read_qwen_live_config_prefers_settings_json_env_and_keeps_provider_config() {
+        with_test_home(|| {
+            let qwen_dir = get_qwen_dir();
+            fs::create_dir_all(&qwen_dir).expect("create qwen dir");
+            fs::write(
+                get_qwen_env_path(),
+                "OPENAI_API_KEY=env-file-key\nOPENAI_BASE_URL=https://env.example/v1\n",
+            )
+            .expect("write env");
+            crate::config::write_json_file(
+                &get_qwen_settings_path(),
+                &json!({
+                    "env": {
+                        "OPENAI_API_KEY": "settings-key",
+                        "OPENAI_MODEL": "qwen3-coder-plus"
+                    },
+                    "modelProviders": {
+                        "dashscope": {
+                            "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                        }
+                    },
+                    "security": {
+                        "auth": {
+                            "selectedType": "openai"
+                        }
+                    },
+                    "model": {
+                        "name": "qwen3-coder-plus"
+                    },
+                    "mcpServers": {
+                        "keep-me": {
+                            "command": "uvx"
+                        }
+                    }
+                }),
+            )
+            .expect("write settings");
+
+            let live = read_qwen_live_config().expect("read live config");
+
+            assert_eq!(live["env"]["OPENAI_API_KEY"], json!("settings-key"));
+            assert_eq!(
+                live["env"]["OPENAI_BASE_URL"],
+                json!("https://env.example/v1")
+            );
+            assert_eq!(live["env"]["OPENAI_MODEL"], json!("qwen3-coder-plus"));
+            assert!(live["config"].get("modelProviders").is_some());
+            assert_eq!(
+                live["config"]["security"]["auth"]["selectedType"],
+                json!("openai")
+            );
+            assert_eq!(live["config"]["model"]["name"], json!("qwen3-coder-plus"));
+            assert!(
+                live["config"].get("mcpServers").is_none(),
+                "shared fields should not be normalized into provider config"
+            );
+        });
+    }
+
+    #[test]
+    fn write_qwen_live_settings_preserves_existing_shared_settings() {
+        with_test_home(|| {
+            let qwen_dir = get_qwen_dir();
+            fs::create_dir_all(&qwen_dir).expect("create qwen dir");
+            crate::config::write_json_file(
+                &get_qwen_settings_path(),
+                &json!({
+                    "mcpServers": {
+                        "persisted": {
+                            "command": "uvx"
+                        }
+                    },
+                    "theme": "dark"
+                }),
+            )
+            .expect("write initial settings");
+
+            write_qwen_live_settings(&json!({
+                "env": {
+                    "OPENAI_API_KEY": "new-key",
+                    "OPENAI_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "OPENAI_MODEL": "qwen3-coder-plus"
+                },
+                "config": {
+                    "modelProviders": {
+                        "dashscope": {
+                            "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                        }
+                    },
+                    "security": {
+                        "auth": {
+                            "selectedType": "openai"
+                        }
+                    },
+                    "model": {
+                        "name": "qwen3-coder-plus"
+                    }
+                }
+            }))
+            .expect("write live settings");
+
+            let saved_settings: Value =
+                crate::config::read_json_file(&get_qwen_settings_path()).expect("read settings");
+            let env_map = read_qwen_env().expect("read env");
+
+            assert_eq!(saved_settings["theme"], json!("dark"));
+            assert!(saved_settings["mcpServers"]["persisted"].is_object());
+            assert_eq!(
+                saved_settings["security"]["auth"]["selectedType"],
+                json!("openai")
+            );
+            assert_eq!(saved_settings["model"]["name"], json!("qwen3-coder-plus"));
+            assert_eq!(
+                env_map.get("OPENAI_API_KEY"),
+                Some(&"new-key".to_string())
+            );
+        });
+    }
+
+    #[test]
+    fn has_qwen_live_config_detects_settings_json_without_env_file() {
+        with_test_home(|| {
+            let qwen_dir = get_qwen_dir();
+            fs::create_dir_all(&qwen_dir).expect("create qwen dir");
+            crate::config::write_json_file(&get_qwen_settings_path(), &json!({ "model": {} }))
+                .expect("write settings");
+
+            assert!(has_qwen_live_config());
+        });
+    }
 }

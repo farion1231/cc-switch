@@ -3,7 +3,7 @@ use crate::app_config::{AppType, MultiAppConfig};
 use crate::error::AppError;
 use crate::provider::Provider;
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
@@ -236,42 +236,16 @@ impl ConfigService {
         provider_id: &str,
         provider: &Provider,
     ) -> Result<(), AppError> {
-        use crate::qwen_config::{env_to_json, read_qwen_env, write_qwen_live};
+        use crate::qwen_config::read_qwen_live_config;
 
-        let settings = provider.settings_config.as_object().ok_or_else(|| {
-            AppError::localized(
-                "provider.qwen.settings.not_object",
-                format!("供应商 {} 的 Qwen 配置必须是对象", provider_id),
-                format!("Qwen configuration for provider {} must be an object", provider_id),
-            )
-        })?;
-        let env = settings.get("env").and_then(Value::as_object).ok_or_else(|| {
-            AppError::localized(
-                "provider.qwen.env.missing",
-                format!("供应商 {} 的 Qwen 配置缺少 env 字段", provider_id),
-                format!("Qwen configuration for provider {} is missing env field", provider_id),
-            )
-        })?;
+        ProviderService::write_qwen_live(provider)?;
 
-        let api_key = env.get("OPENAI_API_KEY").and_then(Value::as_str).unwrap_or("");
-        let base_url = env.get("OPENAI_BASE_URL").and_then(Value::as_str).unwrap_or("");
-        let model = env.get("OPENAI_MODEL").and_then(Value::as_str).unwrap_or("");
-
-        write_qwen_live(api_key, base_url, model)?;
-
-        // 读回实际写入的内容并更新到配置中
-        let live_after_env = read_qwen_env()?;
-        let live_after = env_to_json(&live_after_env);
-        let env_obj = live_after
-            .get("env")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
+        // 读回实际写入的内容并更新到配置中（包含 settings.json）
+        let live_after = read_qwen_live_config()?;
 
         if let Some(manager) = config.get_manager_mut(&AppType::Qwen) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
-                if let Some(obj) = target.settings_config.as_object_mut() {
-                    obj.insert("env".to_string(), env_obj);
-                }
+                target.settings_config = live_after;
             }
         }
 

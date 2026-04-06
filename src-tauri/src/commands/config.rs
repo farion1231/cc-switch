@@ -93,8 +93,7 @@ pub async fn get_config_status(app: String) -> Result<ConfigStatus, String> {
             Ok(ConfigStatus { exists, path })
         }
         AppType::Qwen => {
-            let env_path = crate::qwen_config::get_qwen_env_path();
-            let exists = env_path.exists();
+            let exists = crate::qwen_config::has_qwen_live_config();
             let path = crate::qwen_config::get_qwen_dir()
                 .to_string_lossy()
                 .to_string();

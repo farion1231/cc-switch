@@ -162,6 +162,7 @@ command = "say"
                 claude: false,
                 codex: true,
                 gemini: false,
+                qwen: false,
                 opencode: false,
             },
             description: None,

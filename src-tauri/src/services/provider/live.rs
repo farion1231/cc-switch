@@ -824,25 +824,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             }
         }
         AppType::Qwen => {
-            // Qwen uses .env file format, similar to Gemini
-            use crate::qwen_config::write_qwen_env;
-
-            let env = provider
-                .settings_config
-                .get("env")
-                .and_then(|e| e.as_object())
-                .ok_or_else(|| {
-                    AppError::Config("Qwen provider config must have 'env' object".to_string())
-                })?;
-
-            let mut env_map = std::collections::HashMap::new();
-            for (key, value) in env {
-                if let Some(val_str) = value.as_str() {
-                    env_map.insert(key.clone(), val_str.to_string());
-                }
-            }
-
-            write_qwen_env(&env_map)?;
+            // Qwen uses settings.json as the main live config, with .env compatibility fallback.
+            crate::qwen_config::write_qwen_live_settings(&provider.settings_config)?;
             log::info!("Qwen provider '{}' written to live config", provider.id);
         }
     }
@@ -1026,23 +1009,17 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(config)
         }
         AppType::Qwen => {
-            use crate::qwen_config::{env_to_json, get_qwen_env_path, read_qwen_env};
+            use crate::qwen_config::{has_qwen_live_config, read_qwen_live_config};
 
-            // Read .env file (environment variables)
-            let env_path = get_qwen_env_path();
-            if !env_path.exists() {
+            if !has_qwen_live_config() {
                 return Err(AppError::localized(
-                    "qwen.env.missing",
-                    "Qwen .env 文件不存在",
-                    "Qwen .env file not found",
+                    "qwen.live.missing",
+                    "Qwen 配置文件不存在",
+                    "Qwen configuration file not found",
                 ));
             }
 
-            let env_map = read_qwen_env()?;
-            let env_json = env_to_json(&env_map);
-
-            // Return structure: { "env": {...} }
-            Ok(env_json)
+            read_qwen_live_config()
         }
         AppType::OpenClaw => {
             use crate::openclaw_config::{get_openclaw_config_path, read_openclaw_config};
@@ -1145,11 +1122,9 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             unreachable!("additive mode apps are handled by early return")
         }
         AppType::Qwen => {
-            use crate::qwen_config::{env_to_json, get_qwen_env_path, read_qwen_env};
+            use crate::qwen_config::{has_qwen_live_config, read_qwen_live_config};
 
-            // Read .env file (environment variables)
-            let env_path = get_qwen_env_path();
-            if !env_path.exists() {
+            if !has_qwen_live_config() {
                 return Err(AppError::localized(
                     "qwen.live.missing",
                     "Qwen 配置文件不存在",
@@ -1157,11 +1132,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 ));
             }
 
-            let env_map = read_qwen_env()?;
-            let env_json = env_to_json(&env_map);
-
-            // Return structure: { "env": {...} }
-            env_json
+            read_qwen_live_config()?
         }
     };
 
@@ -1430,6 +1401,11 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
 
     Ok(())
+}
+
+/// Write Qwen live configuration with settings.json-aware merge behavior
+pub(crate) fn write_qwen_live(provider: &Provider) -> Result<(), AppError> {
+    crate::qwen_config::write_qwen_live_settings(&provider.settings_config)
 }
 
 #[cfg(test)]
