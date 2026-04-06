@@ -665,4 +665,70 @@ mod tests {
 
         assert!(output.contains("\"partial_json\":\"{\\\"command\\\":\\\"git status\\\"}\""));
     }
+
+    #[test]
+    fn rectifies_streamed_skill_args_from_nested_parameters() {
+        let payload = json!({
+            "responseId": "resp_6",
+            "modelVersion": "gemini-2.5-pro",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "id": "call_1",
+                            "name": "Skill",
+                            "args": {
+                                "name": "git-commit",
+                                "parameters": {
+                                    "args": ["详细分析内容 编写提交信息 分多次提交代码"]
+                                }
+                            }
+                        }
+                    }]
+                }
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "totalTokenCount": 8
+            }
+        });
+        let owned_chunks = vec![format!(
+            "data: {}\n\n",
+            serde_json::to_string(&payload).unwrap()
+        )];
+        let stream = futures::stream::iter(
+            owned_chunks
+                .into_iter()
+                .map(|chunk| Ok::<Bytes, std::io::Error>(Bytes::from(chunk))),
+        );
+        let hints = super::super::transform_gemini::extract_anthropic_tool_schema_hints(&json!({
+            "tools": [{
+                "name": "Skill",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "skill": { "type": "string" },
+                        "args": { "type": "string" }
+                    },
+                    "required": ["skill"]
+                }
+            }]
+        }));
+        let converted =
+            create_anthropic_sse_stream_from_gemini(stream, None, None, None, Some(hints));
+        let output = futures::executor::block_on(async move {
+            converted
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(|item| String::from_utf8(item.unwrap().to_vec()).unwrap())
+                .collect::<Vec<_>>()
+                .join("")
+        });
+
+        assert!(output.contains("git-commit"));
+        assert!(output.contains("详细分析内容 编写提交信息 分多次提交代码"));
+        assert!(!output.contains("\\\"parameters\\\""));
+    }
 }

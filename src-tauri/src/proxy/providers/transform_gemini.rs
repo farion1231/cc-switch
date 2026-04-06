@@ -576,6 +576,41 @@ pub fn rectify_tool_call_args(
     if args_object.is_empty() || hint.expected_keys.is_empty() {
         return false;
     }
+    let mut changed = false;
+
+    if hint.expected_keys.iter().any(|key| key == "skill") && !args_object.contains_key("skill") {
+        if let Some(value) = args_object.remove("name") {
+            args_object.insert("skill".to_string(), value);
+            changed = true;
+        }
+    }
+
+    if let Some(parameters_value) = args_object.remove("parameters") {
+        if let Some(parameters_object) = parameters_value.as_object() {
+            for expected_key in &hint.expected_keys {
+                if args_object.contains_key(expected_key) {
+                    continue;
+                }
+                let Some(value) = parameters_object.get(expected_key) else {
+                    continue;
+                };
+                let normalized_value = match value {
+                    Value::Array(values) if values.len() == 1 => values[0].clone(),
+                    _ => value.clone(),
+                };
+                args_object.insert(expected_key.clone(), normalized_value);
+                changed = true;
+            }
+        }
+    }
+
+    if hint
+        .required_keys
+        .iter()
+        .all(|key| args_object.contains_key(key.as_str()))
+    {
+        return changed;
+    }
 
     let expected_key_set = hint
         .expected_keys
@@ -1031,7 +1066,12 @@ mod tests {
                         "functionCall": {
                             "id": "call_1",
                             "name": "Skill",
-                            "args": { "name": "git-commit" }
+                            "args": {
+                                "name": "git-commit",
+                                "parameters": {
+                                    "args": ["详细分析内容 编写提交信息 分多次提交代码"]
+                                }
+                            }
                         }
                     }]
                 }
@@ -1056,7 +1096,12 @@ mod tests {
                 .unwrap();
 
         assert_eq!(result["content"][0]["input"]["skill"], "git-commit");
+        assert_eq!(
+            result["content"][0]["input"]["args"],
+            "详细分析内容 编写提交信息 分多次提交代码"
+        );
         assert!(result["content"][0]["input"].get("name").is_none());
+        assert!(result["content"][0]["input"].get("parameters").is_none());
     }
 
     #[test]
