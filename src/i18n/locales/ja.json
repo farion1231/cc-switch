@@ -1023,7 +1023,8 @@
     "dataSource": {
       "proxy": "プロキシ",
       "session_log": "セッションログ",
-      "codex_db": "Codex DB"
+      "codex_db": "Codex DB",
+      "codex_session": "Codex セッション"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",

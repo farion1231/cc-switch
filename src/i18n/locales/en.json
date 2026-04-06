@@ -1023,7 +1023,8 @@
     "dataSource": {
       "proxy": "Proxy",
       "session_log": "Session Log",
-      "codex_db": "Codex DB"
+      "codex_db": "Codex DB",
+      "codex_session": "Codex Session"
     },
     "sessionSync": {
       "trigger": "Sync session logs",
