@@ -12,6 +12,8 @@ import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
+import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
+import { PROVIDER_TYPES } from "@/config/constants";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
@@ -172,6 +174,9 @@ export function ProviderCard({
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
   const isOfficial = isOfficialProvider(provider, appId);
+  const isCopilot =
+    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
+    provider.meta?.usage_script?.templateType === "github_copilot";
 
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw）：使用 isInConfig 代替 isCurrent
@@ -348,7 +353,9 @@ export function ProviderCard({
         <div className="flex items-center ml-auto min-w-0 gap-3">
           <div className="ml-auto">
             <div className="flex items-center gap-1">
-              {isOfficial ? (
+              {isCopilot ? (
+                <CopilotQuotaFooter meta={provider.meta} inline={true} />
+              ) : isOfficial ? (
                 <SubscriptionQuotaFooter appId={appId} inline={true} />
               ) : hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
