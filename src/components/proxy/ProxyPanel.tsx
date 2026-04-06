@@ -14,6 +14,13 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { toast } from "sonner";
@@ -35,6 +42,11 @@ interface ProxyPanelProps {
   onEnableLocalProxyChange: (checked: boolean) => void;
   onToggleProxy: (checked: boolean) => Promise<void>;
   isProxyPending: boolean;
+  enableClaudeIntentRouting: boolean;
+  onEnableClaudeIntentRoutingChange: (checked: boolean) => Promise<void>;
+  claudeRouterProviderId?: string;
+  claudeProviderOptions: Array<{ id: string; name: string }>;
+  onClaudeRouterProviderChange: (providerId?: string) => Promise<void>;
 }
 
 export function ProxyPanel({
@@ -42,6 +54,11 @@ export function ProxyPanel({
   onEnableLocalProxyChange,
   onToggleProxy,
   isProxyPending,
+  enableClaudeIntentRouting,
+  onEnableClaudeIntentRoutingChange,
+  claudeRouterProviderId,
+  claudeProviderOptions,
+  onClaudeRouterProviderChange,
 }: ProxyPanelProps) {
   const { t } = useTranslation();
   const { status, isRunning } = useProxyStatus();
@@ -233,6 +250,72 @@ export function ProxyPanel({
             onCheckedChange={onToggleProxy}
             disabled={isProxyPending}
           />
+        </div>
+
+        <div className="rounded-xl border border-border bg-card/50 transition-colors hover:bg-muted/50">
+          <div className="flex items-center justify-between gap-4 p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-background ring-1 ring-border">
+                <Zap className="h-4 w-4 text-amber-500" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-medium leading-none">
+                  {t("settings.advanced.proxy.enableClaudeIntentRouting")}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    "settings.advanced.proxy.enableClaudeIntentRoutingDescription",
+                  )}
+                </p>
+              </div>
+            </div>
+            <Switch
+              checked={enableClaudeIntentRouting}
+              onCheckedChange={onEnableClaudeIntentRoutingChange}
+              disabled={!isRunning}
+              aria-label={t("settings.advanced.proxy.enableClaudeIntentRouting")}
+            />
+          </div>
+          {enableClaudeIntentRouting && (
+            <div className="border-t border-border/60 px-4 pb-4 pt-3">
+              <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t("settings.advanced.proxy.claudeRouterModelTitle")}
+              </label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("settings.advanced.proxy.claudeRouterModelDescription")}
+              </p>
+              <Select
+                value={claudeRouterProviderId ?? "__current__"}
+                onValueChange={(value) =>
+                  void onClaudeRouterProviderChange(
+                    value === "__current__" ? undefined : value,
+                  )
+                }
+              >
+                <SelectTrigger className="mt-3 w-full rounded-lg">
+                  <SelectValue
+                    placeholder={t(
+                      "settings.advanced.proxy.claudeRouterModelNone",
+                    )}
+                  />
+                </SelectTrigger>
+                <SelectContent
+                  side="bottom"
+                  sideOffset={6}
+                  className="max-h-72 min-w-[var(--radix-select-trigger-width)]"
+                >
+                  <SelectItem value="__current__">
+                    {t("settings.advanced.proxy.claudeRouterModelNone")}
+                  </SelectItem>
+                  {claudeProviderOptions.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
 
         {/* [3] App takeover switches — animated, visible only when proxy is running */}

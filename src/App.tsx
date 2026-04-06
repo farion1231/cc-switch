@@ -21,7 +21,7 @@ import {
   KeyRound,
   Shield,
   Cpu,
-  Sparkles,
+  GitCompareArrows,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -219,6 +219,7 @@ function App() {
     takeoverStatus,
     status: proxyStatus,
   } = useProxyStatus();
+  const previousProxyRunningRef = useRef(isProxyRunning);
   const isCurrentAppTakeoverActive = takeoverStatus?.[activeApp] || false;
   const activeProviderId = useMemo(() => {
     const target = proxyStatus?.active_targets?.find(
@@ -292,6 +293,38 @@ function App() {
       },
     });
   };
+
+  useEffect(() => {
+    const wasProxyRunning = previousProxyRunningRef.current;
+
+    if (
+      wasProxyRunning &&
+      !isProxyRunning &&
+      settingsData?.enableClaudeIntentRouting
+    ) {
+      void settingsApi
+        .save({
+          ...(settingsData ?? {
+            showInTray: true,
+            minimizeToTrayOnClose: true,
+          }),
+          enableClaudeIntentRouting: false,
+        })
+        .then(() =>
+          queryClient.invalidateQueries({
+            queryKey: ["settings"],
+          }),
+        )
+        .catch((error) => {
+          console.error(
+            "Failed to disable Claude intent routing after proxy stopped:",
+            error,
+          );
+        });
+    }
+
+    previousProxyRunningRef.current = isProxyRunning;
+  }, [isProxyRunning, queryClient, settingsData]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -1030,6 +1063,57 @@ function App() {
                   {settingsData?.enableLocalProxy && (
                     <ProxyToggle activeApp={activeApp} />
                   )}
+                  {activeApp === "claude" &&
+                    settingsData?.enableLocalProxy &&
+                    isProxyRunning &&
+                    isCurrentAppTakeoverActive && (
+                      <div
+                        className="flex items-center gap-1 px-1.5 h-8 rounded-lg bg-muted/50"
+                        title={t(
+                          "settings.advanced.proxy.enableClaudeIntentRoutingDescription",
+                        )}
+                      >
+                        <GitCompareArrows
+                          className={cn(
+                            "h-4 w-4 transition-colors",
+                            settingsData?.enableClaudeIntentRouting
+                              ? "text-purple-500"
+                              : "text-muted-foreground",
+                          )}
+                        />
+                        <Switch
+                          checked={
+                            settingsData?.enableClaudeIntentRouting ?? false
+                          }
+                          onCheckedChange={async (checked) => {
+                            try {
+                              await settingsApi.save({
+                                ...(settingsData ?? {
+                                  showInTray: true,
+                                  minimizeToTrayOnClose: true,
+                                }),
+                                enableClaudeIntentRouting: checked,
+                              });
+                              await queryClient.invalidateQueries({
+                                queryKey: ["settings"],
+                              });
+                            } catch (error) {
+                              console.error(
+                                "[App] Failed to toggle Claude intent routing on main page",
+                                error,
+                              );
+                              toast.error(
+                                t("notifications.settingsSaveFailed", {
+                                  defaultValue: "保存设置失败: {{error}}",
+                                  error:
+                                    (error as Error)?.message ?? String(error),
+                                }),
+                              );
+                            }
+                          }}
+                        />
+                      </div>
+                    )}
                   {settingsData?.enableFailoverToggle && (
                     <FailoverToggle activeApp={activeApp} />
                   )}
@@ -1268,56 +1352,6 @@ function App() {
                         </motion.div>
                       </AnimatePresence>
                     </div>
-
-                    {activeApp === "claude" && settingsData?.enableLocalProxy && (
-                      <div
-                        className="flex items-center gap-1 px-1.5 h-8 rounded-lg bg-muted/50"
-                        title={t(
-                          "settings.advanced.proxy.enableClaudeIntentRoutingDescription",
-                        )}
-                      >
-                        <Sparkles
-                          className={cn(
-                            "h-4 w-4 transition-colors",
-                            settingsData?.enableClaudeIntentRouting
-                              ? "text-purple-500"
-                              : "text-muted-foreground",
-                          )}
-                        />
-                        <Switch
-                          checked={
-                            settingsData?.enableClaudeIntentRouting ?? false
-                          }
-                          onCheckedChange={async (checked) => {
-                            try {
-                              await settingsApi.save({
-                                ...(settingsData ?? {
-                                  showInTray: true,
-                                  minimizeToTrayOnClose: true,
-                                }),
-                                enableClaudeIntentRouting: checked,
-                              });
-                              await queryClient.invalidateQueries({
-                                queryKey: ["settings"],
-                              });
-                            } catch (error) {
-                              console.error(
-                                "[App] Failed to toggle Claude intent routing on main page",
-                                error,
-                              );
-                              toast.error(
-                                t("notifications.settingsSaveFailed", {
-                                  defaultValue: "保存设置失败: {{error}}",
-                                  error:
-                                    (error as Error)?.message ?? String(error),
-                                }),
-                              );
-                            }
-                          }}
-                        />
-                      </div>
-                    )}
-
                     <Button
                       onClick={() => setIsAddOpen(true)}
                       size="icon"

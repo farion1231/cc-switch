@@ -14,6 +14,7 @@ use crate::provider::Provider;
 /// - 只在启用意图路由时生效；
 /// - Session ID 由上层根据 `RequestContext` 提供；
 /// - 当前版本仅用于 Claude，后续可扩展到其他 AppType。
+#[allow(dead_code)]
 pub fn resolve_session_bound_providers<'a>(
     _app_type: AppType,
     session_id: &str,

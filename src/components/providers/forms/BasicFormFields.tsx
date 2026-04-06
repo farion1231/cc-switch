@@ -3,12 +3,14 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import {
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -160,11 +162,15 @@ export function BasicFormFields({
             <FormItem>
               <FormLabel>{t("provider.intentDescription")}</FormLabel>
               <FormControl>
-                <Input
+                <Textarea
                   {...field}
                   placeholder={t("provider.intentDescriptionPlaceholder")}
+                  rows={3}
                 />
               </FormControl>
+              <FormDescription>
+                {t("provider.intentDescriptionHelp")}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}

@@ -87,6 +87,17 @@ impl ClaudeIntentRouter {
             return Ok(None);
         }
 
+        let described_candidates = candidates
+            .iter()
+            .filter(|(_, _, desc)| !desc.trim().is_empty())
+            .count();
+        if described_candidates < 2 {
+            log::debug!(
+                "[IntentRouter] Skip cross-provider routing because fewer than two providers have routing hints"
+            );
+            return Ok(None);
+        }
+
         // 估算 token 长度
         let approx_tokens = Self::estimate_token_length(body);
 
