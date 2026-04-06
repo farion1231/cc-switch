@@ -104,6 +104,86 @@ fn import_default_config_without_live_file_returns_error() {
 }
 
 #[test]
+fn import_default_config_qwen_settings_json_persists_default_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let settings_path = home.join(".qwen").join("settings.json");
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).expect("create qwen settings dir");
+    }
+    let settings = json!({
+        "env": {
+            "OPENAI_API_KEY": "test-key",
+            "OPENAI_BASE_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            "OPENAI_MODEL": "qwen3-coder-plus"
+        },
+        "modelProviders": {
+            "dashscope": {
+                "baseURL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            }
+        },
+        "security": {
+            "auth": {
+                "selectedType": "openai"
+            }
+        },
+        "model": {
+            "name": "qwen3-coder-plus"
+        },
+        "mcpServers": {
+            "shared": {
+                "command": "uvx"
+            }
+        },
+        "theme": "dark"
+    });
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&settings).expect("serialize qwen settings"),
+    )
+    .expect("seed qwen settings.json");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Qwen);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::Qwen)
+        .expect("import qwen default config succeeds");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Qwen.as_str())
+        .expect("get qwen providers");
+    let current_id = state
+        .db
+        .get_current_provider(AppType::Qwen.as_str())
+        .expect("get current qwen provider");
+    assert_eq!(current_id.as_deref(), Some("default"));
+
+    let default_provider = providers.get("default").expect("default qwen provider");
+    assert_eq!(
+        default_provider.settings_config["env"]["OPENAI_API_KEY"],
+        json!("test-key")
+    );
+    assert_eq!(
+        default_provider.settings_config["config"]["model"]["name"],
+        json!("qwen3-coder-plus")
+    );
+    assert!(
+        default_provider.settings_config["config"]
+            .get("mcpServers")
+            .is_none(),
+        "shared mcpServers should not be absorbed into the provider snapshot"
+    );
+    assert!(
+        default_provider.settings_config.get("theme").is_none(),
+        "shared top-level settings should stay out of provider storage"
+    );
+}
+
+#[test]
 fn import_mcp_from_claude_creates_config_and_enables_servers() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
