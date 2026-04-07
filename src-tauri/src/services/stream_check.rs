@@ -197,6 +197,14 @@ impl StreamCheckService {
         claude_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
+
+        // OpenCode / OpenClaw 的 settings_config 结构与 Claude/Codex/Gemini 不同
+        // （baseUrl / apiKey 直接作为根字段而非嵌套在 env），并且协议由 `api`
+        // 或 `npm` 字段显式指定。它们不走 get_adapter 路径，而是直接分发。
+        if matches!(app_type, AppType::OpenCode | AppType::OpenClaw) {
+            return Self::check_once_opencode_like(app_type, provider, config, start).await;
+        }
+
         let adapter = get_adapter(app_type);
 
         let base_url = match base_url_override {
@@ -255,21 +263,9 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support stream check yet
-                return Err(AppError::localized(
-                    "opencode_no_stream_check",
-                    "OpenCode 暂不支持健康检查",
-                    "OpenCode does not support health check yet",
-                ));
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support stream check yet
-                return Err(AppError::localized(
-                    "openclaw_no_stream_check",
-                    "OpenClaw 暂不支持健康检查",
-                    "OpenClaw does not support health check yet",
-                ));
+            AppType::OpenCode | AppType::OpenClaw => {
+                // Already handled via early dispatch above
+                unreachable!("OpenCode/OpenClaw 已通过 check_once_opencode_like 处理")
             }
         };
 
@@ -619,6 +615,181 @@ impl StreamCheckService {
         } else {
             Err(AppError::Message("No response data received".to_string()))
         }
+    }
+
+    /// OpenCode / OpenClaw 的独立分发入口
+    ///
+    /// 这两个应用的 `settings_config` 与 Claude/Codex/Gemini 完全不同：
+    /// - OpenClaw: `{ baseUrl, apiKey, api, models: [...] }`，`api` 字段标识协议
+    /// - OpenCode: `{ npm, options: { baseURL, apiKey }, models: {...} }`，`npm` 字段标识协议
+    ///
+    /// 因此不能复用 `get_adapter`（会 fallback 到 CodexAdapter 而提取失败），
+    /// 改为独立解析 base_url/api_key/协议，再分发到现有的 check_*_stream 函数。
+    async fn check_once_opencode_like(
+        app_type: &AppType,
+        provider: &Provider,
+        config: &StreamCheckConfig,
+        start: Instant,
+    ) -> Result<StreamCheckResult, AppError> {
+        // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
+        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
+        let client = crate::proxy::http_client::get_for_provider(proxy_config);
+        let request_timeout = std::time::Duration::from_secs(config.timeout_secs);
+
+        let model_to_test = Self::resolve_test_model(app_type, provider, config);
+        let test_prompt = &config.test_prompt;
+
+        let result = match app_type {
+            AppType::OpenClaw => {
+                Self::check_openclaw_stream(
+                    &client,
+                    provider,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                )
+                .await
+            }
+            AppType::OpenCode => {
+                // Phase 3 will implement this
+                Err(AppError::localized(
+                    "opencode_no_stream_check",
+                    "OpenCode 暂不支持健康检查",
+                    "OpenCode does not support health check yet",
+                ))
+            }
+            _ => unreachable!("check_once_opencode_like 只处理 OpenCode/OpenClaw"),
+        };
+
+        let response_time = start.elapsed().as_millis() as u64;
+        Ok(Self::build_stream_check_result(
+            result,
+            response_time,
+            config.degraded_threshold_ms,
+        ))
+    }
+
+    /// 将 check_*_stream 的原始结果包装成 StreamCheckResult
+    ///
+    /// 抽取自 check_once 的末尾逻辑，以便 OpenCode/OpenClaw 的独立分支复用。
+    fn build_stream_check_result(
+        result: Result<(u16, String), AppError>,
+        response_time: u64,
+        degraded_threshold_ms: u64,
+    ) -> StreamCheckResult {
+        let tested_at = chrono::Utc::now().timestamp();
+        match result {
+            Ok((status_code, model)) => StreamCheckResult {
+                status: Self::determine_status(response_time, degraded_threshold_ms),
+                success: true,
+                message: "Check succeeded".to_string(),
+                response_time_ms: Some(response_time),
+                http_status: Some(status_code),
+                model_used: model,
+                tested_at,
+                retry_count: 0,
+            },
+            Err(e) => StreamCheckResult {
+                status: HealthStatus::Failed,
+                success: false,
+                message: e.to_string(),
+                response_time_ms: Some(response_time),
+                http_status: None,
+                model_used: String::new(),
+                tested_at,
+                retry_count: 0,
+            },
+        }
+    }
+
+    /// OpenClaw 流式检查分发器
+    ///
+    /// 根据 `settings_config.api` 字段分发到对应协议的检查器。
+    /// 取值参见 `openclawApiProtocols` (前端 openclawProviderPresets.ts):
+    /// - `openai-completions`  → Phase 1 已支持（走 check_claude_stream + openai_chat）
+    /// - `openai-responses`    → Phase 2 计划
+    /// - `anthropic-messages`  → Phase 2 计划
+    /// - `google-generative-ai`→ Phase 2 计划
+    /// - `bedrock-converse-stream` → Phase 4 返回友好错误
+    async fn check_openclaw_stream(
+        client: &Client,
+        provider: &Provider,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(u16, String), AppError> {
+        let base_url = Self::extract_openclaw_base_url(provider)?;
+        let api_key = Self::extract_openclaw_api_key(provider)?;
+        let api = Self::extract_openclaw_protocol(provider);
+
+        let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
+
+        match api.as_deref() {
+            Some("openai-completions") => {
+                Self::check_claude_stream(
+                    client,
+                    &base_url,
+                    &auth,
+                    model,
+                    test_prompt,
+                    timeout,
+                    provider,
+                    Some("openai_chat"),
+                )
+                .await
+            }
+            Some(other) => Err(AppError::localized(
+                "openclaw_protocol_not_yet_supported",
+                format!("OpenClaw 暂不支持协议: {other}"),
+                format!("OpenClaw protocol not yet supported: {other}"),
+            )),
+            None => Err(AppError::localized(
+                "openclaw_protocol_missing",
+                "OpenClaw 供应商缺少 api 字段",
+                "OpenClaw provider is missing the `api` field",
+            )),
+        }
+    }
+
+    fn extract_openclaw_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "openclaw_base_url_missing",
+                    "OpenClaw 供应商缺少 baseUrl",
+                    "OpenClaw provider is missing `baseUrl`",
+                )
+            })
+    }
+
+    fn extract_openclaw_api_key(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("apiKey")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "openclaw_api_key_missing",
+                    "OpenClaw 供应商缺少 apiKey",
+                    "OpenClaw provider is missing `apiKey`",
+                )
+            })
+    }
+
+    fn extract_openclaw_protocol(provider: &Provider) -> Option<String> {
+        provider
+            .settings_config
+            .get("api")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 
     fn determine_status(latency_ms: u64, threshold: u64) -> HealthStatus {
