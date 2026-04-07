@@ -66,6 +66,9 @@ fn import_snapshot() -> serde_json::Value {
 fn normalize_skills(mut value: serde_json::Value) -> serde_json::Value {
     if let Some(skills) = value.as_array_mut() {
         for skill in skills {
+            if let Some(skill_obj) = skill.as_object_mut() {
+                skill_obj.remove("installedAt");
+            }
             if let Some(apps) = skill.get_mut("apps").and_then(|apps| apps.as_object_mut()) {
                 apps.remove("openclaw");
             }

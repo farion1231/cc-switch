@@ -22,7 +22,7 @@ pub(super) struct SkillsBackup {
     existed: bool,
 }
 
-pub(super) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
+pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
     let source = SkillService::get_ssot_dir().map_err(|e| {
         localized(
             "webdav.sync.skills_ssot_dir_failed",
@@ -63,7 +63,7 @@ pub(super) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-pub(super) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
+pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
     let tmp = tempdir().map_err(|e| {
         io_context_localized(
             "webdav.sync.skills_extract_tmpdir_failed",

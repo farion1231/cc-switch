@@ -22,7 +22,7 @@ use crate::services::webdav::{
 };
 use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncStatus};
 
-mod archive;
+pub(crate) mod archive;
 use archive::{
     backup_current_skills, restore_skills_from_backup, restore_skills_zip, zip_skills_ssot,
 };

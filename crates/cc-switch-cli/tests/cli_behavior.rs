@@ -5556,6 +5556,75 @@ fn export_import_merge_preserves_existing_data() {
 
 #[test]
 #[serial]
+fn export_import_round_trip_preserves_skill_files() {
+    let source = tempdir().expect("tempdir");
+    let target = tempdir().expect("tempdir");
+    let export_file = source.path().join("backup.json");
+
+    seed_installed_skill(source.path(), "local:demo-skill", "demo-skill");
+    fs::write(
+        skill_ssot_dir(source.path(), "demo-skill").join("notes.txt"),
+        "hello from skill archive\n",
+    )
+    .expect("write extra skill file");
+
+    let export_output = run_cli(
+        source.path(),
+        &[
+            "export",
+            "--output",
+            export_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        export_output.status.success(),
+        "stderr: {}",
+        stderr_text(&export_output)
+    );
+
+    let import_output = run_cli(
+        target.path(),
+        &[
+            "import",
+            "--input",
+            export_file.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        import_output.status.success(),
+        "stderr: {}",
+        stderr_text(&import_output)
+    );
+
+    assert_eq!(
+        fs::read_to_string(skill_ssot_dir(target.path(), "demo-skill").join("SKILL.md"))
+            .expect("restored skill file"),
+        "---\nname: Demo Skill\ndescription: seeded skill\n---\n"
+    );
+    assert_eq!(
+        fs::read_to_string(skill_ssot_dir(target.path(), "demo-skill").join("notes.txt"))
+            .expect("restored extra skill file"),
+        "hello from skill archive\n"
+    );
+
+    let list_output = run_cli(target.path(), &["--format", "json", "skill", "list"]);
+    assert!(
+        list_output.status.success(),
+        "stderr: {}",
+        stderr_text(&list_output)
+    );
+    let skills: Value =
+        serde_json::from_slice(&list_output.stdout).expect("skill list should return json");
+    assert!(
+        skills
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["directory"] == "demo-skill")),
+        "imported skill metadata should exist after import"
+    );
+}
+
+#[test]
+#[serial]
 fn invalid_app_error_is_consistent_across_commands() {
     let temp = tempdir().expect("tempdir");
 
