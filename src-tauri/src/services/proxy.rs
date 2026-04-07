@@ -819,7 +819,7 @@ impl ProxyService {
             .map(str::to_string);
 
         for key in CODEX_PROVIDER_TOP_LEVEL_KEYS {
-            base_doc.as_table_mut().remove(*key);
+            base_doc.as_table_mut().remove(key);
         }
 
         if let Some(model_providers) = base_doc
@@ -838,8 +838,8 @@ impl ProxyService {
         }
 
         for key in CODEX_PROVIDER_TOP_LEVEL_KEYS {
-            if let Some(item) = provider_doc.get(*key) {
-                base_doc[*key] = item.clone();
+            if let Some(item) = provider_doc.get(key) {
+                base_doc[key] = item.clone();
             }
         }
 
