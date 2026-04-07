@@ -717,10 +717,10 @@ export const providerPresets: ProviderPreset[] = [
         // base_url 由代理后端强制重写为 chatgpt.com/backend-api/codex
         // 用户无需配置
         ANTHROPIC_BASE_URL: "https://chatgpt.com/backend-api/codex",
-        ANTHROPIC_MODEL: "gpt-5.1-codex",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-5.1-codex-mini",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-5.1-codex",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.1-codex-max",
+        ANTHROPIC_MODEL: "gpt-5.4",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-5.4-mini",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-5.4",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.4",
       },
     },
     category: "third_party",
