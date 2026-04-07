@@ -1120,12 +1120,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
             selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
               <div className="glass space-y-4 rounded-xl border border-border/50 p-6">
-              <div className="flex items-center justify-between">
-                <Label className="text-base font-medium">
-                  {t("usageScript.extractorCode")}
-                </Label>
-                <div className="text-xs text-muted-foreground">
-                  {t("usageScript.extractorHint")}
+                <div className="flex items-center justify-between">
+                  <Label className="text-base font-medium">
+                    {t("usageScript.extractorCode")}
+                  </Label>
+                  <div className="text-xs text-muted-foreground">
+                    {t("usageScript.extractorHint")}
+                  </div>
                 </div>
                 <JsonEditor
                   id="usage-code"
@@ -1144,14 +1145,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
             selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
               <div className="glass rounded-xl border border-border/50 p-6 text-sm text-foreground/90">
-              <h4 className="font-medium mb-2">
-                {t("usageScript.scriptHelp")}
-              </h4>
-              <div className="space-y-3 text-xs">
-                <div>
-                  <strong>{t("usageScript.configFormat")}</strong>
-                  <pre className="mt-1 overflow-x-auto rounded border border-border/60 bg-muted/60 p-2 text-[10px] text-foreground">
-                    {`({
+                <h4 className="font-medium mb-2">
+                  {t("usageScript.scriptHelp")}
+                </h4>
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <strong>{t("usageScript.configFormat")}</strong>
+                    <pre className="mt-1 overflow-x-auto rounded border border-border/60 bg-muted/60 p-2 text-[10px] text-foreground">
+                      {`({
   request: {
     url: "{{baseUrl}}/api/usage",
     method: "POST",
