@@ -706,11 +706,11 @@ impl StreamCheckService {
     ///
     /// 根据 `settings_config.api` 字段分发到对应协议的检查器。
     /// 取值参见 `openclawApiProtocols` (前端 openclawProviderPresets.ts):
-    /// - `openai-completions`  → Phase 1 已支持（走 check_claude_stream + openai_chat）
-    /// - `openai-responses`    → Phase 2 计划
-    /// - `anthropic-messages`  → Phase 2 计划
-    /// - `google-generative-ai`→ Phase 2 计划
-    /// - `bedrock-converse-stream` → Phase 4 返回友好错误
+    /// - `openai-completions`   → check_claude_stream + api_format="openai_chat"
+    /// - `openai-responses`     → check_claude_stream + api_format="openai_responses"
+    /// - `anthropic-messages`   → check_claude_stream + api_format="anthropic" (ClaudeAuth 策略)
+    /// - `google-generative-ai` → check_gemini_stream (Google API Key 策略)
+    /// - `bedrock-converse-stream` → 不支持（需要 AWS SigV4 签名，Phase 4 会美化错误消息）
     async fn check_openclaw_stream(
         client: &Client,
         provider: &Provider,
@@ -722,10 +722,9 @@ impl StreamCheckService {
         let api_key = Self::extract_openclaw_api_key(provider)?;
         let api = Self::extract_openclaw_protocol(provider);
 
-        let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
-
         match api.as_deref() {
             Some("openai-completions") => {
+                let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
                 Self::check_claude_stream(
                     client,
                     &base_url,
@@ -738,6 +737,47 @@ impl StreamCheckService {
                 )
                 .await
             }
+            Some("openai-responses") => {
+                let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
+                Self::check_claude_stream(
+                    client,
+                    &base_url,
+                    &auth,
+                    model,
+                    test_prompt,
+                    timeout,
+                    provider,
+                    Some("openai_responses"),
+                )
+                .await
+            }
+            Some("anthropic-messages") => {
+                // 使用 ClaudeAuth（Bearer-only）以兼容 Claude 中转服务。
+                // 某些中转同时收到 Authorization 和 x-api-key 会报错，ClaudeAuth
+                // 策略保证只下发 Bearer。官方 Anthropic 也接受纯 Bearer。
+                let auth = AuthInfo::new(api_key, AuthStrategy::ClaudeAuth);
+                Self::check_claude_stream(
+                    client,
+                    &base_url,
+                    &auth,
+                    model,
+                    test_prompt,
+                    timeout,
+                    provider,
+                    Some("anthropic"),
+                )
+                .await
+            }
+            Some("google-generative-ai") => {
+                let auth = AuthInfo::new(api_key, AuthStrategy::Google);
+                Self::check_gemini_stream(client, &base_url, &auth, model, test_prompt, timeout)
+                    .await
+            }
+            Some("bedrock-converse-stream") => Err(AppError::localized(
+                "openclaw_bedrock_not_supported",
+                "OpenClaw 暂不支持 AWS Bedrock 健康检查",
+                "OpenClaw AWS Bedrock health check is not supported",
+            )),
             Some(other) => Err(AppError::localized(
                 "openclaw_protocol_not_yet_supported",
                 format!("OpenClaw 暂不支持协议: {other}"),
