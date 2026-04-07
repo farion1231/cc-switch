@@ -435,6 +435,11 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
     parsed
 }
 
+enum SyncToAppPolicy {
+    UseGlobalSetting,
+    ForceCopy,
+}
+
 // ========== SkillService ==========
 
 pub struct SkillService;
@@ -601,7 +606,7 @@ impl SkillService {
                     let mut updated = existing.clone();
                     updated.apps.set_enabled_for(current_app, true);
                     db.save_skill(&updated)?;
-                    Self::sync_to_app_dir(&updated.directory, current_app)?;
+                    Self::sync_to_app_dir_after_install(&updated.directory, current_app)?;
                     log::info!(
                         "Skill {} 已存在，更新 {:?} 启用状态",
                         updated.name,
@@ -778,8 +783,8 @@ impl SkillService {
         // 保存到数据库
         db.save_skill(&installed_skill)?;
 
-        // 同步到当前应用目录
-        Self::sync_to_app_dir(&install_name, current_app)?;
+        // 同步到当前应用目录（安装场景固定复制，不读全局 symlink 设置）
+        Self::sync_to_app_dir_after_install(&install_name, current_app)?;
 
         log::info!(
             "Skill {} 安装成功，已启用 {:?}",
@@ -1512,7 +1517,8 @@ impl SkillService {
 
             // 复制到 SSOT
             let dest = ssot_dir.join(&dir_name);
-            if !dest.exists() {
+            let created_ssot = !dest.exists();
+            if created_ssot {
                 Self::copy_dir_recursive(&source, &dest)?;
             }
 
@@ -1585,15 +1591,144 @@ impl SkillService {
 
     #[cfg(windows)]
     fn create_symlink(src: &Path, dest: &Path) -> Result<()> {
-        std::os::windows::fs::symlink_dir(src, dest)
-            .with_context(|| format!("创建符号链接失败: {} -> {}", src.display(), dest.display()))
+        // 优先尝试真正的 symlink（需要开发者模式或管理员权限）
+        match std::os::windows::fs::symlink_dir(src, dest) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                log::debug!(
+                    "Windows symlink 创建失败（需要开发者模式或管理员权限），尝试 junction: {err}"
+                );
+            }
+        }
+
+        // 回退到 junction（无需特殊权限，同卷目录链接）
+        Self::create_junction(src, dest)
     }
 
-    /// 检查路径是否为符号链接
+    /// 在 Windows 上创建目录联接（junction），不需要管理员权限
+    #[cfg(windows)]
+    fn create_junction(src: &Path, dest: &Path) -> Result<()> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let output = std::process::Command::new("cmd")
+            .arg("/c")
+            .arg("mklink")
+            .arg("/J")
+            .arg(dest.as_os_str())
+            .arg(src.as_os_str())
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .with_context(|| {
+                format!("创建目录联接失败: {} -> {}", dest.display(), src.display())
+            })?;
+
+        if output.status.success() {
+            log::debug!(
+                "已通过 junction 创建目录链接: {} -> {}",
+                dest.display(),
+                src.display()
+            );
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let detail = [stderr.trim(), stdout.trim()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            Err(anyhow!(
+                "创建目录联接失败: {} -> {}. {}",
+                dest.display(),
+                src.display(),
+                if detail.is_empty() {
+                    "(无输出)".to_string()
+                } else {
+                    detail
+                }
+            ))
+        }
+    }
+
+    /// 检查路径是否为符号链接或目录联接（junction）
+    ///
+    /// Windows 上 `FileType::is_symlink()` 仅检测 IO_REPARSE_TAG_SYMLINK，
+    /// 不包括 junction（IO_REPARSE_TAG_MOUNT_POINT）。带
+    /// `FILE_ATTRIBUTE_REPARSE_POINT` 的路径还可能是云占位符等非链接
+    /// reparse 类型，若误判为链接，`remove_path` 会走 `remove_dir` 分支，
+    /// 在非空目录上会失败。因此仅在 reparse 标签为 symlink 或 mount-point
+    ///（junction）时视为链接；若无法读取标签，则用 `read_link` 作为回退
+    /// （与 junction 行为一致），避免误伤云目录。
     fn is_symlink(path: &Path) -> bool {
-        path.symlink_metadata()
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+            const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000_000C;
+            const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+
+            let Ok(meta) = path.symlink_metadata() else {
+                return false;
+            };
+            if meta.file_type().is_symlink() {
+                return true;
+            }
+            if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+                return false;
+            }
+            if let Some(tag) = Self::windows_reparse_point_tag(path) {
+                return tag == IO_REPARSE_TAG_SYMLINK || tag == IO_REPARSE_TAG_MOUNT_POINT;
+            }
+            fs::read_link(path).is_ok()
+        }
+        #[cfg(not(windows))]
+        {
+            path.symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+        }
+    }
+
+    /// 读取路径的 Windows reparse 标签（需已判定为 reparse 点且非 `is_symlink()`）。
+    #[cfg(windows)]
+    fn windows_reparse_point_tag(path: &Path) -> Option<u32> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FileAttributeTagInfo, GetFileInformationByHandleEx,
+            FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        unsafe {
+            let handle = CreateFileW(
+                wide.as_ptr(),
+                FILE_GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            );
+            if handle == INVALID_HANDLE_VALUE {
+                return None;
+            }
+            let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
+            let ok = GetFileInformationByHandleEx(
+                handle,
+                FileAttributeTagInfo,
+                &raw mut info as *mut _,
+                std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+            );
+            CloseHandle(handle);
+            (ok != 0).then_some(info.ReparseTag)
+        }
     }
 
     /// 获取当前同步方式配置
@@ -1607,7 +1742,23 @@ impl SkillService {
     /// - Auto: 优先尝试 symlink，失败时回退到 copy
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
+    ///
+    /// **安装路径**（仓库安装 / ZIP 安装）请使用 [`Self::sync_to_app_dir_after_install`]，
+    /// 应向各产品目录 **复制** 一份，而不读取上述全局同步方式。
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
+        Self::sync_to_app_dir_impl(directory, app, SyncToAppPolicy::UseGlobalSetting)
+    }
+
+    /// 安装或重新启用到当前应用后，将 Skill **复制** 到该产品目录（不读取设置里的 symlink/auto）。
+    fn sync_to_app_dir_after_install(directory: &str, app: &AppType) -> Result<()> {
+        Self::sync_to_app_dir_impl(directory, app, SyncToAppPolicy::ForceCopy)
+    }
+
+    fn sync_to_app_dir_impl(
+        directory: &str,
+        app: &AppType,
+        policy: SyncToAppPolicy,
+    ) -> Result<()> {
         let ssot_dir = Self::get_ssot_dir()?;
         let source = ssot_dir.join(directory);
 
@@ -1625,7 +1776,10 @@ impl SkillService {
             Self::remove_path(&dest)?;
         }
 
-        let sync_method = Self::get_sync_method();
+        let sync_method = match policy {
+            SyncToAppPolicy::UseGlobalSetting => Self::get_sync_method(),
+            SyncToAppPolicy::ForceCopy => SyncMethod::Copy,
+        };
 
         match sync_method {
             SyncMethod::Auto => {
@@ -1666,14 +1820,14 @@ impl SkillService {
         Self::sync_to_app_dir(directory, app)
     }
 
-    /// 删除路径（支持 symlink 和真实目录）
+    /// 删除路径（支持 symlink、junction 和真实目录）
     fn remove_path(path: &Path) -> Result<()> {
         if Self::is_symlink(path) {
-            // 符号链接：仅删除链接本身，不影响源文件
+            // symlink / junction：仅删除链接本身，不影响源文件
             #[cfg(unix)]
             fs::remove_file(path)?;
             #[cfg(windows)]
-            fs::remove_dir(path)?; // Windows 的目录 symlink 需要用 remove_dir
+            fs::remove_dir(path)?; // Windows 的目录 symlink 和 junction 都用 remove_dir
         } else if path.is_dir() {
             // 真实目录：递归删除
             fs::remove_dir_all(path)?;
@@ -2575,8 +2729,8 @@ impl SkillService {
             // 保存到数据库
             db.save_skill(&skill)?;
 
-            // 同步到当前应用目录
-            Self::sync_to_app_dir(&install_name, current_app)?;
+            // 同步到当前应用目录（安装场景固定复制，不读全局 symlink 设置）
+            Self::sync_to_app_dir_after_install(&install_name, current_app)?;
 
             log::info!(
                 "Skill {} installed from ZIP, enabled for {:?}",

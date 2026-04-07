@@ -13,7 +13,10 @@
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest watch"
+    "test:unit:watch": "vitest watch",
+    "cargo:check": "bash scripts/cargo-with-real-cc.sh check",
+    "cargo:clippy": "bash scripts/cargo-with-real-cc.sh clippy",
+    "check:all": "pnpm typecheck && pnpm format:check && pnpm test:unit && pnpm cargo:check && pnpm cargo:clippy"
   },
   "keywords": [],
   "author": "Jason Young",

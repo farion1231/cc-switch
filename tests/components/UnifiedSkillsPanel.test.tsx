@@ -1,10 +1,10 @@
-import { createRef } from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { createRef } from 'react';
+import { render, screen, waitFor, act } from '@testing-library/react';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
-} from "@/components/skills/UnifiedSkillsPanel";
+} from '@/components/skills/UnifiedSkillsPanel';
 
 const scanUnmanagedMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
@@ -14,7 +14,7 @@ const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
 
-vi.mock("sonner", () => ({
+vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
@@ -22,7 +22,7 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("@/hooks/useSkills", () => ({
+vi.mock('@/hooks/useSkills', () => ({
   useInstalledSkills: () => ({
     data: [],
     isLoading: false,
@@ -49,11 +49,11 @@ vi.mock("@/hooks/useSkills", () => ({
   useScanUnmanagedSkills: () => ({
     data: [
       {
-        directory: "shared-skill",
-        name: "Shared Skill",
-        description: "Imported from Claude",
-        foundIn: ["claude"],
-        path: "/tmp/shared-skill",
+        directory: 'shared-skill',
+        name: 'Shared Skill',
+        description: 'Imported from Claude',
+        foundIn: ['claude'],
+        path: '/tmp/shared-skill',
       },
     ],
     refetch: scanUnmanagedMock,
@@ -75,16 +75,16 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
 }));
 
-describe("UnifiedSkillsPanel", () => {
+describe('UnifiedSkillsPanel', () => {
   beforeEach(() => {
     scanUnmanagedMock.mockResolvedValue({
       data: [
         {
-          directory: "shared-skill",
-          name: "Shared Skill",
-          description: "Imported from Claude",
-          foundIn: ["claude"],
-          path: "/tmp/shared-skill",
+          directory: 'shared-skill',
+          name: 'Shared Skill',
+          description: 'Imported from Claude',
+          foundIn: ['claude'],
+          path: '/tmp/shared-skill',
         },
       ],
     });
@@ -96,14 +96,14 @@ describe("UnifiedSkillsPanel", () => {
     restoreSkillBackupMock.mockReset();
   });
 
-  it("opens the import dialog without crashing when app toggles render", async () => {
+  it('opens the import dialog without crashing when app toggles render', async () => {
     const ref = createRef<UnifiedSkillsPanelHandle>();
 
     render(
       <UnifiedSkillsPanel
         ref={ref}
         onOpenDiscovery={() => {}}
-        currentApp="claude"
+        currentApp='claude'
       />,
     );
 
@@ -112,9 +112,9 @@ describe("UnifiedSkillsPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("skills.import")).toBeInTheDocument();
-      expect(screen.getByText("Shared Skill")).toBeInTheDocument();
-      expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
+      expect(screen.getByText('skills.import')).toBeInTheDocument();
+      expect(screen.getByText('Shared Skill')).toBeInTheDocument();
+      expect(screen.getByText('/tmp/shared-skill')).toBeInTheDocument();
     });
   });
 });
