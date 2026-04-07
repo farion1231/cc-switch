@@ -1044,10 +1044,7 @@ mod tests {
         let bytes = full.as_bytes();
 
         // Find "你" and split inside it
-        let ni_start = bytes
-            .windows(3)
-            .position(|w| w == "你".as_bytes())
-            .unwrap();
+        let ni_start = bytes.windows(3).position(|w| w == "你".as_bytes()).unwrap();
         let split_point = ni_start + 2; // split after second byte of "你"
 
         let chunk1 = Bytes::from(bytes[..split_point].to_vec());

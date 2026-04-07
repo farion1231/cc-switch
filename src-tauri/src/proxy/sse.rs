@@ -222,10 +222,7 @@ mod tests {
         let bytes = json_line.as_bytes();
 
         // Find where "你" starts in the byte stream and split there
-        let ni_start = bytes
-            .windows(3)
-            .position(|w| w == "你".as_bytes())
-            .unwrap();
+        let ni_start = bytes.windows(3).position(|w| w == "你".as_bytes()).unwrap();
         let split_point = ni_start + 1; // split inside "你"
 
         let mut buf = String::new();
@@ -252,7 +249,10 @@ mod tests {
 
         // "hi" + invalid byte + "ok"
         append_utf8_safe(&mut buf, &mut rem, b"hi\xFFok");
-        assert!(rem.is_empty(), "remainder should be empty after invalid byte");
+        assert!(
+            rem.is_empty(),
+            "remainder should be empty after invalid byte"
+        );
         assert!(buf.contains("hi"), "valid prefix must be present");
         assert!(buf.contains("ok"), "valid suffix must be present");
         assert!(buf.contains('\u{FFFD}'), "invalid byte must produce U+FFFD");
@@ -271,7 +271,10 @@ mod tests {
         // invalid byte should both be flushed, not accumulated.
         append_utf8_safe(&mut buf, &mut rem, b"\xFFworld");
         assert!(rem.is_empty(), "remainder should be empty");
-        assert!(buf.contains("world"), "valid data after invalid byte must appear");
+        assert!(
+            buf.contains("world"),
+            "valid data after invalid byte must appear"
+        );
     }
 
     #[test]
