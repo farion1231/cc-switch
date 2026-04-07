@@ -1821,9 +1821,18 @@ fn openclaw_env_tools_default_model_and_catalog_round_trip() {
 
     let live_config = fs::read_to_string(openclaw_config_path(temp.path()))
         .expect("openclaw config file should exist");
-    assert!(live_config.contains("\"env\""));
-    assert!(live_config.contains("\"tools\""));
-    assert!(live_config.contains("\"agents\""));
+    assert!(
+        live_config.contains("env: {") || live_config.contains("\"env\": {"),
+        "expected env section in live config, got:\n{live_config}"
+    );
+    assert!(
+        live_config.contains("tools: {") || live_config.contains("\"tools\": {"),
+        "expected tools section in live config, got:\n{live_config}"
+    );
+    assert!(
+        live_config.contains("agents: {") || live_config.contains("\"agents\": {"),
+        "expected agents section in live config, got:\n{live_config}"
+    );
 }
 
 #[test]

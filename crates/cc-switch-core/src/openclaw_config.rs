@@ -1,12 +1,22 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use indexmap::IndexMap;
+use json_five::rt::parser::{
+    from_str as rt_from_str, JSONKeyValuePair as RtJSONKeyValuePair,
+    JSONObjectContext as RtJSONObjectContext, JSONText as RtJSONText, JSONValue as RtJSONValue,
+    KeyValuePairContext as RtKeyValuePairContext,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::config::{get_openclaw_config_dir, write_json_file};
+use crate::config::{atomic_write, get_openclaw_config_dir};
 use crate::error::AppError;
+
+const OPENCLAW_DEFAULT_SOURCE: &str =
+    "{\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n}\n";
 
 pub fn get_openclaw_dir() -> PathBuf {
     get_openclaw_config_dir()
@@ -14,6 +24,138 @@ pub fn get_openclaw_dir() -> PathBuf {
 
 pub fn get_openclaw_config_path() -> PathBuf {
     get_openclaw_dir().join("openclaw.json")
+}
+
+fn default_openclaw_config_value() -> Value {
+    json!({
+        "models": {
+            "mode": "merge",
+            "providers": {}
+        }
+    })
+}
+
+fn openclaw_write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct OpenClawConfigDocument {
+    path: PathBuf,
+    original_source: Option<String>,
+    text: RtJSONText,
+}
+
+impl OpenClawConfigDocument {
+    fn load() -> Result<Self, AppError> {
+        let path = get_openclaw_config_path();
+        let original_source = if path.exists() {
+            Some(fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?)
+        } else {
+            None
+        };
+
+        let source = original_source
+            .clone()
+            .unwrap_or_else(|| OPENCLAW_DEFAULT_SOURCE.to_string());
+        let text = rt_from_str(&source).map_err(|e| {
+            AppError::Config(format!(
+                "Failed to parse OpenClaw config as round-trip JSON5 document: {}",
+                e.message
+            ))
+        })?;
+
+        Ok(Self {
+            path,
+            original_source,
+            text,
+        })
+    }
+
+    fn set_root_section(&mut self, key: &str, value: &Value) -> Result<(), AppError> {
+        let RtJSONValue::JSONObject {
+            key_value_pairs,
+            context,
+        } = &mut self.text.value
+        else {
+            return Err(AppError::Config(
+                "OpenClaw config root must be a JSON5 object".to_string(),
+            ));
+        };
+
+        if key_value_pairs.is_empty()
+            && context
+                .as_ref()
+                .map(|ctx| ctx.wsc.0.is_empty())
+                .unwrap_or(true)
+        {
+            *context = Some(RtJSONObjectContext {
+                wsc: ("\n  ".to_string(),),
+            });
+        }
+
+        let leading_ws = context
+            .as_ref()
+            .map(|ctx| ctx.wsc.0.clone())
+            .unwrap_or_default();
+        let entry_separator_ws = derive_entry_separator(&leading_ws);
+        let child_indent = extract_trailing_indent(&leading_ws);
+        let new_value = value_to_rt_value(value, &child_indent)?;
+
+        if let Some(existing) = key_value_pairs
+            .iter_mut()
+            .find(|pair| json5_key_name(&pair.key) == Some(key))
+        {
+            existing.value = new_value;
+            return Ok(());
+        }
+
+        let new_pair = if let Some(last_pair) = key_value_pairs.last_mut() {
+            let last_ctx = ensure_kvp_context(last_pair);
+            let closing_ws = if let Some(after_comma) = last_ctx.wsc.3.clone() {
+                last_ctx.wsc.3 = Some(entry_separator_ws.clone());
+                after_comma
+            } else {
+                let closing_ws = std::mem::take(&mut last_ctx.wsc.2);
+                last_ctx.wsc.3 = Some(entry_separator_ws.clone());
+                closing_ws
+            };
+
+            make_root_pair(key, new_value, closing_ws)
+        } else {
+            make_root_pair(
+                key,
+                new_value,
+                derive_closing_ws_from_separator(&leading_ws),
+            )
+        };
+
+        key_value_pairs.push(new_pair);
+        Ok(())
+    }
+
+    fn save(self) -> Result<(), AppError> {
+        let _guard = openclaw_write_lock().lock()?;
+
+        let current_source = if self.path.exists() {
+            Some(fs::read_to_string(&self.path).map_err(|e| AppError::io(&self.path, e))?)
+        } else {
+            None
+        };
+
+        if current_source != self.original_source {
+            return Err(AppError::Config(
+                "OpenClaw config changed on disk. Please reload and try again.".to_string(),
+            ));
+        }
+
+        let next_source = self.text.to_string();
+        if current_source.as_deref() == Some(next_source.as_str()) {
+            return Ok(());
+        }
+
+        atomic_write(&self.path, next_source.as_bytes())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,22 +188,28 @@ pub struct OpenClawModelEntry {
 pub fn read_openclaw_config() -> Result<Value, AppError> {
     let path = get_openclaw_config_path();
     if !path.exists() {
-        return Ok(json!({
-            "models": {
-                "mode": "merge",
-                "providers": {}
-            }
-        }));
+        return Ok(default_openclaw_config_value());
     }
 
-    let content = std::fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
+    let content = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
     json5::from_str(&content)
         .map_err(|e| AppError::Config(format!("Failed to parse OpenClaw config as JSON5: {e}")))
 }
 
 pub fn write_openclaw_config(config: &Value) -> Result<(), AppError> {
-    let path = get_openclaw_config_path();
-    write_json_file(&path, config)
+    let root = config
+        .as_object()
+        .ok_or_else(|| AppError::Config("OpenClaw config root must be an object".to_string()))?;
+
+    let current_config = read_openclaw_config()?;
+    let mut document = OpenClawConfigDocument::load()?;
+    for (section, value) in root {
+        if current_config.get(section) == Some(value) {
+            continue;
+        }
+        document.set_root_section(section, value)?;
+    }
+    document.save()
 }
 
 pub fn get_providers() -> Result<Map<String, Value>, AppError> {
@@ -316,6 +464,190 @@ fn ensure_agents_defaults_path(config: &mut Value) {
     }
 }
 
+fn ensure_kvp_context(pair: &mut RtJSONKeyValuePair) -> &mut RtKeyValuePairContext {
+    pair.context.get_or_insert_with(|| RtKeyValuePairContext {
+        wsc: (String::new(), " ".to_string(), String::new(), None),
+    })
+}
+
+fn extract_trailing_indent(separator_ws: &str) -> String {
+    separator_ws
+        .rsplit_once('\n')
+        .map(|(_, tail)| tail.to_string())
+        .unwrap_or_default()
+}
+
+fn derive_closing_ws_from_separator(separator_ws: &str) -> String {
+    let Some((prefix, indent)) = separator_ws.rsplit_once('\n') else {
+        return String::new();
+    };
+
+    let reduced_indent = if indent.ends_with('\t') {
+        &indent[..indent.len().saturating_sub(1)]
+    } else if indent.ends_with("  ") {
+        &indent[..indent.len().saturating_sub(2)]
+    } else if indent.ends_with(' ') {
+        &indent[..indent.len().saturating_sub(1)]
+    } else {
+        indent
+    };
+
+    format!("{prefix}\n{reduced_indent}")
+}
+
+fn derive_entry_separator(leading_ws: &str) -> String {
+    if leading_ws.is_empty() {
+        return String::new();
+    }
+
+    if leading_ws.contains('\n') {
+        return format!("\n{}", extract_trailing_indent(leading_ws));
+    }
+
+    String::new()
+}
+
+fn value_to_rt_value(value: &Value, parent_indent: &str) -> Result<RtJSONValue, AppError> {
+    let source = render_json5_value(value, 0);
+    let adjusted = reindent_json5_block(&source, parent_indent);
+    let text = rt_from_str(&adjusted).map_err(|e| {
+        AppError::Config(format!(
+            "Failed to parse generated JSON5 section: {}",
+            e.message
+        ))
+    })?;
+    Ok(text.value)
+}
+
+fn reindent_json5_block(source: &str, parent_indent: &str) -> String {
+    let normalized = normalize_json_five_output(source);
+    if parent_indent.is_empty() || !normalized.contains('\n') {
+        return normalized;
+    }
+
+    let mut lines = normalized.lines();
+    let Some(first_line) = lines.next() else {
+        return String::new();
+    };
+
+    let mut result = String::from(first_line);
+    for line in lines {
+        result.push('\n');
+        result.push_str(parent_indent);
+        result.push_str(line);
+    }
+    result
+}
+
+fn normalize_json_five_output(source: &str) -> String {
+    source.replace("\\/", "/")
+}
+
+fn render_json5_value(value: &Value, depth: usize) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(boolean) => boolean.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(string) => {
+            serde_json::to_string(string).expect("serializing string literals should not fail")
+        }
+        Value::Array(values) => render_json5_array(values, depth),
+        Value::Object(map) => render_json5_object(map, depth),
+    }
+}
+
+fn render_json5_array(values: &[Value], depth: usize) -> String {
+    if values.is_empty() {
+        return "[]".to_string();
+    }
+
+    let current_indent = "  ".repeat(depth);
+    let child_indent = "  ".repeat(depth + 1);
+    let body = values
+        .iter()
+        .map(|value| format!("{child_indent}{}", render_json5_value(value, depth + 1)))
+        .collect::<Vec<_>>()
+        .join(",\n");
+
+    format!("[\n{body}\n{current_indent}]")
+}
+
+fn render_json5_object(map: &Map<String, Value>, depth: usize) -> String {
+    if map.is_empty() {
+        return "{}".to_string();
+    }
+
+    let current_indent = "  ".repeat(depth);
+    let child_indent = "  ".repeat(depth + 1);
+    let body = map
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{child_indent}{}: {}",
+                render_json5_key(key),
+                render_json5_value(value, depth + 1)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+
+    format!("{{\n{body}\n{current_indent}}}")
+}
+
+fn render_json5_key(key: &str) -> String {
+    if should_render_unquoted_key(key) {
+        key.to_string()
+    } else {
+        serde_json::to_string(key).expect("serializing object keys should not fail")
+    }
+}
+
+fn should_render_unquoted_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    matches!(first, 'a'..='z') && chars.all(|ch| matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9'))
+}
+
+fn make_root_pair(key: &str, value: RtJSONValue, closing_ws: String) -> RtJSONKeyValuePair {
+    RtJSONKeyValuePair {
+        key: make_json5_key(key),
+        value,
+        context: Some(RtKeyValuePairContext {
+            wsc: (String::new(), " ".to_string(), closing_ws, None),
+        }),
+    }
+}
+
+fn make_json5_key(key: &str) -> RtJSONValue {
+    if is_identifier_key(key) {
+        RtJSONValue::Identifier(key.to_string())
+    } else {
+        RtJSONValue::DoubleQuotedString(key.to_string())
+    }
+}
+
+fn is_identifier_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    matches!(first, 'a'..='z' | 'A'..='Z' | '_' | '$')
+        && chars.all(|ch| matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$'))
+}
+
+fn json5_key_name(key: &RtJSONValue) -> Option<&str> {
+    match key {
+        RtJSONValue::Identifier(name)
+        | RtJSONValue::DoubleQuotedString(name)
+        | RtJSONValue::SingleQuotedString(name) => Some(name),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,6 +762,35 @@ mod tests {
         assert_eq!(tools.profile.as_deref(), Some("strict"));
         assert_eq!(tools.allow, vec!["read:*".to_string()]);
         assert_eq!(tools.deny, vec!["write:*".to_string()]);
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn openclaw_env_write_preserves_legacy_json5_shape() -> Result<(), AppError> {
+        let temp = tempdir().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        let mut env_vars = HashMap::new();
+        env_vars.insert(
+            "ANTHROPIC_API_KEY".to_string(),
+            Value::String("legacy-anthropic".to_string()),
+        );
+        env_vars.insert(
+            "OPENAI_API_KEY".to_string(),
+            Value::String("legacy-openai".to_string()),
+        );
+
+        set_env_config(&OpenClawEnvConfig { vars: env_vars })?;
+
+        let path = get_openclaw_config_path();
+        let written = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
+
+        assert_eq!(
+            written,
+            "{\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n  env: {\n    \"ANTHROPIC_API_KEY\": \"legacy-anthropic\",\n    \"OPENAI_API_KEY\": \"legacy-openai\"\n  }\n}\n"
+        );
 
         Ok(())
     }

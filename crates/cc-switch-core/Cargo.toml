@@ -43,6 +43,7 @@ tempfile = { workspace = true }
 rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
 csv = "1.3"
 json5 = "0.4"
+json-five = { workspace = true }
 serde_yaml = "0.9"
 zip = "2.2"
 sha2 = "0.10"
