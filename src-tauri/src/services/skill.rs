@@ -435,6 +435,14 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
     parsed
 }
 
+/// `import_from_apps` 将 Skill 同步到各应用目录时的回滚状态。
+/// 成功路径下由 `TempDir` 析构删除临时备份；回滚且恢复失败时须 `into_path()` 保留以免误删用户数据。
+struct ImportedAppSyncState {
+    dest: PathBuf,
+    backup_path: Option<PathBuf>,
+    backup_dir: Option<tempfile::TempDir>,
+}
+
 // ========== SkillService ==========
 
 pub struct SkillService;
@@ -1505,7 +1513,8 @@ impl SkillService {
 
             // 复制到 SSOT
             let dest = ssot_dir.join(&dir_name);
-            if !dest.exists() {
+            let created_ssot = !dest.exists();
+            if created_ssot {
                 Self::copy_dir_recursive(&source, &dest)?;
             }
 
@@ -1540,8 +1549,113 @@ impl SkillService {
                 updated_at: 0,
             };
 
+            let enabled_apps = skill.apps.enabled_apps();
+
             // 保存到数据库
-            db.save_skill(&skill)?;
+            if let Err(err) = db.save_skill(&skill) {
+                if created_ssot {
+                    let _ = Self::remove_path(&dest);
+                }
+                return Err(err.into());
+            }
+
+            // 按用户配置的同步方式（symlink/copy）同步到各已启用的应用目录
+            let mut synced_apps = Vec::new();
+            for app in &enabled_apps {
+                let sync_result: Result<()> = (|| {
+                    let app_dir = Self::get_app_skills_dir(app)?;
+                    fs::create_dir_all(&app_dir)?;
+
+                    let app_dest = app_dir.join(&skill.directory);
+                    let mut backup_path = None;
+                    let mut backup_dir = None;
+
+                    if app_dest.exists() || Self::is_symlink(&app_dest) {
+                        let temp_backup_dir = tempfile::Builder::new()
+                            .prefix(".cc-switch-import-backup-")
+                            .tempdir_in(&app_dir)
+                            .with_context(|| {
+                                format!(
+                                    "创建 Skill 导入回滚备份目录失败: {} ({app:?})",
+                                    app_dir.display()
+                                )
+                            })?;
+                        let original_backup_path = temp_backup_dir.path().join("original");
+                        fs::rename(&app_dest, &original_backup_path).with_context(|| {
+                            format!(
+                                "备份现有 Skill 目录失败: {} -> {}",
+                                app_dest.display(),
+                                original_backup_path.display()
+                            )
+                        })?;
+                        backup_path = Some(original_backup_path);
+                        backup_dir = Some(temp_backup_dir);
+                    }
+
+                    synced_apps.push(ImportedAppSyncState {
+                        dest: app_dest.clone(),
+                        backup_path,
+                        backup_dir,
+                    });
+
+                    Self::sync_to_app_dir(&skill.directory, app)
+                })();
+
+                if let Err(err) = sync_result {
+                    // 先尽力恢复各应用目录，再删库，避免「库已删但盘上仍是新同步」的更难排查状态
+                    for mut synced_app in synced_apps.into_iter().rev() {
+                        if synced_app.dest.exists() || Self::is_symlink(&synced_app.dest) {
+                            if let Err(remove_err) = Self::remove_path(&synced_app.dest) {
+                                log::warn!(
+                                    "回滚导入 Skill '{}' 时删除同步目录失败: {} ({remove_err:#})",
+                                    skill.directory,
+                                    synced_app.dest.display()
+                                );
+                            }
+                        }
+
+                        if let Some(backup_path) = synced_app.backup_path.take() {
+                            match fs::rename(&backup_path, &synced_app.dest) {
+                                Ok(()) => {}
+                                Err(restore_err) => {
+                                    log::warn!(
+                                        "回滚导入 Skill '{}' 时恢复原目录失败: {} -> {} ({restore_err:#})；已保留临时备份目录以免数据丢失",
+                                        skill.directory,
+                                        backup_path.display(),
+                                        synced_app.dest.display(),
+                                    );
+                                    // 恢复失败时不得让 TempDir 析构删除仍含备份的目录（例如 remove_path 未清空目标时）
+                                    if let Some(td) = synced_app.backup_dir.take() {
+                                        let preserved = td.keep();
+                                        log::warn!(
+                                            "Skill '{}' 导入回滚失败：用户原目录备份仍保留在 {}",
+                                            skill.directory,
+                                            preserved.display()
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    match db.delete_skill(&skill.id) {
+                        Ok(true) => {}
+                        Ok(false) => log::warn!(
+                            "回滚导入 Skill '{}' 时删除数据库记录：未找到 id {}",
+                            skill.directory,
+                            skill.id
+                        ),
+                        Err(e) => log::warn!(
+                            "回滚导入 Skill '{}' 时删除数据库记录失败: {e:#}",
+                            skill.directory
+                        ),
+                    }
+                    if created_ssot {
+                        let _ = Self::remove_path(&dest);
+                    }
+                    return Err(err);
+                }
+            }
+
             imported.push(skill);
         }
 
@@ -1564,15 +1678,144 @@ impl SkillService {
 
     #[cfg(windows)]
     fn create_symlink(src: &Path, dest: &Path) -> Result<()> {
-        std::os::windows::fs::symlink_dir(src, dest)
-            .with_context(|| format!("创建符号链接失败: {} -> {}", src.display(), dest.display()))
+        // 优先尝试真正的 symlink（需要开发者模式或管理员权限）
+        match std::os::windows::fs::symlink_dir(src, dest) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                log::debug!(
+                    "Windows symlink 创建失败（需要开发者模式或管理员权限），尝试 junction: {err}"
+                );
+            }
+        }
+
+        // 回退到 junction（无需特殊权限，同卷目录链接）
+        Self::create_junction(src, dest)
     }
 
-    /// 检查路径是否为符号链接
+    /// 在 Windows 上创建目录联接（junction），不需要管理员权限
+    #[cfg(windows)]
+    fn create_junction(src: &Path, dest: &Path) -> Result<()> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let output = std::process::Command::new("cmd")
+            .arg("/c")
+            .arg("mklink")
+            .arg("/J")
+            .arg(dest.as_os_str())
+            .arg(src.as_os_str())
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .with_context(|| {
+                format!("创建目录联接失败: {} -> {}", dest.display(), src.display())
+            })?;
+
+        if output.status.success() {
+            log::debug!(
+                "已通过 junction 创建目录链接: {} -> {}",
+                dest.display(),
+                src.display()
+            );
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let detail = [stderr.trim(), stdout.trim()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            Err(anyhow!(
+                "创建目录联接失败: {} -> {}. {}",
+                dest.display(),
+                src.display(),
+                if detail.is_empty() {
+                    "(无输出)".to_string()
+                } else {
+                    detail
+                }
+            ))
+        }
+    }
+
+    /// 检查路径是否为符号链接或目录联接（junction）
+    ///
+    /// Windows 上 `FileType::is_symlink()` 仅检测 IO_REPARSE_TAG_SYMLINK，
+    /// 不包括 junction（IO_REPARSE_TAG_MOUNT_POINT）。带
+    /// `FILE_ATTRIBUTE_REPARSE_POINT` 的路径还可能是云占位符等非链接
+    /// reparse 类型，若误判为链接，`remove_path` 会走 `remove_dir` 分支，
+    /// 在非空目录上会失败。因此仅在 reparse 标签为 symlink 或 mount-point
+    ///（junction）时视为链接；若无法读取标签，则用 `read_link` 作为回退
+    /// （与 junction 行为一致），避免误伤云目录。
     fn is_symlink(path: &Path) -> bool {
-        path.symlink_metadata()
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+            const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000_000C;
+            const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+
+            let Ok(meta) = path.symlink_metadata() else {
+                return false;
+            };
+            if meta.file_type().is_symlink() {
+                return true;
+            }
+            if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+                return false;
+            }
+            if let Some(tag) = Self::windows_reparse_point_tag(path) {
+                return tag == IO_REPARSE_TAG_SYMLINK || tag == IO_REPARSE_TAG_MOUNT_POINT;
+            }
+            fs::read_link(path).is_ok()
+        }
+        #[cfg(not(windows))]
+        {
+            path.symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+        }
+    }
+
+    /// 读取路径的 Windows reparse 标签（需已判定为 reparse 点且非 `is_symlink()`）。
+    #[cfg(windows)]
+    fn windows_reparse_point_tag(path: &Path) -> Option<u32> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FileAttributeTagInfo, GetFileInformationByHandleEx,
+            FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        unsafe {
+            let handle = CreateFileW(
+                wide.as_ptr(),
+                FILE_GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            );
+            if handle == INVALID_HANDLE_VALUE {
+                return None;
+            }
+            let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
+            let ok = GetFileInformationByHandleEx(
+                handle,
+                FileAttributeTagInfo,
+                &raw mut info as *mut _,
+                std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+            );
+            CloseHandle(handle);
+            (ok != 0).then_some(info.ReparseTag)
+        }
     }
 
     /// 获取当前同步方式配置
@@ -1645,14 +1888,14 @@ impl SkillService {
         Self::sync_to_app_dir(directory, app)
     }
 
-    /// 删除路径（支持 symlink 和真实目录）
+    /// 删除路径（支持 symlink、junction 和真实目录）
     fn remove_path(path: &Path) -> Result<()> {
         if Self::is_symlink(path) {
-            // 符号链接：仅删除链接本身，不影响源文件
+            // symlink / junction：仅删除链接本身，不影响源文件
             #[cfg(unix)]
             fs::remove_file(path)?;
             #[cfg(windows)]
-            fs::remove_dir(path)?; // Windows 的目录 symlink 需要用 remove_dir
+            fs::remove_dir(path)?; // Windows 的目录 symlink 和 junction 都用 remove_dir
         } else if path.is_dir() {
             // 真实目录：递归删除
             fs::remove_dir_all(path)?;
