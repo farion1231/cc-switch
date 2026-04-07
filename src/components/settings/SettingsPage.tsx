@@ -9,7 +9,6 @@ import {
   ScrollText,
   HardDriveDownload,
   FlaskConical,
-  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -272,23 +271,6 @@ export function SettingsPage({
                   transition={{ duration: 0.3 }}
                   className="space-y-6"
                 >
-                  <div className="flex items-center gap-3 px-1">
-                    <KeyRound className="h-5 w-5 text-primary" />
-                    <div>
-                      <h2 className="text-base font-semibold">
-                        {t("settings.authCenter.heading", {
-                          defaultValue: "认证中心",
-                        })}
-                      </h2>
-                      <p className="text-sm text-muted-foreground">
-                        {t("settings.authCenter.headingDescription", {
-                          defaultValue:
-                            "统一管理可跨应用复用的 OAuth 账号和默认认证来源。",
-                        })}
-                      </p>
-                    </div>
-                  </div>
-
                   <AuthCenterPanel />
                 </motion.div>
               </TabsContent>

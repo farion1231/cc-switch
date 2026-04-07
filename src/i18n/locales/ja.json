@@ -225,6 +225,13 @@
     "tabGeneral": "一般",
     "tabAdvanced": "詳細",
     "tabProxy": "プロキシ",
+    "authCenter": {
+      "title": "OAuth 認証センター",
+      "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
+      "beta": "Beta",
+      "copilotDescription": "GitHub Copilot アカウントを管理します",
+      "codexOauthDescription": "ChatGPT アカウントを管理します"
+    },
     "advanced": {
       "configDir": {
         "title": "設定ディレクトリ",
@@ -846,7 +853,7 @@
     "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました"
   },
   "codexOauth": {
-    "authStatus": "ChatGPT Plus/Pro 認証",
+    "authStatus": "認証状態",
     "notAuthenticated": "未認証",
     "loginWithChatGPT": "ChatGPT でログイン",
     "loginRequired": "先に ChatGPT にログインしてください",

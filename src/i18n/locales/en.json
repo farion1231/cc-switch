@@ -225,6 +225,13 @@
     "tabGeneral": "General",
     "tabAdvanced": "Advanced",
     "tabProxy": "Proxy",
+    "authCenter": {
+      "title": "OAuth Authentication Center",
+      "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
+      "beta": "Beta",
+      "copilotDescription": "Manage GitHub Copilot accounts",
+      "codexOauthDescription": "Manage ChatGPT accounts"
+    },
     "advanced": {
       "configDir": {
         "title": "Configuration Directory",
@@ -846,7 +853,7 @@
     "loadModelsFailed": "Failed to load Copilot models"
   },
   "codexOauth": {
-    "authStatus": "ChatGPT Plus/Pro Auth",
+    "authStatus": "Auth status",
     "notAuthenticated": "Not authenticated",
     "loginWithChatGPT": "Sign in with ChatGPT",
     "loginRequired": "Please sign in to ChatGPT first",

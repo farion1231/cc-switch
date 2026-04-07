@@ -89,7 +89,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     <div className={`space-y-4 ${className || ""}`}>
       {/* 认证状态标题 */}
       <div className="flex items-center justify-between">
-        <Label>{t("codexOauth.authStatus", "ChatGPT Plus/Pro 认证")}</Label>
+        <Label>{t("codexOauth.authStatus", "认证状态")}</Label>
         <Badge
           variant={hasAnyAccount ? "default" : "secondary"}
           className={hasAnyAccount ? "bg-green-500 hover:bg-green-600" : ""}

@@ -225,6 +225,13 @@
     "tabGeneral": "通用",
     "tabAdvanced": "高级",
     "tabProxy": "代理",
+    "authCenter": {
+      "title": "OAuth 认证中心",
+      "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
+      "beta": "Beta",
+      "copilotDescription": "管理 GitHub Copilot 账号",
+      "codexOauthDescription": "管理 ChatGPT 账号"
+    },
     "advanced": {
       "configDir": {
         "title": "配置文件目录",
@@ -846,7 +853,7 @@
     "loadModelsFailed": "加载 Copilot 模型列表失败"
   },
   "codexOauth": {
-    "authStatus": "ChatGPT Plus/Pro 认证",
+    "authStatus": "认证状态",
     "notAuthenticated": "未认证",
     "loginWithChatGPT": "使用 ChatGPT 登录",
     "loginRequired": "请先登录 ChatGPT 账号",
