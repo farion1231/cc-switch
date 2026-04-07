@@ -1102,6 +1102,131 @@ base_url = "http://localhost:8080"
         );
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn sync_current_common_config_for_app_tolerates_malformed_previous_snippet() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut provider = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "model-a"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        write_json_file(
+            &get_claude_settings_path(),
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                    "ANTHROPIC_MODEL": "model-a"
+                },
+                "permissions": { "allow": ["Bash"] }
+            }),
+        )
+        .expect("seed taken-over live file");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "model-a"
+                },
+                "permissions": { "allow": ["Bash"] }
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        state.proxy_service.mark_running_for_test().await;
+
+        db.set_config_snippet(
+            "claude",
+            Some(r#"{ "includeCoAuthoredBy": true }"#.to_string()),
+        )
+        .expect("set new common config");
+
+        ProviderService::sync_current_common_config_for_app(
+            &state,
+            AppType::Claude,
+            Some("{ invalid previous snippet"),
+        )
+        .expect("sync common config should tolerate malformed previous snippet");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live.get("includeCoAuthoredBy").and_then(|v| v.as_bool()),
+            Some(true),
+            "takeover live should still update when the previous snippet is malformed"
+        );
+        assert_eq!(
+            live.get("permissions"),
+            Some(&json!({ "allow": ["Bash"] })),
+            "live-only Claude settings should be preserved when previous snippet removal is skipped"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        assert_eq!(
+            backup_value
+                .get("includeCoAuthoredBy")
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "restore backup should still refresh when the previous snippet is malformed"
+        );
+        assert_eq!(
+            backup_value.get("permissions"),
+            Some(&json!({ "allow": ["Bash"] })),
+            "backup should preserve existing live-only Claude settings when previous snippet removal is skipped"
+        );
+    }
+
     #[test]
     #[serial]
     fn rename_rejects_missing_original_provider() {

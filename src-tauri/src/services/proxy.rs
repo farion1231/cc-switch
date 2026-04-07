@@ -431,9 +431,16 @@ impl ProxyService {
         if let Some(previous_common_snippet) = previous_common_snippet
             .filter(|snippet| provider_uses_common_config(app_type, provider, Some(*snippet)))
         {
-            snapshot =
-                remove_common_config_from_settings(app_type, &snapshot, previous_common_snippet)
-                    .map_err(|e| format!("移除 {} 旧通用配置失败: {e}", app_type.as_str()))?;
+            match remove_common_config_from_settings(app_type, &snapshot, previous_common_snippet) {
+                Ok(updated_snapshot) => snapshot = updated_snapshot,
+                Err(err) => {
+                    log::warn!(
+                        "Skipping previous common config removal for {} provider '{}' during transition: {err}",
+                        app_type.as_str(),
+                        provider.id
+                    );
+                }
+            }
         }
 
         let mut snapshot_provider = provider.clone();
