@@ -417,10 +417,14 @@ export function ProviderCard({
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={
-                onTest && !isOfficial ? () => onTest(provider) : undefined
+                onTest && !isOfficial && !isCopilot && !isCodexOauth
+                  ? () => onTest(provider)
+                  : undefined
               }
               onConfigureUsage={
-                isOfficial ? undefined : () => onConfigureUsage(provider)
+                isOfficial || isCopilot || isCodexOauth
+                  ? undefined
+                  : () => onConfigureUsage(provider)
               }
               onDelete={() => onDelete(provider)}
               onRemoveFromConfig={
