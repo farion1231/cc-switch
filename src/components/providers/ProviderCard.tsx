@@ -13,6 +13,7 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
+import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
@@ -177,6 +178,8 @@ export function ProviderCard({
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
+  const isCodexOauth =
+    provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
 
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw）：使用 isInConfig 代替 isCurrent
@@ -355,6 +358,8 @@ export function ProviderCard({
             <div className="flex items-center gap-1">
               {isCopilot ? (
                 <CopilotQuotaFooter meta={provider.meta} inline={true} />
+              ) : isCodexOauth ? (
+                <CodexOauthQuotaFooter meta={provider.meta} inline={true} />
               ) : isOfficial ? (
                 <SubscriptionQuotaFooter appId={appId} inline={true} />
               ) : hasMultiplePlans ? (

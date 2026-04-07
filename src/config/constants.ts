@@ -1,6 +1,7 @@
 // Provider 类型常量
 export const PROVIDER_TYPES = {
   GITHUB_COPILOT: "github_copilot",
+  CODEX_OAUTH: "codex_oauth",
 } as const;
 
 // 用量脚本模板类型常量

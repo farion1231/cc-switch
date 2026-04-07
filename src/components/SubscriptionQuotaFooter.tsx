@@ -3,10 +3,19 @@ import { RefreshCw, AlertCircle, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import { useSubscriptionQuota } from "@/lib/query/subscription";
-import type { QuotaTier } from "@/types/subscription";
+import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 
 interface SubscriptionQuotaFooterProps {
   appId: AppId;
+  inline?: boolean;
+}
+
+interface SubscriptionQuotaViewProps {
+  quota: SubscriptionQuota | undefined;
+  loading: boolean;
+  refetch: () => void;
+  /** 用于 `subscription.expiredHint` 的 {tool} 插值；解耦了 hook 的 appId */
+  appIdForExpiredHint: string;
   inline?: boolean;
 }
 
@@ -78,16 +87,22 @@ function formatRelativeTime(
   return t("usage.daysAgo", { count: Math.floor(diff / 86400) });
 }
 
-const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
-  appId,
+/**
+ * 纯展示组件：渲染 SubscriptionQuota 的 5 种状态（not_found / parse_error /
+ * expired / API 失败 / 成功），支持 inline / expanded 两种布局。
+ *
+ * 数据源由调用方 hook 注入，方便不同的额度后端复用同一套渲染逻辑：
+ * - `SubscriptionQuotaFooter`（CLI 凭据路径，by appId）
+ * - `CodexOauthQuotaFooter`（cc-switch 自管 OAuth 路径，by ChatGPT account）
+ */
+export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
+  quota,
+  loading,
+  refetch,
+  appIdForExpiredHint,
   inline = false,
 }) => {
   const { t } = useTranslation();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useSubscriptionQuota(appId, true);
 
   // 定期更新相对时间显示
   const [now, setNow] = React.useState(Date.now());
@@ -131,7 +146,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
             <div>
               <span className="font-medium">{t("subscription.expired")}</span>
               <span className="ml-2 text-amber-500/70 dark:text-amber-400/70">
-                {t("subscription.expiredHint", { tool: appId })}
+                {t("subscription.expiredHint", { tool: appIdForExpiredHint })}
               </span>
             </div>
           </div>
@@ -361,6 +376,31 @@ const TierBar: React.FC<{
         )}
       </div>
     </div>
+  );
+};
+
+/**
+ * CLI 凭据路径下的薄 wrapper：通过 useSubscriptionQuota(appId) 自取数据
+ * 后转发到 SubscriptionQuotaView。对外 props/行为与重构前完全一致。
+ */
+const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
+  appId,
+  inline = false,
+}) => {
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+  } = useSubscriptionQuota(appId, true);
+
+  return (
+    <SubscriptionQuotaView
+      quota={quota}
+      loading={loading}
+      refetch={refetch}
+      appIdForExpiredHint={appId}
+      inline={inline}
+    />
   );
 };
 
