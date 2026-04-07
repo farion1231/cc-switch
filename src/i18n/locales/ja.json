@@ -845,6 +845,27 @@
     "migrationFailed": "旧認証データの移行に失敗しました: {{error}}",
     "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました"
   },
+  "codexOauth": {
+    "authStatus": "ChatGPT Plus/Pro 認証",
+    "notAuthenticated": "未認証",
+    "loginWithChatGPT": "ChatGPT でログイン",
+    "loginRequired": "先に ChatGPT にログインしてください",
+    "waitingForAuth": "認証を待機中...",
+    "enterCode": "ブラウザで以下のコードを入力してください：",
+    "accountCount": "{{count}} アカウント",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "ChatGPT アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
+    "loggedInAccounts": "ログイン済みアカウント",
+    "defaultAccount": "デフォルト",
+    "selected": "選択中",
+    "removeAccount": "アカウントを削除",
+    "setAsDefault": "デフォルトに設定",
+    "addAnotherAccount": "別のアカウントを追加",
+    "logoutAll": "すべてのアカウントをログアウト",
+    "retry": "再試行",
+    "copyCode": "コードをコピー"
+  },
   "endpointTest": {
     "title": "API エンドポイント管理",
     "endpoints": "エンドポイント",

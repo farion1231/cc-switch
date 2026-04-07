@@ -1,7 +1,8 @@
-import { Github, ShieldCheck } from "lucide-react";
+import { Github, ShieldCheck, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
+import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 
 export function AuthCenterPanel() {
   const { t } = useTranslation();
@@ -49,6 +50,25 @@ export function AuthCenterPanel() {
         </div>
 
         <CopilotAuthSection />
+      </section>
+
+      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <div>
+            <h4 className="font-medium">ChatGPT (Codex OAuth)</h4>
+            <p className="text-sm text-muted-foreground">
+              {t("settings.authCenter.codexOauthDescription", {
+                defaultValue:
+                  "管理 ChatGPT Plus/Pro 账号，用于将 Claude Code 请求反代到 Codex 后端。仅限个人开发使用。",
+              })}
+            </p>
+          </div>
+        </div>
+
+        <CodexOAuthSection />
       </section>
     </div>
   );

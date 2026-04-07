@@ -14,7 +14,14 @@ use serde_json::{json, Value};
 /// Anthropic 请求 → OpenAI Responses 请求
 ///
 /// `cache_key`: optional prompt_cache_key to inject for improved cache routing
-pub fn anthropic_to_responses(body: Value, cache_key: Option<&str>) -> Result<Value, ProxyError> {
+/// `is_codex_oauth`: 当目标后端是 ChatGPT Plus/Pro 反代 (`chatgpt.com/backend-api/codex`) 时为 true。
+/// 该后端强制要求 `store: false`，并要求 `include` 包含 `reasoning.encrypted_content`
+/// 以便在无服务端状态下保持多轮 reasoning 上下文。
+pub fn anthropic_to_responses(
+    body: Value,
+    cache_key: Option<&str>,
+    is_codex_oauth: bool,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
     // NOTE: 模型映射由上游统一处理（proxy::model_mapper），格式转换层只做结构转换。
@@ -101,6 +108,59 @@ pub fn anthropic_to_responses(body: Value, cache_key: Option<&str>) -> Result<Va
     // Inject prompt_cache_key for improved cache routing on OpenAI-compatible endpoints
     if let Some(key) = cache_key {
         result["prompt_cache_key"] = json!(key);
+    }
+
+    // Codex OAuth (ChatGPT Plus/Pro 反代) 特殊协议约束：
+    // 整体依据：OpenAI 官方 codex-rs 的 `ResponsesApiRequest` 结构体
+    // (codex-rs/codex-api/src/common.rs) 是 ChatGPT 反代后端的协议契约。
+    // 任何不在该结构体里的字段都可能被 ChatGPT 后端以
+    // "Unsupported parameter: ..." 400 拒绝；任何在结构体里的必填字段
+    // 都需要在请求体里出现。
+    //
+    // 字段处理：
+    // - store: 必须显式为 false（ChatGPT 消费级后端不允许服务端持久化）
+    // - include: 必须包含 "reasoning.encrypted_content"，
+    //   否则多轮 reasoning 中间态会丢失（无服务端状态 + 无加密回传 = 上下文断链）
+    // - max_output_tokens / temperature / top_p: 必须删除
+    //   （codex-rs 结构体根本没有这三个字段，OpenAI 自己的客户端不发它们）
+    // - instructions / tools / parallel_tool_calls: 必填字段，缺则兜底默认值
+    //   （cc-switch 的 transform 当前是"条件写入"，可能产生缺失）
+    // - stream: 必须永远 true（codex-rs 硬编码 true，且 cc-switch 的
+    //   SSE 解析层只处理流式响应，强制覆盖避免客户端误传 false）
+    if is_codex_oauth {
+        result["store"] = json!(false);
+
+        const REASONING_MARKER: &str = "reasoning.encrypted_content";
+        let mut includes: Vec<Value> = body
+            .get("include")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if !includes
+            .iter()
+            .any(|v| v.as_str() == Some(REASONING_MARKER))
+        {
+            includes.push(json!(REASONING_MARKER));
+        }
+        result["include"] = json!(includes);
+
+        if let Some(obj) = result.as_object_mut() {
+            // —— 删除 ChatGPT 反代不接受的字段 ——
+            obj.remove("max_output_tokens");
+            obj.remove("temperature");
+            obj.remove("top_p");
+
+            // —— 兜底必填字段（or_insert：客户端送了什么就保留，否则注入默认值）——
+            obj.entry("instructions".to_string()).or_insert(json!(""));
+            obj.entry("tools".to_string()).or_insert(json!([]));
+            obj.entry("parallel_tool_calls".to_string())
+                .or_insert(json!(false));
+
+            // —— 强制覆盖 stream = true ——
+            // 即便客户端误传 stream:false 也要覆盖，因为 codex-rs 永远 true，
+            // 且 cc-switch SSE 解析层只支持流式响应。
+            obj.insert("stream".to_string(), json!(true));
+        }
     }
 
     Ok(result)
@@ -468,7 +528,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["model"], "gpt-4o");
         assert_eq!(result["max_output_tokens"], 1024);
         assert_eq!(result["input"][0]["role"], "user");
@@ -487,7 +547,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["instructions"], "You are a helpful assistant.");
         // system should not appear in input
         assert_eq!(result["input"].as_array().unwrap().len(), 1);
@@ -505,7 +565,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["instructions"], "Part 1\n\nPart 2");
     }
 
@@ -522,7 +582,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["name"], "get_weather");
         assert!(result["tools"][0].get("parameters").is_some());
@@ -539,7 +599,7 @@ mod tests {
             "tool_choice": {"type": "any"}
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["tool_choice"], "required");
     }
 
@@ -552,7 +612,7 @@ mod tests {
             "tool_choice": {"type": "tool", "name": "get_weather"}
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["tool_choice"]["type"], "function");
         assert_eq!(result["tool_choice"]["name"], "get_weather");
     }
@@ -571,7 +631,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         let input_arr = result["input"].as_array().unwrap();
 
         // Should produce: assistant message (text) + function_call item
@@ -601,7 +661,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         let input_arr = result["input"].as_array().unwrap();
 
         // Should produce: function_call_output item (lifted)
@@ -625,7 +685,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         let input_arr = result["input"].as_array().unwrap();
 
         // thinking should be discarded, only text remains
@@ -648,7 +708,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         let content = result["input"][0]["content"].as_array().unwrap();
 
         assert_eq!(content[0]["type"], "input_text");
@@ -806,7 +866,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["model"], "o3-mini");
     }
 
@@ -818,7 +878,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, Some("my-provider-id")).unwrap();
+        let result = anthropic_to_responses(input, Some("my-provider-id"), false).unwrap();
         assert_eq!(result["prompt_cache_key"], "my-provider-id");
     }
 
@@ -836,7 +896,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert!(result["tools"][0].get("cache_control").is_none());
     }
 
@@ -853,7 +913,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert!(result["input"][0]["content"][0]
             .get("cache_control")
             .is_none());
@@ -915,7 +975,7 @@ mod tests {
             "max_tokens": 4096,
             "messages": [{"role": "user", "content": "Hello"}]
         });
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["max_output_tokens"], 4096);
         assert!(result.get("max_completion_tokens").is_none());
     }
@@ -929,7 +989,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
     }
 
@@ -943,7 +1003,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "low");
     }
 
@@ -956,7 +1016,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "low");
     }
 
@@ -969,7 +1029,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "medium");
     }
 
@@ -982,7 +1042,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "high");
     }
 
@@ -995,7 +1055,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "high");
     }
 
@@ -1008,7 +1068,271 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None).unwrap();
+        let result = anthropic_to_responses(input, None, false).unwrap();
         assert!(result.get("reasoning").is_none());
+    }
+
+    // ==================== Codex OAuth (ChatGPT 反代) 协议约束 ====================
+
+    #[test]
+    fn test_anthropic_to_responses_codex_oauth_sets_store_and_include() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+
+        // store 必须显式为 false（ChatGPT 后端拒绝 true）
+        assert_eq!(result["store"], json!(false));
+
+        // include 必须包含 reasoning.encrypted_content（无服务端状态下保持多轮 reasoning）
+        assert_eq!(result["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_non_codex_omits_store_and_include() {
+        // 回归护栏：is_codex_oauth=false 时，行为必须与今日字节级一致
+        // —— 不写 store、不写 include，OpenRouter / Azure / OpenAI 付费 API 路径不受影响
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false).unwrap();
+
+        assert!(result.get("store").is_none());
+        assert!(result.get("include").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_codex_oauth_preserves_existing_include() {
+        // 客户端预置了 include：union 保留原有项 + 添加 marker，不重复
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "include": ["something.else", "reasoning.encrypted_content"]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+        let includes = result["include"]
+            .as_array()
+            .expect("include should be array");
+
+        // 原有项必须保留
+        assert!(includes
+            .iter()
+            .any(|v| v.as_str() == Some("something.else")));
+        // marker 必须存在
+        assert!(includes
+            .iter()
+            .any(|v| v.as_str() == Some("reasoning.encrypted_content")));
+        // 不重复：marker 只出现一次
+        let marker_count = includes
+            .iter()
+            .filter(|v| v.as_str() == Some("reasoning.encrypted_content"))
+            .count();
+        assert_eq!(marker_count, 1, "marker 不应被重复添加（idempotent 失败）");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_codex_oauth_strips_max_output_tokens() {
+        // ChatGPT Plus/Pro 反代不接受 max_output_tokens（OpenAI 官方 codex-rs 的
+        // ResponsesApiRequest 结构体里也没有这个字段），必须删除，否则服务端 400：
+        // "Unsupported parameter: max_output_tokens"
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+
+        assert!(
+            result.get("max_output_tokens").is_none(),
+            "Codex OAuth 路径必须删除 max_output_tokens"
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_non_codex_keeps_max_output_tokens() {
+        // 回归护栏：非 Codex OAuth 路径必须保留 max_output_tokens
+        // —— OpenAI 付费 Responses API / Azure 等仍然依赖这个字段
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false).unwrap();
+
+        assert_eq!(result["max_output_tokens"], json!(1024));
+    }
+
+    // ==================== 第二轮：P0 + P1 字段对齐 ====================
+
+    #[test]
+    fn test_codex_oauth_strips_temperature() {
+        // P0: ChatGPT 反代不接受 temperature
+        // 依据：OpenAI 官方 codex-rs 的 ResponsesApiRequest 结构体根本没有这个字段
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "temperature": 0.7,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+
+        assert!(
+            result.get("temperature").is_none(),
+            "Codex OAuth 路径必须删除 temperature"
+        );
+    }
+
+    #[test]
+    fn test_codex_oauth_strips_top_p() {
+        // P0: ChatGPT 反代不接受 top_p
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "top_p": 0.9,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+
+        assert!(
+            result.get("top_p").is_none(),
+            "Codex OAuth 路径必须删除 top_p"
+        );
+    }
+
+    #[test]
+    fn test_codex_oauth_defaults_required_fields_when_absent() {
+        // P1: 极简输入（无 system / 无 tools / 无 stream），断言四个必填字段都被注入默认值
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+
+        assert_eq!(
+            result["instructions"],
+            json!(""),
+            "instructions 缺失时应兜底为空字符串"
+        );
+        assert_eq!(result["tools"], json!([]), "tools 缺失时应兜底为空数组");
+        assert_eq!(
+            result["parallel_tool_calls"],
+            json!(false),
+            "parallel_tool_calls 应兜底为 false"
+        );
+        assert_eq!(result["stream"], json!(true), "stream 应被强制设为 true");
+    }
+
+    #[test]
+    fn test_codex_oauth_preserves_existing_instructions_and_tools() {
+        // P1: 客户端送了 system 和 tools，应保留原值，不被默认值覆盖
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "system": "You are a helpful assistant",
+            "tools": [{
+                "name": "get_weather",
+                "description": "Get weather",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}}
+                }
+            }],
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+
+        assert_eq!(
+            result["instructions"],
+            json!("You are a helpful assistant"),
+            "client 已送的 instructions 必须保留"
+        );
+
+        let tools = result["tools"].as_array().expect("tools 应为数组");
+        assert_eq!(tools.len(), 1, "client 已送的 tools 必须保留");
+        assert_eq!(tools[0]["name"], json!("get_weather"));
+    }
+
+    #[test]
+    fn test_codex_oauth_forces_stream_true_even_when_client_sends_false() {
+        // 即使客户端误传 stream:false，也要强制覆盖为 true
+        // 依据：cc-switch SSE 解析层只支持流式响应
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "stream": false,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+
+        assert_eq!(
+            result["stream"],
+            json!(true),
+            "Codex OAuth 路径下 stream 必须强制为 true"
+        );
+    }
+
+    #[test]
+    fn test_non_codex_keeps_temperature_and_top_p() {
+        // 回归护栏：非 Codex OAuth 路径必须保留 temperature/top_p
+        // —— 防止 P0 删除逻辑误扩散到 OpenRouter / Azure / 付费 OpenAI 路径
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false).unwrap();
+
+        assert_eq!(result["temperature"], json!(0.7));
+        assert_eq!(result["top_p"], json!(0.9));
+    }
+
+    #[test]
+    fn test_non_codex_does_not_inject_default_required_fields() {
+        // 回归护栏：非 Codex OAuth 路径不应被 P1 默认值污染
+        // —— OpenRouter / Azure / 付费 OpenAI 等保持原有"条件写入"语义
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false).unwrap();
+
+        assert!(
+            result.get("parallel_tool_calls").is_none(),
+            "非 Codex OAuth 路径不应注入 parallel_tool_calls"
+        );
+        assert!(
+            result.get("stream").is_none(),
+            "非 Codex OAuth 路径不应注入 stream"
+        );
+        // instructions 和 tools 因为客户端没送，所以不应出现
+        assert!(
+            result.get("instructions").is_none(),
+            "非 Codex OAuth 路径下 instructions 在客户端未送时不应被注入"
+        );
+        assert!(
+            result.get("tools").is_none(),
+            "非 Codex OAuth 路径下 tools 在客户端未送时不应被注入"
+        );
     }
 }

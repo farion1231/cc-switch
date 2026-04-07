@@ -357,8 +357,16 @@ impl StreamCheckService {
             "messages": [{ "role": "user", "content": test_prompt }],
             "stream": true
         });
+        // Codex OAuth (ChatGPT Plus/Pro 反代) 需要 store:false + include 标记，
+        // 否则 Stream Check 会和生产路径一样被服务端 400 拒绝。
+        let is_codex_oauth = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("codex_oauth");
+
         let body = if is_openai_responses {
-            anthropic_to_responses(anthropic_body, Some(&provider.id))
+            anthropic_to_responses(anthropic_body, Some(&provider.id), is_codex_oauth)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_openai_chat {
             anthropic_to_openai(anthropic_body, Some(&provider.id))

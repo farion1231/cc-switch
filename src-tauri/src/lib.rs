@@ -715,6 +715,18 @@ pub fn run() {
                 log::info!("✓ CopilotAuthManager initialized");
             }
 
+            // 初始化 CodexOAuthManager (ChatGPT Plus/Pro 反代)
+            {
+                use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+                use commands::CodexOAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let codex_oauth_manager = CodexOAuthManager::new(app_config_dir);
+                app.manage(CodexOAuthState(Arc::new(RwLock::new(codex_oauth_manager))));
+                log::info!("✓ CodexOAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;

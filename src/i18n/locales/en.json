@@ -845,6 +845,27 @@
     "migrationFailed": "Legacy auth migration failed: {{error}}",
     "loadModelsFailed": "Failed to load Copilot models"
   },
+  "codexOauth": {
+    "authStatus": "ChatGPT Plus/Pro Auth",
+    "notAuthenticated": "Not authenticated",
+    "loginWithChatGPT": "Sign in with ChatGPT",
+    "loginRequired": "Please sign in to ChatGPT first",
+    "waitingForAuth": "Waiting for authorization...",
+    "enterCode": "Enter the code in your browser:",
+    "accountCount": "{{count}} account(s)",
+    "selectAccount": "Select account",
+    "selectAccountPlaceholder": "Choose a ChatGPT account",
+    "useDefaultAccount": "Use default account",
+    "loggedInAccounts": "Logged in accounts",
+    "defaultAccount": "Default",
+    "selected": "Selected",
+    "removeAccount": "Remove account",
+    "setAsDefault": "Set as default",
+    "addAnotherAccount": "Add another account",
+    "logoutAll": "Logout all accounts",
+    "retry": "Retry",
+    "copyCode": "Copy code"
+  },
   "endpointTest": {
     "title": "API Endpoint Management",
     "endpoints": "endpoints",
