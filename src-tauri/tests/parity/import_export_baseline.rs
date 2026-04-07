@@ -38,9 +38,7 @@ fn import_config() -> MultiAppConfig {
 
 #[test]
 fn import_export_baseline_legacy_round_trip_is_stable() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     let export = export_file();
     let _ = std::fs::remove_file(&export);
@@ -48,15 +46,24 @@ fn import_export_baseline_legacy_round_trip_is_stable() {
     reset_test_fs();
     let _home = ensure_test_home();
     let legacy_state = create_legacy_state_with_config(&import_config());
-    import_export_bridge::legacy_export_config_to_file(&legacy_state, export.to_string_lossy().as_ref())
-        .expect("legacy export");
+    import_export_bridge::legacy_export_config_to_file(
+        &legacy_state,
+        export.to_string_lossy().as_ref(),
+    )
+    .expect("legacy export");
 
     reset_test_fs();
     let _home = ensure_test_home();
     let import_state = create_empty_legacy_state();
-    import_export_bridge::legacy_import_config_from_file(&import_state, export.to_string_lossy().as_ref())
-        .expect("legacy import");
+    import_export_bridge::legacy_import_config_from_file(
+        &import_state,
+        export.to_string_lossy().as_ref(),
+    )
+    .expect("legacy import");
 
-    let providers = import_state.db.get_all_providers("claude").expect("legacy providers");
+    let providers = import_state
+        .db
+        .get_all_providers("claude")
+        .expect("legacy providers");
     assert!(providers.get("provider-a").is_some());
 }

@@ -48,16 +48,17 @@ fn seed_codex_session() -> String {
         .to_string(),
     ];
 
-    std::fs::write(&session_path, format!("{}\n{}\n{}\n", lines[0], lines[1], lines[2]))
-        .expect("write codex session");
+    std::fs::write(
+        &session_path,
+        format!("{}\n{}\n{}\n", lines[0], lines[1], lines[2]),
+    )
+    .expect("write codex session");
     session_path.to_string_lossy().to_string()
 }
 
 #[test]
 fn session_parity_codex_scan_and_messages_match_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
     reset_test_fs();
     let source_path = seed_codex_session();
 
@@ -75,8 +76,8 @@ fn session_parity_codex_scan_and_messages_match_legacy() {
         serde_json::to_value(legacy_sessions).expect("legacy sessions json")
     );
 
-    let legacy_messages =
-        session_bridge::legacy_get_session_messages("codex", &source_path).expect("legacy messages");
+    let legacy_messages = session_bridge::legacy_get_session_messages("codex", &source_path)
+        .expect("legacy messages");
     let core_messages =
         session_bridge::get_session_messages("codex", &source_path).expect("core messages");
     assert_eq!(

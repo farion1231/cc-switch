@@ -45,9 +45,7 @@ fn seed_codex_session() -> std::path::PathBuf {
 
 #[test]
 fn session_baseline_legacy_codex_scan_is_stable() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
     reset_test_fs();
     let path = seed_codex_session();
 
@@ -58,5 +56,8 @@ fn session_baseline_legacy_codex_scan_is_stable() {
         .expect("seeded codex session");
 
     assert_eq!(session.session_id, "11111111-2222-3333-4444-555555555555");
-    assert_eq!(session.resume_command.as_deref(), Some("codex resume 11111111-2222-3333-4444-555555555555"));
+    assert_eq!(
+        session.resume_command.as_deref(),
+        Some("codex resume 11111111-2222-3333-4444-555555555555")
+    );
 }

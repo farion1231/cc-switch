@@ -4,8 +4,7 @@ use crate::services::env_checker::EnvConflict;
 use crate::services::env_manager::BackupInfo;
 
 pub fn legacy_check_env_conflicts(app: &str) -> Result<Vec<EnvConflict>, AppError> {
-    crate::services::env_checker::check_env_conflicts(app)
-        .map_err(AppError::Message)
+    crate::services::env_checker::check_env_conflicts(app).map_err(AppError::Message)
 }
 
 pub fn check_env_conflicts(app: &str) -> Result<Vec<EnvConflict>, AppError> {

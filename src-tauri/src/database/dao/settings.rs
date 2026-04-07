@@ -270,6 +270,31 @@ impl Database {
         self.set_setting("optimizer_config", &json)
     }
 
+    // --- Copilot 优化器配置 ---
+
+    /// 获取 Copilot 优化器配置
+    ///
+    /// 返回配置，如果不存在则返回默认值（默认开启）
+    pub fn get_copilot_optimizer_config(
+        &self,
+    ) -> Result<crate::proxy::types::CopilotOptimizerConfig, AppError> {
+        match self.get_setting("copilot_optimizer_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析 Copilot 优化器配置失败: {e}"))),
+            None => Ok(crate::proxy::types::CopilotOptimizerConfig::default()),
+        }
+    }
+
+    /// 更新 Copilot 优化器配置
+    pub fn set_copilot_optimizer_config(
+        &self,
+        config: &crate::proxy::types::CopilotOptimizerConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化 Copilot 优化器配置失败: {e}")))?;
+        self.set_setting("copilot_optimizer_config", &json)
+    }
+
     // --- 日志配置 ---
 
     /// 获取日志配置

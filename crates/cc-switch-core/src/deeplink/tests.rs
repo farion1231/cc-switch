@@ -43,6 +43,23 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
+fn test_parse_legacy_provider_deeplink() {
+    let url = "ccswitch://provider?name=Router&baseUrl=https%3A%2F%2Fapi.example.com&apiKey=sk-demo&app=claude";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.version, "legacy");
+    assert_eq!(request.resource, "provider");
+    assert_eq!(request.app, Some("claude".to_string()));
+    assert_eq!(request.name, Some("Router".to_string()));
+    assert_eq!(
+        request.endpoint,
+        Some("https://api.example.com".to_string())
+    );
+    assert_eq!(request.api_key, Some("sk-demo".to_string()));
+}
+
+#[test]
 fn test_parse_invalid_scheme() {
     let url = "https://v1/import?resource=provider&app=claude&name=Test";
 

@@ -6,9 +6,7 @@ const PROVIDER_URL: &str = "ccswitch://v1/import?resource=provider&app=claude&na
 
 #[test]
 fn deeplink_baseline_legacy_parse_merge_and_import_are_stable() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();
@@ -21,6 +19,9 @@ fn deeplink_baseline_legacy_parse_merge_and_import_are_stable() {
     let state = create_empty_legacy_state();
     let provider_id =
         deeplink_bridge::legacy_import_provider(&state, merged).expect("legacy import provider");
-    let providers = state.db.get_all_providers("claude").expect("export providers");
+    let providers = state
+        .db
+        .get_all_providers("claude")
+        .expect("export providers");
     assert!(providers.get(&provider_id).is_some());
 }

@@ -72,7 +72,8 @@ pub fn legacy_get_provider_stats(state: &AppState) -> Result<Vec<ProviderStats>,
 }
 
 pub fn get_provider_stats() -> Result<Vec<ProviderStats>, AppError> {
-    let stats = with_core_state(|state| cc_switch_core::UsageService::get_provider_stats(&state.db))?;
+    let stats =
+        with_core_state(|state| cc_switch_core::UsageService::get_provider_stats(&state.db))?;
     convert(stats)
 }
 
@@ -100,8 +101,9 @@ pub fn get_request_logs(
     page_size: u32,
 ) -> Result<PaginatedLogs, AppError> {
     let filters = convert::<_, cc_switch_core::UsageLogFilters>(normalize_filters(filters))?;
-    let logs =
-        with_core_state(|state| cc_switch_core::UsageService::get_logs(&state.db, &filters, page, page_size))?;
+    let logs = with_core_state(|state| {
+        cc_switch_core::UsageService::get_logs(&state.db, &filters, page, page_size)
+    })?;
     convert(logs)
 }
 
@@ -113,8 +115,9 @@ pub fn legacy_get_request_detail(
 }
 
 pub fn get_request_detail(request_id: &str) -> Result<Option<RequestLogDetail>, AppError> {
-    let detail =
-        with_core_state(|state| cc_switch_core::UsageService::get_request_detail(&state.db, request_id))?;
+    let detail = with_core_state(|state| {
+        cc_switch_core::UsageService::get_request_detail(&state.db, request_id)
+    })?;
     convert(detail)
 }
 
@@ -150,7 +153,8 @@ pub fn legacy_get_model_pricing(
 }
 
 pub fn get_model_pricing() -> Result<Vec<crate::commands::ModelPricingInfo>, AppError> {
-    let pricing = with_core_state(|state| cc_switch_core::UsageService::get_model_pricing(&state.db))?;
+    let pricing =
+        with_core_state(|state| cc_switch_core::UsageService::get_model_pricing(&state.db))?;
     convert(pricing)
 }
 
@@ -178,9 +182,7 @@ pub fn legacy_update_model_pricing(
     Ok(())
 }
 
-pub fn update_model_pricing(
-    pricing: crate::commands::ModelPricingInfo,
-) -> Result<(), AppError> {
+pub fn update_model_pricing(pricing: crate::commands::ModelPricingInfo) -> Result<(), AppError> {
     let pricing = convert(pricing)?;
     with_core_state(|state| cc_switch_core::UsageService::update_model_pricing(&state.db, pricing))
 }

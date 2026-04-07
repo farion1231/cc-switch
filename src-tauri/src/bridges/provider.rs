@@ -9,8 +9,8 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::{Provider, UniversalProvider, UsageResult};
 use crate::services::{
-    EndpointLatency, ProviderService as LegacyProviderService, ProviderSortUpdate, SpeedtestService,
-    SwitchResult,
+    EndpointLatency, ProviderService as LegacyProviderService, ProviderSortUpdate,
+    SpeedtestService, SwitchResult,
 };
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -39,9 +39,8 @@ fn to_core_app_type(app_type: AppType) -> cc_switch_core::AppType {
 }
 
 fn core_state() -> Result<cc_switch_core::AppState, AppError> {
-    let state = cc_switch_core::AppState::new(
-        cc_switch_core::Database::new().map_err(map_core_err)?,
-    );
+    let state =
+        cc_switch_core::AppState::new(cc_switch_core::Database::new().map_err(map_core_err)?);
     state.run_startup_maintenance();
     Ok(state)
 }
@@ -67,7 +66,10 @@ pub fn get_providers(app_type: AppType) -> Result<IndexMap<String, Provider>, Ap
     convert(providers)
 }
 
-pub fn legacy_get_current_provider(state: &AppState, app_type: AppType) -> Result<String, AppError> {
+pub fn legacy_get_current_provider(
+    state: &AppState,
+    app_type: AppType,
+) -> Result<String, AppError> {
     LegacyProviderService::current(state, app_type)
 }
 
@@ -82,7 +84,7 @@ pub fn legacy_add_provider(
     app_type: AppType,
     provider: Provider,
 ) -> Result<bool, AppError> {
-    LegacyProviderService::add(state, app_type, provider)
+    LegacyProviderService::add(state, app_type, provider, true)
 }
 
 pub fn add_provider(app_type: AppType, provider: Provider) -> Result<bool, AppError> {
@@ -97,7 +99,7 @@ pub fn legacy_update_provider(
     app_type: AppType,
     provider: Provider,
 ) -> Result<bool, AppError> {
-    LegacyProviderService::update(state, app_type, provider)
+    LegacyProviderService::update(state, app_type, None, provider)
 }
 
 pub fn update_provider(app_type: AppType, provider: Provider) -> Result<bool, AppError> {
@@ -116,7 +118,9 @@ pub fn legacy_delete_provider(
 }
 
 pub fn delete_provider(app_type: AppType, id: &str) -> Result<(), AppError> {
-    with_core_state(|state| cc_switch_core::ProviderService::delete(state, to_core_app_type(app_type), id))
+    with_core_state(|state| {
+        cc_switch_core::ProviderService::delete(state, to_core_app_type(app_type), id)
+    })
 }
 
 pub fn legacy_remove_provider_from_live_config(
@@ -169,8 +173,10 @@ pub fn legacy_import_default_config(state: &AppState, app_type: AppType) -> Resu
 
 pub fn import_default_config(app_type: AppType) -> Result<bool, AppError> {
     with_core_state(|state| {
-        let imported =
-            cc_switch_core::ProviderService::import_default_config(state, to_core_app_type(app_type.clone()))?;
+        let imported = cc_switch_core::ProviderService::import_default_config(
+            state,
+            to_core_app_type(app_type.clone()),
+        )?;
         if imported && state.db.get_config_snippet(app_type.as_str())?.is_none() {
             match cc_switch_core::ProviderService::extract_common_config_snippet(
                 state,
@@ -338,7 +344,11 @@ pub fn legacy_add_custom_endpoint(
     LegacyProviderService::add_custom_endpoint(state, app_type, provider_id, url)
 }
 
-pub fn add_custom_endpoint(app_type: AppType, provider_id: &str, url: String) -> Result<(), AppError> {
+pub fn add_custom_endpoint(
+    app_type: AppType,
+    provider_id: &str,
+    url: String,
+) -> Result<(), AppError> {
     with_core_state(|state| {
         cc_switch_core::ProviderService::add_custom_endpoint(
             state,
@@ -411,10 +421,12 @@ pub fn update_providers_sort_order(
 ) -> Result<bool, AppError> {
     let updates = updates
         .into_iter()
-        .map(|update| cc_switch_core::services::provider::ProviderSortUpdate {
-            id: update.id,
-            sort_index: update.sort_index,
-        })
+        .map(
+            |update| cc_switch_core::services::provider::ProviderSortUpdate {
+                id: update.id,
+                sort_index: update.sort_index,
+            },
+        )
         .collect();
     with_core_state(|state| {
         cc_switch_core::ProviderService::update_sort_order(
@@ -444,7 +456,8 @@ pub fn legacy_get_universal_provider(
 }
 
 pub fn get_universal_provider(id: &str) -> Result<Option<UniversalProvider>, AppError> {
-    let provider = with_core_state(|state| cc_switch_core::ProviderService::get_universal(state, id))?;
+    let provider =
+        with_core_state(|state| cc_switch_core::ProviderService::get_universal(state, id))?;
     convert(provider)
 }
 

@@ -18,7 +18,7 @@ async fn enable_auto_failover_legacy(state: &cc_switch_lib::AppState) -> Result<
             .db
             .get_current_provider("claude")
             .map_err(|e| e.to_string())?
-        .ok_or_else(|| "missing current provider".to_string())?;
+            .ok_or_else(|| "missing current provider".to_string())?;
 
         state
             .db
@@ -54,9 +54,7 @@ async fn enable_auto_failover_legacy(state: &cc_switch_lib::AppState) -> Result<
 
 #[tokio::test(flavor = "current_thread")]
 async fn proxy_baseline_legacy_takeover_start_stop_is_stable() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();
@@ -69,7 +67,11 @@ async fn proxy_baseline_legacy_takeover_start_stop_is_stable() {
         .await
         .expect("enable takeover");
 
-    let running_status = state.proxy_service.get_status().await.expect("proxy status");
+    let running_status = state
+        .proxy_service
+        .get_status()
+        .await
+        .expect("proxy status");
     let takeover_status = state
         .proxy_service
         .get_takeover_status()
@@ -87,7 +89,11 @@ async fn proxy_baseline_legacy_takeover_start_stop_is_stable() {
         .await
         .expect("stop proxy");
 
-    let stopped_status = state.proxy_service.get_status().await.expect("proxy stopped status");
+    let stopped_status = state
+        .proxy_service
+        .get_status()
+        .await
+        .expect("proxy stopped status");
     let takeover_after = state
         .proxy_service
         .get_takeover_status()
@@ -125,9 +131,7 @@ async fn proxy_baseline_legacy_takeover_start_stop_is_stable() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn proxy_baseline_legacy_auto_failover_enable_is_stable() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();
@@ -142,7 +146,10 @@ async fn proxy_baseline_legacy_auto_failover_enable_is_stable() {
         .get_proxy_config_for_app("claude")
         .await
         .expect("proxy config");
-    let queue = state.db.get_failover_queue("claude").expect("failover queue");
+    let queue = state
+        .db
+        .get_failover_queue("claude")
+        .expect("failover queue");
     let current = state
         .db
         .get_current_provider("claude")

@@ -13,10 +13,7 @@ use crate::store::AppState;
 
 use super::support::{fresh_core_state, map_core_err};
 
-pub fn legacy_export_config_to_file(
-    state: &AppState,
-    file_path: &str,
-) -> Result<Value, AppError> {
+pub fn legacy_export_config_to_file(state: &AppState, file_path: &str) -> Result<Value, AppError> {
     state.db.export_sql(Path::new(file_path))?;
     Ok(json!({
         "success": true,
@@ -56,9 +53,8 @@ pub fn import_config_from_file(file_path: &str) -> Result<Value, AppError> {
         .db
         .import_sql(Path::new(file_path))
         .map_err(map_core_err)?;
-    let warning = post_sync_warning_from_result(Ok(run_post_import_sync(Arc::new(
-        Database::init()?,
-    ))));
+    let warning =
+        post_sync_warning_from_result(Ok(run_post_import_sync(Arc::new(Database::init()?))));
     if let Some(msg) = warning.as_ref() {
         log::warn!("[Import] post-import sync warning: {msg}");
     }

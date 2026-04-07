@@ -11,9 +11,7 @@ fn seed_shell_conflict() -> std::path::PathBuf {
 
 #[test]
 fn env_parity_file_conflict_delete_restore_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let path = seed_shell_conflict();

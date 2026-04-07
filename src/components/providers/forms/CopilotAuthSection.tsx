@@ -22,6 +22,7 @@ import {
   User,
 } from "lucide-react";
 import { useCopilotAuth } from "./hooks/useCopilotAuth";
+import { copyText } from "@/lib/clipboard";
 import type { GitHubAccount } from "@/lib/api";
 
 interface CopilotAuthSectionProps {
@@ -67,7 +68,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
   // 复制用户码
   const copyUserCode = async () => {
     if (deviceCode?.user_code) {
-      await navigator.clipboard.writeText(deviceCode.user_code);
+      await copyText(deviceCode.user_code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }

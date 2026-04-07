@@ -11,16 +11,19 @@ fn seed_shell_conflict() -> std::path::PathBuf {
 
 #[test]
 fn env_baseline_legacy_file_conflict_delete_restore_is_stable() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let path = seed_shell_conflict();
     let conflicts = env_bridge::legacy_check_env_conflicts("claude").expect("legacy env scan");
     let file_conflicts: Vec<_> = conflicts
         .into_iter()
-        .filter(|item| item.source_type == "file" && item.source_path.starts_with(path.to_string_lossy().as_ref()))
+        .filter(|item| {
+            item.source_type == "file"
+                && item
+                    .source_path
+                    .starts_with(path.to_string_lossy().as_ref())
+        })
         .collect();
     assert_eq!(file_conflicts.len(), 1);
 

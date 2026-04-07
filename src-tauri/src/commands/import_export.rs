@@ -101,9 +101,9 @@ pub async fn open_zip_file_dialog<R: tauri::Runtime>(
 #[tauri::command]
 pub async fn create_db_backup(_state: State<'_, AppState>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(import_export_bridge::create_db_backup)
-    .await
-    .map_err(|e| format!("Backup failed: {e}"))?
-    .map_err(|e| e.to_string())
+        .await
+        .map_err(|e| format!("Backup failed: {e}"))?
+        .map_err(|e| e.to_string())
 }
 
 /// List all database backup files

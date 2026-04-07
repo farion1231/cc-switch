@@ -25,9 +25,7 @@ fn normalize_provider_snapshot(snapshot: Value) -> Value {
 
 #[test]
 fn deeplink_parity_parse_and_merge_match_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     let legacy = deeplink_bridge::legacy_merge_deeplink_config(
         deeplink_bridge::legacy_parse_deeplink(PROVIDER_URL).expect("legacy parse"),
@@ -46,9 +44,7 @@ fn deeplink_parity_parse_and_merge_match_legacy() {
 
 #[test]
 fn deeplink_parity_provider_import_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();
@@ -70,9 +66,10 @@ fn deeplink_parity_provider_import_matches_legacy() {
     reset_test_fs();
     let _home = ensure_test_home();
     let _core_state = create_empty_core_state();
-    let core_request =
-        deeplink_bridge::merge_deeplink_config(deeplink_bridge::parse_deeplink(PROVIDER_URL).expect("core parse"))
-            .expect("core merge");
+    let core_request = deeplink_bridge::merge_deeplink_config(
+        deeplink_bridge::parse_deeplink(PROVIDER_URL).expect("core parse"),
+    )
+    .expect("core merge");
     deeplink_bridge::import_provider(core_request).expect("core import provider");
     let core_state = create_empty_core_state();
     let core_snapshot = serde_json::to_value(

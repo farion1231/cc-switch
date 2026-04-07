@@ -4,7 +4,8 @@ use crate::error::AppError;
 use crate::services::skill::{DiscoverableSkill, Skill, SkillRepo};
 
 pub fn get_installed_skills() -> Result<Vec<InstalledSkill>, AppError> {
-    let skills = with_core_state(|state| cc_switch_core::SkillService::get_all_installed(&state.db))?;
+    let skills =
+        with_core_state(|state| cc_switch_core::SkillService::get_all_installed(&state.db))?;
     convert(skills)
 }
 
@@ -28,12 +29,7 @@ pub fn uninstall_skill_unified(id: &str) -> Result<(), AppError> {
 
 pub fn toggle_skill_app(id: &str, app: AppType, enabled: bool) -> Result<(), AppError> {
     with_core_state(|state| {
-        cc_switch_core::SkillService::toggle_app(
-            &state.db,
-            id,
-            &to_core_app_type(app),
-            enabled,
-        )
+        cc_switch_core::SkillService::toggle_app(&state.db, id, &to_core_app_type(app), enabled)
     })
 }
 
@@ -43,8 +39,9 @@ pub fn scan_unmanaged_skills() -> Result<Vec<UnmanagedSkill>, AppError> {
 }
 
 pub fn import_skills_from_apps(directories: Vec<String>) -> Result<Vec<InstalledSkill>, AppError> {
-    let skills =
-        with_core_state(|state| cc_switch_core::SkillService::import_from_apps(&state.db, directories))?;
+    let skills = with_core_state(|state| {
+        cc_switch_core::SkillService::import_from_apps(&state.db, directories)
+    })?;
     convert(skills)
 }
 

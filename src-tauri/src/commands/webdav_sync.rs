@@ -129,8 +129,8 @@ pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, S
         tauri::async_runtime::spawn_blocking(move || {
             run_post_import_sync(std::sync::Arc::new(crate::database::Database::init()?))
         })
-            .await
-            .map_err(|e| e.to_string()),
+        .await
+        .map_err(|e| e.to_string()),
     );
     if let Some(msg) = warning.as_ref() {
         log::warn!("[WebDAV] post-download sync warning: {msg}");

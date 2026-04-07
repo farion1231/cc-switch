@@ -26,7 +26,9 @@ pub fn legacy_save_settings(settings: AppSettings) -> Result<bool, AppError> {
     Ok(true)
 }
 
-pub fn save_settings(settings: AppSettings) -> Result<cc_switch_core::SettingsSaveResult, AppError> {
+pub fn save_settings(
+    settings: AppSettings,
+) -> Result<cc_switch_core::SettingsSaveResult, AppError> {
     let settings = convert(settings)?;
     let state = fresh_core_state()?;
     cc_switch_core::SettingsService::save_settings(&state, settings).map_err(map_core_err)
@@ -46,13 +48,16 @@ pub fn get_auto_launch_status() -> Result<bool, AppError> {
     cc_switch_core::AutoLaunchService::is_enabled().map_err(map_core_err)
 }
 
-pub fn legacy_get_rectifier_config(state: &crate::store::AppState) -> Result<RectifierConfig, AppError> {
+pub fn legacy_get_rectifier_config(
+    state: &crate::store::AppState,
+) -> Result<RectifierConfig, AppError> {
     state.db.get_rectifier_config()
 }
 
 pub fn get_rectifier_config() -> Result<RectifierConfig, AppError> {
     let state = fresh_core_state()?;
-    let config = cc_switch_core::SettingsService::get_rectifier_config(&state).map_err(map_core_err)?;
+    let config =
+        cc_switch_core::SettingsService::get_rectifier_config(&state).map_err(map_core_err)?;
     convert(config)
 }
 

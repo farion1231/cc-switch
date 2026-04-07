@@ -47,29 +47,25 @@ fn snapshot(home: &std::path::Path, servers: serde_json::Value) -> serde_json::V
 
 #[test]
 fn mcp_baseline_legacy_upsert_snapshot_is_stable() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
     reset_test_fs();
     let home = ensure_test_home().to_path_buf();
     std::fs::create_dir_all(home.join(".codex")).expect("create codex dir");
-    std::fs::write(home.join(".codex").join("auth.json"), r#"{"OPENAI_API_KEY":"seed-key"}"#)
-        .expect("seed auth");
+    std::fs::write(
+        home.join(".codex").join("auth.json"),
+        r#"{"OPENAI_API_KEY":"seed-key"}"#,
+    )
+    .expect("seed auth");
     std::fs::write(home.join(".codex").join("config.toml"), "").expect("seed config");
 
     let state = create_empty_legacy_state();
     mcp_bridge::legacy_upsert_mcp_server(&state, demo_server()).expect("legacy upsert mcp");
 
     let servers = mcp_bridge::legacy_get_all_mcp_servers(&state).expect("get mcp servers");
-    let snapshot = snapshot(
-        &home,
-        serde_json::to_value(servers).expect("servers json"),
-    );
+    let snapshot = snapshot(&home, serde_json::to_value(servers).expect("servers json"));
 
-    assert!(
-        snapshot["files"]["codex/config.toml"]
-            .as_str()
-            .expect("codex config")
-            .contains("mcp_servers.demo")
-    );
+    assert!(snapshot["files"]["codex/config.toml"]
+        .as_str()
+        .expect("codex config")
+        .contains("mcp_servers.demo"));
 }

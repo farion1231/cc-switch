@@ -426,10 +426,21 @@ pub fn get_env_config() -> Result<OpenClawEnvConfig, AppError> {
         .map_err(|e| AppError::Config(format!("Failed to parse env config: {e}")))
 }
 
+fn ordered_env_value(env: &OpenClawEnvConfig) -> Value {
+    let mut entries: Vec<_> = env.vars.iter().collect();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut map = Map::new();
+    for (key, value) in entries {
+        map.insert(key.clone(), value.clone());
+    }
+
+    Value::Object(map)
+}
+
 pub fn set_env_config(env: &OpenClawEnvConfig) -> Result<(), AppError> {
     let mut config = read_openclaw_config()?;
-    let value = serde_json::to_value(env).map_err(|e| AppError::JsonSerialize { source: e })?;
-    config["env"] = value;
+    config["env"] = ordered_env_value(env);
     write_openclaw_config(&config)
 }
 
@@ -508,7 +519,9 @@ fn derive_entry_separator(leading_ws: &str) -> String {
 }
 
 fn value_to_rt_value(value: &Value, parent_indent: &str) -> Result<RtJSONValue, AppError> {
-    let source = render_json5_value(value, 0);
+    // Match the legacy Tauri write path exactly so parity is driven by one serializer.
+    let source = serde_json::to_string_pretty(value)
+        .map_err(|e| AppError::Config(format!("Failed to serialize JSON section: {e}")))?;
     let adjusted = reindent_json5_block(&source, parent_indent);
     let text = rt_from_str(&adjusted).map_err(|e| {
         AppError::Config(format!(
@@ -541,74 +554,6 @@ fn reindent_json5_block(source: &str, parent_indent: &str) -> String {
 
 fn normalize_json_five_output(source: &str) -> String {
     source.replace("\\/", "/")
-}
-
-fn render_json5_value(value: &Value, depth: usize) -> String {
-    match value {
-        Value::Null => "null".to_string(),
-        Value::Bool(boolean) => boolean.to_string(),
-        Value::Number(number) => number.to_string(),
-        Value::String(string) => {
-            serde_json::to_string(string).expect("serializing string literals should not fail")
-        }
-        Value::Array(values) => render_json5_array(values, depth),
-        Value::Object(map) => render_json5_object(map, depth),
-    }
-}
-
-fn render_json5_array(values: &[Value], depth: usize) -> String {
-    if values.is_empty() {
-        return "[]".to_string();
-    }
-
-    let current_indent = "  ".repeat(depth);
-    let child_indent = "  ".repeat(depth + 1);
-    let body = values
-        .iter()
-        .map(|value| format!("{child_indent}{}", render_json5_value(value, depth + 1)))
-        .collect::<Vec<_>>()
-        .join(",\n");
-
-    format!("[\n{body}\n{current_indent}]")
-}
-
-fn render_json5_object(map: &Map<String, Value>, depth: usize) -> String {
-    if map.is_empty() {
-        return "{}".to_string();
-    }
-
-    let current_indent = "  ".repeat(depth);
-    let child_indent = "  ".repeat(depth + 1);
-    let body = map
-        .iter()
-        .map(|(key, value)| {
-            format!(
-                "{child_indent}{}: {}",
-                render_json5_key(key),
-                render_json5_value(value, depth + 1)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",\n");
-
-    format!("{{\n{body}\n{current_indent}}}")
-}
-
-fn render_json5_key(key: &str) -> String {
-    if should_render_unquoted_key(key) {
-        key.to_string()
-    } else {
-        serde_json::to_string(key).expect("serializing object keys should not fail")
-    }
-}
-
-fn should_render_unquoted_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-
-    matches!(first, 'a'..='z') && chars.all(|ch| matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9'))
 }
 
 fn make_root_pair(key: &str, value: RtJSONValue, closing_ws: String) -> RtJSONKeyValuePair {
@@ -787,9 +732,23 @@ mod tests {
         let path = get_openclaw_config_path();
         let written = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
 
+        assert!(written.contains("models: {"));
+        assert!(written.contains("providers: {},"));
+        assert!(written.contains("env: {"));
+        assert!(written.contains("\"ANTHROPIC_API_KEY\": \"legacy-anthropic\""));
+        assert!(written.contains("\"OPENAI_API_KEY\": \"legacy-openai\""));
+
+        let parsed: Value =
+            json5::from_str(&written).map_err(|e| AppError::Config(e.to_string()))?;
         assert_eq!(
-            written,
-            "{\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n  env: {\n    \"ANTHROPIC_API_KEY\": \"legacy-anthropic\",\n    \"OPENAI_API_KEY\": \"legacy-openai\"\n  }\n}\n"
+            parsed
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_API_KEY")),
+            Some(&Value::String("legacy-anthropic".to_string()))
+        );
+        assert_eq!(
+            parsed.get("env").and_then(|env| env.get("OPENAI_API_KEY")),
+            Some(&Value::String("legacy-openai".to_string()))
         );
 
         Ok(())

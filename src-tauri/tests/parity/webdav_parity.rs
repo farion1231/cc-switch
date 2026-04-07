@@ -1,13 +1,11 @@
-use cc_switch_lib::bridges::webdav as webdav_bridge;
 use cc_switch_core::WebDavSyncSettings;
+use cc_switch_lib::bridges::webdav as webdav_bridge;
 
 use super::support::{ensure_test_home, reset_test_fs, test_mutex};
 
 #[test]
 fn webdav_parity_save_settings_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     let settings = WebDavSyncSettings {
         enabled: true,

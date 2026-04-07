@@ -348,6 +348,8 @@ impl ProviderAdapter for ClaudeAdapter {
                 )]
             }
             AuthStrategy::GitHubCopilot => {
+                // 生成请求追踪 ID
+                let request_id = uuid::Uuid::new_v4().to_string();
                 vec![
                     (
                         HeaderName::from_static("authorization"),
@@ -373,9 +375,30 @@ impl ProviderAdapter for ClaudeAdapter {
                         HeaderName::from_static("x-github-api-version"),
                         HeaderValue::from_static(super::copilot_auth::COPILOT_API_VERSION),
                     ),
+                    // 26-04-01新增的copilot关键 headers
                     (
                         HeaderName::from_static("openai-intent"),
-                        HeaderValue::from_static("conversation-panel"),
+                        HeaderValue::from_static("conversation-agent"),
+                    ),
+                    (
+                        HeaderName::from_static("x-initiator"),
+                        HeaderValue::from_static("user"),
+                    ),
+                    (
+                        HeaderName::from_static("x-interaction-type"),
+                        HeaderValue::from_static("conversation-agent"),
+                    ),
+                    (
+                        HeaderName::from_static("x-vscode-user-agent-library-version"),
+                        HeaderValue::from_static("electron-fetch"),
+                    ),
+                    (
+                        HeaderName::from_static("x-request-id"),
+                        HeaderValue::from_str(&request_id).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("x-agent-task-id"),
+                        HeaderValue::from_str(&request_id).unwrap(),
                     ),
                 ]
             }

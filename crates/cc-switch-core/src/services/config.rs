@@ -6,6 +6,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::settings;
 use crate::settings::AppSettings;
+use crate::store::AppState;
 
 /// Config business logic service
 pub struct ConfigService;
@@ -154,153 +155,43 @@ pub struct DeeplinkService;
 
 impl DeeplinkService {
     /// Import from deeplink URL
-    pub fn import(url: &str, db: &Database) -> Result<DeeplinkImportResult, AppError> {
-        let parsed =
-            url::Url::parse(url).map_err(|e| AppError::Message(format!("Invalid URL: {}", e)))?;
+    pub fn import(url: &str, state: &AppState) -> Result<DeeplinkImportResult, AppError> {
+        let request = crate::parse_deeplink_url(url)?;
 
-        let scheme = parsed.scheme();
-        if scheme != "ccswitch" {
-            return Err(AppError::Message(format!("Invalid scheme: {}", scheme)));
+        match request.resource.as_str() {
+            "provider" => {
+                crate::import_provider_from_deeplink(state, request)?;
+                Ok(DeeplinkImportResult {
+                    item_type: "provider".to_string(),
+                    warnings: vec![],
+                })
+            }
+            "prompt" => {
+                crate::import_prompt_from_deeplink(state, request)?;
+                Ok(DeeplinkImportResult {
+                    item_type: "prompt".to_string(),
+                    warnings: vec![],
+                })
+            }
+            "mcp" => {
+                let result = crate::import_mcp_from_deeplink(state, request)?;
+                Ok(DeeplinkImportResult {
+                    item_type: "mcp".to_string(),
+                    warnings: result
+                        .failed
+                        .into_iter()
+                        .map(|item| format!("{}: {}", item.id, item.error))
+                        .collect(),
+                })
+            }
+            "skill" => {
+                crate::import_skill_from_deeplink(state, request)?;
+                Ok(DeeplinkImportResult {
+                    item_type: "skill".to_string(),
+                    warnings: vec![],
+                })
+            }
+            other => Err(AppError::Message(format!("Unknown import type: {other}"))),
         }
-
-        let host = parsed
-            .host_str()
-            .ok_or_else(|| AppError::Message("Missing host in URL".to_string()))?;
-
-        match host {
-            "provider" => Self::import_provider(&parsed, db),
-            "mcp" => Self::import_mcp(&parsed, db),
-            "skill" => Self::import_skill(&parsed, db),
-            _ => Err(AppError::Message(format!("Unknown import type: {}", host))),
-        }
-    }
-
-    fn import_provider(url: &url::Url, db: &Database) -> Result<DeeplinkImportResult, AppError> {
-        let query: std::collections::HashMap<String, String> = url
-            .query_pairs()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-
-        let name = query
-            .get("name")
-            .ok_or_else(|| AppError::Message("Missing name parameter".to_string()))?;
-        let base_url = query
-            .get("baseUrl")
-            .ok_or_else(|| AppError::Message("Missing baseUrl parameter".to_string()))?;
-        let api_key = query
-            .get("apiKey")
-            .ok_or_else(|| AppError::Message("Missing apiKey parameter".to_string()))?;
-        let app = query.get("app").map(|s| s.as_str()).unwrap_or("claude");
-
-        let id = uuid::Uuid::new_v4().to_string();
-
-        let settings_config = match app {
-            "claude" => serde_json::json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": base_url,
-                    "ANTHROPIC_AUTH_TOKEN": api_key,
-                }
-            }),
-            "codex" => serde_json::json!({
-                "auth": {
-                    "OPENAI_API_KEY": api_key
-                },
-                "config": format!(r#"base_url = "{}""#, base_url)
-            }),
-            "opencode" => serde_json::json!({
-                "npm": "@ai-sdk/openai-compatible",
-                "options": {
-                    "baseURL": base_url,
-                    "apiKey": api_key,
-                },
-                "models": {}
-            }),
-            "openclaw" => serde_json::json!({
-                "baseUrl": base_url,
-                "apiKey": api_key,
-                "api": "openai-completions",
-                "models": []
-            }),
-            _ => serde_json::json!({
-                "env": {
-                    "GOOGLE_GEMINI_BASE_URL": base_url,
-                    "GEMINI_API_KEY": api_key,
-                }
-            }),
-        };
-
-        let provider = crate::provider::Provider {
-            id: id.clone(),
-            name: name.clone(),
-            settings_config,
-            website_url: None,
-            category: None,
-            created_at: Some(chrono::Utc::now().timestamp_millis()),
-            sort_index: None,
-            notes: None,
-            meta: None,
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-
-        db.save_provider(app, &provider)?;
-
-        Ok(DeeplinkImportResult {
-            item_type: "provider".to_string(),
-            warnings: vec![],
-        })
-    }
-
-    fn import_mcp(url: &url::Url, db: &Database) -> Result<DeeplinkImportResult, AppError> {
-        let query: std::collections::HashMap<String, String> = url
-            .query_pairs()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-
-        let id = query
-            .get("id")
-            .ok_or_else(|| AppError::Message("Missing id parameter".to_string()))?;
-        let command = query
-            .get("command")
-            .ok_or_else(|| AppError::Message("Missing command parameter".to_string()))?;
-
-        let args: Vec<String> = query
-            .get("args")
-            .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
-            .unwrap_or_default();
-
-        let server = crate::app_config::McpServer {
-            id: id.clone(),
-            name: id.clone(),
-            server: serde_json::json!({
-                "command": command,
-                "args": args,
-            }),
-            apps: crate::app_config::McpApps {
-                claude: true,
-                codex: false,
-                gemini: false,
-                opencode: false,
-                openclaw: false,
-            },
-            description: None,
-            homepage: None,
-            docs: None,
-            tags: vec![],
-        };
-
-        db.save_mcp_server(&server)?;
-
-        Ok(DeeplinkImportResult {
-            item_type: "mcp".to_string(),
-            warnings: vec![],
-        })
-    }
-
-    fn import_skill(_url: &url::Url, _db: &Database) -> Result<DeeplinkImportResult, AppError> {
-        Err(AppError::Message(
-            "Skill import not implemented".to_string(),
-        ))
     }
 }

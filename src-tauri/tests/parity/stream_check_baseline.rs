@@ -4,9 +4,7 @@ use super::support::{create_empty_legacy_state, ensure_test_home, reset_test_fs,
 
 #[test]
 fn stream_check_baseline_legacy_save_and_get_config_is_stable() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 

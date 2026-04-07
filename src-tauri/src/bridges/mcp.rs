@@ -34,9 +34,8 @@ fn to_core_app_type(app_type: AppType) -> cc_switch_core::AppType {
 }
 
 fn core_state() -> Result<cc_switch_core::AppState, AppError> {
-    let state = cc_switch_core::AppState::new(
-        cc_switch_core::Database::new().map_err(map_core_err)?,
-    );
+    let state =
+        cc_switch_core::AppState::new(cc_switch_core::Database::new().map_err(map_core_err)?);
     state.run_startup_maintenance();
     Ok(state)
 }
@@ -78,7 +77,9 @@ pub fn legacy_get_mcp_servers_for_app(
     }
 }
 
-pub fn get_mcp_servers_for_app(app: AppType) -> Result<HashMap<String, serde_json::Value>, AppError> {
+pub fn get_mcp_servers_for_app(
+    app: AppType,
+) -> Result<HashMap<String, serde_json::Value>, AppError> {
     let all_servers: IndexMap<String, cc_switch_core::McpServer> =
         with_core_state(cc_switch_core::McpService::get_all_servers)?;
 
@@ -210,7 +211,9 @@ pub fn set_mcp_enabled(app: AppType, id: &str, enabled: bool) -> Result<bool, Ap
     })
 }
 
-pub fn legacy_get_all_mcp_servers(state: &AppState) -> Result<IndexMap<String, McpServer>, AppError> {
+pub fn legacy_get_all_mcp_servers(
+    state: &AppState,
+) -> Result<IndexMap<String, McpServer>, AppError> {
     LegacyMcpService::get_all_servers(state)
 }
 

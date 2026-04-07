@@ -6,9 +6,7 @@ use cc_switch_lib::AppType;
 
 #[test]
 fn provider_parity_codex_switch_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();
@@ -27,9 +25,7 @@ fn provider_parity_codex_switch_matches_legacy() {
 
 #[test]
 fn provider_parity_claude_switch_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();

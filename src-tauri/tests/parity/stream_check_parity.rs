@@ -4,15 +4,14 @@ use super::support::{create_empty_legacy_state, ensure_test_home, reset_test_fs,
 
 #[test]
 fn stream_check_parity_save_and_get_config_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();
     let legacy = {
         let legacy_state = create_empty_legacy_state();
-        let mut config = stream_check_bridge::legacy_get_config(&legacy_state).expect("legacy default config");
+        let mut config =
+            stream_check_bridge::legacy_get_config(&legacy_state).expect("legacy default config");
         config.timeout_secs = 22;
         config.max_retries = 3;
         config.degraded_threshold_ms = 4567;
@@ -20,7 +19,8 @@ fn stream_check_parity_save_and_get_config_matches_legacy() {
         config.codex_model = "codex-parity".to_string();
         config.gemini_model = "gemini-parity".to_string();
         config.test_prompt = "hello".to_string();
-        stream_check_bridge::legacy_save_config(&legacy_state, &config).expect("legacy save config");
+        stream_check_bridge::legacy_save_config(&legacy_state, &config)
+            .expect("legacy save config");
         stream_check_bridge::legacy_get_config(&legacy_state).expect("legacy get config")
     };
 

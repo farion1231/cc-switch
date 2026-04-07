@@ -24,12 +24,13 @@ pub async fn handle_import(
     let json = std::fs::read_to_string(input)?;
     let data: serde_json::Value = serde_json::from_str(&json)?;
     cc_switch_core::ConfigService::import_all(&state.db, &data, merge)?;
+    cc_switch_core::ProviderService::sync_current_to_live(state)?;
     printer.success(format!("✓ Imported configuration from {}", input));
     Ok(())
 }
 
 pub async fn handle_deeplink(url: &str, state: &AppState, printer: &Printer) -> anyhow::Result<()> {
-    let result = cc_switch_core::DeeplinkService::import(url, &state.db)?;
+    let result = cc_switch_core::DeeplinkService::import(url, state)?;
     printer.success(format!("✓ Imported {} from deeplink", result.item_type));
     if !result.warnings.is_empty() {
         for warning in &result.warnings {

@@ -30,8 +30,8 @@ pub fn set_proxy_url(url: &str) -> Result<(), AppError> {
 }
 
 pub async fn legacy_test_proxy_url(url: &str) -> Result<cc_switch_core::ProxyTestResult, AppError> {
-    let proxy =
-        reqwest::Proxy::all(url).map_err(|e| AppError::Message(format!("Invalid proxy URL: {e}")))?;
+    let proxy = reqwest::Proxy::all(url)
+        .map_err(|e| AppError::Message(format!("Invalid proxy URL: {e}")))?;
     let start = std::time::Instant::now();
     let client = reqwest::Client::builder()
         .proxy(proxy)
@@ -113,7 +113,11 @@ pub async fn legacy_scan_local_proxies() -> Vec<cc_switch_core::DetectedProxy> {
                     port,
                 });
                 if is_mixed {
-                    let alt_type = if primary_type == "http" { "socks5" } else { "http" };
+                    let alt_type = if primary_type == "http" {
+                        "socks5"
+                    } else {
+                        "http"
+                    };
                     found.push(cc_switch_core::DetectedProxy {
                         url: format!("{alt_type}://127.0.0.1:{port}"),
                         proxy_type: alt_type.to_string(),

@@ -97,10 +97,7 @@ pub fn check_provider_limits(
 
 /// 删除模型定价
 #[tauri::command]
-pub fn delete_model_pricing(
-    _state: State<'_, AppState>,
-    model_id: String,
-) -> Result<(), AppError> {
+pub fn delete_model_pricing(_state: State<'_, AppState>, model_id: String) -> Result<(), AppError> {
     usage_bridge::delete_model_pricing(&model_id)
 }
 

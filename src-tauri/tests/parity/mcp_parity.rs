@@ -49,15 +49,16 @@ fn snapshot(home: &std::path::Path, servers: serde_json::Value) -> serde_json::V
 
 #[test]
 fn mcp_parity_upsert_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let home = ensure_test_home().to_path_buf();
     std::fs::create_dir_all(home.join(".codex")).expect("create codex dir");
-    std::fs::write(home.join(".codex").join("auth.json"), r#"{"OPENAI_API_KEY":"seed-key"}"#)
-        .expect("seed auth");
+    std::fs::write(
+        home.join(".codex").join("auth.json"),
+        r#"{"OPENAI_API_KEY":"seed-key"}"#,
+    )
+    .expect("seed auth");
     std::fs::write(home.join(".codex").join("config.toml"), "").expect("seed config");
     let state = create_empty_legacy_state();
     mcp_bridge::legacy_upsert_mcp_server(&state, demo_server()).expect("legacy upsert mcp");
@@ -70,13 +71,19 @@ fn mcp_parity_upsert_matches_legacy() {
     reset_test_fs();
     let home = ensure_test_home().to_path_buf();
     std::fs::create_dir_all(home.join(".codex")).expect("create codex dir");
-    std::fs::write(home.join(".codex").join("auth.json"), r#"{"OPENAI_API_KEY":"seed-key"}"#)
-        .expect("seed auth");
+    std::fs::write(
+        home.join(".codex").join("auth.json"),
+        r#"{"OPENAI_API_KEY":"seed-key"}"#,
+    )
+    .expect("seed auth");
     std::fs::write(home.join(".codex").join("config.toml"), "").expect("seed config");
     let _state = create_empty_core_state();
     mcp_bridge::upsert_mcp_server(demo_server()).expect("core upsert mcp");
     let core_servers = mcp_bridge::get_all_mcp_servers().expect("core servers");
-    let core = snapshot(&home, serde_json::to_value(core_servers).expect("core json"));
+    let core = snapshot(
+        &home,
+        serde_json::to_value(core_servers).expect("core json"),
+    );
 
     assert_eq!(core, legacy);
 }

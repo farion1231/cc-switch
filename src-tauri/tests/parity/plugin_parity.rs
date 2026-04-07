@@ -36,9 +36,7 @@ fn legacy_plugin_snapshot() -> serde_json::Value {
 
 #[test]
 fn plugin_parity_apply_and_onboarding_match_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     plugin_bridge::legacy_apply_config(false).expect("legacy apply config");

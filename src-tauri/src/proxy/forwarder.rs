@@ -14,7 +14,7 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
 use crate::commands::CopilotAuthState;
@@ -52,6 +52,8 @@ pub struct RequestForwarder {
     rectifier_config: RectifierConfig,
     /// 优化器配置
     optimizer_config: OptimizerConfig,
+    /// Copilot 优化器配置
+    copilot_optimizer_config: CopilotOptimizerConfig,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
 }
@@ -70,6 +72,7 @@ impl RequestForwarder {
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
+        copilot_optimizer_config: CopilotOptimizerConfig,
     ) -> Self {
         Self {
             router,
@@ -80,6 +83,7 @@ impl RequestForwarder {
             current_provider_id_at_start,
             rectifier_config,
             optimizer_config,
+            copilot_optimizer_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
     }
@@ -747,7 +751,7 @@ impl RequestForwarder {
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
-        let base_url = adapter.extract_base_url(provider)?;
+        let mut base_url = adapter.extract_base_url(provider)?;
 
         let is_full_url = provider
             .meta
@@ -760,7 +764,7 @@ impl RequestForwarder {
             super::model_mapper::apply_model_mapping(body.clone(), provider);
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
-        let mapped_body = normalize_thinking_type(mapped_body);
+        let mut mapped_body = normalize_thinking_type(mapped_body);
 
         // 确定有效端点
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
@@ -770,6 +774,92 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
+
+        // --- Copilot 优化器：请求体优化 + 分类（在格式转换之前执行） ---
+        // 注意：确定性 ID 也在此处计算，因为 mapped_body 在格式转换时会被 move
+        let copilot_optimization = if is_copilot && self.copilot_optimizer_config.enabled {
+            // 1. Tool result 合并 — 必须在分类之前执行
+            //    合并将 [tool_result, text] 变为 [tool_result(含text)]，
+            //    分类才能正确识别为 agent（全是 tool_result）而非 user（有 text block）
+            if self.copilot_optimizer_config.tool_result_merging {
+                mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
+            }
+
+            // 2. 在合并后的 body 上进行分类
+            let has_anthropic_beta = headers.contains_key("anthropic-beta");
+            let classification = super::copilot_optimizer::classify_request(
+                &mapped_body,
+                has_anthropic_beta,
+                self.copilot_optimizer_config.compact_detection,
+            );
+
+            log::debug!(
+                "[Copilot] 优化器分类: initiator={}, is_warmup={}, is_compact={}",
+                classification.initiator,
+                classification.is_warmup,
+                classification.is_compact
+            );
+
+            // 3. Warmup 小模型降级
+            if self.copilot_optimizer_config.warmup_downgrade && classification.is_warmup {
+                log::info!(
+                    "[Copilot] Warmup 请求降级到模型: {}",
+                    self.copilot_optimizer_config.warmup_model
+                );
+                mapped_body["model"] =
+                    serde_json::json!(&self.copilot_optimizer_config.warmup_model);
+            }
+
+            // 预计算确定性 Request ID（在 body 被 move 之前）
+            // 使用 session_id 从 body.metadata.user_id 或请求头提取
+            let session_id = body
+                .pointer("/metadata/user_id")
+                .and_then(|v| v.as_str())
+                .or_else(|| headers.get("x-session-id").and_then(|v| v.to_str().ok()))
+                .unwrap_or("");
+            let det_request_id = if self.copilot_optimizer_config.deterministic_request_id {
+                Some(super::copilot_optimizer::deterministic_request_id(
+                    &mapped_body,
+                    session_id,
+                ))
+            } else {
+                None
+            };
+
+            Some((classification, det_request_id))
+        } else {
+            None
+        };
+
+        // GitHub Copilot 动态 endpoint 路由
+        // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
+        if is_copilot && !is_full_url {
+            if let Some(app_handle) = &self.app_handle {
+                let copilot_state = app_handle.state::<CopilotAuthState>();
+                let copilot_auth = copilot_state.0.read().await;
+
+                // 从 provider.meta 获取关联的 GitHub 账号 ID
+                let account_id = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.managed_account_id_for("github_copilot"));
+
+                let dynamic_endpoint = match &account_id {
+                    Some(id) => copilot_auth.get_api_endpoint(id).await,
+                    None => copilot_auth.get_default_api_endpoint().await,
+                };
+
+                // 只在动态 endpoint 与当前 base_url 不同时替换
+                if dynamic_endpoint != base_url {
+                    log::debug!(
+                        "[Copilot] 使用动态 API endpoint: {} (原: {})",
+                        dynamic_endpoint,
+                        base_url
+                    );
+                    base_url = dynamic_endpoint;
+                }
+            }
+        }
         let resolved_claude_api_format = if adapter.name() == "Claude" {
             Some(
                 self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
@@ -828,7 +918,7 @@ impl RequestForwarder {
             || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
         // 获取认证头（提前准备，用于内联替换）
-        let auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
+        let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
                 if let Some(app_handle) = &self.app_handle {
@@ -884,6 +974,25 @@ impl RequestForwarder {
             Vec::new()
         };
 
+        // --- Copilot 优化器：动态 header 注入 ---
+        if let Some((ref classification, ref det_request_id)) = copilot_optimization {
+            for (name, value) in auth_headers.iter_mut() {
+                match name.as_str() {
+                    "x-initiator" if self.copilot_optimizer_config.request_classification => {
+                        *value = http::HeaderValue::from_static(classification.initiator);
+                    }
+                    "x-request-id" | "x-agent-task-id" => {
+                        if let Some(ref det_id) = det_request_id {
+                            if let Ok(hv) = http::HeaderValue::from_str(det_id) {
+                                *value = hv;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // Copilot 指纹头名（由 get_auth_headers 注入，需在原始头中去重）
         let copilot_fingerprint_headers: &[&str] = if is_copilot {
             &[
@@ -893,6 +1002,12 @@ impl RequestForwarder {
                 "copilot-integration-id",
                 "x-github-api-version",
                 "openai-intent",
+                // 新增 headers
+                "x-initiator",
+                "x-interaction-type",
+                "x-vscode-user-agent-library-version",
+                "x-request-id",
+                "x-agent-task-id",
             ]
         } else {
             &[]
@@ -1662,5 +1777,108 @@ mod tests {
             &json!({ "model": "gpt-5" }),
             &headers
         ));
+    }
+
+    // ==================== Copilot 动态 endpoint 路由相关测试 ====================
+
+    /// 验证 is_copilot 检测逻辑：通过 provider_type 判断
+    #[test]
+    fn copilot_detection_via_provider_type() {
+        use crate::provider::{Provider, ProviderMeta};
+
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test Copilot".to_string(),
+            settings_config: serde_json::json!({}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let is_copilot = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("github_copilot");
+
+        assert!(is_copilot, "应该通过 provider_type 检测为 Copilot");
+    }
+
+    /// 验证 is_copilot 检测逻辑：通过 base_url 判断
+    #[test]
+    fn copilot_detection_via_base_url() {
+        let base_url = "https://api.githubcopilot.com";
+        let is_copilot = base_url.contains("githubcopilot.com");
+        assert!(is_copilot, "应该通过 base_url 检测为 Copilot");
+
+        let non_copilot_url = "https://api.anthropic.com";
+        let is_not_copilot = non_copilot_url.contains("githubcopilot.com");
+        assert!(!is_not_copilot, "非 Copilot URL 不应被检测为 Copilot");
+    }
+
+    /// 验证企业版 endpoint（不包含 githubcopilot.com）场景下 is_copilot 仍然正确
+    #[test]
+    fn copilot_detection_for_enterprise_endpoint() {
+        use crate::provider::{Provider, ProviderMeta};
+
+        // 企业版场景：provider_type 是 github_copilot，但 base_url 可能是企业内部域名
+        let provider = Provider {
+            id: "enterprise".to_string(),
+            name: "Enterprise Copilot".to_string(),
+            settings_config: serde_json::json!({}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let enterprise_base_url = "https://copilot-api.corp.example.com";
+
+        // is_copilot 应该通过 provider_type 检测成功，即使 base_url 不包含 githubcopilot.com
+        let is_copilot = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("github_copilot")
+            || enterprise_base_url.contains("githubcopilot.com");
+
+        assert!(
+            is_copilot,
+            "企业版 Copilot 应该通过 provider_type 被正确检测"
+        );
+    }
+
+    /// 验证动态 endpoint 替换条件
+    #[test]
+    fn dynamic_endpoint_replacement_conditions() {
+        // 条件：is_copilot && !is_full_url
+        let test_cases = [
+            (true, false, true, "Copilot + 非 full_url 应该替换"),
+            (true, true, false, "Copilot + full_url 不应替换"),
+            (false, false, false, "非 Copilot 不应替换"),
+            (false, true, false, "非 Copilot + full_url 不应替换"),
+        ];
+
+        for (is_copilot, is_full_url, should_replace, desc) in test_cases {
+            let will_replace = is_copilot && !is_full_url;
+            assert_eq!(will_replace, should_replace, "{desc}");
+        }
     }
 }

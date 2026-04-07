@@ -2,7 +2,8 @@ use crate::bridges::support::{convert, map_core_err};
 use crate::error::AppError;
 use crate::openclaw_config::get_openclaw_dir;
 
-pub fn legacy_list_daily_memory_files() -> Result<Vec<cc_switch_core::DailyMemoryFileInfo>, AppError> {
+pub fn legacy_list_daily_memory_files() -> Result<Vec<cc_switch_core::DailyMemoryFileInfo>, AppError>
+{
     let memory_dir = get_openclaw_dir().join("workspace").join("memory");
     if !memory_dir.exists() {
         return Ok(Vec::new());
@@ -74,13 +75,15 @@ pub fn legacy_write_daily_memory_file(filename: &str, content: &str) -> Result<(
 }
 
 pub fn write_daily_memory_file(filename: &str, content: &str) -> Result<(), AppError> {
-    cc_switch_core::WorkspaceService::write_daily_memory_file(filename, content).map_err(map_core_err)
+    cc_switch_core::WorkspaceService::write_daily_memory_file(filename, content)
+        .map_err(map_core_err)
 }
 
 pub fn legacy_search_daily_memory_files(
     query: &str,
 ) -> Result<Vec<cc_switch_core::DailyMemorySearchResult>, AppError> {
-    let results = cc_switch_core::WorkspaceService::search_daily_memory_files(query).map_err(map_core_err)?;
+    let results =
+        cc_switch_core::WorkspaceService::search_daily_memory_files(query).map_err(map_core_err)?;
     convert(results)
 }
 

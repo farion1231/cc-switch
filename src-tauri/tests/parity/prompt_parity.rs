@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use cc_switch_lib::{bridges::prompt as prompt_bridge, AppType, MultiAppConfig, Prompt};
 
-use super::support::{create_core_state_with_config, create_legacy_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
+use super::support::{
+    create_core_state_with_config, create_legacy_state_with_config, ensure_test_home,
+    reset_test_fs, test_mutex,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct PromptSnapshot {
@@ -34,8 +37,8 @@ fn legacy_snapshot() -> PromptSnapshot {
 
     let prompts =
         prompt_bridge::legacy_get_prompts(&state, AppType::Claude).expect("legacy prompts");
-    let current_file =
-        prompt_bridge::legacy_get_current_prompt_file_content(AppType::Claude).expect("current file");
+    let current_file = prompt_bridge::legacy_get_current_prompt_file_content(AppType::Claude)
+        .expect("current file");
 
     let mut files = BTreeMap::new();
     let prompt_path = home.join(".claude").join("CLAUDE.md");
@@ -76,9 +79,7 @@ fn core_snapshot() -> PromptSnapshot {
 
 #[test]
 fn prompt_parity_upsert_enabled_prompt_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
     let legacy = legacy_snapshot();
     let core = core_snapshot();
     assert_eq!(core, legacy);

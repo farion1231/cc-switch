@@ -102,8 +102,16 @@ impl SettingsService {
     }
 
     fn merge_settings_for_save(mut incoming: AppSettings, existing: &AppSettings) -> AppSettings {
-        if incoming.webdav_sync.is_none() {
-            incoming.webdav_sync = existing.webdav_sync.clone();
+        match (&mut incoming.webdav_sync, &existing.webdav_sync) {
+            (None, _) => {
+                incoming.webdav_sync = existing.webdav_sync.clone();
+            }
+            (Some(incoming_sync), Some(existing_sync))
+                if incoming_sync.password.is_empty() && !existing_sync.password.is_empty() =>
+            {
+                incoming_sync.password = existing_sync.password.clone();
+            }
+            _ => {}
         }
         incoming
     }
@@ -162,6 +170,49 @@ mod tests {
                 .as_ref()
                 .map(|item| item.base_url.as_str()),
             Some("https://dav.example.com")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn save_settings_preserves_existing_webdav_password_when_incoming_is_empty(
+    ) -> Result<(), crate::error::AppError> {
+        let temp = tempdir().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let state = AppState::new(Database::memory()?);
+
+        update_settings(AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                base_url: "https://dav.example.com".to_string(),
+                username: "alice".to_string(),
+                password: "secret".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        })?;
+
+        let result = SettingsService::save_settings(
+            &state,
+            AppSettings {
+                webdav_sync: Some(WebDavSyncSettings {
+                    base_url: "https://dav.example.com".to_string(),
+                    username: "alice".to_string(),
+                    password: String::new(),
+                    ..WebDavSyncSettings::default()
+                }),
+                ..AppSettings::default()
+            },
+        )?;
+
+        assert!(result.warnings.is_empty());
+        assert_eq!(
+            crate::settings::get_settings()
+                .webdav_sync
+                .as_ref()
+                .map(|item| item.password.as_str()),
+            Some("secret")
         );
 
         Ok(())

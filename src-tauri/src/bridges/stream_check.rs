@@ -1,6 +1,8 @@
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::services::stream_check::{StreamCheckConfig, StreamCheckResult, StreamCheckService as LegacyStreamCheckService};
+use crate::services::stream_check::{
+    StreamCheckConfig, StreamCheckResult, StreamCheckService as LegacyStreamCheckService,
+};
 use crate::store::AppState;
 
 use super::support::{convert, fresh_core_state, with_core_state};
@@ -32,7 +34,9 @@ pub async fn legacy_check_provider(
     let provider = providers
         .get(provider_id)
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
-    let result = LegacyStreamCheckService::check_with_retry(&app_type, provider, &config, None, None).await?;
+    let result =
+        LegacyStreamCheckService::check_with_retry(&app_type, provider, &config, None, None, None)
+            .await?;
     let _ = state
         .db
         .save_stream_check_log(provider_id, &provider.name, app_type.as_str(), &result);
@@ -45,10 +49,9 @@ pub async fn check_provider(
 ) -> Result<StreamCheckResult, AppError> {
     let app_type = super::support::to_core_app_type(app_type);
     let state = fresh_core_state()?;
-    let result =
-        cc_switch_core::StreamCheckService::check_provider(&state, app_type, provider_id)
-            .await
-            .map_err(super::support::map_core_err)?;
+    let result = cc_switch_core::StreamCheckService::check_provider(&state, app_type, provider_id)
+        .await
+        .map_err(super::support::map_core_err)?;
     convert(result)
 }
 
@@ -82,18 +85,20 @@ pub async fn legacy_check_all_providers(
             }
         }
 
-        let result = LegacyStreamCheckService::check_with_retry(&app_type, &provider, &config, None, None)
-            .await
-            .unwrap_or_else(|error| StreamCheckResult {
-                status: crate::services::stream_check::HealthStatus::Failed,
-                success: false,
-                message: error.to_string(),
-                response_time_ms: None,
-                http_status: None,
-                model_used: String::new(),
-                tested_at: chrono::Utc::now().timestamp(),
-                retry_count: 0,
-            });
+        let result = LegacyStreamCheckService::check_with_retry(
+            &app_type, &provider, &config, None, None, None,
+        )
+        .await
+        .unwrap_or_else(|error| StreamCheckResult {
+            status: crate::services::stream_check::HealthStatus::Failed,
+            success: false,
+            message: error.to_string(),
+            response_time_ms: None,
+            http_status: None,
+            model_used: String::new(),
+            tested_at: chrono::Utc::now().timestamp(),
+            retry_count: 0,
+        });
 
         let _ = state
             .db

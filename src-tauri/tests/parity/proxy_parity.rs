@@ -20,7 +20,7 @@ async fn enable_auto_failover_legacy(state: &cc_switch_lib::AppState) -> Result<
             .db
             .get_current_provider("claude")
             .map_err(|e| e.to_string())?
-        .ok_or_else(|| "missing current provider".to_string())?;
+            .ok_or_else(|| "missing current provider".to_string())?;
 
         state
             .db
@@ -64,9 +64,7 @@ fn read_claude_live() -> serde_json::Value {
 
 #[tokio::test(flavor = "current_thread")]
 async fn proxy_parity_takeover_start_stop_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();
@@ -145,9 +143,7 @@ async fn proxy_parity_takeover_start_stop_matches_legacy() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn proxy_parity_auto_failover_enable_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();

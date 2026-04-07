@@ -146,9 +146,7 @@ pub async fn get_skills(
 ) -> Result<Vec<Skill>, String> {
     let _ = service;
     let _ = app_state;
-    skill_bridge::get_skills()
-        .await
-        .map_err(|e| e.to_string())
+    skill_bridge::get_skills().await.map_err(|e| e.to_string())
 }
 
 /// 获取指定应用的技能列表（兼容旧 API）

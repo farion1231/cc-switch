@@ -34,7 +34,9 @@ fn create_skill_zip() -> std::path::PathBuf {
     let file = fs::File::create(&path).expect("create zip");
     let mut writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default();
-    writer.start_file("SKILL.md", options).expect("start skill file");
+    writer
+        .start_file("SKILL.md", options)
+        .expect("start skill file");
     writer
         .write_all(b"---\nname: Zip Skill\ndescription: from zip\n---\n")
         .expect("write skill");
@@ -74,9 +76,7 @@ fn normalize_skills(mut value: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn skill_parity_import_from_apps_matches_core() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();
@@ -111,9 +111,7 @@ fn skill_parity_import_from_apps_matches_core() {
 
 #[test]
 fn skill_parity_zip_install_matches_core() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     let zip_path = create_skill_zip();
 

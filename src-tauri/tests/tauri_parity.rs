@@ -1,21 +1,3 @@
-#[path = "parity/support.rs"]
-mod support;
-#[path = "parity/mcp_baseline.rs"]
-mod mcp_baseline;
-#[path = "parity/mcp_parity.rs"]
-mod mcp_parity;
-#[path = "parity/openclaw_omo_baseline.rs"]
-mod openclaw_omo_baseline;
-#[path = "parity/openclaw_omo_parity.rs"]
-mod openclaw_omo_parity;
-#[path = "parity/plugin_baseline.rs"]
-mod plugin_baseline;
-#[path = "parity/plugin_parity.rs"]
-mod plugin_parity;
-#[path = "parity/global_proxy_baseline.rs"]
-mod global_proxy_baseline;
-#[path = "parity/global_proxy_parity.rs"]
-mod global_proxy_parity;
 #[path = "parity/config_baseline.rs"]
 mod config_baseline;
 #[path = "parity/config_parity.rs"]
@@ -28,10 +10,26 @@ mod deeplink_parity;
 mod env_baseline;
 #[path = "parity/env_parity.rs"]
 mod env_parity;
+#[path = "parity/global_proxy_baseline.rs"]
+mod global_proxy_baseline;
+#[path = "parity/global_proxy_parity.rs"]
+mod global_proxy_parity;
 #[path = "parity/import_export_baseline.rs"]
 mod import_export_baseline;
 #[path = "parity/import_export_parity.rs"]
 mod import_export_parity;
+#[path = "parity/mcp_baseline.rs"]
+mod mcp_baseline;
+#[path = "parity/mcp_parity.rs"]
+mod mcp_parity;
+#[path = "parity/openclaw_omo_baseline.rs"]
+mod openclaw_omo_baseline;
+#[path = "parity/openclaw_omo_parity.rs"]
+mod openclaw_omo_parity;
+#[path = "parity/plugin_baseline.rs"]
+mod plugin_baseline;
+#[path = "parity/plugin_parity.rs"]
+mod plugin_parity;
 #[path = "parity/prompt_baseline.rs"]
 mod prompt_baseline;
 #[path = "parity/prompt_parity.rs"]
@@ -52,14 +50,16 @@ mod session_parity;
 mod settings_baseline;
 #[path = "parity/settings_parity.rs"]
 mod settings_parity;
-#[path = "parity/stream_check_baseline.rs"]
-mod stream_check_baseline;
-#[path = "parity/stream_check_parity.rs"]
-mod stream_check_parity;
 #[path = "parity/skill_baseline.rs"]
 mod skill_baseline;
 #[path = "parity/skill_parity.rs"]
 mod skill_parity;
+#[path = "parity/stream_check_baseline.rs"]
+mod stream_check_baseline;
+#[path = "parity/stream_check_parity.rs"]
+mod stream_check_parity;
+#[path = "parity/support.rs"]
+mod support;
 #[path = "parity/usage_baseline.rs"]
 mod usage_baseline;
 #[path = "parity/usage_parity.rs"]

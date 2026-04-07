@@ -15,9 +15,7 @@ fn demo_settings() -> AppSettings {
 
 #[test]
 fn settings_parity_save_and_get_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();

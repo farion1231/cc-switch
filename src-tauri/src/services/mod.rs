@@ -1,7 +1,9 @@
+pub mod coding_plan;
 pub mod config;
 pub mod env_checker;
 pub mod env_manager;
 pub mod mcp;
+pub mod model_fetch;
 pub mod omo;
 pub mod prompt;
 pub mod provider;
@@ -9,6 +11,7 @@ pub mod proxy;
 pub mod skill;
 pub mod speedtest;
 pub mod stream_check;
+pub mod subscription;
 pub mod usage_stats;
 pub mod webdav;
 pub mod webdav_auto_sync;

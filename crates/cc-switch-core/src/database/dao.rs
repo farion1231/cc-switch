@@ -45,7 +45,7 @@ impl Database {
                 Ok(Provider {
                     id: row.get(0)?,
                     name: row.get(1)?,
-                    settings_config: parse_json(row.get(2)?),
+                    settings_config: parse_json(row.get(2)?)?,
                     website_url: row.get(3)?,
                     category: row.get(4)?,
                     created_at: row.get(5)?,
@@ -53,7 +53,7 @@ impl Database {
                     notes: row.get(7)?,
                     icon: row.get(8)?,
                     icon_color: row.get(9)?,
-                    meta: Some(parse_json(row.get::<_, String>(10)?)),
+                    meta: Some(parse_json(row.get::<_, String>(10)?)?),
                     in_failover_queue: row.get(11)?,
                 })
             })
@@ -410,10 +410,10 @@ impl Database {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     provider_type: row.get(2)?,
-                    apps: parse_json(row.get(3)?),
+                    apps: parse_json(row.get(3)?)?,
                     base_url: row.get(4)?,
                     api_key: row.get(5)?,
-                    models: parse_json(row.get(6)?),
+                    models: parse_json(row.get(6)?)?,
                     website_url: row.get(7)?,
                     notes: row.get(8)?,
                     icon: row.get(9)?,
@@ -446,10 +446,10 @@ impl Database {
                         id: row.get(0)?,
                         name: row.get(1)?,
                         provider_type: row.get(2)?,
-                        apps: parse_json(row.get(3)?),
+                        apps: parse_json(row.get(3)?)?,
                         base_url: row.get(4)?,
                         api_key: row.get(5)?,
-                        models: parse_json(row.get(6)?),
+                        models: parse_json(row.get(6)?)?,
                         website_url: row.get(7)?,
                         notes: row.get(8)?,
                         icon: row.get(9)?,
@@ -517,11 +517,11 @@ impl Database {
                 Ok(McpServer {
                     id: row.get(0)?,
                     name: row.get(1)?,
-                    server: parse_json(row.get(2)?),
+                    server: parse_json(row.get(2)?)?,
                     description: row.get(3)?,
                     homepage: row.get(4)?,
                     docs: row.get(5)?,
-                    tags: parse_json(row.get(6)?),
+                    tags: parse_json(row.get(6)?)?,
                     apps: McpApps {
                         claude: row.get(7)?,
                         codex: row.get(8)?,
@@ -553,11 +553,11 @@ impl Database {
                     Ok(McpServer {
                         id: row.get(0)?,
                         name: row.get(1)?,
-                        server: parse_json(row.get(2)?),
+                        server: parse_json(row.get(2)?)?,
                         description: row.get(3)?,
                         homepage: row.get(4)?,
                         docs: row.get(5)?,
-                        tags: parse_json(row.get(6)?),
+                        tags: parse_json(row.get(6)?)?,
                         apps: McpApps {
                             claude: row.get(7)?,
                             codex: row.get(8)?,
@@ -1175,13 +1175,21 @@ impl Database {
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 drop(conn);
                 self.ensure_runtime_proxy_config_rows_initialized()?;
-                let (max_retries, first_byte_timeout, idle_timeout, circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold, circuit_min_requests) =
-                    match app_type {
-                        "claude" => (6, 90, 180, 8, 3, 90, 0.7, 15),
-                        "codex" => (3, 60, 120, 4, 2, 60, 0.6, 10),
-                        "gemini" => (5, 60, 120, 4, 2, 60, 0.6, 10),
-                        _ => (3, 60, 120, 4, 2, 60, 0.6, 10),
-                    };
+                let (
+                    max_retries,
+                    first_byte_timeout,
+                    idle_timeout,
+                    circuit_failure_threshold,
+                    circuit_success_threshold,
+                    circuit_timeout_seconds,
+                    circuit_error_rate_threshold,
+                    circuit_min_requests,
+                ) = match app_type {
+                    "claude" => (6, 90, 180, 8, 3, 90, 0.7, 15),
+                    "codex" => (3, 60, 120, 4, 2, 60, 0.6, 10),
+                    "gemini" => (5, 60, 120, 4, 2, 60, 0.6, 10),
+                    _ => (3, 60, 120, 4, 2, 60, 0.6, 10),
+                };
                 Ok(AppProxyConfig {
                     app_type: app_type_owned,
                     enabled: false,
@@ -1849,7 +1857,8 @@ impl Database {
         } else {
             format!("WHERE {}", conditions.join(" AND "))
         };
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|item| item.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|item| item.as_ref()).collect();
 
         let sql = format!(
             "SELECT
@@ -2778,8 +2787,14 @@ pub(crate) fn find_model_pricing_row(
     Ok(exact)
 }
 
-fn parse_json<T: DeserializeOwned>(json: String) -> T {
-    serde_json::from_str(&json).unwrap_or_else(|_| panic!("Failed to parse JSON: {}", json))
+fn parse_json<T: DeserializeOwned>(json: String) -> rusqlite::Result<T> {
+    serde_json::from_str(&json).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(
+            json.len(),
+            rusqlite::types::Type::Text,
+            Box::new(err),
+        )
+    })
 }
 
 fn load_provider_endpoints(

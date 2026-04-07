@@ -57,6 +57,9 @@ export interface ProviderPreset {
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
+
+  // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
+  hidden?: boolean;
 }
 
 export const providerPresets: ProviderPreset[] = [

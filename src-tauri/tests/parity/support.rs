@@ -34,9 +34,8 @@ pub fn create_legacy_state_with_config(config: &MultiAppConfig) -> AppState {
 pub fn create_core_state_with_config(config: &MultiAppConfig) -> cc_switch_core::AppState {
     let _ = update_settings(AppSettings::default());
     let _ = cc_switch_core::settings::update_settings(cc_switch_core::AppSettings::default());
-    let state = cc_switch_core::AppState::new(
-        cc_switch_core::Database::new().expect("init core db"),
-    );
+    let state =
+        cc_switch_core::AppState::new(cc_switch_core::Database::new().expect("init core db"));
 
     for (app, manager) in &config.apps {
         for provider in manager.providers.values() {
@@ -52,7 +51,9 @@ pub fn create_core_state_with_config(config: &MultiAppConfig) -> cc_switch_core:
                 .set_current_provider(app, &manager.current)
                 .expect("set core current provider");
 
-            let app_type = app.parse::<cc_switch_core::AppType>().expect("parse app type");
+            let app_type = app
+                .parse::<cc_switch_core::AppType>()
+                .expect("parse app type");
             if !app_type.is_additive_mode() {
                 cc_switch_core::settings::set_current_provider(&app_type, Some(&manager.current))
                     .expect("set core effective current provider");
@@ -183,7 +184,10 @@ pub fn provider_state_snapshot(
 ) -> ProviderSwitchSnapshot {
     let mut files = BTreeMap::new();
     for (key, path) in [
-        ("claude/settings.json", root.join(".claude").join("settings.json")),
+        (
+            "claude/settings.json",
+            root.join(".claude").join("settings.json"),
+        ),
         ("claude/mcp.json", root.join(".claude.json")),
         ("codex/auth.json", root.join(".codex").join("auth.json")),
         ("codex/config.toml", root.join(".codex").join("config.toml")),
@@ -192,7 +196,10 @@ pub fn provider_state_snapshot(
             "opencode/opencode.json",
             root.join(".config").join("opencode").join("opencode.json"),
         ),
-        ("openclaw/openclaw.json", root.join(".openclaw").join("openclaw.json")),
+        (
+            "openclaw/openclaw.json",
+            root.join(".openclaw").join("openclaw.json"),
+        ),
     ] {
         if let Ok(content) = std::fs::read_to_string(path) {
             files.insert(key.to_string(), content);
@@ -340,10 +347,12 @@ pub fn run_legacy_switch_case(
     provider_id: &str,
 ) -> Result<ProviderSwitchSnapshot, cc_switch_lib::AppError> {
     let state = create_legacy_state_with_config(config);
-    let result =
-        cc_switch_lib::provider_bridge::legacy_switch_provider(&state, app_type.clone(), provider_id)?;
-    let providers =
-        cc_switch_lib::provider_bridge::legacy_get_providers(&state, app_type.clone())?;
+    let result = cc_switch_lib::provider_bridge::legacy_switch_provider(
+        &state,
+        app_type.clone(),
+        provider_id,
+    )?;
+    let providers = cc_switch_lib::provider_bridge::legacy_get_providers(&state, app_type.clone())?;
     let current =
         cc_switch_lib::provider_bridge::legacy_get_current_provider(&state, app_type.clone())?;
     let root = std::env::var("CC_SWITCH_TEST_HOME").expect("CC_SWITCH_TEST_HOME");
@@ -352,7 +361,11 @@ pub fn run_legacy_switch_case(
         app_type.as_str(),
         serde_json::to_value(result).expect("legacy switch result"),
         serde_json::to_value(providers).expect("legacy providers"),
-        if current.is_empty() { None } else { Some(current) },
+        if current.is_empty() {
+            None
+        } else {
+            Some(current)
+        },
     ))
 }
 
@@ -371,6 +384,10 @@ pub fn run_core_switch_case(
         app_type.as_str(),
         serde_json::to_value(result).expect("core switch result"),
         serde_json::to_value(providers).expect("core providers"),
-        if current.is_empty() { None } else { Some(current) },
+        if current.is_empty() {
+            None
+        } else {
+            Some(current)
+        },
     ))
 }

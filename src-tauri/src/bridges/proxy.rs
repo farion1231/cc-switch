@@ -6,8 +6,8 @@ use crate::database::FailoverQueueItem as LegacyFailoverQueueItem;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::types::{
-    AppProxyConfig, GlobalProxyConfig, ProviderHealth, ProxyConfig, ProxyServerInfo,
-    ProxyStatus, ProxyTakeoverStatus,
+    AppProxyConfig, GlobalProxyConfig, ProviderHealth, ProxyConfig, ProxyServerInfo, ProxyStatus,
+    ProxyTakeoverStatus,
 };
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 
@@ -36,7 +36,8 @@ fn runtime_state() -> Result<cc_switch_core::AppState, AppError> {
         }
     }
 
-    let state = cc_switch_core::AppState::new(cc_switch_core::Database::new().map_err(map_core_err)?);
+    let state =
+        cc_switch_core::AppState::new(cc_switch_core::Database::new().map_err(map_core_err)?);
     state.run_startup_maintenance();
     let cloned = state.clone();
     *guard = Some(RuntimeProxyState { key, state });
@@ -54,8 +55,11 @@ fn map_proxy_err(err: String) -> AppError {
     AppError::Message(err)
 }
 
-fn convert_failover_queue(items: Vec<cc_switch_core::proxy::FailoverQueueItem>) -> Vec<LegacyFailoverQueueItem> {
-    items.into_iter()
+fn convert_failover_queue(
+    items: Vec<cc_switch_core::proxy::FailoverQueueItem>,
+) -> Vec<LegacyFailoverQueueItem> {
+    items
+        .into_iter()
         .map(|item| LegacyFailoverQueueItem {
             provider_id: item.provider_id,
             provider_name: item.provider_name,
@@ -103,13 +107,21 @@ pub async fn set_proxy_takeover_for_app(app_type: &str, enabled: bool) -> Result
 
 pub async fn get_proxy_status() -> Result<ProxyStatus, AppError> {
     let state = runtime_state()?;
-    let status = state.proxy_service.get_status().await.map_err(map_proxy_err)?;
+    let status = state
+        .proxy_service
+        .get_status()
+        .await
+        .map_err(map_proxy_err)?;
     convert(status)
 }
 
 pub async fn get_proxy_config() -> Result<ProxyConfig, AppError> {
     let state = runtime_state()?;
-    let config = state.proxy_service.get_config().await.map_err(map_proxy_err)?;
+    let config = state
+        .proxy_service
+        .get_config()
+        .await
+        .map_err(map_proxy_err)?;
     convert(config)
 }
 
@@ -289,11 +301,18 @@ pub async fn reset_circuit_breaker(
         return Ok(None);
     }
 
-    let Some(current_id) = state.db.get_current_provider(app_type).map_err(map_core_err)? else {
+    let Some(current_id) = state
+        .db
+        .get_current_provider(app_type)
+        .map_err(map_core_err)?
+    else {
         return Ok(None);
     };
 
-    let queue = state.db.get_failover_queue(app_type).map_err(map_core_err)?;
+    let queue = state
+        .db
+        .get_failover_queue(app_type)
+        .map_err(map_core_err)?;
     let restored_priority = queue
         .iter()
         .find(|item| item.provider_id == provider_id)
@@ -327,7 +346,9 @@ pub async fn get_failover_queue(app_type: &str) -> Result<Vec<LegacyFailoverQueu
     Ok(convert_failover_queue(queue))
 }
 
-pub async fn get_available_providers_for_failover(app_type: &str) -> Result<Vec<Provider>, AppError> {
+pub async fn get_available_providers_for_failover(
+    app_type: &str,
+) -> Result<Vec<Provider>, AppError> {
     let state = runtime_state()?;
     let providers = state
         .proxy_service

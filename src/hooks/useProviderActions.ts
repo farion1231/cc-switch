@@ -65,6 +65,7 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
       provider: Omit<Provider, "id"> & {
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
+        addToLive?: boolean;
       },
     ) => {
       await addProviderMutation.mutateAsync(provider);
@@ -120,8 +121,8 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
 
   // 更新供应商
   const updateProvider = useCallback(
-    async (provider: Provider) => {
-      await updateProviderMutation.mutateAsync(provider);
+    async (provider: Provider, originalId?: string) => {
+      await updateProviderMutation.mutateAsync({ provider, originalId });
 
       // 更新托盘菜单（失败不影响主操作）
       try {
@@ -182,7 +183,6 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
               "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
           }),
         );
-        return;
       }
 
       try {
@@ -202,13 +202,14 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
 
         // 根据供应商类型显示不同的成功提示
         if (
+          !proxyRequiredReason &&
           activeApp === "claude" &&
           provider.category !== "official" &&
           (isCopilotProvider ||
             provider.meta?.apiFormat === "openai_chat" ||
             provider.meta?.apiFormat === "openai_responses")
         ) {
-          // OpenAI format provider: show proxy hint
+          // OpenAI format provider: show proxy hint (skip if warning already shown)
           toast.info(
             isCopilotProvider
               ? t("notifications.copilotProxyHint")

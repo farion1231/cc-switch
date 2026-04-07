@@ -1,12 +1,12 @@
-use serde_json::{json, Value};
 use crate::error::AppError;
+use serde_json::{json, Value};
 
 pub(crate) fn run_post_import_sync(
     _db: std::sync::Arc<crate::database::Database>,
 ) -> Result<(), AppError> {
-    let state = cc_switch_core::AppState::new(cc_switch_core::Database::new().map_err(|e| {
-        AppError::Message(e.to_string())
-    })?);
+    let state = cc_switch_core::AppState::new(
+        cc_switch_core::Database::new().map_err(|e| AppError::Message(e.to_string()))?,
+    );
     state.run_startup_maintenance();
     cc_switch_core::ProviderService::sync_current_to_live(&state)
         .map_err(|e| AppError::Message(e.to_string()))?;

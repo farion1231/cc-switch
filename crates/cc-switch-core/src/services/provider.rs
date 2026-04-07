@@ -424,29 +424,104 @@ impl ProviderService {
             .get_universal_provider(id)?
             .ok_or_else(|| AppError::Message(format!("Universal provider {id} not found")))?;
 
-        if provider.apps.claude {
-            if let Some(claude_provider) = provider.to_claude_provider() {
-                Self::add(state, AppType::Claude, claude_provider)?;
+        if let Some(mut claude_provider) = provider.to_claude_provider() {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&claude_provider.id, AppType::Claude.as_str())?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &claude_provider.settings_config);
+                claude_provider.settings_config = merged;
             }
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &claude_provider)?;
+        } else {
+            let _ = state
+                .db
+                .delete_provider(AppType::Claude.as_str(), &format!("universal-claude-{id}"));
         }
 
-        if provider.apps.codex {
-            if let Some(codex_provider) = provider.to_codex_provider() {
-                Self::add(state, AppType::Codex, codex_provider)?;
+        if let Some(mut codex_provider) = provider.to_codex_provider() {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&codex_provider.id, AppType::Codex.as_str())?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &codex_provider.settings_config);
+                codex_provider.settings_config = merged;
             }
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &codex_provider)?;
+        } else {
+            let _ = state
+                .db
+                .delete_provider(AppType::Codex.as_str(), &format!("universal-codex-{id}"));
         }
 
-        if provider.apps.gemini {
-            if let Some(gemini_provider) = provider.to_gemini_provider() {
-                Self::add(state, AppType::Gemini, gemini_provider)?;
+        if let Some(mut gemini_provider) = provider.to_gemini_provider() {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&gemini_provider.id, AppType::Gemini.as_str())?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &gemini_provider.settings_config);
+                gemini_provider.settings_config = merged;
             }
+            state
+                .db
+                .save_provider(AppType::Gemini.as_str(), &gemini_provider)?;
+        } else {
+            let _ = state
+                .db
+                .delete_provider(AppType::Gemini.as_str(), &format!("universal-gemini-{id}"));
         }
 
         Ok(())
     }
 
     pub fn delete_universal(state: &AppState, id: &str) -> Result<(), AppError> {
-        state.db.delete_universal_provider(id)
+        let provider = state.db.get_universal_provider(id)?;
+        state.db.delete_universal_provider(id)?;
+
+        if let Some(provider) = provider {
+            if provider.apps.claude {
+                let _ = state
+                    .db
+                    .delete_provider(AppType::Claude.as_str(), &format!("universal-claude-{id}"));
+            }
+            if provider.apps.codex {
+                let _ = state
+                    .db
+                    .delete_provider(AppType::Codex.as_str(), &format!("universal-codex-{id}"));
+            }
+            if provider.apps.gemini {
+                let _ = state
+                    .db
+                    .delete_provider(AppType::Gemini.as_str(), &format!("universal-gemini-{id}"));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn merge_json(base: &mut Value, patch: &Value) {
+        match (base, patch) {
+            (Value::Object(base_map), Value::Object(patch_map)) => {
+                for (key, patch_value) in patch_map {
+                    match base_map.get_mut(key) {
+                        Some(base_value) => Self::merge_json(base_value, patch_value),
+                        None => {
+                            base_map.insert(key.clone(), patch_value.clone());
+                        }
+                    }
+                }
+            }
+            (base_value, patch_value) => {
+                *base_value = patch_value.clone();
+            }
+        }
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
@@ -1092,6 +1167,152 @@ mod tests {
 
         let result = ProviderService::add(&state, AppType::Claude, provider);
         assert!(result.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn sync_universal_to_apps_preserves_existing_child_config_and_removes_disabled_apps(
+    ) -> Result<(), AppError> {
+        let state = AppState::new(Database::memory()?);
+        let universal = UniversalProvider {
+            id: "omni".to_string(),
+            name: "Omni".to_string(),
+            provider_type: "openai-compatible".to_string(),
+            apps: crate::provider::UniversalProviderApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+            },
+            base_url: "https://api.example.com".to_string(),
+            api_key: "secret".to_string(),
+            models: Default::default(),
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            meta: None,
+            created_at: None,
+            sort_index: None,
+        };
+
+        state.db.save_universal_provider(&universal)?;
+        state.db.save_provider(
+            AppType::Claude.as_str(),
+            &Provider::with_id(
+                "universal-claude-omni".to_string(),
+                "Omni".to_string(),
+                serde_json::json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": "https://old.example.com",
+                        "ANTHROPIC_AUTH_TOKEN": "old-token"
+                    },
+                    "permissions": {
+                        "allow": ["Bash"]
+                    }
+                }),
+                None,
+            ),
+        )?;
+        state.db.save_provider(
+            AppType::Codex.as_str(),
+            &Provider::with_id(
+                "universal-codex-omni".to_string(),
+                "Omni".to_string(),
+                serde_json::json!({
+                    "auth": {
+                        "OPENAI_API_KEY": "old-token"
+                    }
+                }),
+                None,
+            ),
+        )?;
+
+        ProviderService::sync_universal_to_apps(&state, "omni")?;
+
+        let claude = state
+            .db
+            .get_provider_by_id("universal-claude-omni", AppType::Claude.as_str())?
+            .expect("claude child should exist");
+        assert_eq!(
+            claude
+                .settings_config
+                .pointer("/permissions/allow/0")
+                .and_then(Value::as_str),
+            Some("Bash")
+        );
+        assert_eq!(
+            claude
+                .settings_config
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str),
+            Some("https://api.example.com")
+        );
+        assert!(
+            state
+                .db
+                .get_provider_by_id("universal-codex-omni", AppType::Codex.as_str())?
+                .is_none(),
+            "disabled codex child should be removed"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_universal_removes_generated_children() -> Result<(), AppError> {
+        let state = AppState::new(Database::memory()?);
+        state.db.save_universal_provider(&UniversalProvider {
+            id: "omni".to_string(),
+            name: "Omni".to_string(),
+            provider_type: "openai-compatible".to_string(),
+            apps: crate::provider::UniversalProviderApps {
+                claude: true,
+                codex: true,
+                gemini: true,
+            },
+            base_url: "https://api.example.com".to_string(),
+            api_key: "secret".to_string(),
+            models: Default::default(),
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            meta: None,
+            created_at: None,
+            sort_index: None,
+        })?;
+        for (app_type, id) in [
+            (AppType::Claude, "universal-claude-omni"),
+            (AppType::Codex, "universal-codex-omni"),
+            (AppType::Gemini, "universal-gemini-omni"),
+        ] {
+            state.db.save_provider(
+                app_type.as_str(),
+                &Provider::with_id(
+                    id.to_string(),
+                    "Omni".to_string(),
+                    serde_json::json!({}),
+                    None,
+                ),
+            )?;
+        }
+
+        ProviderService::delete_universal(&state, "omni")?;
+
+        assert!(state.db.get_universal_provider("omni")?.is_none());
+        assert!(state
+            .db
+            .get_provider_by_id("universal-claude-omni", AppType::Claude.as_str())?
+            .is_none());
+        assert!(state
+            .db
+            .get_provider_by_id("universal-codex-omni", AppType::Codex.as_str())?
+            .is_none());
+        assert!(state
+            .db
+            .get_provider_by_id("universal-gemini-omni", AppType::Gemini.as_str())?
+            .is_none());
 
         Ok(())
     }

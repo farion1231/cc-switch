@@ -38,9 +38,7 @@ fn import_config() -> MultiAppConfig {
 
 #[test]
 fn import_export_parity_round_trip_matches_legacy() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     let export = export_file();
     let _ = std::fs::remove_file(&export);
@@ -48,14 +46,20 @@ fn import_export_parity_round_trip_matches_legacy() {
     reset_test_fs();
     let _home = ensure_test_home();
     let legacy_state = create_legacy_state_with_config(&import_config());
-    import_export_bridge::legacy_export_config_to_file(&legacy_state, export.to_string_lossy().as_ref())
-        .expect("legacy export");
+    import_export_bridge::legacy_export_config_to_file(
+        &legacy_state,
+        export.to_string_lossy().as_ref(),
+    )
+    .expect("legacy export");
 
     reset_test_fs();
     let _home = ensure_test_home();
     let import_state = create_empty_legacy_state();
-    import_export_bridge::legacy_import_config_from_file(&import_state, export.to_string_lossy().as_ref())
-        .expect("legacy import");
+    import_export_bridge::legacy_import_config_from_file(
+        &import_state,
+        export.to_string_lossy().as_ref(),
+    )
+    .expect("legacy import");
     let legacy_snapshot = serde_json::to_value(
         import_state
             .db
@@ -67,12 +71,14 @@ fn import_export_parity_round_trip_matches_legacy() {
     reset_test_fs();
     let _home = ensure_test_home();
     let _core_state = create_core_state_with_config(&import_config());
-    import_export_bridge::export_config_to_file(export.to_string_lossy().as_ref()).expect("core export");
+    import_export_bridge::export_config_to_file(export.to_string_lossy().as_ref())
+        .expect("core export");
 
     reset_test_fs();
     let _home = ensure_test_home();
     let _core_state = create_empty_core_state();
-    import_export_bridge::import_config_from_file(export.to_string_lossy().as_ref()).expect("core import");
+    import_export_bridge::import_config_from_file(export.to_string_lossy().as_ref())
+        .expect("core import");
     let core_state = create_empty_core_state();
     let core_snapshot = serde_json::to_value(
         core_state

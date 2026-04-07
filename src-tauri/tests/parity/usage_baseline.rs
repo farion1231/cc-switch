@@ -6,9 +6,7 @@ use super::support::{
 
 #[test]
 fn usage_baseline_legacy_summary_handles_seconds_window() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
     let legacy_state = create_empty_legacy_state();

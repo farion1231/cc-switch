@@ -6,9 +6,7 @@ use super::support::{ensure_test_home, reset_test_fs, test_mutex};
 
 #[test]
 fn config_baseline_legacy_snippet_round_trip_is_stable() {
-    let _guard = test_mutex()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner());
+    let _guard = test_mutex().lock().unwrap_or_else(|err| err.into_inner());
 
     reset_test_fs();
     let _home = ensure_test_home();

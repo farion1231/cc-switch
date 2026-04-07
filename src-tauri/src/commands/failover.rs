@@ -2,7 +2,6 @@
 //!
 //! 管理代理模式下的故障转移队列（基于 providers 表的 in_failover_queue 字段）
 
-use crate::bridges::proxy as proxy_bridge;
 use crate::database::FailoverQueueItem;
 use crate::provider::Provider;
 use crate::store::AppState;
@@ -11,57 +10,64 @@ use tauri::Emitter;
 /// 获取故障转移队列
 #[tauri::command]
 pub async fn get_failover_queue(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<Vec<FailoverQueueItem>, String> {
-    proxy_bridge::get_failover_queue(&app_type)
-        .await
+    state
+        .db
+        .get_failover_queue(&app_type)
         .map_err(|e| e.to_string())
 }
 
 /// 获取可添加到故障转移队列的供应商（不在队列中的）
 #[tauri::command]
 pub async fn get_available_providers_for_failover(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<Vec<Provider>, String> {
-    proxy_bridge::get_available_providers_for_failover(&app_type)
-        .await
+    state
+        .db
+        .get_available_providers_for_failover(&app_type)
         .map_err(|e| e.to_string())
 }
 
 /// 添加供应商到故障转移队列
 #[tauri::command]
 pub async fn add_to_failover_queue(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     app_type: String,
     provider_id: String,
 ) -> Result<(), String> {
-    proxy_bridge::add_to_failover_queue(&app_type, &provider_id)
-        .await
+    state
+        .db
+        .add_to_failover_queue(&app_type, &provider_id)
         .map_err(|e| e.to_string())
 }
 
 /// 从故障转移队列移除供应商
 #[tauri::command]
 pub async fn remove_from_failover_queue(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     app_type: String,
     provider_id: String,
 ) -> Result<(), String> {
-    proxy_bridge::remove_from_failover_queue(&app_type, &provider_id)
-        .await
+    state
+        .db
+        .remove_from_failover_queue(&app_type, &provider_id)
         .map_err(|e| e.to_string())
 }
 
 /// 获取指定应用的自动故障转移开关状态（从 proxy_config 表读取）
 #[tauri::command]
 pub async fn get_auto_failover_enabled(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<bool, String> {
-    proxy_bridge::get_auto_failover_enabled(&app_type)
+    state
+        .db
+        .get_proxy_config_for_app(&app_type)
         .await
+        .map(|config| config.auto_failover_enabled)
         .map_err(|e| e.to_string())
 }
 
@@ -79,9 +85,41 @@ pub async fn set_auto_failover_enabled(
         "[Failover] Setting auto_failover_enabled: app_type='{app_type}', enabled={enabled}"
     );
 
-    let switched_provider_id = proxy_bridge::set_auto_failover_enabled(&app_type, enabled)
+    let mut config = state
+        .db
+        .get_proxy_config_for_app(&app_type)
         .await
         .map_err(|e| e.to_string())?;
+    config.auto_failover_enabled = enabled;
+    state
+        .db
+        .update_proxy_config_for_app(config)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let switched_provider_id = if enabled && state.proxy_service.is_running().await {
+        let queue = state
+            .db
+            .get_failover_queue(&app_type)
+            .map_err(|e| e.to_string())?;
+        let next_provider = queue
+            .iter()
+            .find_map(|item| item.sort_index.map(|idx| (idx, item)))
+            .map(|(_, item)| item.provider_id.clone())
+            .or_else(|| queue.first().map(|item| item.provider_id.clone()));
+
+        if let Some(provider_id) = next_provider.clone() {
+            state
+                .proxy_service
+                .switch_proxy_target(&app_type, &provider_id)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        next_provider
+    } else {
+        None
+    };
 
     if let Some(provider_id) = switched_provider_id {
         let event_data = serde_json::json!({

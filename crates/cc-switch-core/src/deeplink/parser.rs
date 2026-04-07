@@ -13,11 +13,9 @@ use url::Url;
 /// Expected format:
 /// ccswitch://v1/import?resource={type}&...
 pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppError> {
-    // Parse URL
     let url = Url::parse(url_str)
         .map_err(|e| AppError::InvalidInput(format!("Invalid deep link URL: {e}")))?;
 
-    // Validate scheme
     let scheme = url.scheme();
     if scheme != "ccswitch" {
         return Err(AppError::InvalidInput(format!(
@@ -25,20 +23,35 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
         )));
     }
 
-    // Extract version from host
+    let host = url
+        .host_str()
+        .ok_or_else(|| AppError::InvalidInput("Missing version in URL host".to_string()))?
+        .to_string();
+
+    let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
+
+    if host == "v1" {
+        return parse_versioned_deeplink(&url, params);
+    }
+
+    parse_legacy_host_deeplink(&url, host, params)
+}
+
+fn parse_versioned_deeplink(
+    url: &Url,
+    params: HashMap<String, String>,
+) -> Result<DeepLinkImportRequest, AppError> {
     let version = url
         .host_str()
         .ok_or_else(|| AppError::InvalidInput("Missing version in URL host".to_string()))?
         .to_string();
 
-    // Validate version
     if version != "v1" {
         return Err(AppError::InvalidInput(format!(
             "Unsupported protocol version: {version}"
         )));
     }
 
-    // Extract path (should be "/import")
     let path = url.path();
     if path != "/import" {
         return Err(AppError::InvalidInput(format!(
@@ -46,21 +59,45 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
         )));
     }
 
-    // Parse query parameters
-    let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
-
-    // Extract and validate resource type
     let resource = params
         .get("resource")
         .ok_or_else(|| AppError::InvalidInput("Missing 'resource' parameter".to_string()))?
         .clone();
 
-    // Dispatch to appropriate parser based on resource type
+    dispatch_resource_parser(&params, version, resource)
+}
+
+fn parse_legacy_host_deeplink(
+    url: &Url,
+    resource: String,
+    mut params: HashMap<String, String>,
+) -> Result<DeepLinkImportRequest, AppError> {
+    let path = url.path();
+    if !(path.is_empty() || path == "/") {
+        return Err(AppError::InvalidInput(format!(
+            "Unsupported protocol version: {resource}"
+        )));
+    }
+
+    if resource == "provider" && !params.contains_key("endpoint") {
+        if let Some(base_url) = params.get("baseUrl").cloned() {
+            params.insert("endpoint".to_string(), base_url);
+        }
+    }
+
+    dispatch_resource_parser(&params, "legacy".to_string(), resource)
+}
+
+fn dispatch_resource_parser(
+    params: &HashMap<String, String>,
+    version: String,
+    resource: String,
+) -> Result<DeepLinkImportRequest, AppError> {
     match resource.as_str() {
-        "provider" => parse_provider_deeplink(&params, version, resource),
-        "prompt" => parse_prompt_deeplink(&params, version, resource),
-        "mcp" => parse_mcp_deeplink(&params, version, resource),
-        "skill" => parse_skill_deeplink(&params, version, resource),
+        "provider" => parse_provider_deeplink(params, version, resource),
+        "prompt" => parse_prompt_deeplink(params, version, resource),
+        "mcp" => parse_mcp_deeplink(params, version, resource),
+        "skill" => parse_skill_deeplink(params, version, resource),
         _ => Err(AppError::InvalidInput(format!(
             "Unsupported resource type: {resource}"
         ))),
