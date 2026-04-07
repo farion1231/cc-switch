@@ -51,6 +51,7 @@ interface EndpointCandidate {
 
 interface ClaudeFormFieldsProps {
   providerId?: string;
+  connectionOverride?: string;
   // API Key
   shouldShowApiKey: boolean;
   apiKey: string;
@@ -121,6 +122,7 @@ interface ClaudeFormFieldsProps {
 
 export function ClaudeFormFields({
   providerId,
+  connectionOverride,
   shouldShowApiKey,
   apiKey,
   onApiKeyChange,
@@ -197,7 +199,12 @@ export function ClaudeFormFields({
       return;
     }
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey, isFullUrl)
+    fetchModelsForConfig(
+      baseUrl,
+      apiKey,
+      isFullUrl,
+      connectionOverride?.trim() || undefined,
+    )
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
@@ -213,7 +220,7 @@ export function ClaudeFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, isFullUrl, t]);
+  }, [baseUrl, apiKey, isFullUrl, t, connectionOverride]);
 
   // 当 Copilot 预设且已认证时，加载可用模型
   useEffect(() => {
@@ -432,6 +439,7 @@ export function ClaudeFormFields({
         <EndpointSpeedTest
           appId="claude"
           providerId={providerId}
+          connectionOverride={connectionOverride}
           value={baseUrl}
           onChange={onBaseUrlChange}
           initialEndpoints={speedTestEndpoints}

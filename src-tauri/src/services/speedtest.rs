@@ -1,5 +1,5 @@
 use futures::future::join_all;
-use reqwest::{Client, Url};
+use reqwest::Url;
 use serde::Serialize;
 use std::time::Instant;
 
@@ -26,6 +26,7 @@ impl SpeedtestService {
     pub async fn test_endpoints(
         urls: Vec<String>,
         timeout_secs: Option<u64>,
+        connection_override: Option<String>,
     ) -> Result<Vec<EndpointLatency>, AppError> {
         if urls.is_empty() {
             return Ok(vec![]);
@@ -65,21 +66,53 @@ impl SpeedtestService {
         }
 
         let timeout = Self::sanitize_timeout(timeout_secs);
-        let (client, request_timeout) = Self::build_client(timeout)?;
+        let request_timeout = Self::build_timeout(timeout);
+        let override_text = connection_override
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty());
 
         let tasks = valid_targets.into_iter().map(|(idx, trimmed, parsed_url)| {
-            let client = client.clone();
+            let override_text = override_text.clone();
             async move {
+                let semantic_host = if override_text.is_some() {
+                    Some(
+                        crate::proxy::http_client::request_authority(parsed_url.as_str())
+                            .map_err(AppError::Message)?,
+                    )
+                } else {
+                    None
+                };
+                let effective_url = crate::proxy::http_client::apply_connection_override_to_url(
+                    parsed_url.as_str(),
+                    override_text.as_deref(),
+                )
+                .map_err(AppError::Message)?;
+                let effective_parsed_url =
+                    Url::parse(&effective_url).map_err(|e| AppError::Message(e.to_string()))?;
+
+                let client = crate::proxy::http_client::get_for_provider_with_override(
+                    None,
+                    Some(effective_parsed_url.as_str()),
+                    override_text.as_deref(),
+                )
+                .map_err(AppError::Message)?;
+
                 // 先进行一次热身请求，忽略结果，仅用于复用连接/绕过首包惩罚。
-                let _ = client
-                    .get(parsed_url.clone())
-                    .timeout(request_timeout)
-                    .send()
-                    .await;
+                let mut warmup = client
+                    .get(effective_parsed_url.clone())
+                    .timeout(request_timeout);
+                if let Some(host) = semantic_host.as_deref() {
+                    warmup = warmup.header(reqwest::header::HOST, host);
+                }
+                let _ = warmup.send().await;
 
                 // 第二次请求开始计时，并将其作为结果返回。
                 let start = Instant::now();
-                let latency = match client.get(parsed_url).timeout(request_timeout).send().await {
+                let mut request = client.get(effective_parsed_url).timeout(request_timeout);
+                if let Some(host) = semantic_host.as_deref() {
+                    request = request.header(reqwest::header::HOST, host);
+                }
+                let latency = match request.send().await {
                     Ok(resp) => EndpointLatency {
                         url: trimmed,
                         latency: Some(start.elapsed().as_millis()),
@@ -88,13 +121,7 @@ impl SpeedtestService {
                     },
                     Err(err) => {
                         let status = err.status().map(|s| s.as_u16());
-                        let error_message = if err.is_timeout() {
-                            "请求超时".to_string()
-                        } else if err.is_connect() {
-                            "连接失败".to_string()
-                        } else {
-                            err.to_string()
-                        };
+                        let error_message = Self::classify_request_error(&err);
 
                         EndpointLatency {
                             url: trimmed,
@@ -105,27 +132,53 @@ impl SpeedtestService {
                     }
                 };
 
-                (idx, latency)
+                Ok::<(usize, EndpointLatency), AppError>((idx, latency))
             }
         });
 
-        for (idx, latency) in join_all(tasks).await {
+        for item in join_all(tasks).await {
+            let (idx, latency) = item?;
             results[idx] = Some(latency);
         }
 
         Ok(results.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    fn build_client(timeout_secs: u64) -> Result<(Client, std::time::Duration), AppError> {
-        // 使用全局 HTTP 客户端（已包含代理配置）
-        // 返回 timeout Duration 供请求级别使用
-        let timeout = std::time::Duration::from_secs(timeout_secs);
-        Ok((crate::proxy::http_client::get(), timeout))
+    fn build_timeout(timeout_secs: u64) -> std::time::Duration {
+        std::time::Duration::from_secs(timeout_secs)
     }
 
     fn sanitize_timeout(timeout_secs: Option<u64>) -> u64 {
         let secs = timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
         secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS)
+    }
+
+    fn classify_request_error(err: &reqwest::Error) -> String {
+        if err.is_timeout() {
+            return "请求超时".to_string();
+        }
+        let message = err.to_string();
+        let lower = message.to_lowercase();
+        if err.is_connect() {
+            if lower.contains("certificate")
+                || lower.contains("tls")
+                || lower.contains("handshake")
+                || lower.contains("hostname")
+                || lower.contains("sni")
+            {
+                return "证书/SNI 不匹配".to_string();
+            }
+            return "连接失败".to_string();
+        }
+        if lower.contains("certificate")
+            || lower.contains("tls")
+            || lower.contains("handshake")
+            || lower.contains("hostname")
+            || lower.contains("sni")
+        {
+            return "证书/SNI 不匹配".to_string();
+        }
+        message
     }
 }
 
@@ -155,9 +208,12 @@ mod tests {
 
     #[test]
     fn test_endpoints_handles_empty_list() {
-        let result =
-            tauri::async_runtime::block_on(SpeedtestService::test_endpoints(Vec::new(), Some(5)))
-                .expect("empty list should succeed");
+        let result = tauri::async_runtime::block_on(SpeedtestService::test_endpoints(
+            Vec::new(),
+            Some(5),
+            None,
+        ))
+        .expect("empty list should succeed");
         assert!(result.is_empty());
     }
 
@@ -165,6 +221,7 @@ mod tests {
     fn test_endpoints_reports_invalid_url() {
         let result = tauri::async_runtime::block_on(SpeedtestService::test_endpoints(
             vec!["not a url".into(), "".into()],
+            None,
             None,
         ))
         .expect("invalid inputs should still succeed");
@@ -183,5 +240,16 @@ mod tests {
             Some("URL 不能为空"),
             "empty url should report validation error"
         );
+    }
+
+    #[test]
+    fn test_endpoints_rejects_invalid_connection_override() {
+        let result = tauri::async_runtime::block_on(SpeedtestService::test_endpoints(
+            vec!["https://example.com".into()],
+            None,
+            Some("invalid-host:443".into()),
+        ));
+
+        assert!(result.is_err());
     }
 }

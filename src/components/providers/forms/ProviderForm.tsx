@@ -93,6 +93,7 @@ import {
 } from "./helpers/opencodeFormUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
+import { validateConnectionOverride } from "@/utils/connectionOverride";
 
 type PresetEntry = {
   id: string;
@@ -189,6 +190,9 @@ export function ProviderForm({
       initialData?.meta?.pricingModelSource,
     ),
   }));
+  const [connectionOverride, setConnectionOverride] = useState<string>(
+    () => initialData?.meta?.connectionOverride ?? "",
+  );
 
   const { category } = useProviderCategory({
     appId,
@@ -222,6 +226,7 @@ export function ProviderForm({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setConnectionOverride(initialData?.meta?.connectionOverride ?? "");
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -848,6 +853,12 @@ export function ProviderForm({
     }
 
     let settingsConfig: string;
+    const connectionOverrideError =
+      validateConnectionOverride(connectionOverride);
+    if (connectionOverrideError) {
+      toast.error(connectionOverrideError);
+      return;
+    }
 
     if (appId === "codex") {
       try {
@@ -1031,6 +1042,7 @@ export function ProviderForm({
           : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
+      connectionOverride: connectionOverride.trim() || undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
         : undefined,
@@ -1476,6 +1488,7 @@ export function ProviderForm({
         {appId === "claude" && (
           <ClaudeFormFields
             providerId={providerId}
+            connectionOverride={connectionOverride}
             shouldShowApiKey={
               (category !== "cloud_provider" ||
                 hasApiKeyField(form.getValues("settingsConfig"), "claude")) &&
@@ -1536,6 +1549,7 @@ export function ProviderForm({
         {appId === "codex" && (
           <CodexFormFields
             providerId={providerId}
+            connectionOverride={connectionOverride}
             codexApiKey={codexApiKey}
             onApiKeyChange={handleCodexApiKeyChange}
             category={category}
@@ -1565,6 +1579,7 @@ export function ProviderForm({
         {appId === "gemini" && (
           <GeminiFormFields
             providerId={providerId}
+            connectionOverride={connectionOverride}
             shouldShowApiKey={shouldShowApiKey(
               form.getValues("settingsConfig"),
               isEditMode,
@@ -1784,6 +1799,11 @@ export function ProviderForm({
             testConfig={testConfig}
             proxyConfig={proxyConfig}
             pricingConfig={pricingConfig}
+            connectionOverride={connectionOverride}
+            connectionOverrideError={validateConnectionOverride(
+              connectionOverride,
+            )}
+            onConnectionOverrideChange={setConnectionOverride}
             onTestConfigChange={setTestConfig}
             onProxyConfigChange={setProxyConfig}
             onPricingConfigChange={setPricingConfig}

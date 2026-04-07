@@ -17,8 +17,14 @@ export async function fetchModelsForConfig(
   baseUrl: string,
   apiKey: string,
   isFullUrl?: boolean,
+  connectionOverride?: string,
 ): Promise<FetchedModel[]> {
-  return invoke("fetch_models_for_config", { baseUrl, apiKey, isFullUrl });
+  return invoke("fetch_models_for_config", {
+    baseUrl,
+    apiKey,
+    isFullUrl,
+    connectionOverride,
+  });
 }
 
 /**

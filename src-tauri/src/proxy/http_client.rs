@@ -412,6 +412,95 @@ pub fn build_client_for_provider(proxy_config: Option<&ProviderProxyConfig>) -> 
     }
 }
 
+fn apply_connection_override(
+    mut builder: reqwest::ClientBuilder,
+    request_url: Option<&str>,
+    connection_override: Option<&str>,
+) -> Result<reqwest::ClientBuilder, String> {
+    let Some(override_addr) =
+        super::connection_override::parse_connection_override(connection_override)?
+    else {
+        return Ok(builder);
+    };
+
+    let Some(url_text) = request_url else {
+        return Err("Connection override requires a valid request URL".to_string());
+    };
+
+    let parsed =
+        url::Url::parse(url_text).map_err(|e| format!("Invalid request URL for override: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "Request URL missing host for connection override".to_string())?;
+
+    // Keep URL semantic host as SNI/Host while routing TCP to override IP:port.
+    builder = builder.resolve(host, override_addr);
+    Ok(builder)
+}
+
+/// Build effective request URL when connection override is enabled.
+///
+/// The override host/IP routing is handled by DNS resolve override. This function
+/// additionally applies the override port to request URL so requests originally
+/// targeting `domain:old_port` can connect to `override_ip:new_port`.
+pub fn apply_connection_override_to_url(
+    request_url: &str,
+    connection_override: Option<&str>,
+) -> Result<String, String> {
+    let Some(override_addr) =
+        super::connection_override::parse_connection_override(connection_override)?
+    else {
+        return Ok(request_url.to_string());
+    };
+
+    let mut parsed = url::Url::parse(request_url)
+        .map_err(|e| format!("Invalid request URL for override: {e}"))?;
+    parsed
+        .set_port(Some(override_addr.port()))
+        .map_err(|_| "Unable to apply override port to request URL".to_string())?;
+    Ok(parsed.to_string())
+}
+
+/// Extract the original URL authority used for the HTTP Host header.
+pub fn request_authority(request_url: &str) -> Result<String, String> {
+    request_url
+        .parse::<http::Uri>()
+        .map_err(|e| format!("Invalid request URL for authority: {e}"))?
+        .authority()
+        .map(|authority| authority.as_str().to_string())
+        .ok_or_else(|| "Request URL missing authority".to_string())
+}
+
+fn build_provider_client(
+    proxy_config: Option<&ProviderProxyConfig>,
+    request_url: Option<&str>,
+    connection_override: Option<&str>,
+) -> Result<Client, String> {
+    let mut builder = Client::builder()
+        .timeout(Duration::from_secs(600))
+        .connect_timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(10)
+        .tcp_keepalive(Duration::from_secs(60));
+
+    if let Some(config) = proxy_config.filter(|c| c.enabled) {
+        if let Some(proxy_url) = build_proxy_url_from_config(config) {
+            let proxy = reqwest::Proxy::all(&proxy_url).map_err(|e| {
+                format!(
+                    "Invalid provider proxy URL '{}': {}",
+                    mask_url(&proxy_url),
+                    e
+                )
+            })?;
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    builder = apply_connection_override(builder, request_url, connection_override)?;
+    builder
+        .build()
+        .map_err(|e| format!("Failed to build provider HTTP client: {e}"))
+}
+
 /// 获取供应商专用的 HTTP 客户端
 ///
 /// 优先使用供应商单独代理配置，如果未启用则返回全局客户端。
@@ -431,9 +520,32 @@ pub fn get_for_provider(proxy_config: Option<&ProviderProxyConfig>) -> Client {
     get()
 }
 
+pub fn get_for_provider_with_override(
+    proxy_config: Option<&ProviderProxyConfig>,
+    request_url: Option<&str>,
+    connection_override: Option<&str>,
+) -> Result<Client, String> {
+    match build_provider_client(proxy_config, request_url, connection_override) {
+        Ok(client) => Ok(client),
+        Err(err) => {
+            // Fallback: no provider-specific settings, keep existing global behavior.
+            let has_provider_proxy = proxy_config.is_some_and(|c| c.enabled);
+            let has_override = connection_override
+                .map(str::trim)
+                .is_some_and(|text| !text.is_empty());
+            if !has_provider_proxy && !has_override {
+                return Ok(get_for_provider(proxy_config));
+            }
+            Err(err)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {
@@ -543,5 +655,108 @@ mod tests {
         for key in &keys {
             std::env::remove_var(key);
         }
+    }
+
+    #[test]
+    fn test_get_for_provider_with_override_valid() {
+        let client = get_for_provider_with_override(
+            None,
+            Some("https://test.example.com/v1/chat/completions"),
+            Some("1.2.3.4:443"),
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_get_for_provider_with_override_invalid_override() {
+        let client = get_for_provider_with_override(
+            None,
+            Some("https://test.example.com/v1/chat/completions"),
+            Some("invalid-host:443"),
+        );
+        assert!(client.is_err());
+    }
+
+    #[test]
+    fn test_get_for_provider_with_override_missing_url() {
+        let client = get_for_provider_with_override(None, None, Some("1.2.3.4:443"));
+        assert!(client.is_err());
+    }
+
+    #[test]
+    fn test_override_routes_connection_but_preserves_host_header() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let port = listener.local_addr().expect("listener addr").port();
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept connection");
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).expect("read request");
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+            stream.write_all(response).expect("write response");
+            request
+        });
+
+        let url = format!("http://semantic.invalid:{port}/ping");
+        let client =
+            get_for_provider_with_override(None, Some(&url), Some(&format!("127.0.0.1:{port}")))
+                .expect("build client with override");
+
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let response = rt
+            .block_on(async { client.get(&url).send().await })
+            .expect("request with override should succeed");
+        assert_eq!(response.status().as_u16(), 200);
+
+        let request_text = server.join().expect("join server thread");
+        let request_lower = request_text.to_lowercase();
+        assert!(
+            request_lower.contains(&format!("host: semantic.invalid:{port}")),
+            "expected host header to keep original semantic host, got: {request_text}"
+        );
+    }
+
+    #[test]
+    fn test_apply_connection_override_to_url_replaces_port() {
+        let rewritten = apply_connection_override_to_url(
+            "https://api.example.test:8443/responses",
+            Some("203.0.113.10:26101"),
+        )
+        .expect("rewrite url");
+
+        assert_eq!(rewritten, "https://api.example.test:26101/responses");
+    }
+
+    #[test]
+    fn test_apply_connection_override_to_url_keeps_original_without_override() {
+        let original = "https://api.example.test:8443/responses";
+        let rewritten =
+            apply_connection_override_to_url(original, None).expect("rewrite url without override");
+        assert_eq!(rewritten, original);
+    }
+
+    #[test]
+    fn test_request_authority_preserves_original_url_authority() {
+        assert_eq!(
+            request_authority("https://api.example.test/v1/models").expect("authority"),
+            "api.example.test"
+        );
+        assert_eq!(
+            request_authority("https://api.example.test:8443/v1/models").expect("authority"),
+            "api.example.test:8443"
+        );
+    }
+
+    #[test]
+    fn test_without_override_keeps_old_behavior() {
+        let url = "http://semantic.invalid:6553/ping";
+        let client = get_for_provider_with_override(None, Some(url), None).expect("build client");
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let result = rt.block_on(async { client.get(url).send().await });
+        assert!(
+            result.is_err(),
+            "without override, unresolved semantic host should fail"
+        );
     }
 }

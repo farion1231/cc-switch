@@ -36,6 +36,9 @@ interface ProviderAdvancedConfigProps {
   testConfig: ProviderTestConfig;
   proxyConfig: ProviderProxyConfig;
   pricingConfig: ProviderPricingConfig;
+  connectionOverride: string;
+  connectionOverrideError?: string | null;
+  onConnectionOverrideChange: (value: string) => void;
   onTestConfigChange: (config: ProviderTestConfig) => void;
   onProxyConfigChange: (config: ProviderProxyConfig) => void;
   onPricingConfigChange: (config: ProviderPricingConfig) => void;
@@ -90,6 +93,9 @@ export function ProviderAdvancedConfig({
   testConfig,
   proxyConfig,
   pricingConfig,
+  connectionOverride,
+  connectionOverrideError,
+  onConnectionOverrideChange,
   onTestConfigChange,
   onProxyConfigChange,
   onPricingConfigChange,
@@ -166,6 +172,35 @@ export function ProviderAdvancedConfig({
 
   return (
     <div className="space-y-4">
+      <div className="rounded-lg border border-border/50 bg-muted/20">
+        <div className="p-4 space-y-2">
+          <div className="flex items-center gap-3">
+            <Globe className="h-4 w-4 text-muted-foreground" />
+            <span className="font-medium">
+              {t("providerAdvanced.connectionOverride", {
+                defaultValue: "连接覆写地址（高级）",
+              })}
+            </span>
+          </div>
+          <Input
+            value={connectionOverride}
+            onChange={(e) => onConnectionOverrideChange(e.target.value)}
+            placeholder="1.2.3.4:443 或 [2001:db8::1]:443"
+          />
+          <p className="text-xs text-muted-foreground">
+            {t("providerAdvanced.connectionOverrideHint", {
+              defaultValue:
+                "仅改变 TCP/TLS 连接目标地址，TLS SNI 与 HTTP Host 仍保持 API URL 的原始域名语义。需先启动内置代理并为当前应用启用接管后才会生效。",
+            })}
+          </p>
+          {connectionOverrideError ? (
+            <p className="text-xs text-destructive">
+              {connectionOverrideError}
+            </p>
+          ) : null}
+        </div>
+      </div>
+
       <div className="rounded-lg border border-border/50 bg-muted/20">
         <button
           type="button"

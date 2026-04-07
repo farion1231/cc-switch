@@ -265,6 +265,9 @@ pub struct ProviderMeta {
     /// 供应商单独的代理配置
     #[serde(rename = "proxyConfig", skip_serializing_if = "Option::is_none")]
     pub proxy_config: Option<ProviderProxyConfig>,
+    /// 可选连接覆写地址，格式：IPv4:端口 或 [IPv6]:端口
+    #[serde(rename = "connectionOverride", skip_serializing_if = "Option::is_none")]
+    pub connection_override: Option<String>,
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
@@ -745,6 +748,22 @@ mod tests {
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
         assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_connection_override() {
+        let mut meta = ProviderMeta::default();
+        meta.connection_override = Some("1.2.3.4:443".to_string());
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value
+                .get("connectionOverride")
+                .and_then(|item| item.as_str()),
+            Some("1.2.3.4:443")
+        );
+        assert!(value.get("connection_override").is_none());
     }
 
     #[test]

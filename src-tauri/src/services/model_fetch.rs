@@ -35,18 +35,34 @@ pub async fn fetch_models(
     base_url: &str,
     api_key: &str,
     is_full_url: bool,
+    connection_override: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
     if api_key.is_empty() {
         return Err("API Key is required to fetch models".to_string());
     }
 
     let models_url = build_models_url(base_url, is_full_url)?;
-    let client = crate::proxy::http_client::get_for_provider(None);
+    let effective_url = crate::proxy::http_client::apply_connection_override_to_url(
+        &models_url,
+        connection_override,
+    )?;
+    let client = crate::proxy::http_client::get_for_provider_with_override(
+        None,
+        Some(&effective_url),
+        connection_override,
+    )?;
 
-    let response = client
-        .get(&models_url)
+    let mut request = client
+        .get(&effective_url)
         .header("Authorization", format!("Bearer {api_key}"))
-        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
+    if connection_override.is_some() {
+        request = request.header(
+            reqwest::header::HOST,
+            crate::proxy::http_client::request_authority(&models_url)?,
+        );
+    }
+    let response = request
         .send()
         .await
         .map_err(|e| format!("Request failed: {e}"))?;

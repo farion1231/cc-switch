@@ -19,6 +19,7 @@ interface EndpointCandidate {
 
 interface GeminiFormFieldsProps {
   providerId?: string;
+  connectionOverride?: string;
   // API Key
   shouldShowApiKey: boolean;
   apiKey: string;
@@ -50,6 +51,7 @@ interface GeminiFormFieldsProps {
 
 export function GeminiFormFields({
   providerId,
+  connectionOverride,
   shouldShowApiKey,
   apiKey,
   onApiKeyChange,
@@ -85,7 +87,12 @@ export function GeminiFormFields({
       return;
     }
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey)
+    fetchModelsForConfig(
+      baseUrl,
+      apiKey,
+      undefined,
+      connectionOverride?.trim() || undefined,
+    )
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
@@ -101,7 +108,7 @@ export function GeminiFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, t]);
+  }, [baseUrl, apiKey, t, connectionOverride]);
 
   // 检测是否为 Google 官方（使用 OAuth）
   const isGoogleOfficial =
@@ -197,6 +204,7 @@ export function GeminiFormFields({
         <EndpointSpeedTest
           appId="gemini"
           providerId={providerId}
+          connectionOverride={connectionOverride}
           value={baseUrl}
           onChange={onBaseUrlChange}
           initialEndpoints={speedTestEndpoints}

@@ -13,6 +13,13 @@ pub async fn fetch_models_for_config(
     base_url: String,
     api_key: String,
     is_full_url: Option<bool>,
+    #[allow(non_snake_case)] connectionOverride: Option<String>,
 ) -> Result<Vec<FetchedModel>, String> {
-    model_fetch::fetch_models(&base_url, &api_key, is_full_url.unwrap_or(false)).await
+    model_fetch::fetch_models(
+        &base_url,
+        &api_key,
+        is_full_url.unwrap_or(false),
+        connectionOverride.as_deref(),
+    )
+    .await
 }

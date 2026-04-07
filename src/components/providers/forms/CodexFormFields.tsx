@@ -18,6 +18,7 @@ interface EndpointCandidate {
 
 interface CodexFormFieldsProps {
   providerId?: string;
+  connectionOverride?: string;
   // API Key
   codexApiKey: string;
   onApiKeyChange: (key: string) => void;
@@ -50,6 +51,7 @@ interface CodexFormFieldsProps {
 
 export function CodexFormFields({
   providerId,
+  connectionOverride,
   codexApiKey,
   onApiKeyChange,
   category,
@@ -86,7 +88,12 @@ export function CodexFormFields({
       return;
     }
     setIsFetchingModels(true);
-    fetchModelsForConfig(codexBaseUrl, codexApiKey, isFullUrl)
+    fetchModelsForConfig(
+      codexBaseUrl,
+      codexApiKey,
+      isFullUrl,
+      connectionOverride?.trim() || undefined,
+    )
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
@@ -102,7 +109,7 @@ export function CodexFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [codexBaseUrl, codexApiKey, isFullUrl, t]);
+  }, [codexBaseUrl, codexApiKey, isFullUrl, t, connectionOverride]);
 
   return (
     <>
@@ -196,6 +203,7 @@ export function CodexFormFields({
         <EndpointSpeedTest
           appId="codex"
           providerId={providerId}
+          connectionOverride={connectionOverride}
           value={codexBaseUrl}
           onChange={onBaseUrlChange}
           initialEndpoints={speedTestEndpoints}

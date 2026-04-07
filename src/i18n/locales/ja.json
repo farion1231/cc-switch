@@ -874,6 +874,8 @@
     "proxyConfigDesc": "このプロバイダーに個別のネットワークプロキシを設定します。無効の場合はシステムプロキシまたはグローバル設定を使用します。",
     "proxyUsername": "ユーザー名（任意）",
     "proxyPassword": "パスワード（任意）",
+    "connectionOverride": "接続オーバーライド（上級）",
+    "connectionOverrideHint": "TCP/TLS の接続先アドレスのみを変更します。TLS SNI と HTTP Host は API URL の元のドメイン意味を維持します。反映には内蔵プロキシの起動と、対象アプリでの接管有効化が必要です。",
     "pricingConfig": "課金設定",
     "useCustomPricing": "個別設定を使用",
     "pricingConfigDesc": "このプロバイダーに個別の課金パラメータを設定します。無効の場合はグローバル設定を使用します。",

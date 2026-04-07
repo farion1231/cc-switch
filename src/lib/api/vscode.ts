@@ -16,11 +16,12 @@ export const vscodeApi = {
 
   async testApiEndpoints(
     urls: string[],
-    options?: { timeoutSecs?: number },
+    options?: { timeoutSecs?: number; connectionOverride?: string },
   ): Promise<EndpointLatencyResult[]> {
     return await invoke("test_api_endpoints", {
       urls,
       timeoutSecs: options?.timeoutSecs,
+      connectionOverride: options?.connectionOverride,
     });
   },
 
