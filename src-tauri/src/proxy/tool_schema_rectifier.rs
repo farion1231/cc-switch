@@ -37,10 +37,11 @@ pub fn rectify_tool_schema(body: &mut Value) -> ToolSchemaRectifyResult {
     };
 
     // 统计移除的非 function tool
+    // 保留 type == "function" 的工具，以及没有 type 字段的工具（如 Anthropic 格式）
     let original_len = tools.len();
-    tools.retain(|tool| {
-        let tool_type = tool.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        tool_type == "function"
+    tools.retain(|tool| match tool.get("type").and_then(|v| v.as_str()) {
+        Some(t) => t == "function",
+        None => true, // 保留无 type 字段的工具（Anthropic 格式使用 name + input_schema）
     });
     result.removed_non_function_tools = original_len - tools.len();
 
@@ -215,5 +216,57 @@ mod tests {
         });
         let result = rectify_tool_schema(&mut body);
         assert!(!result.applied);
+    }
+
+    #[test]
+    fn test_preserve_anthropic_typeless_tools() {
+        // Anthropic 格式的工具没有 type 字段，使用 name + input_schema
+        let mut body = json!({
+            "tools": [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather info",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"location": {"type": "string"}},
+                        "required": ["location"]
+                    }
+                },
+                {
+                    "name": "search",
+                    "description": "Search the web",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"]
+                    }
+                }
+            ]
+        });
+        let result = rectify_tool_schema(&mut body);
+        // Anthropic 格式工具不应被移除
+        assert!(!result.applied);
+        assert_eq!(result.removed_non_function_tools, 0);
+        assert_eq!(body["tools"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_mixed_openai_and_typeless_tools() {
+        // 混合场景：同时存在 OpenAI 格式和无 type 字段的工具
+        let mut body = json!({
+            "tools": [
+                {"type": "function", "name": "exec", "parameters": {"type": "object", "properties": {}, "required": []}},
+                {"type": "web_search"},
+                {"name": "anthropic_tool", "input_schema": {"type": "object", "properties": {}}}
+            ]
+        });
+        let result = rectify_tool_schema(&mut body);
+        assert!(result.applied);
+        assert_eq!(result.removed_non_function_tools, 1); // web_search removed
+        assert_eq!(body["tools"].as_array().unwrap().len(), 2); // function + typeless preserved
+        // 验证保留的工具
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["name"].as_str().unwrap(), "exec");
+        assert_eq!(tools[1]["name"].as_str().unwrap(), "anthropic_tool");
     }
 }
