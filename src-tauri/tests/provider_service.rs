@@ -239,7 +239,7 @@ command = "say"
 }
 
 #[test]
-fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup() {
+fn sync_current_provider_for_app_skips_proxy_refresh_when_proxy_server_is_not_running() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let _home = ensure_test_home();
@@ -250,53 +250,56 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
             .get_manager_mut(&AppType::Claude)
             .expect("claude manager");
         manager.current = "current-provider".to_string();
-
-        let mut provider = Provider::with_id(
+        manager.providers.insert(
             "current-provider".to_string(),
-            "Current".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_AUTH_TOKEN": "real-token",
-                    "ANTHROPIC_BASE_URL": "https://claude.example"
-                }
-            }),
-            None,
+            Provider::with_id(
+                "current-provider".to_string(),
+                "Current".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "real-token",
+                        "ANTHROPIC_BASE_URL": "https://claude.example",
+                        "ANTHROPIC_MODEL": "claude-sync-target"
+                    },
+                    "primaryModel": "claude-primary-target"
+                }),
+                None,
+            ),
         );
-        provider.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-
-        manager
-            .providers
-            .insert("current-provider".to_string(), provider);
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");
-    state
-        .db
-        .set_config_snippet(
-            AppType::Claude.as_str(),
-            Some(r#"{ "includeCoAuthoredBy": false }"#.to_string()),
-        )
-        .expect("set common config snippet");
-
-    let taken_over_live = json!({
-        "env": {
-            "ANTHROPIC_BASE_URL": "http://127.0.0.1:5000",
-            "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"
-        }
-    });
     let settings_path = get_claude_settings_path();
     std::fs::create_dir_all(settings_path.parent().expect("settings dir")).expect("create dir");
     std::fs::write(
         &settings_path,
-        serde_json::to_string_pretty(&taken_over_live).expect("serialize taken over live"),
+        serde_json::to_string_pretty(&json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                "ANTHROPIC_MODEL": "claude-stale-live"
+            },
+            "permissions": {
+                "allow": ["Bash"]
+            }
+        }))
+        .expect("serialize taken over live"),
     )
     .expect("write taken over live");
 
-    futures::executor::block_on(state.db.save_live_backup("claude", "{\"env\":{}}"))
-        .expect("seed live backup");
+    futures::executor::block_on(
+        state.db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&json!({
+                "env": {},
+                "permissions": {
+                    "allow": ["Bash"]
+                }
+            }))
+            .expect("serialize live backup"),
+        ),
+    )
+    .expect("seed live backup");
 
     let mut proxy_config = futures::executor::block_on(state.db.get_proxy_config_for_app("claude"))
         .expect("get proxy config");
@@ -310,8 +313,38 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
     let live_after: serde_json::Value =
         read_json_file(&settings_path).expect("read live settings after sync");
     assert_eq!(
-        live_after, taken_over_live,
-        "sync should not overwrite live config while takeover is active"
+        live_after
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
+            .and_then(|v| v.as_str()),
+        Some("real-token"),
+        "direct sync should restore the real auth token when the proxy server is down"
+    );
+    assert_eq!(
+        live_after
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str()),
+        Some("https://claude.example"),
+        "direct sync should not leave Claude pointing at the dead local proxy URL"
+    );
+    assert_eq!(
+        live_after
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_MODEL"))
+            .and_then(|v| v.as_str()),
+        Some("claude-sync-target"),
+        "direct sync should still refresh provider-owned live fields"
+    );
+    assert_eq!(
+        live_after.get("primaryModel").and_then(|v| v.as_str()),
+        Some("claude-primary-target"),
+        "direct sync should refresh top-level current-provider fields when takeover is inactive"
+    );
+    assert_eq!(
+        live_after.get("permissions"),
+        Some(&json!({ "allow": ["Bash"] })),
+        "direct sync should preserve Claude live-only settings while restoring provider-owned fields"
     );
 
     let backup = futures::executor::block_on(state.db.get_live_backup("claude"))
@@ -319,13 +352,126 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
         .expect("backup exists");
     let backup_value: serde_json::Value =
         serde_json::from_str(&backup.original_config).expect("parse backup value");
-
     assert_eq!(
         backup_value
-            .get("includeCoAuthoredBy")
-            .and_then(|v| v.as_bool()),
-        Some(false),
-        "restore backup should receive the updated effective config"
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
+            .and_then(|v| v.as_str()),
+        Some("real-token"),
+        "backup should stay in sync with the current provider even when the proxy server is down"
+    );
+    assert_eq!(
+        backup_value
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_MODEL"))
+            .and_then(|v| v.as_str()),
+        Some("claude-sync-target"),
+        "backup should refresh provider-owned fields so restore cannot roll back the latest change"
+    );
+    assert_eq!(
+        backup_value.get("primaryModel").and_then(|v| v.as_str()),
+        Some("claude-primary-target"),
+        "backup should refresh top-level fields so later restore stays consistent"
+    );
+    assert_eq!(
+        backup_value.get("permissions"),
+        Some(&json!({ "allow": ["Bash"] })),
+        "backup should preserve live-only settings so later restore does not drop Claude permissions"
+    );
+}
+
+#[test]
+fn sync_current_provider_for_app_preserves_taken_over_live_when_proxy_server_is_not_running_without_backup(
+) {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "current-provider".to_string();
+        manager.providers.insert(
+            "current-provider".to_string(),
+            Provider::with_id(
+                "current-provider".to_string(),
+                "Current".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "real-token",
+                        "ANTHROPIC_BASE_URL": "https://claude.example",
+                        "ANTHROPIC_MODEL": "claude-sync-target"
+                    },
+                    "primaryModel": "claude-primary-target"
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir")).expect("create dir");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                "ANTHROPIC_MODEL": "claude-stale-live"
+            },
+            "permissions": {
+                "allow": ["Bash"]
+            }
+        }))
+        .expect("serialize taken over live"),
+    )
+    .expect("write taken over live");
+
+    let mut proxy_config = futures::executor::block_on(state.db.get_proxy_config_for_app("claude"))
+        .expect("get proxy config");
+    proxy_config.enabled = true;
+    futures::executor::block_on(state.db.update_proxy_config_for_app(proxy_config))
+        .expect("enable takeover");
+
+    ProviderService::sync_current_provider_for_app(&state, AppType::Claude)
+        .expect("sync current provider should succeed");
+
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read live settings after sync");
+    assert_eq!(
+        live_after
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
+            .and_then(|v| v.as_str()),
+        Some("real-token"),
+        "restore-safe sync should restore the real auth token when only taken-over live exists"
+    );
+    assert_eq!(
+        live_after
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str()),
+        Some("https://claude.example"),
+        "restore-safe sync should remove the dead proxy URL when rebuilding from taken-over live"
+    );
+    assert_eq!(
+        live_after.get("permissions"),
+        Some(&json!({ "allow": ["Bash"] })),
+        "restore-safe sync should preserve Claude live-only settings from the taken-over live snapshot"
+    );
+
+    let backup = futures::executor::block_on(state.db.get_live_backup("claude"))
+        .expect("get live backup")
+        .expect("backup should be recreated from taken-over live");
+    let backup_value: serde_json::Value =
+        serde_json::from_str(&backup.original_config).expect("parse backup value");
+    assert_eq!(
+        backup_value.get("permissions"),
+        Some(&json!({ "allow": ["Bash"] })),
+        "recreated backup should preserve live-only settings from the taken-over live snapshot"
     );
     assert_eq!(
         backup_value
@@ -333,7 +479,7 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
             .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
             .and_then(|v| v.as_str()),
         Some("real-token"),
-        "restore backup should preserve the provider token rather than proxy placeholder"
+        "recreated backup should store restored provider credentials"
     );
 }
 

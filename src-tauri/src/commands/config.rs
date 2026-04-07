@@ -212,23 +212,7 @@ pub async fn set_claude_common_config_snippet(
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
-    let is_cleared = snippet.trim().is_empty();
-
-    if !snippet.trim().is_empty() {
-        serde_json::from_str::<serde_json::Value>(&snippet).map_err(invalid_json_format_error)?;
-    }
-
-    let value = if is_cleared { None } else { Some(snippet) };
-
-    state
-        .db
-        .set_config_snippet("claude", value)
-        .map_err(|e| e.to_string())?;
-    state
-        .db
-        .set_config_snippet_cleared("claude", is_cleared)
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    set_common_config_snippet("claude".to_string(), snippet, state).await
 }
 
 #[tauri::command]
@@ -286,7 +270,13 @@ pub async fn set_common_config_snippet(
         let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
         crate::services::provider::ProviderService::sync_current_provider_for_app(
             state.inner(),
+            app.clone(),
+        )
+        .map_err(|e| e.to_string())?;
+        crate::services::provider::ProviderService::sync_current_common_config_for_app(
+            state.inner(),
             app,
+            old_snippet.as_deref(),
         )
         .map_err(|e| e.to_string())?;
     }

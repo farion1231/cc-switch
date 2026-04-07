@@ -29,7 +29,8 @@ pub use live::{
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    provider_exists_in_live_config, strip_common_config_from_live_settings,
+    provider_exists_in_live_config, provider_uses_common_config,
+    remove_common_config_from_settings, strip_common_config_from_live_settings,
     sync_current_provider_for_app_to_live, write_live_with_common_config,
 };
 
@@ -372,29 +373,25 @@ base_url = "http://localhost:8080"
                 "env": {
                     "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
                     "ANTHROPIC_API_KEY": "PROXY_MANAGED",
-                    "ANTHROPIC_MODEL": "stale-model"
+                    "ANTHROPIC_MODEL": "stale-model",
+                    "ANTHROPIC_SMALL_FAST_MODEL": "legacy-fast-model"
                 },
                 "permissions": { "allow": ["Bash"] }
             }),
         )
         .expect("seed taken-over live file");
 
-        state
-            .proxy_service
-            .start()
-            .await
-            .expect("start proxy service");
+        state.proxy_service.mark_running_for_test().await;
 
         let updated = Provider::with_id(
             "p1".into(),
             "Claude A".into(),
             json!({
                 "env": {
-                    "ANTHROPIC_API_KEY": "token-updated",
-                    "ANTHROPIC_BASE_URL": "https://api.updated.example",
+                    "OPENROUTER_API_KEY": "token-updated",
+                    "ANTHROPIC_BASE_URL": "https://openrouter.example/api",
                     "ANTHROPIC_MODEL": "model-updated"
-                },
-                "permissions": { "allow": ["Read"] }
+                }
             }),
             None,
         );
@@ -407,26 +404,21 @@ base_url = "http://localhost:8080"
             .await
             .expect("get live backup")
             .expect("backup exists");
-        let stored_provider = db
-            .get_provider_by_id("p1", "claude")
-            .expect("get stored provider")
-            .expect("stored provider exists");
-        let expected_backup =
-            serde_json::to_string(&stored_provider.settings_config).expect("serialize");
-        assert_eq!(backup.original_config, expected_backup);
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
 
         let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
         assert_eq!(
             live.get("permissions"),
-            updated.settings_config.get("permissions"),
-            "provider edits should propagate into Claude live config during takeover"
+            original.settings_config.get("permissions"),
+            "live-only Claude settings should remain intact during takeover refresh"
         );
         assert_eq!(
             live.get("env")
-                .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                .and_then(|env| env.get("OPENROUTER_API_KEY"))
                 .and_then(|v| v.as_str()),
             Some("PROXY_MANAGED"),
-            "takeover placeholder should stay intact"
+            "takeover placeholder should move with the updated Claude credential family"
         );
         assert_eq!(
             live.get("env")
@@ -441,6 +433,187 @@ base_url = "http://localhost:8080"
                 .and_then(|v| v.as_str()),
             Some("model-updated"),
             "current provider model should be refreshed into takeover live config"
+        );
+        assert!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                .is_none(),
+            "stale Claude credential families should be removed from live"
+        );
+        assert!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_SMALL_FAST_MODEL"))
+                .is_none(),
+            "legacy Claude small-fast model overrides should be removed from live"
+        );
+        assert_eq!(
+            backup_value.get("permissions"),
+            original.settings_config.get("permissions"),
+            "backup should keep the existing live-only Claude settings"
+        );
+        assert_eq!(
+            backup_value
+                .get("env")
+                .and_then(|env| env.get("OPENROUTER_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("token-updated"),
+            "backup should store the updated provider credential"
+        );
+        assert!(
+            backup_value
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                .is_none(),
+            "backup should not retain stale Claude credential families"
+        );
+        assert!(
+            backup_value
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_SMALL_FAST_MODEL"))
+                .is_none(),
+            "backup should not retain legacy Claude small-fast model overrides"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_provider_refreshes_top_level_fields_when_proxy_takeover_detected(
+    ) {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let original = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "model-a"
+                },
+                "apiBaseUrl": "https://stale.provider.example",
+                "primaryModel": "claude-stale-primary",
+                "smallFastModel": "claude-stale-small",
+                "permissions": { "allow": ["Bash"] }
+            }),
+            None,
+        );
+        db.save_provider("claude", &original)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        write_json_file(
+            &get_claude_settings_path(),
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": "PROXY_MANAGED",
+                    "ANTHROPIC_MODEL": "stale-model"
+                },
+                "apiBaseUrl": "https://live-stale.example",
+                "primaryModel": "live-stale-primary",
+                "smallFastModel": "live-stale-small",
+                "permissions": { "allow": ["Bash"] }
+            }),
+        )
+        .expect("seed taken-over live file");
+
+        state.proxy_service.mark_running_for_test().await;
+
+        let updated = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "OPENROUTER_API_KEY": "token-updated",
+                    "ANTHROPIC_BASE_URL": "https://openrouter.example/api",
+                    "ANTHROPIC_MODEL": "model-updated"
+                },
+                "apiBaseUrl": "https://provider-updated.example",
+                "primaryModel": "claude-updated-primary"
+            }),
+            None,
+        );
+
+        ProviderService::update(&state, AppType::Claude, None, updated.clone())
+            .expect("update current provider");
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live.get("permissions"),
+            original.settings_config.get("permissions"),
+            "live-only Claude settings should remain intact during takeover refresh"
+        );
+        assert_eq!(
+            live.get("apiBaseUrl").and_then(|v| v.as_str()),
+            Some("https://provider-updated.example"),
+            "live should refresh Claude apiBaseUrl from the current provider"
+        );
+        assert_eq!(
+            live.get("primaryModel").and_then(|v| v.as_str()),
+            Some("claude-updated-primary"),
+            "live should refresh Claude primaryModel from the current provider"
+        );
+        assert!(
+            live.get("smallFastModel").is_none(),
+            "live should remove stale Claude smallFastModel when the provider no longer defines it"
+        );
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721"),
+            "proxy base URL should stay intact"
+        );
+        assert_eq!(
+            backup_value.get("permissions"),
+            original.settings_config.get("permissions"),
+            "backup should keep the existing live-only Claude settings"
+        );
+        assert_eq!(
+            backup_value.get("apiBaseUrl").and_then(|v| v.as_str()),
+            Some("https://provider-updated.example"),
+            "backup should refresh Claude apiBaseUrl from the current provider"
+        );
+        assert_eq!(
+            backup_value.get("primaryModel").and_then(|v| v.as_str()),
+            Some("claude-updated-primary"),
+            "backup should refresh Claude primaryModel from the current provider"
+        );
+        assert!(
+            backup_value.get("smallFastModel").is_none(),
+            "backup should remove stale Claude smallFastModel when the provider no longer defines it"
         );
     }
 
@@ -497,14 +670,12 @@ base_url = "http://localhost:8080"
             ),
             ("GEMINI_API_KEY".to_string(), "PROXY_MANAGED".to_string()),
             ("GEMINI_MODEL".to_string(), "stale-model".to_string()),
+            ("GEMINI_EXTRA_FLAG".to_string(), "stale-extra".to_string()),
+            ("GEMINI_STALE_ONLY".to_string(), "stale-only".to_string()),
         ]))
         .expect("seed taken-over live env");
 
-        state
-            .proxy_service
-            .start()
-            .await
-            .expect("start proxy service");
+        state.proxy_service.mark_running_for_test().await;
 
         let updated = Provider::with_id(
             "g1".into(),
@@ -513,7 +684,8 @@ base_url = "http://localhost:8080"
                 "env": {
                     "GEMINI_API_KEY": "token-updated",
                     "GOOGLE_GEMINI_BASE_URL": "https://gemini.updated.example",
-                    "GEMINI_MODEL": "gemini-updated"
+                    "GEMINI_MODEL": "gemini-updated",
+                    "GEMINI_EXTRA_FLAG": "provider-updated"
                 }
             }),
             None,
@@ -527,13 +699,8 @@ base_url = "http://localhost:8080"
             .await
             .expect("get live backup")
             .expect("backup exists");
-        let stored_provider = db
-            .get_provider_by_id("g1", "gemini")
-            .expect("get stored provider")
-            .expect("stored provider exists");
-        let expected_backup =
-            serde_json::to_string(&stored_provider.settings_config).expect("serialize");
-        assert_eq!(backup.original_config, expected_backup);
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
 
         let live_env = crate::gemini_config::read_gemini_env().expect("read live env");
         assert_eq!(
@@ -550,6 +717,388 @@ base_url = "http://localhost:8080"
             live_env.get("GEMINI_MODEL").map(String::as_str),
             Some("gemini-updated"),
             "current provider model should be refreshed into Gemini live env"
+        );
+        assert_eq!(
+            live_env.get("GEMINI_EXTRA_FLAG").map(String::as_str),
+            Some("provider-updated"),
+            "Gemini takeover refresh should rewrite provider-managed env keys from the updated provider"
+        );
+        assert!(
+            live_env.get("GEMINI_STALE_ONLY").is_none(),
+            "Gemini takeover refresh should remove stale env keys that are no longer present in provider settings"
+        );
+        assert_eq!(
+            backup_value
+                .get("env")
+                .and_then(|env| env.get("GEMINI_EXTRA_FLAG"))
+                .and_then(|v| v.as_str()),
+            Some("provider-updated"),
+            "backup should store the updated Gemini provider env keys"
+        );
+        assert!(
+            backup_value
+                .get("env")
+                .and_then(|env| env.get("GEMINI_STALE_ONLY"))
+                .is_none(),
+            "backup should remove stale Gemini env keys that are no longer present in provider settings"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_current_common_config_for_app_updates_taken_over_live_and_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut provider = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "model-a"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        write_json_file(
+            &get_claude_settings_path(),
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                    "ANTHROPIC_MODEL": "model-a"
+                },
+                "includeCoAuthoredBy": true,
+                "permissions": { "allow": ["Bash"] }
+            }),
+        )
+        .expect("seed taken-over live file");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "model-a"
+                },
+                "includeCoAuthoredBy": true,
+                "permissions": { "allow": ["Bash"] }
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        state.proxy_service.mark_running_for_test().await;
+
+        db.set_config_snippet(
+            "claude",
+            Some(r#"{ "includeCoAuthoredBy": true }"#.to_string()),
+        )
+        .expect("set old common config");
+        db.set_config_snippet(
+            "claude",
+            Some(r#"{ "includeCoAuthoredBy": false }"#.to_string()),
+        )
+        .expect("set new common config");
+
+        ProviderService::sync_current_common_config_for_app(
+            &state,
+            AppType::Claude,
+            Some(r#"{ "includeCoAuthoredBy": true }"#),
+        )
+        .expect("sync common config transition");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live.get("includeCoAuthoredBy").and_then(|v| v.as_bool()),
+            Some(false),
+            "taken-over live should refresh to the updated common-config value"
+        );
+        assert_eq!(
+            live.get("permissions"),
+            Some(&json!({ "allow": ["Bash"] })),
+            "common-config sync should preserve live-only Claude settings"
+        );
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN"))
+                .and_then(|v| v.as_str()),
+            Some("PROXY_MANAGED"),
+            "common-config sync should keep the takeover auth placeholder in live"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        assert_eq!(
+            backup_value
+                .get("includeCoAuthoredBy")
+                .and_then(|v| v.as_bool()),
+            Some(false),
+            "restore backup should refresh to the updated common-config value"
+        );
+        assert_eq!(
+            backup_value.get("permissions"),
+            Some(&json!({ "allow": ["Bash"] })),
+            "backup should preserve existing live-only Claude settings"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_current_common_config_for_app_removes_cleared_values_from_live_and_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut provider = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "model-a"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        write_json_file(
+            &get_claude_settings_path(),
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                    "ANTHROPIC_MODEL": "model-a"
+                },
+                "includeCoAuthoredBy": false,
+                "permissions": { "allow": ["Bash"] }
+            }),
+        )
+        .expect("seed taken-over live file");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "model-a"
+                },
+                "includeCoAuthoredBy": false,
+                "permissions": { "allow": ["Bash"] }
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        state.proxy_service.mark_running_for_test().await;
+
+        db.set_config_snippet(
+            "claude",
+            Some(r#"{ "includeCoAuthoredBy": false }"#.to_string()),
+        )
+        .expect("set old common config");
+        db.set_config_snippet("claude", None)
+            .expect("clear common config");
+
+        ProviderService::sync_current_common_config_for_app(
+            &state,
+            AppType::Claude,
+            Some(r#"{ "includeCoAuthoredBy": false }"#),
+        )
+        .expect("sync cleared common config");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert!(
+            live.get("includeCoAuthoredBy").is_none(),
+            "taken-over live should remove cleared common-config values"
+        );
+        assert_eq!(
+            live.get("permissions"),
+            Some(&json!({ "allow": ["Bash"] })),
+            "clearing common config should preserve live-only Claude settings"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        assert!(
+            backup_value.get("includeCoAuthoredBy").is_none(),
+            "restore backup should remove cleared common-config values"
+        );
+        assert_eq!(
+            backup_value.get("permissions"),
+            Some(&json!({ "allow": ["Bash"] })),
+            "backup should preserve existing live-only Claude settings when clearing common config"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_current_common_config_for_app_tolerates_malformed_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut provider = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_MODEL": "model-a"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        write_json_file(
+            &get_claude_settings_path(),
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                    "ANTHROPIC_MODEL": "model-a"
+                }
+            }),
+        )
+        .expect("seed taken-over live file");
+        db.save_live_backup("claude", "{ invalid backup json")
+            .await
+            .expect("seed malformed backup");
+
+        state.proxy_service.mark_running_for_test().await;
+
+        db.set_config_snippet(
+            "claude",
+            Some(r#"{ "includeCoAuthoredBy": true }"#.to_string()),
+        )
+        .expect("set new common config");
+
+        ProviderService::sync_current_common_config_for_app(&state, AppType::Claude, None)
+            .expect("sync common config should tolerate malformed backup");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live.get("includeCoAuthoredBy").and_then(|v| v.as_bool()),
+            Some(true),
+            "takeover live should still update when backup parsing fails"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        assert_eq!(
+            backup.original_config, "{ invalid backup json",
+            "malformed backup should be left untouched when refresh is skipped"
         );
     }
 
@@ -1677,6 +2226,7 @@ impl ProviderService {
             futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str()))
                 .map(|config| config.enabled)
                 .unwrap_or(false);
+        let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
 
         let has_live_backup =
             futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
@@ -1689,16 +2239,84 @@ impl ProviderService {
             .detect_takeover_in_live_config_for_app(&app_type);
 
         if takeover_enabled && (has_live_backup || live_taken_over) {
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            if is_proxy_running {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .refresh_takeover_state_from_provider(&app_type, provider),
+                )
+                .map_err(|e| AppError::Message(format!("刷新代理接管状态失败: {e}")))?;
+            } else {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .refresh_restore_state_from_provider(&app_type, provider),
+                )
+                .map_err(|e| AppError::Message(format!("刷新恢复态配置失败: {e}")))?;
+            }
             return Ok(());
         }
 
         sync_current_provider_for_app_to_live(state, &app_type)
+    }
+
+    pub(crate) fn sync_current_common_config_for_app(
+        state: &AppState,
+        app_type: AppType,
+        previous_common_snippet: Option<&str>,
+    ) -> Result<(), AppError> {
+        if app_type.is_additive_mode() {
+            return Ok(());
+        }
+
+        let current_id =
+            match crate::settings::get_effective_current_provider(&state.db, &app_type)? {
+                Some(id) => id,
+                None => return Ok(()),
+            };
+
+        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let Some(provider) = providers.get(&current_id) else {
+            return Ok(());
+        };
+
+        let takeover_enabled =
+            futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str()))
+                .map(|config| config.enabled)
+                .unwrap_or(false);
+        let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
+        let has_live_backup =
+            futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                .ok()
+                .flatten()
+                .is_some();
+        let live_taken_over = state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&app_type);
+
+        if !takeover_enabled || !(has_live_backup || live_taken_over) {
+            return Ok(());
+        }
+
+        if is_proxy_running {
+            futures::executor::block_on(
+                state.proxy_service.sync_takeover_common_config_transition(
+                    &app_type,
+                    provider,
+                    previous_common_snippet,
+                ),
+            )
+            .map_err(|e| AppError::Message(format!("同步代理接管态通用配置失败: {e}")))?;
+        } else {
+            futures::executor::block_on(state.proxy_service.sync_restore_common_config_transition(
+                &app_type,
+                provider,
+                previous_common_snippet,
+            ))
+            .map_err(|e| AppError::Message(format!("同步恢复态通用配置失败: {e}")))?;
+        }
+
+        Ok(())
     }
 
     pub fn migrate_legacy_common_config_usage(
