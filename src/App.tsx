@@ -40,7 +40,12 @@ import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
-import { isWindows, isLinux } from "@/lib/platform";
+import {
+  isWindows,
+  isLinux,
+  DRAG_REGION_ATTR,
+  DRAG_REGION_STYLE,
+} from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
@@ -876,11 +881,13 @@ function App() {
       className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30"
       style={{ overflowX: "hidden", paddingTop: CONTENT_TOP_OFFSET }}
     >
-      <div
-        className="fixed top-0 left-0 right-0 z-[60]"
-        data-tauri-drag-region
-        style={{ WebkitAppRegion: "drag", height: DRAG_BAR_HEIGHT } as any}
-      />
+      {DRAG_BAR_HEIGHT > 0 && (
+        <div
+          className="fixed top-0 left-0 right-0 z-[60]"
+          data-tauri-drag-region
+          style={{ WebkitAppRegion: "drag", height: DRAG_BAR_HEIGHT } as any}
+        />
+      )}
       {showEnvBanner && envConflicts.length > 0 && (
         <EnvWarningBanner
           conflicts={envConflicts}
@@ -908,10 +915,10 @@ function App() {
 
       <header
         className="fixed z-50 w-full transition-all duration-300 bg-background/80 backdrop-blur-md"
-        data-tauri-drag-region
+        {...DRAG_REGION_ATTR}
         style={
           {
-            WebkitAppRegion: "drag",
+            ...DRAG_REGION_STYLE,
             top: DRAG_BAR_HEIGHT,
             height: HEADER_HEIGHT,
           } as any
@@ -919,8 +926,8 @@ function App() {
       >
         <div
           className="flex h-full items-center justify-between gap-2 px-6"
-          data-tauri-drag-region
-          style={{ WebkitAppRegion: "drag" } as any}
+          {...DRAG_REGION_ATTR}
+          style={{ ...DRAG_REGION_STYLE } as any}
         >
           <div
             className="flex items-center gap-1"
