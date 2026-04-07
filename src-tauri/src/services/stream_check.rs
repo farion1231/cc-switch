@@ -651,12 +651,14 @@ impl StreamCheckService {
                 .await
             }
             AppType::OpenCode => {
-                // Phase 3 will implement this
-                Err(AppError::localized(
-                    "opencode_no_stream_check",
-                    "OpenCode 暂不支持健康检查",
-                    "OpenCode does not support health check yet",
-                ))
+                Self::check_opencode_stream(
+                    &client,
+                    provider,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                )
+                .await
             }
             _ => unreachable!("check_once_opencode_like 只处理 OpenCode/OpenClaw"),
         };
@@ -827,6 +829,140 @@ impl StreamCheckService {
         provider
             .settings_config
             .get("api")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// OpenCode 流式检查分发器
+    ///
+    /// OpenCode 用 `npm` 字段（AI SDK 包名）隐式指定协议。映射关系参见
+    /// `opencodeNpmPackages` (前端 opencodeProviderPresets.ts):
+    /// - `@ai-sdk/openai-compatible` → check_claude_stream + api_format="openai_chat"
+    /// - `@ai-sdk/openai`            → check_claude_stream + api_format="openai_responses"
+    /// - `@ai-sdk/anthropic`         → check_claude_stream + api_format="anthropic"
+    /// - `@ai-sdk/google`            → check_gemini_stream (Google API Key 策略)
+    /// - `@ai-sdk/amazon-bedrock`    → 不支持（Phase 4 会美化错误消息）
+    ///
+    /// URL/API Key 存放在 `settings_config.options.{baseURL,apiKey}`，注意
+    /// `baseURL` 大写 L（与 OpenClaw 的 `baseUrl` 首字母小写 u 不同）。
+    async fn check_opencode_stream(
+        client: &Client,
+        provider: &Provider,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(u16, String), AppError> {
+        let base_url = Self::extract_opencode_base_url(provider)?;
+        let api_key = Self::extract_opencode_api_key(provider)?;
+        let npm = Self::extract_opencode_npm(provider);
+
+        match npm.as_deref() {
+            Some("@ai-sdk/openai-compatible") => {
+                let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
+                Self::check_claude_stream(
+                    client,
+                    &base_url,
+                    &auth,
+                    model,
+                    test_prompt,
+                    timeout,
+                    provider,
+                    Some("openai_chat"),
+                )
+                .await
+            }
+            Some("@ai-sdk/openai") => {
+                let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
+                Self::check_claude_stream(
+                    client,
+                    &base_url,
+                    &auth,
+                    model,
+                    test_prompt,
+                    timeout,
+                    provider,
+                    Some("openai_responses"),
+                )
+                .await
+            }
+            Some("@ai-sdk/anthropic") => {
+                // 见 check_openclaw_stream 对 anthropic-messages 的注释：
+                // 用 ClaudeAuth（Bearer-only）兼容中转服务。
+                let auth = AuthInfo::new(api_key, AuthStrategy::ClaudeAuth);
+                Self::check_claude_stream(
+                    client,
+                    &base_url,
+                    &auth,
+                    model,
+                    test_prompt,
+                    timeout,
+                    provider,
+                    Some("anthropic"),
+                )
+                .await
+            }
+            Some("@ai-sdk/google") => {
+                let auth = AuthInfo::new(api_key, AuthStrategy::Google);
+                Self::check_gemini_stream(client, &base_url, &auth, model, test_prompt, timeout)
+                    .await
+            }
+            Some("@ai-sdk/amazon-bedrock") => Err(AppError::localized(
+                "opencode_bedrock_not_supported",
+                "OpenCode 暂不支持 AWS Bedrock 健康检查",
+                "OpenCode AWS Bedrock health check is not supported",
+            )),
+            Some(other) => Err(AppError::localized(
+                "opencode_npm_not_yet_supported",
+                format!("OpenCode 暂不支持 SDK 包: {other}"),
+                format!("OpenCode SDK package not yet supported: {other}"),
+            )),
+            None => Err(AppError::localized(
+                "opencode_npm_missing",
+                "OpenCode 供应商缺少 npm 字段",
+                "OpenCode provider is missing the `npm` field",
+            )),
+        }
+    }
+
+    fn extract_opencode_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("options")
+            .and_then(|v| v.get("baseURL"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "opencode_base_url_missing",
+                    "OpenCode 供应商缺少 options.baseURL",
+                    "OpenCode provider is missing `options.baseURL`",
+                )
+            })
+    }
+
+    fn extract_opencode_api_key(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("options")
+            .and_then(|v| v.get("apiKey"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "opencode_api_key_missing",
+                    "OpenCode 供应商缺少 options.apiKey",
+                    "OpenCode provider is missing `options.apiKey`",
+                )
+            })
+    }
+
+    fn extract_opencode_npm(provider: &Provider) -> Option<String> {
+        provider
+            .settings_config
+            .get("npm")
             .and_then(|v| v.as_str())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
