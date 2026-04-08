@@ -680,10 +680,7 @@ impl CopilotAuthManager {
             } else {
                 // 新账号，生成 Machine ID
                 let new_machine_id = self.generate_machine_id(&account_id);
-                log::debug!(
-                    "[CopilotAuth] 为新账号 {} 生成 Machine ID",
-                    account_id
-                );
+                log::debug!("[CopilotAuth] 为新账号 {} 生成 Machine ID", account_id);
                 new_machine_id
             }
         };
@@ -954,9 +951,7 @@ impl CopilotAuthManager {
         {
             let accounts = self.accounts.read().await;
             if !accounts.contains_key(account_id) {
-                log::debug!(
-                    "[CopilotAuth] 账号 {account_id} 不存在，使用默认 endpoint"
-                );
+                log::debug!("[CopilotAuth] 账号 {account_id} 不存在，使用默认 endpoint");
                 return DEFAULT_COPILOT_API_ENDPOINT.to_string();
             }
         }
@@ -1743,10 +1738,7 @@ impl CopilotAuthManager {
                     // 生成 Machine ID（迁移时也需要，基于账号 ID）
                     let account_id = user.id.to_string();
                     let machine_id = self.generate_machine_id(&account_id);
-                    log::debug!(
-                        "[CopilotAuth] 为迁移账号 {} 生成 Machine ID",
-                        account_id
-                    );
+                    log::debug!("[CopilotAuth] 为迁移账号 {} 生成 Machine ID", account_id);
 
                     // 添加账号
                     self.add_account_internal(legacy_token, user, machine_id)
