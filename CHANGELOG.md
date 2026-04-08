@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux Window Controls**: Use the system title bar on Linux and disable custom drag regions there so GNOME/Wayland window buttons stay clickable
+
 ---
 
 ## [3.12.3] - 2026-03-24

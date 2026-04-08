@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "CC Switch",
+        "titleBarStyle": "Visible",
+        "width": 1000,
+        "height": 650,
+        "minWidth": 900,
+        "minHeight": 600,
+        "visible": false,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ]
+  }
+}
