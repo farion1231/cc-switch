@@ -489,6 +489,11 @@
       "title": "首选终端",
       "description": "选择点击终端按钮时使用的终端应用",
       "fallbackHint": "如果选择的终端不可用，将自动使用系统默认终端",
+      "cmuxSocketHint": "cmux 默认不允许外部应用通过套接字控制。若出现 “Failed to write to socket”，请点击下方按钮：将退出 cmux 并以允许外部进程的方式重新启动（当前 cmux 会话会关闭）。",
+      "cmuxRestartButton": "重启 cmux（允许外部控制）",
+      "cmuxRestarting": "正在重启…",
+      "cmuxRestartSuccess": "cmux 已重新启动，请再试一次「打开终端」。",
+      "cmuxRestartFailed": "重启失败：{{message}}",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -496,7 +501,8 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
-          "wezterm": "WezTerm"
+          "wezterm": "WezTerm",
+          "cmux": "cmux"
         },
         "windows": {
           "cmd": "命令提示符",

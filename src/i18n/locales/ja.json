@@ -489,6 +489,11 @@
       "title": "優先ターミナル",
       "description": "ターミナルボタンをクリックした時に使用するターミナルアプリを選択",
       "fallbackHint": "選択したターミナルが利用できない場合、システムのデフォルトが使用されます",
+      "cmuxSocketHint": "cmux のソケットは既定で外部アプリからの接続を拒否します。「Failed to write to socket」が出たら、下のボタンで cmux を終了し、外部制御を許可するモードで再起動してください（セッションは閉じます）。",
+      "cmuxRestartButton": "cmux を再起動（外部制御を許可）",
+      "cmuxRestarting": "再起動中…",
+      "cmuxRestartSuccess": "cmux を再起動しました。もう一度ターミナルを開いてください。",
+      "cmuxRestartFailed": "再起動に失敗しました: {{message}}",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -496,7 +501,8 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
-          "wezterm": "WezTerm"
+          "wezterm": "WezTerm",
+          "cmux": "cmux"
         },
         "windows": {
           "cmd": "コマンドプロンプト",

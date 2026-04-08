@@ -21,6 +21,7 @@ pub fn launch_terminal(
         "kitty" => launch_kitty(command, cwd),
         "wezterm" => launch_wezterm(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        "cmux" => launch_cmux(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
         _ => Err(format!("Unsupported terminal target: {target}")),
     }
@@ -209,6 +210,12 @@ fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     } else {
         Err("Failed to launch Alacritty.".to_string())
     }
+}
+
+fn launch_cmux(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let full_command = build_shell_command(command, cwd);
+    let cmd_text = format!("{}\n", full_command);
+    crate::cmux_macos::run_in_cmux(&cmd_text)
 }
 
 fn launch_custom(

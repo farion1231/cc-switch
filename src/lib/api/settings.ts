@@ -31,6 +31,11 @@ export const settingsApi = {
     return await invoke("restart_app");
   },
 
+  /** macOS: quit cmux and relaunch with CMUX_SOCKET_MODE=allowAll (fixes “Failed to write to socket”). */
+  async restartCmuxForExternalAccess(): Promise<void> {
+    await invoke("restart_cmux_for_external_access");
+  },
+
   async checkUpdates(): Promise<void> {
     await invoke("check_for_updates");
   },

@@ -489,6 +489,11 @@
       "title": "Preferred Terminal",
       "description": "Choose which terminal app to use when clicking the terminal button",
       "fallbackHint": "If the selected terminal is unavailable, the system default will be used",
+      "cmuxSocketHint": "cmux’s socket defaults to rejecting apps like CC Switch. If you see “Failed to write to socket”, click the button below to quit cmux and relaunch it with external control enabled (your cmux sessions will close).",
+      "cmuxRestartButton": "Restart cmux for external control",
+      "cmuxRestarting": "Restarting…",
+      "cmuxRestartSuccess": "cmux restarted in external-control mode. Try Open Terminal again.",
+      "cmuxRestartFailed": "Could not restart cmux: {{message}}",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -496,7 +501,8 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
-          "wezterm": "WezTerm"
+          "wezterm": "WezTerm",
+          "cmux": "cmux"
         },
         "windows": {
           "cmd": "Command Prompt",

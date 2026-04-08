@@ -948,11 +948,13 @@ exec bash --norc --noprofile
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
         "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
+        "cmux" => launch_macos_cmux(&script_file, cwd),
         _ => launch_macos_terminal_app(&script_file), // "terminal" or default
     };
 
-    // If preferred terminal fails and it's not the default, try Terminal.app as fallback
-    if result.is_err() && terminal != "terminal" {
+    // If preferred terminal fails and it's not the default, try Terminal.app as fallback.
+    // cmux: do not fall back — failures are usually PATH or cmux socket policy; user should see the error.
+    if result.is_err() && terminal != "terminal" && terminal != "cmux" {
         log::warn!(
             "首选终端 {} 启动失败，回退到 Terminal.app: {:?}",
             terminal,
@@ -1063,6 +1065,22 @@ fn launch_macos_open_app(
     }
 
     Ok(())
+}
+
+/// macOS: cmux (terminal built on Ghostty with workspace management)
+#[cfg(target_os = "macos")]
+fn launch_macos_cmux(script_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+    let mut cmd_text = String::new();
+    if let Some(dir) = cwd {
+        cmd_text.push_str(&format!(
+            "cd {} && ",
+            shell_single_quote(&dir.to_string_lossy())
+        ));
+    }
+    cmd_text.push_str(&format!("bash '{}'\n", script_file.display()));
+
+    crate::cmux_macos::run_in_cmux(&cmd_text)
+        .map_err(|e| format!("启动 cmux 失败: {e}"))
 }
 
 /// Linux: 根据用户首选终端启动
@@ -1322,6 +1340,19 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
     };
 
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
+}
+
+/// Quit cmux and relaunch with `CMUX_SOCKET_MODE=allowAll` so CC Switch can run `cmux new-workspace` / `send`.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn restart_cmux_for_external_access() -> Result<(), String> {
+    crate::cmux_macos::restart_cmux_with_allow_all()
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn restart_cmux_for_external_access() -> Result<(), String> {
+    Err("cmux is only supported on macOS".into())
 }
 
 #[cfg(test)]
