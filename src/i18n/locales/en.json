@@ -874,6 +874,8 @@
     "proxyConfigDesc": "Configure separate network proxy for this provider. Uses system proxy or global settings when disabled.",
     "proxyUsername": "Username (optional)",
     "proxyPassword": "Password (optional)",
+    "connectionOverride": "Connection Override (Advanced)",
+    "connectionOverrideHint": "Only changes the TCP/TLS connection target. TLS SNI and HTTP Host still keep the original API URL hostname semantics. It takes effect only after starting the built-in proxy and enabling takeover for the current app.",
     "pricingConfig": "Pricing Config",
     "useCustomPricing": "Use separate config",
     "pricingConfigDesc": "Configure separate pricing parameters for this provider. Uses global defaults when disabled.",

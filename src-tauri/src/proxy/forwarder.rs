@@ -917,6 +917,18 @@ impl RequestForwarder {
         let force_identity_encoding = needs_transform
             || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
+        // 连接覆盖：仅改连接目标端口/IP，保留原始 URL 的 Host/SNI 语义
+        let connection_override = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.connection_override.as_deref());
+        let connection_override_addr =
+            super::connection_override::parse_connection_override(connection_override)
+                .map_err(ProxyError::ConfigError)?;
+        let effective_url =
+            super::http_client::apply_connection_override_to_url(&url, connection_override)
+                .map_err(ProxyError::ConfigError)?;
+
         // 获取认证头（提前准备，用于内联替换）
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
@@ -1014,10 +1026,7 @@ impl RequestForwarder {
         };
 
         // 预计算上游 host 值（用于在原位替换 host header）
-        let upstream_host = url
-            .parse::<http::Uri>()
-            .ok()
-            .and_then(|u| u.authority().map(|a| a.to_string()));
+        let upstream_host = super::http_client::request_authority(&url).ok();
 
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if adapter.name() == "Claude" {
@@ -1207,7 +1216,7 @@ impl RequestForwarder {
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
-        log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
+        log::info!("[{tag}] >>> 请求 URL: {effective_url} (model={request_model})");
         if let Ok(body_str) = serde_json::to_string(&filtered_body) {
             log::debug!(
                 "[{tag}] >>> 请求体内容 ({}字节): {}",
@@ -1236,16 +1245,21 @@ impl RequestForwarder {
             .map(|u| u.starts_with("socks5"))
             .unwrap_or(false);
 
-        let uri: http::Uri = url
-            .parse()
-            .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
+        let uri: http::Uri = effective_url.parse().map_err(|e| {
+            ProxyError::ForwardFailed(format!("Invalid URL '{effective_url}': {e}"))
+        })?;
 
         // 发送请求
         let response = if is_socks_proxy {
             // SOCKS5 代理：只能走 reqwest（不支持 header case 保留）
             log::debug!("[Forwarder] Using reqwest for SOCKS5 proxy");
-            let client = super::http_client::get_for_provider(proxy_config);
-            let mut request = client.post(&url);
+            let client = super::http_client::get_for_provider_with_override(
+                proxy_config,
+                Some(&effective_url),
+                connection_override,
+            )
+            .map_err(ProxyError::ConfigError)?;
+            let mut request = client.post(&effective_url);
             if !self.non_streaming_timeout.is_zero() {
                 request = request.timeout(self.non_streaming_timeout);
             }
@@ -1265,15 +1279,16 @@ impl RequestForwarder {
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            super::hyper_client::send_request(
+            super::hyper_client::send_request(super::hyper_client::SendRequestInput {
                 uri,
-                http::Method::POST,
-                ordered_headers,
-                extensions.clone(),
-                body_bytes,
+                method: http::Method::POST,
+                headers: ordered_headers,
+                original_extensions: extensions.clone(),
+                body: body_bytes,
                 timeout,
-                upstream_proxy_url.as_deref(),
-            )
+                proxy_url: upstream_proxy_url.as_deref(),
+                connection_override: connection_override_addr,
+            })
             .await?
         };
 

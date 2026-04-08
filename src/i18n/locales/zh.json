@@ -874,6 +874,8 @@
     "proxyConfigDesc": "为此供应商配置单独的网络代理，不启用时使用系统代理或全局设置。",
     "proxyUsername": "用户名（可选）",
     "proxyPassword": "密码（可选）",
+    "connectionOverride": "连接覆写地址（高级）",
+    "connectionOverrideHint": "仅改变 TCP/TLS 连接目标地址，TLS SNI 与 HTTP Host 仍保持 API URL 的原始域名语义。需先启动内置代理并为当前应用启用接管后才会生效。",
     "pricingConfig": "计费配置",
     "useCustomPricing": "使用单独配置",
     "pricingConfigDesc": "为此供应商配置单独的计费参数，不启用时使用全局默认配置。",

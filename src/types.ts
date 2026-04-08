@@ -151,6 +151,8 @@ export interface ProviderMeta {
   testConfig?: ProviderTestConfig;
   // 供应商单独的代理配置
   proxyConfig?: ProviderProxyConfig;
+  // 可选连接覆写地址，格式：IPv4:端口 或 [IPv6]:端口
+  connectionOverride?: string;
   // 供应商成本倍率
   costMultiplier?: string;
   // 供应商计费模式来源

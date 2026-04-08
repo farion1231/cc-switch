@@ -694,6 +694,50 @@ fn provider_service_switch_missing_provider_returns_error() {
 }
 
 #[test]
+fn provider_service_persists_connection_override_meta() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+
+    let mut provider = Provider::with_id(
+        "override-provider".to_string(),
+        "Override Provider".to_string(),
+        json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "token",
+                "ANTHROPIC_BASE_URL": "https://semantic.invalid/v1"
+            }
+        }),
+        None,
+    );
+    provider.meta = Some(ProviderMeta {
+        connection_override: Some("1.2.3.4:443".to_string()),
+        ..ProviderMeta::default()
+    });
+
+    state
+        .db
+        .save_provider(AppType::Claude.as_str(), &provider)
+        .expect("save provider with connection override");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("get providers");
+    let saved = providers.get("override-provider").expect("provider exists");
+
+    assert_eq!(
+        saved
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.connection_override.as_deref()),
+        Some("1.2.3.4:443")
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_missing_auth_returns_error() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

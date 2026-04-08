@@ -316,8 +316,9 @@ pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, Str
 pub async fn test_api_endpoints(
     urls: Vec<String>,
     #[allow(non_snake_case)] timeoutSecs: Option<u64>,
+    #[allow(non_snake_case)] connectionOverride: Option<String>,
 ) -> Result<Vec<EndpointLatency>, String> {
-    SpeedtestService::test_endpoints(urls, timeoutSecs)
+    SpeedtestService::test_endpoints(urls, timeoutSecs, connectionOverride)
         .await
         .map_err(|e| e.to_string())
 }

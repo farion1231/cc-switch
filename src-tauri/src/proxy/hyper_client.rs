@@ -10,6 +10,7 @@ use futures::stream::Stream;
 use http_body_util::BodyExt;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::OnceLock;
 
 /// Our own header case map: maps lowercase header name → original wire-casing bytes.
@@ -180,31 +181,48 @@ impl ProxyResponse {
 /// `proxy_url`: optional upstream HTTP proxy URL (e.g. `http://127.0.0.1:7890`).
 /// When set, the raw write path uses HTTP CONNECT tunneling through the proxy,
 /// so header-case preservation works even when an upstream proxy is configured.
-pub async fn send_request(
-    uri: http::Uri,
-    method: http::Method,
-    headers: http::HeaderMap,
-    original_extensions: http::Extensions,
-    body: Vec<u8>,
-    timeout: std::time::Duration,
-    proxy_url: Option<&str>,
-) -> Result<ProxyResponse, ProxyError> {
+pub(crate) struct SendRequestInput<'a> {
+    pub uri: http::Uri,
+    pub method: http::Method,
+    pub headers: http::HeaderMap,
+    pub original_extensions: http::Extensions,
+    pub body: Vec<u8>,
+    pub timeout: std::time::Duration,
+    pub proxy_url: Option<&'a str>,
+    pub connection_override: Option<SocketAddr>,
+}
+
+pub(crate) async fn send_request(input: SendRequestInput<'_>) -> Result<ProxyResponse, ProxyError> {
+    let SendRequestInput {
+        uri,
+        method,
+        headers,
+        original_extensions,
+        body,
+        timeout,
+        proxy_url,
+        connection_override,
+    } = input;
     // Extract our own OriginalHeaderCases if available
     let original_cases = original_extensions.get::<OriginalHeaderCases>().cloned();
     let has_cases = original_cases
         .as_ref()
         .map(|c| !c.cases.is_empty())
         .unwrap_or(false);
+    let has_override = connection_override.is_some();
 
     log::debug!(
         "[HyperClient] Sending request: uri={uri}, header_count={}, \
-         has_host={}, has_original_cases={has_cases}, proxy={:?}",
+         has_host={}, has_original_cases={has_cases}, has_override={}, proxy={:?}",
         headers.len(),
         headers.contains_key(http::header::HOST),
+        has_override,
         proxy_url,
     );
 
-    if has_cases {
+    if has_cases || has_override {
+        let default_cases = OriginalHeaderCases::default();
+        let cases = original_cases.as_ref().unwrap_or(&default_cases);
         // Primary path: use raw write + hyper handshake for exact header casing
         let result = tokio::time::timeout(
             timeout,
@@ -212,9 +230,10 @@ pub async fn send_request(
                 &uri,
                 &method,
                 &headers,
-                original_cases.as_ref().unwrap(),
+                cases,
                 &body,
                 proxy_url,
+                connection_override,
             ),
         )
         .await
@@ -223,7 +242,7 @@ pub async fn send_request(
         match result {
             Ok(resp) => return Ok(resp),
             Err(e) => {
-                if proxy_url.is_some() {
+                if proxy_url.is_some() || has_override {
                     // Don't bypass configured proxy with direct connect fallback
                     return Err(e);
                 }
@@ -320,6 +339,7 @@ async fn send_raw_request(
     original_cases: &OriginalHeaderCases,
     body: &[u8],
     proxy_url: Option<&str>,
+    connection_override: Option<SocketAddr>,
 ) -> Result<ProxyResponse, ProxyError> {
     use tokio::io::AsyncWriteExt;
 
@@ -334,10 +354,20 @@ async fn send_raw_request(
 
     // Build raw HTTP request bytes
     let raw = build_raw_request(method, path_and_query, headers, original_cases, body);
+    let connect_port = connection_override.map(|addr| addr.port()).unwrap_or(port);
 
     // Establish TCP connection — either direct or through HTTP CONNECT proxy
     let stream = if let Some(proxy) = proxy_url {
-        connect_via_proxy(proxy, host, port).await?
+        let connect_host = connection_override
+            .map(|addr| format_connect_host(addr.ip()))
+            .unwrap_or_else(|| host.to_string());
+        connect_via_proxy(proxy, &connect_host, connect_port).await?
+    } else if let Some(addr) = connection_override {
+        ProxyStream::Tcp(
+            tokio::net::TcpStream::connect(addr)
+                .await
+                .map_err(|e| ProxyError::ForwardFailed(format!("TCP connect failed: {e}")))?,
+        )
     } else {
         ProxyStream::Tcp(
             tokio::net::TcpStream::connect((host, port))
@@ -379,6 +409,13 @@ async fn send_raw_request(
 
         let filtered = WriteFilter::new(stream);
         do_hyper_response(filtered, method.clone()).await
+    }
+}
+
+fn format_connect_host(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(addr) => addr.to_string(),
+        IpAddr::V6(addr) => format!("[{addr}]"),
     }
 }
 
@@ -693,5 +730,76 @@ impl<S: Unpin> tokio::io::AsyncWrite for WriteFilter<S> {
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{send_request, OriginalHeaderCases, SendRequestInput};
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpListener};
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn send_request_uses_connection_override_and_keeps_original_host_header() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let port = listener.local_addr().expect("listener addr").port();
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept connection");
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).expect("read request");
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+            stream.write_all(response).expect("write response");
+            stream.flush().expect("flush response");
+            thread::sleep(Duration::from_millis(50));
+            request
+        });
+
+        let uri: http::Uri = "http://semantic.invalid:18181/ping"
+            .parse()
+            .expect("parse uri");
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::HOST,
+            http::HeaderValue::from_static("semantic.invalid:18181"),
+        );
+        let mut extensions = http::Extensions::new();
+        extensions.insert(OriginalHeaderCases {
+            cases: vec![("host".to_string(), b"Host".to_vec())],
+        });
+
+        let result = tokio::runtime::Runtime::new()
+            .expect("tokio runtime")
+            .block_on(send_request(SendRequestInput {
+                uri,
+                method: http::Method::GET,
+                headers,
+                original_extensions: extensions,
+                body: Vec::new(),
+                timeout: Duration::from_secs(5),
+                proxy_url: None,
+                connection_override: Some(SocketAddr::from(([127, 0, 0, 1], port))),
+            }));
+        if let Err(err) = &result {
+            let err_text = format!("{err:?}");
+            assert!(
+                err_text.contains("Response parse failed"),
+                "unexpected request error: {err_text}"
+            );
+        }
+
+        let request_text = server.join().expect("join server thread");
+        let request_lower = request_text.to_lowercase();
+        assert!(
+            request_lower.starts_with("get /ping http/1.1\r\n"),
+            "expected original request target, got: {request_text}"
+        );
+        assert!(
+            request_lower.contains("host: semantic.invalid:18181"),
+            "expected host header to keep original authority, got: {request_text}"
+        );
     }
 }

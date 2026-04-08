@@ -79,6 +79,17 @@ pub struct StreamCheckResult {
 /// 流式健康检查服务
 pub struct StreamCheckService;
 
+struct CodexStreamCheckInput<'a> {
+    client: &'a Client,
+    base_url: &'a str,
+    host_header: Option<&'a str>,
+    auth: &'a AuthInfo,
+    model: &'a str,
+    test_prompt: &'a str,
+    timeout: std::time::Duration,
+    provider: &'a Provider,
+}
+
 impl StreamCheckService {
     /// 执行流式健康检查（带重试）
     ///
@@ -212,7 +223,29 @@ impl StreamCheckService {
 
         // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
         let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
-        let client = crate::proxy::http_client::get_for_provider(proxy_config);
+        let connection_override = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.connection_override.as_deref());
+        let semantic_host_header = if connection_override.is_some() {
+            Some(
+                crate::proxy::http_client::request_authority(&base_url)
+                    .map_err(AppError::Message)?,
+            )
+        } else {
+            None
+        };
+        let effective_base_url = crate::proxy::http_client::apply_connection_override_to_url(
+            &base_url,
+            connection_override,
+        )
+        .map_err(AppError::Message)?;
+        let client = crate::proxy::http_client::get_for_provider_with_override(
+            proxy_config,
+            Some(&effective_base_url),
+            connection_override,
+        )
+        .map_err(AppError::Message)?;
         let request_timeout = std::time::Duration::from_secs(config.timeout_secs);
 
         let model_to_test = Self::resolve_test_model(app_type, provider, config);
@@ -222,7 +255,8 @@ impl StreamCheckService {
             AppType::Claude => {
                 Self::check_claude_stream(
                     &client,
-                    &base_url,
+                    &effective_base_url,
+                    semantic_host_header.as_deref(),
                     &auth,
                     &model_to_test,
                     test_prompt,
@@ -233,21 +267,23 @@ impl StreamCheckService {
                 .await
             }
             AppType::Codex => {
-                Self::check_codex_stream(
-                    &client,
-                    &base_url,
-                    &auth,
-                    &model_to_test,
+                Self::check_codex_stream(CodexStreamCheckInput {
+                    client: &client,
+                    base_url: &effective_base_url,
+                    host_header: semantic_host_header.as_deref(),
+                    auth: &auth,
+                    model: &model_to_test,
                     test_prompt,
-                    request_timeout,
+                    timeout: request_timeout,
                     provider,
-                )
+                })
                 .await
             }
             AppType::Gemini => {
                 Self::check_gemini_stream(
                     &client,
-                    &base_url,
+                    &effective_base_url,
+                    semantic_host_header.as_deref(),
                     &auth,
                     &model_to_test,
                     test_prompt,
@@ -313,6 +349,7 @@ impl StreamCheckService {
     async fn check_claude_stream(
         client: &Client,
         base_url: &str,
+        host_header: Option<&str>,
         auth: &AuthInfo,
         model: &str,
         test_prompt: &str,
@@ -444,6 +481,9 @@ impl StreamCheckService {
                 .header("sec-fetch-mode", "cors")
                 .header("connection", "keep-alive");
         }
+        if let Some(host) = host_header {
+            request_builder = request_builder.header(reqwest::header::HOST, host);
+        }
 
         let response = request_builder
             .timeout(timeout)
@@ -475,14 +515,18 @@ impl StreamCheckService {
     ///
     /// 严格按照 Codex CLI 真实请求格式构建请求 (Responses API)
     async fn check_codex_stream(
-        client: &Client,
-        base_url: &str,
-        auth: &AuthInfo,
-        model: &str,
-        test_prompt: &str,
-        timeout: std::time::Duration,
-        provider: &Provider,
+        input: CodexStreamCheckInput<'_>,
     ) -> Result<(u16, String), AppError> {
+        let CodexStreamCheckInput {
+            client,
+            base_url,
+            host_header,
+            auth,
+            model,
+            test_prompt,
+            timeout,
+            provider,
+        } = input;
         let is_full_url = provider
             .meta
             .as_ref()
@@ -511,7 +555,7 @@ impl StreamCheckService {
 
         for (i, url) in urls.iter().enumerate() {
             // 严格按照 Codex CLI 请求格式设置 headers
-            let response = client
+            let mut request_builder = client
                 .post(url)
                 .header("authorization", format!("Bearer {}", auth.api_key))
                 .header("content-type", "application/json")
@@ -521,7 +565,11 @@ impl StreamCheckService {
                     "user-agent",
                     format!("codex_cli_rs/0.80.0 ({os_name} 15.7.2; {arch_name}) Terminal"),
                 )
-                .header("originator", "codex_cli_rs")
+                .header("originator", "codex_cli_rs");
+            if let Some(host) = host_header {
+                request_builder = request_builder.header(reqwest::header::HOST, host);
+            }
+            let response = request_builder
                 .timeout(timeout)
                 .json(&body)
                 .send()
@@ -561,6 +609,7 @@ impl StreamCheckService {
     async fn check_gemini_stream(
         client: &Client,
         base_url: &str,
+        host_header: Option<&str>,
         auth: &AuthInfo,
         model: &str,
         test_prompt: &str,
@@ -584,11 +633,15 @@ impl StreamCheckService {
             }]
         });
 
-        let response = client
+        let mut request_builder = client
             .post(&url)
             .header("x-goog-api-key", &auth.api_key)
             .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
+            .header("Accept", "text/event-stream");
+        if let Some(host) = host_header {
+            request_builder = request_builder.header(reqwest::header::HOST, host);
+        }
+        let response = request_builder
             .timeout(timeout)
             .json(&body)
             .send()
@@ -643,9 +696,31 @@ impl StreamCheckService {
         if e.is_timeout() {
             AppError::Message("Request timeout".to_string())
         } else if e.is_connect() {
-            AppError::Message(format!("Connection failed: {e}"))
+            let text = e.to_string();
+            let lower = text.to_lowercase();
+            if lower.contains("certificate")
+                || lower.contains("tls")
+                || lower.contains("handshake")
+                || lower.contains("hostname")
+                || lower.contains("sni")
+            {
+                AppError::Message("Certificate/SNI mismatch".to_string())
+            } else {
+                AppError::Message(format!("Connection failed: {text}"))
+            }
         } else {
-            AppError::Message(e.to_string())
+            let text = e.to_string();
+            let lower = text.to_lowercase();
+            if lower.contains("certificate")
+                || lower.contains("tls")
+                || lower.contains("handshake")
+                || lower.contains("hostname")
+                || lower.contains("sni")
+            {
+                AppError::Message("Certificate/SNI mismatch".to_string())
+            } else {
+                AppError::Message(text)
+            }
         }
     }
 

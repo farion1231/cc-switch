@@ -27,6 +27,7 @@ interface TestResult {
 interface EndpointSpeedTestProps {
   appId: AppId;
   providerId?: string;
+  connectionOverride?: string;
   value: string;
   onChange: (url: string) => void;
   initialEndpoints: EndpointCandidate[];
@@ -84,6 +85,7 @@ const buildInitialEntries = (
 const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   appId,
   providerId,
+  connectionOverride,
   value,
   onChange,
   initialEndpoints,
@@ -328,6 +330,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     try {
       const results = await vscodeApi.testApiEndpoints(urls, {
         timeoutSecs: ENDPOINT_TIMEOUT_SECS[appId],
+        connectionOverride: connectionOverride?.trim() || undefined,
       });
 
       const resultMap = new Map(
@@ -377,7 +380,15 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     } finally {
       setIsTesting(false);
     }
-  }, [entries, autoSelect, appId, normalizedSelected, onChange, t]);
+  }, [
+    entries,
+    autoSelect,
+    appId,
+    normalizedSelected,
+    onChange,
+    t,
+    connectionOverride,
+  ]);
 
   const handleSelect = useCallback(
     (url: string) => {

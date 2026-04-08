@@ -5,16 +5,31 @@ use url::{Host, Url};
 
 use crate::error::AppError;
 
+pub(crate) struct ExecuteUsageScriptInput<'a> {
+    pub script_code: &'a str,
+    pub api_key: &'a str,
+    pub base_url: &'a str,
+    pub timeout_secs: u64,
+    pub connection_override: Option<&'a str>,
+    pub access_token: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+    pub template_type: Option<&'a str>,
+}
+
 /// 执行用量查询脚本
-pub async fn execute_usage_script(
-    script_code: &str,
-    api_key: &str,
-    base_url: &str,
-    timeout_secs: u64,
-    access_token: Option<&str>,
-    user_id: Option<&str>,
-    template_type: Option<&str>,
+pub(crate) async fn execute_usage_script(
+    input: ExecuteUsageScriptInput<'_>,
 ) -> Result<Value, AppError> {
+    let ExecuteUsageScriptInput {
+        script_code,
+        api_key,
+        base_url,
+        timeout_secs,
+        connection_override,
+        access_token,
+        user_id,
+        template_type,
+    } = input;
     // 检测是否为自定义模板模式
     // 优先使用前端传递的 template_type
     let is_custom_template = template_type.map(|t| t == "custom").unwrap_or(false);
@@ -109,7 +124,7 @@ pub async fn execute_usage_script(
     validate_request_url(&request.url, base_url, is_custom_template)?;
 
     // 6. 发送 HTTP 请求
-    let response_data = send_http_request(&request, timeout_secs).await?;
+    let response_data = send_http_request(&request, timeout_secs, connection_override).await?;
 
     // 7. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
     let result: Value = {
@@ -221,9 +236,48 @@ struct RequestConfig {
 }
 
 /// 发送 HTTP 请求
-async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
-    // 使用全局 HTTP 客户端（已包含代理配置）
-    let client = crate::proxy::http_client::get();
+async fn send_http_request(
+    config: &RequestConfig,
+    timeout_secs: u64,
+    connection_override: Option<&str>,
+) -> Result<String, AppError> {
+    let semantic_host = if connection_override.is_some() {
+        Some(
+            crate::proxy::http_client::request_authority(&config.url).map_err(|e| {
+                AppError::localized(
+                    "usage_script.request_failed",
+                    format!("请求 Host 解析失败: {e}"),
+                    format!("Failed to resolve request Host header: {e}"),
+                )
+            })?,
+        )
+    } else {
+        None
+    };
+    let effective_url = crate::proxy::http_client::apply_connection_override_to_url(
+        &config.url,
+        connection_override,
+    )
+    .map_err(|e| {
+        AppError::localized(
+            "usage_script.request_failed",
+            format!("请求 URL 覆写失败: {e}"),
+            format!("Failed to apply request URL override: {e}"),
+        )
+    })?;
+
+    let client = crate::proxy::http_client::get_for_provider_with_override(
+        None,
+        Some(&effective_url),
+        connection_override,
+    )
+    .map_err(|e| {
+        AppError::localized(
+            "usage_script.request_failed",
+            format!("请求客户端构建失败: {e}"),
+            format!("Failed to build request client: {e}"),
+        )
+    })?;
     // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
     let request_timeout = std::time::Duration::from_secs(timeout_secs.clamp(2, 30));
 
@@ -237,12 +291,15 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     })?;
 
     let mut req = client
-        .request(method.clone(), &config.url)
+        .request(method.clone(), &effective_url)
         .timeout(request_timeout);
 
     // 添加请求头
     for (k, v) in &config.headers {
         req = req.header(k, v);
+    }
+    if let Some(host) = semantic_host.as_deref() {
+        req = req.header(reqwest::header::HOST, host);
     }
 
     // 添加请求体
