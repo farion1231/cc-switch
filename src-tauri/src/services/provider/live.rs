@@ -999,11 +999,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         return Ok(false);
     }
 
-    {
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        if !providers.is_empty() {
-            return Ok(false); // 已有供应商，跳过
-        }
+    // 允许 "只有官方 seed 预设" 的情况下继续导入 live：
+    // - 启动编排顺序是先 import 后 seed，新用户启动时 providers 为空，导入照常
+    // - 老用户已有非 seed provider，跳过导入（正确）
+    // - 用户手动点 ProviderEmptyState 的导入按钮时，与官方 seed 共存而不被阻塞
+    if state.db.has_non_official_seed_provider(app_type.as_str())? {
+        return Ok(false);
     }
 
     let settings_config = match app_type {
