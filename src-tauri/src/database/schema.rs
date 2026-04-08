@@ -111,6 +111,68 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 6b. Rules 表（与 Skills 对称）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS rules (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            directory TEXT NOT NULL,
+            repo_owner TEXT,
+            repo_name TEXT,
+            repo_branch TEXT DEFAULT 'main',
+            readme_url TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6c. Rule Repos 表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS rule_repos (
+            owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
+            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6d. Agents 表（与 Rules 对称）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agents (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            directory TEXT NOT NULL,
+            repo_owner TEXT,
+            repo_name TEXT,
+            repo_branch TEXT DEFAULT 'main',
+            readme_url TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6e. Agent Repos 表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_repos (
+            owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
+            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 7. Settings 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)",
@@ -417,6 +479,11 @@ impl Database {
                         log::info!("迁移数据库从 v7 到 v8（会话日志使用追踪 + 修正模型定价）");
                         Self::migrate_v7_to_v8(conn)?;
                         Self::set_user_version(conn, 8)?;
+                    }
+                    8 => {
+                        log::info!("迁移数据库从 v8 到 v9（添加 Rules 管理表）");
+                        Self::migrate_v8_to_v9(conn)?;
+                        Self::set_user_version(conn, 9)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1141,6 +1208,76 @@ impl Database {
         }
 
         log::info!("v7 -> v8 迁移完成：data_source 列、session_log_sync 表、修正 13 个模型定价");
+        Ok(())
+    }
+
+    /// v8 -> v9 迁移：添加 Rules 管理表
+    fn migrate_v8_to_v9(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                directory TEXT NOT NULL,
+                repo_owner TEXT,
+                repo_name TEXT,
+                repo_branch TEXT DEFAULT 'main',
+                readme_url TEXT,
+                enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+                enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+                installed_at INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 rules 表失败: {e}")))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS rule_repos (
+                owner TEXT NOT NULL,
+                name TEXT NOT NULL,
+                branch TEXT NOT NULL DEFAULT 'main',
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                PRIMARY KEY (owner, name)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 rule_repos 表失败: {e}")))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                directory TEXT NOT NULL,
+                repo_owner TEXT,
+                repo_name TEXT,
+                repo_branch TEXT DEFAULT 'main',
+                readme_url TEXT,
+                enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+                enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+                installed_at INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 agents 表失败: {e}")))?;
+            
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_repos (
+                owner TEXT NOT NULL,
+                name TEXT NOT NULL,
+                branch TEXT NOT NULL DEFAULT 'main',
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                PRIMARY KEY (owner, name)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 agent_repos 表失败: {e}")))?;
+        
+        log::info!("v8 -> v9 迁移完成：已添加 Rules 和 Agents 管理表");
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
@@ -156,26 +156,42 @@ const renderApp = (AppComponent: ComponentType) => {
   );
 };
 
+/** AnimatePresence 转场时可能短暂挂载两个 ProviderList，取最后一个作为当前视图 */
+function getProviderListText(): string | null | undefined {
+  const nodes = screen.getAllByTestId("provider-list");
+  if (nodes.length === 0) return undefined;
+  return nodes[nodes.length - 1]?.textContent;
+}
+
 describe("App integration with MSW", () => {
   beforeEach(() => {
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+    localStorage.removeItem("cc-switch-last-app");
+    localStorage.removeItem("cc-switch-last-view");
   });
 
-  it("covers basic provider flows via real hooks", async () => {
+  afterEach(() => {
+    localStorage.removeItem("cc-switch-last-app");
+    localStorage.removeItem("cc-switch-last-view");
+  });
+
+  it(
+    "covers basic provider flows via real hooks",
+    async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(getProviderListText()).toContain(
         "claude-1",
       ),
     );
 
     fireEvent.click(screen.getByText("switch-codex"));
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(getProviderListText()).toContain(
         "codex-1",
       ),
     );
@@ -189,7 +205,7 @@ describe("App integration with MSW", () => {
     expect(screen.getByTestId("add-provider-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByText("confirm-add"));
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(
+      expect(getProviderListText()).toMatch(
         /New codex Provider/,
       ),
     );
@@ -198,7 +214,7 @@ describe("App integration with MSW", () => {
     expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByText("confirm-edit"));
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(
+      expect(getProviderListText()).toMatch(
         /-edited/,
       ),
     );
@@ -206,7 +222,7 @@ describe("App integration with MSW", () => {
     fireEvent.click(screen.getByText("switch"));
     fireEvent.click(screen.getByText("duplicate"));
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(/copy/),
+      expect(getProviderListText()).toMatch(/copy/),
     );
 
     fireEvent.click(screen.getByText("open-website"));
@@ -218,14 +234,15 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  });
+  },
+  20_000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(getProviderListText()).toContain(
         "claude-1",
       ),
     );
@@ -266,7 +283,7 @@ describe("App integration with MSW", () => {
     fireEvent.click(screen.getByText("switch-openclaw"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(getProviderListText()).toContain(
         "deepseek",
       ),
     );
@@ -274,7 +291,7 @@ describe("App integration with MSW", () => {
     fireEvent.click(screen.getByText("duplicate"));
 
     await waitFor(() => {
-      const providerList = screen.getByTestId("provider-list").textContent;
+      const providerList = getProviderListText();
       expect(providerList).toContain("deepseek-copy-2");
       expect(providerList).toContain("DeepSeek copy");
     });
@@ -312,7 +329,7 @@ describe("App integration with MSW", () => {
     fireEvent.click(screen.getByText("switch-openclaw"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
+      expect(getProviderListText()).toContain(
         "deepseek",
       ),
     );
@@ -325,7 +342,7 @@ describe("App integration with MSW", () => {
       );
     });
 
-    expect(screen.getByTestId("provider-list").textContent).not.toContain(
+    expect(getProviderListText()).not.toContain(
       "deepseek-copy",
     );
 

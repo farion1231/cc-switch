@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
@@ -255,6 +254,16 @@ pub struct AppSettings {
     #[serde(default)]
     pub skill_storage_location: SkillStorageLocation,
 
+    // ===== Rule 同步设置 =====
+    /// Rule 同步方式：auto（默认，优先 symlink）、symlink、copy
+    #[serde(default)]
+    pub rule_sync_method: SyncMethod,
+
+    // ===== Agent 同步设置 =====
+    /// Agent 同步方式：auto（默认，优先 symlink）、symlink、copy
+    #[serde(default)]
+    pub agent_sync_method: SyncMethod,
+
     // ===== WebDAV 同步设置 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_sync: Option<WebDavSyncSettings>,
@@ -319,6 +328,8 @@ impl Default for AppSettings {
             current_provider_openclaw: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
+            rule_sync_method: SyncMethod::default(),
+            agent_sync_method: SyncMethod::default(),
             webdav_sync: None,
             webdav_backup: None,
             backup_interval_hours: None,
@@ -672,6 +683,32 @@ pub fn set_skill_storage_location(location: SkillStorageLocation) -> Result<(), 
     mutate_settings(|s| {
         s.skill_storage_location = location;
     })
+}
+
+// ===== Rule 同步方式管理函数 =====
+
+/// 获取 Rule 同步方式配置
+pub fn get_rule_sync_method() -> SyncMethod {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .rule_sync_method
+}
+
+// ===== Agent 同步方式管理函数 =====
+
+/// 获取 Agent 同步方式配置
+pub fn get_agent_sync_method() -> SyncMethod {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .agent_sync_method
 }
 
 // ===== 备份策略管理函数 =====

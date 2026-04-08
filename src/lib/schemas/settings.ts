@@ -31,6 +31,12 @@ export const settingsSchema = z.object({
   skillSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),
   skillStorageLocation: z.enum(["cc_switch", "unified"]).optional(),
 
+  // Rule 同步设置
+  ruleSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),
+
+  // Agent 同步设置
+  agentSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),
+
   // WebDAV v2 同步设置（通过专用命令保存，schema 仅用于读取）
   webdavSync: z
     .object({

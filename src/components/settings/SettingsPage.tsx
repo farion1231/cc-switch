@@ -1,16 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
+import { AboutSection } from "@/components/settings/AboutSection";
+import { AgentSyncMethodSettings } from "@/components/settings/AgentSyncMethodSettings";
+import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
+import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import { BackupListSection } from "@/components/settings/BackupListSection";
+import { DirectorySettings } from "@/components/settings/DirectorySettings";
+import { ImportExportSection } from "@/components/settings/ImportExportSection";
+import { LanguageSettings } from "@/components/settings/LanguageSettings";
+import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
+import { ProxyTabContent } from "@/components/settings/ProxyTabContent";
+import { RuleSyncMethodSettings } from "@/components/settings/RuleSyncMethodSettings";
+import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
+import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
+import { TerminalSettings } from "@/components/settings/TerminalSettings";
+import { ThemeSettings } from "@/components/settings/ThemeSettings";
+import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
+import { WindowSettings } from "@/components/settings/WindowSettings";
 import {
-  Loader2,
-  Save,
-  FolderSearch,
-  Database,
-  Cloud,
-  ScrollText,
-  HardDriveDownload,
-  FlaskConical,
-} from "lucide-react";
-import { toast } from "sonner";
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -18,37 +29,28 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
-import { settingsApi } from "@/lib/api";
-import { LanguageSettings } from "@/components/settings/LanguageSettings";
-import { ThemeSettings } from "@/components/settings/ThemeSettings";
-import { WindowSettings } from "@/components/settings/WindowSettings";
-import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
-import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
-import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
-import { TerminalSettings } from "@/components/settings/TerminalSettings";
-import { DirectorySettings } from "@/components/settings/DirectorySettings";
-import { ImportExportSection } from "@/components/settings/ImportExportSection";
-import { BackupListSection } from "@/components/settings/BackupListSection";
-import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
-import { AboutSection } from "@/components/settings/AboutSection";
-import { ProxyTabContent } from "@/components/settings/ProxyTabContent";
 import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
-import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
-import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
-import { useInstalledSkills } from "@/hooks/useSkills";
-import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
-import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import { useSettings } from "@/hooks/useSettings";
+import { useInstalledSkills } from "@/hooks/useSkills";
+import { settingsApi } from "@/lib/api";
+import { motion } from "framer-motion";
+import {
+  Cloud,
+  Database,
+  FlaskConical,
+  FolderSearch,
+  HardDriveDownload,
+  Loader2,
+  Save,
+  ScrollText,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -239,6 +241,18 @@ export function SettingsPage({
                       value={settings.skillSyncMethod ?? "auto"}
                       onChange={(method) =>
                         handleAutoSave({ skillSyncMethod: method })
+                      }
+                    />
+                    <RuleSyncMethodSettings
+                      value={settings.ruleSyncMethod ?? "auto"}
+                      onChange={(method) =>
+                        handleAutoSave({ ruleSyncMethod: method })
+                      }
+                    />
+                    <AgentSyncMethodSettings
+                      value={settings.agentSyncMethod ?? "auto"}
+                      onChange={(method) =>
+                        handleAutoSave({ agentSyncMethod: method })
                       }
                     />
                     <WindowSettings

@@ -41,11 +41,14 @@ export interface UseSettingsFormResult {
  */
 export function useSettingsForm(): UseSettingsFormResult {
   const { i18n } = useTranslation();
-  const { data, isLoading } = useSettingsQuery();
+  const { data, isLoading: queryLoading } = useSettingsQuery();
 
   const [settingsState, setSettingsState] = useState<SettingsFormState | null>(
     null,
   );
+
+  // 避免「查询已结束但尚未把 data 写入本地 state」的一帧空窗，否则设置页会短暂渲染无表单的 Tabs
+  const isLoading = queryLoading || (data != null && settingsState === null);
 
   const initialLanguageRef = useRef<Language>("zh");
 

@@ -1,30 +1,29 @@
-import { useEffect, useMemo, useState, useRef } from "react";
-import { useTranslation } from "react-i18next";
-import { motion, AnimatePresence } from "framer-motion";
-import { toast } from "sonner";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { useQueryClient } from "@tanstack/react-query";
-import {
-  Plus,
-  Settings,
-  ArrowLeft,
-  Book,
-  Wrench,
-  RefreshCw,
-  History,
-  BarChart2,
-  Download,
-  FolderArchive,
-  Search,
-  FolderOpen,
-  KeyRound,
-  Shield,
-  Cpu,
-} from "lucide-react";
-import type { Provider, VisibleApps } from "@/types";
-import type { EnvConflict } from "@/types/env";
-import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import { AgentsDiscoveryPage } from "@/components/agents/AgentsDiscoveryPage";
+import UnifiedAgentsPanel from "@/components/agents/UnifiedAgentsPanel";
+import { AppSwitcher } from "@/components/AppSwitcher";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
+import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
+import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
+import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
+import PromptPanel from "@/components/prompts/PromptPanel";
+import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
+import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
+import { ProviderList } from "@/components/providers/ProviderList";
+import { FailoverToggle } from "@/components/proxy/FailoverToggle";
+import { ProxyToggle } from "@/components/proxy/ProxyToggle";
+import { RulesPage } from "@/components/rules/RulesPage";
+import UnifiedRulesPanel from "@/components/rules/UnifiedRulesPanel";
+import { SettingsPage } from "@/components/settings/SettingsPage";
+import { SkillsPage } from "@/components/skills/SkillsPage";
+import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
+import { UpdateBadge } from "@/components/UpdateBadge";
+import UsageScriptModal from "@/components/UsageScriptModal";
+import { useAutoCompact } from "@/hooks/useAutoCompact";
+import { useLastValidValue } from "@/hooks/useLastValidValue";
+import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
+import { useProviderActions } from "@/hooks/useProviderActions";
+import { useProxyStatus } from "@/hooks/useProxyStatus";
 import {
   providersApi,
   settingsApi,
@@ -32,51 +31,58 @@ import {
   type ProviderSwitchEvent,
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
-import { useProviderActions } from "@/hooks/useProviderActions";
-import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
-import { useProxyStatus } from "@/hooks/useProxyStatus";
-import { useAutoCompact } from "@/hooks/useAutoCompact";
-import { useLastValidValue } from "@/hooks/useLastValidValue";
-import { extractErrorMessage } from "@/utils/errorUtils";
-import { isTextEditableTarget } from "@/utils/domUtils";
-import { cn } from "@/lib/utils";
 import {
-  isWindows,
-  isLinux,
   DRAG_REGION_ATTR,
   DRAG_REGION_STYLE,
+  isLinux,
+  isWindows,
 } from "@/lib/platform";
-import { AppSwitcher } from "@/components/AppSwitcher";
-import { ProviderList } from "@/components/providers/ProviderList";
-import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
-import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { SettingsPage } from "@/components/settings/SettingsPage";
-import { UpdateBadge } from "@/components/UpdateBadge";
-import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
-import { ProxyToggle } from "@/components/proxy/ProxyToggle";
-import { FailoverToggle } from "@/components/proxy/FailoverToggle";
-import UsageScriptModal from "@/components/UsageScriptModal";
-import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
-import PromptPanel from "@/components/prompts/PromptPanel";
-import { SkillsPage } from "@/components/skills/SkillsPage";
-import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
-import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
-import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
-import { AgentsPanel } from "@/components/agents/AgentsPanel";
-import { UniversalProviderPanel } from "@/components/universal";
+import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import { cn } from "@/lib/utils";
+import type { Provider, VisibleApps } from "@/types";
+import type { EnvConflict } from "@/types/env";
+import { isTextEditableTarget } from "@/utils/domUtils";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { useQueryClient } from "@tanstack/react-query";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  ArrowLeft,
+  BarChart2,
+  Book,
+  Bot,
+  Cpu,
+  Download,
+  FolderArchive,
+  FolderOpen,
+  History,
+  KeyRound,
+  Plus,
+  RefreshCw,
+  Scale,
+  Search,
+  Settings,
+  Shield,
+  Wrench,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
+// AgentsPanel placeholder replaced by UnifiedAgentsPanel
 import { McpIcon } from "@/components/BrandIcons";
-import { Button } from "@/components/ui/button";
+import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
+import EnvPanel from "@/components/openclaw/EnvPanel";
+import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
+import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
+import { Button } from "@/components/ui/button";
+import { UniversalProviderPanel } from "@/components/universal";
+import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
-import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
-import EnvPanel from "@/components/openclaw/EnvPanel";
-import ToolsPanel from "@/components/openclaw/ToolsPanel";
-import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
-import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 
 type View =
   | "providers"
@@ -84,8 +90,11 @@ type View =
   | "prompts"
   | "skills"
   | "skillsDiscovery"
+  | "rules"
+  | "rulesDiscovery"
   | "mcp"
   | "agents"
+  | "agentsDiscovery"
   | "universal"
   | "sessions"
   | "workspace"
@@ -127,8 +136,11 @@ const VALID_VIEWS: View[] = [
   "prompts",
   "skills",
   "skillsDiscovery",
+  "rules",
+  "rulesDiscovery",
   "mcp",
   "agents",
+  "agentsDiscovery",
   "universal",
   "sessions",
   "workspace",
@@ -215,6 +227,10 @@ function App() {
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
+  const rulesPageRef = useRef<any>(null);
+  const unifiedRulesPanelRef = useRef<any>(null);
+  const agentsDiscoveryPageRef = useRef<any>(null);
+  const unifiedAgentsPanelRef = useRef<any>(null);
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -517,7 +533,15 @@ function App() {
       if (isTextEditableTarget(event.target)) return;
 
       event.preventDefault();
-      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
+      setCurrentView(
+        view === "skillsDiscovery"
+          ? "skills"
+          : view === "rulesDiscovery"
+            ? "rules"
+            : view === "agentsDiscovery"
+              ? "agents"
+              : "providers",
+      );
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -770,6 +794,21 @@ function App() {
               initialApp={activeApp === "openclaw" ? "claude" : activeApp}
             />
           );
+        case "rules":
+          return (
+            <UnifiedRulesPanel
+              ref={unifiedRulesPanelRef}
+              onOpenDiscovery={() => setCurrentView("rulesDiscovery")}
+              currentApp={activeApp === "openclaw" ? "claude" : activeApp}
+            />
+          );
+        case "rulesDiscovery":
+          return (
+            <RulesPage
+              ref={rulesPageRef}
+              initialApp={activeApp === "openclaw" ? "claude" : activeApp}
+            />
+          );
         case "mcp":
           return (
             <UnifiedMcpPanel
@@ -779,7 +818,18 @@ function App() {
           );
         case "agents":
           return (
-            <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
+            <UnifiedAgentsPanel
+              ref={unifiedAgentsPanelRef}
+              onOpenDiscovery={() => setCurrentView("agentsDiscovery")}
+              currentApp={activeApp === "openclaw" ? "claude" : activeApp}
+            />
+          );
+        case "agentsDiscovery":
+          return (
+            <AgentsDiscoveryPage
+              ref={agentsDiscoveryPageRef}
+              initialApp={activeApp === "openclaw" ? "claude" : activeApp}
+            />
           );
         case "universal":
           return (
@@ -943,7 +993,11 @@ function App() {
                     setCurrentView(
                       currentView === "skillsDiscovery"
                         ? "skills"
-                        : "providers",
+                        : currentView === "rulesDiscovery"
+                          ? "rules"
+                          : currentView === "agentsDiscovery"
+                            ? "agents"
+                            : "providers",
                     )
                   }
                   className="mr-2 rounded-lg"
@@ -956,8 +1010,11 @@ function App() {
                     t("prompts.title", { appName: t(`apps.${activeApp}`) })}
                   {currentView === "skills" && t("skills.title")}
                   {currentView === "skillsDiscovery" && t("skills.title")}
-                  {currentView === "mcp" && t("mcp.unifiedPanel.title")}
+                  {currentView === "rules" && t("rules.title")}
+                  {currentView === "rulesDiscovery" && t("rules.title")}
                   {currentView === "agents" && t("agents.title")}
+                  {currentView === "agentsDiscovery" && t("agents.title")}
+                  {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "universal" &&
                     t("universalProvider.title", {
                       defaultValue: "统一供应商",
@@ -1150,6 +1207,142 @@ function App() {
                     </Button>
                   </>
                 )}
+                {currentView === "rules" && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        unifiedRulesPanelRef.current?.openRestoreFromBackup()
+                      }
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <History className="w-4 h-4 mr-2" />
+                      {t("rules.restoreFromBackup.button")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        unifiedRulesPanelRef.current?.openInstallFromZip()
+                      }
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <FolderArchive className="w-4 h-4 mr-2" />
+                      {t("rules.installFromZip.button")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => unifiedRulesPanelRef.current?.openImport()}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      {t("rules.import")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCurrentView("rulesDiscovery")}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Search className="w-4 h-4 mr-2" />
+                      {t("rules.discover")}
+                    </Button>
+                  </>
+                )}
+                {currentView === "rulesDiscovery" && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => rulesPageRef.current?.refresh()}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      {t("rules.refresh")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => rulesPageRef.current?.openRepoManager()}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Settings className="w-4 h-4 mr-2" />
+                      {t("rules.repoManager")}
+                    </Button>
+                  </>
+                )}
+                {currentView === "agents" && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        unifiedAgentsPanelRef.current?.openRestoreFromBackup()
+                      }
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <History className="w-4 h-4 mr-2" />
+                      {t("agents.restoreFromBackup.button")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        unifiedAgentsPanelRef.current?.openInstallFromZip()
+                      }
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <FolderArchive className="w-4 h-4 mr-2" />
+                      {t("agents.installFromZip.button")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        unifiedAgentsPanelRef.current?.openImport()
+                      }
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      {t("agents.import")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCurrentView("agentsDiscovery")}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Search className="w-4 h-4 mr-2" />
+                      {t("agents.discover")}
+                    </Button>
+                  </>
+                )}
+                {currentView === "agentsDiscovery" && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => agentsDiscoveryPageRef.current?.refresh()}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      {t("agents.refresh")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        agentsDiscoveryPageRef.current?.openRepoManager()
+                      }
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Settings className="w-4 h-4 mr-2" />
+                      {t("agents.repoManager")}
+                    </Button>
+                  </>
+                )}
                 {currentView === "providers" && (
                   <>
                     <AppSwitcher
@@ -1235,6 +1428,36 @@ function App() {
                                 title={t("skills.manage")}
                               >
                                 <Wrench className="flex-shrink-0 w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("rules")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasSkillsSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
+                                title={t("rules.manage")}
+                              >
+                                <Scale className="flex-shrink-0 w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("agents")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasSkillsSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
+                                title={t("agents.manage")}
+                              >
+                                <Bot className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"

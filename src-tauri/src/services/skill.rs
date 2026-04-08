@@ -2658,6 +2658,28 @@ impl SkillService {
         Ok(())
     }
 
+    // ========== 公共工具方法（供 RuleService 等复用）==========
+
+    /// 公共方法：下载仓库（供其他服务层复用）
+    pub async fn download_repo_pub(&self, repo: &SkillRepo) -> Result<(PathBuf, String)> {
+        self.download_repo(repo).await
+    }
+
+    /// 公共方法：递归复制目录
+    pub fn copy_dir_recursive_pub(src: &Path, dest: &Path) -> Result<()> {
+        Self::copy_dir_recursive(src, dest)
+    }
+
+    /// 公共方法：解压本地 ZIP 文件
+    pub fn extract_local_zip_pub(zip_path: &Path) -> Result<PathBuf> {
+        Self::extract_local_zip(zip_path)
+    }
+
+    /// 公共方法：校验并规范化技能源路径
+    pub fn sanitize_skill_source_path_pub(raw: &str) -> Option<PathBuf> {
+        Self::sanitize_skill_source_path(raw)
+    }
+
     // ========== 仓库管理（保留原有逻辑）==========
 
     /// 列出仓库

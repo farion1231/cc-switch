@@ -1,6 +1,6 @@
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { createRef } from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,

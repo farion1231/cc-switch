@@ -50,7 +50,7 @@ pub use provider::{Provider, ProviderMeta};
 pub use services::{
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
-    SkillService, SpeedtestService,
+    AgentService, RuleService, SkillService, SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
@@ -426,6 +426,24 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to initialize default skill repos: {e}"),
             }
 
+            // 1a. 初始化默认 Rules 仓库
+            match app_state.db.init_default_rule_repos() {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Initialized {count} default rule repositories");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("✗ Failed to initialize default rule repos: {e}"),
+            }
+
+            // 1b. 初始化默认 Agents 仓库
+            match app_state.db.init_default_agent_repos() {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Initialized {count} default agent repositories");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("✗ Failed to initialize default agent repos: {e}"),
+            }
+
             // 1.1. Skills 统一管理迁移：当数据库迁移到 v3 结构后，自动从各应用目录导入到 SSOT
             // 触发条件由 schema 迁移设置 settings.skills_ssot_migration_pending = true 控制。
             match app_state.db.get_setting("skills_ssot_migration_pending") {
@@ -787,6 +805,14 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
+            // 初始化 RuleService
+            let rule_service = RuleService::new();
+            app.manage(commands::rule::RuleServiceState(Arc::new(rule_service)));
+
+            // 初始化 AgentService
+            let agent_service = AgentService::new();
+            app.manage(commands::agent::AgentServiceState(Arc::new(agent_service)));
+
             // 初始化 CopilotAuthManager
             {
                 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
@@ -1142,6 +1168,50 @@ pub fn run() {
             commands::add_skill_repo,
             commands::remove_skill_repo,
             commands::install_skills_from_zip,
+            // Rule management
+            commands::get_installed_rules,
+            commands::get_rule_backups,
+            commands::delete_rule_backup,
+            commands::install_rule_unified,
+            commands::uninstall_rule_unified,
+            commands::restore_rule_backup,
+            commands::toggle_rule_app,
+            commands::scan_unmanaged_rules,
+            commands::import_rules_from_apps,
+            commands::discover_available_rules,
+            commands::get_rule_repos,
+            commands::add_rule_repo,
+            commands::remove_rule_repo,
+            commands::install_rules_from_zip,
+            // Rule management (legacy API compatibility)
+            commands::get_rules,
+            commands::get_rules_for_app,
+            commands::install_rule,
+            commands::install_rule_for_app,
+            commands::uninstall_rule,
+            commands::uninstall_rule_for_app,
+            // Agent management
+            commands::get_installed_agents,
+            commands::get_agent_backups,
+            commands::delete_agent_backup,
+            commands::install_agent_unified,
+            commands::uninstall_agent_unified,
+            commands::restore_agent_backup,
+            commands::toggle_agent_app,
+            commands::scan_unmanaged_agents,
+            commands::import_agents_from_apps,
+            commands::discover_available_agents,
+            commands::get_agent_repos,
+            commands::add_agent_repo,
+            commands::remove_agent_repo,
+            commands::install_agents_from_zip,
+            // Agent management (legacy API compatibility)
+            commands::get_agents,
+            commands::get_agents_for_app,
+            commands::install_agent,
+            commands::install_agent_for_app,
+            commands::uninstall_agent,
+            commands::uninstall_agent_for_app,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,

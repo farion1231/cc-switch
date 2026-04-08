@@ -13,7 +13,11 @@
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest watch"
+    "test:unit:watch": "vitest watch",
+    "cargo:clippy": "cd ./src-tauri && cargo clippy",
+    "cargo:check": "cd ./src-tauri && cargo check",
+    "cargo:fix": "cd ./src-tauri && cargo clippy --fix --lib -p cc-switch --allow-dirty",
+    "check:all": "pnpm typecheck && pnpm format && pnpm cargo:check && pnpm cargo:clippy"
   },
   "keywords": [],
   "author": "Jason Young",

@@ -12,6 +12,8 @@ pub mod proxy;
 pub mod session_usage;
 pub mod session_usage_codex;
 pub mod session_usage_gemini;
+pub mod agent;
+pub mod rule;
 pub mod skill;
 pub mod speedtest;
 pub mod stream_check;
@@ -27,6 +29,10 @@ pub use omo::OmoService;
 pub use prompt::PromptService;
 pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
 pub use proxy::ProxyService;
+#[allow(unused_imports)]
+pub use agent::AgentService;
+#[allow(unused_imports)]
+pub use rule::RuleService;
 #[allow(unused_imports)]
 pub use skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};
 pub use speedtest::{EndpointLatency, SpeedtestService};

@@ -180,6 +180,12 @@ export type SkillSyncMethod = "auto" | "symlink" | "copy";
 // Skill 存储位置
 export type SkillStorageLocation = "cc_switch" | "unified";
 
+// Rule 同步方式
+export type RuleSyncMethod = "auto" | "symlink" | "copy";
+
+// Agent 同步方式
+export type AgentSyncMethod = "auto" | "symlink" | "copy";
+
 // Claude API 格式类型
 // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
@@ -301,6 +307,14 @@ export interface Settings {
   skillSyncMethod?: SkillSyncMethod;
   // Skill 存储位置：cc_switch（默认）或 unified（~/.agents/skills/）
   skillStorageLocation?: SkillStorageLocation;
+
+  // ===== Rule 同步设置 =====
+  // Rule 同步方式：auto（默认，优先 symlink）、symlink、copy
+  ruleSyncMethod?: RuleSyncMethod;
+
+  // ===== Agent 同步设置 =====
+  // Agent 同步方式：auto（默认，优先 symlink）、symlink、copy
+  agentSyncMethod?: AgentSyncMethod;
 
   // ===== WebDAV v2 同步设置 =====
   webdavSync?: WebDavSyncSettings;

@@ -199,6 +199,166 @@ pub struct UnmanagedSkill {
     pub path: String,
 }
 
+// ========== Rule 相关类型 ==========
+
+/// Rule 应用启用状态（标记 Rule 应用到哪些客户端）
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct RuleApps {
+    #[serde(default)]
+    pub claude: bool,
+    #[serde(default)]
+    pub codex: bool,
+    #[serde(default)]
+    pub gemini: bool,
+    #[serde(default)]
+    pub opencode: bool,
+}
+
+impl RuleApps {
+    pub fn is_enabled_for(&self, app: &AppType) -> bool {
+        match app {
+            AppType::Claude => self.claude,
+            AppType::Codex => self.codex,
+            AppType::Gemini => self.gemini,
+            AppType::OpenCode => self.opencode,
+            AppType::OpenClaw => false,
+        }
+    }
+
+    pub fn set_enabled_for(&mut self, app: &AppType, enabled: bool) {
+        match app {
+            AppType::Claude => self.claude = enabled,
+            AppType::Codex => self.codex = enabled,
+            AppType::Gemini => self.gemini = enabled,
+            AppType::OpenCode => self.opencode = enabled,
+            AppType::OpenClaw => {}
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.claude && !self.codex && !self.gemini && !self.opencode
+    }
+
+    pub fn only(app: &AppType) -> Self {
+        let mut apps = Self::default();
+        apps.set_enabled_for(app, true);
+        apps
+    }
+}
+
+/// 已安装的 Rule（统一结构）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledRule {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub directory: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readme_url: Option<String>,
+    pub apps: RuleApps,
+    pub installed_at: i64,
+}
+
+/// 未管理的 Rule（在应用目录中发现但未被 CC Switch 管理）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnmanagedRule {
+    pub directory: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub found_in: Vec<String>,
+    pub path: String,
+}
+
+// ========== Agent 相关类型 ==========
+
+/// Agent 应用启用状态
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct AgentApps {
+    #[serde(default)]
+    pub claude: bool,
+    #[serde(default)]
+    pub codex: bool,
+    #[serde(default)]
+    pub gemini: bool,
+    #[serde(default)]
+    pub opencode: bool,
+}
+
+impl AgentApps {
+    pub fn is_enabled_for(&self, app: &AppType) -> bool {
+        match app {
+            AppType::Claude => self.claude,
+            AppType::Codex => self.codex,
+            AppType::Gemini => self.gemini,
+            AppType::OpenCode => self.opencode,
+            AppType::OpenClaw => false,
+        }
+    }
+
+    pub fn set_enabled_for(&mut self, app: &AppType, enabled: bool) {
+        match app {
+            AppType::Claude => self.claude = enabled,
+            AppType::Codex => self.codex = enabled,
+            AppType::Gemini => self.gemini = enabled,
+            AppType::OpenCode => self.opencode = enabled,
+            AppType::OpenClaw => {}
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.claude && !self.codex && !self.gemini && !self.opencode
+    }
+
+    pub fn only(app: &AppType) -> Self {
+        let mut apps = Self::default();
+        apps.set_enabled_for(app, true);
+        apps
+    }
+}
+
+/// 已安装的 Agent（统一结构）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledAgent {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub directory: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readme_url: Option<String>,
+    pub apps: AgentApps,
+    pub installed_at: i64,
+}
+
+/// 未管理的 Agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnmanagedAgent {
+    pub directory: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub found_in: Vec<String>,
+    pub path: String,
+}
+
 /// MCP 服务器定义（v3.7.0 统一结构）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServer {
