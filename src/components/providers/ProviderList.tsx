@@ -25,7 +25,7 @@ import {
   useOpenClawLiveProviderIds,
   useOpenClawDefaultModel,
 } from "@/hooks/useOpenClaw";
-// import { useStreamCheck } from "@/hooks/useStreamCheck"; // 测试功能已隐藏
+import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import {
@@ -41,6 +41,8 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { settingsApi } from "@/lib/api/settings";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -86,6 +88,7 @@ export function ProviderList({
   onSetAsDefault,
 }: ProviderListProps) {
   const { t } = useTranslation();
+  const { checkProvider, isChecking } = useStreamCheck(appId);
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
     appId,
@@ -175,6 +178,44 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [showStreamCheckConfirm, setShowStreamCheckConfirm] = useState(false);
+  const [pendingTestProvider, setPendingTestProvider] =
+    useState<Provider | null>(null);
+
+  // Query settings for streamCheckConfirmed flag
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => settingsApi.get(),
+  });
+
+  const handleTest = useCallback(
+    (provider: Provider) => {
+      if (!settings?.streamCheckConfirmed) {
+        setPendingTestProvider(provider);
+        setShowStreamCheckConfirm(true);
+      } else {
+        checkProvider(provider.id, provider.name);
+      }
+    },
+    [checkProvider, settings?.streamCheckConfirmed],
+  );
+
+  const handleStreamCheckConfirm = async () => {
+    setShowStreamCheckConfirm(false);
+    try {
+      if (settings) {
+        const { webdavSync: _, ...rest } = settings;
+        await settingsApi.save({ ...rest, streamCheckConfirmed: true });
+        await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      }
+    } catch (error) {
+      console.error("Failed to save stream check confirmed:", error);
+    }
+    if (pendingTestProvider) {
+      checkProvider(pendingTestProvider.id, pendingTestProvider.name);
+      setPendingTestProvider(null);
+    }
+  };
 
   // Import current live config as default provider
   const queryClient = useQueryClient();
@@ -258,6 +299,7 @@ export function ProviderList({
   if (sortedProviders.length === 0) {
     return (
       <ProviderEmptyState
+        appId={appId}
         onCreate={onCreate}
         onImport={() => importMutation.mutate()}
       />
@@ -306,7 +348,12 @@ export function ProviderList({
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
-                isTesting={false} // isChecking(provider.id) - 测试功能已隐藏
+                onTest={
+                  appId !== "opencode" && appId !== "openclaw"
+                    ? handleTest
+                    : undefined
+                }
+                isTesting={isChecking(provider.id)}
                 isProxyRunning={isProxyRunning}
                 isProxyTakeover={isProxyTakeover}
                 isAutoFailoverEnabled={isFailoverModeActive}
@@ -404,6 +451,19 @@ export function ProviderList({
       ) : (
         renderProviderList()
       )}
+
+      <ConfirmDialog
+        isOpen={showStreamCheckConfirm}
+        variant="info"
+        title={t("confirm.streamCheck.title")}
+        message={t("confirm.streamCheck.message")}
+        confirmText={t("confirm.streamCheck.confirm")}
+        onConfirm={() => void handleStreamCheckConfirm()}
+        onCancel={() => {
+          setShowStreamCheckConfirm(false);
+          setPendingTestProvider(null);
+        }}
+      />
     </div>
   );
 }

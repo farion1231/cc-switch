@@ -233,6 +233,90 @@ impl Default for RectifierConfig {
     }
 }
 
+/// 请求优化器配置
+///
+/// 存储在 settings 表中，key = "optimizer_config"
+/// 仅对 Bedrock provider 生效（CLAUDE_CODE_USE_BEDROCK = "1"）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OptimizerConfig {
+    /// 总开关（默认关闭，用户需手动启用）
+    #[serde(default)]
+    pub enabled: bool,
+    /// Thinking 优化子开关（总开关开启后默认生效）
+    #[serde(default = "default_true")]
+    pub thinking_optimizer: bool,
+    /// Cache 注入子开关（总开关开启后默认生效）
+    #[serde(default = "default_true")]
+    pub cache_injection: bool,
+    /// Cache TTL: "5m" | "1h"（默认 "1h"）
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl: String,
+}
+
+fn default_cache_ttl() -> String {
+    "1h".to_string()
+}
+
+impl Default for OptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            thinking_optimizer: true,
+            cache_injection: true,
+            cache_ttl: "1h".to_string(),
+        }
+    }
+}
+
+/// Copilot 优化器配置
+///
+/// 存储在 settings 表中，key = "copilot_optimizer_config"
+/// 解决 Copilot 代理消耗量异常问题（Issue #1813）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotOptimizerConfig {
+    /// 总开关（默认开启 — 对 Copilot 用户至关重要）
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// x-initiator 请求分类（默认开启，P0 优先级）
+    #[serde(default = "default_true")]
+    pub request_classification: bool,
+    /// Tool result 消息合并（默认开启，P1 优先级）
+    #[serde(default = "default_true")]
+    pub tool_result_merging: bool,
+    /// Compact 请求识别（默认开启，P2 优先级）
+    #[serde(default = "default_true")]
+    pub compact_detection: bool,
+    /// 确定性 Request ID（默认开启，P3 优先级）
+    #[serde(default = "default_true")]
+    pub deterministic_request_id: bool,
+    /// Warmup 小模型降级（默认关闭，P4 优先级，opt-in）
+    #[serde(default)]
+    pub warmup_downgrade: bool,
+    /// Warmup 降级使用的模型（默认 "gpt-4o-mini"）
+    #[serde(default = "default_warmup_model")]
+    pub warmup_model: String,
+}
+
+fn default_warmup_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+impl Default for CopilotOptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            request_classification: true,
+            tool_result_merging: true,
+            compact_detection: true,
+            deterministic_request_id: true,
+            warmup_downgrade: false,
+            warmup_model: "gpt-4o-mini".to_string(),
+        }
+    }
+}
+
 /// 日志配置
 ///
 /// 存储在 settings 表的 log_config 字段中（JSON 格式）

@@ -17,6 +17,7 @@ import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
+import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 
@@ -47,6 +48,7 @@ export function AddProviderDialog({
   const [universalFormOpen, setUniversalFormOpen] = useState(false);
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
+  const [isFormSubmitting, setIsFormSubmitting] = useState(false);
 
   const handleUniversalProviderSave = useCallback(
     async (provider: UniversalProvider) => {
@@ -179,11 +181,9 @@ export function AddProviderDialog({
         } else if (appId === "codex") {
           const config = parsedConfig.config as string | undefined;
           if (config) {
-            const baseUrlMatch = config.match(
-              /base_url\s*=\s*["']([^"']+)["']/,
-            );
-            if (baseUrlMatch?.[1]) {
-              addUrl(baseUrlMatch[1]);
+            const extractedBaseUrl = extractCodexBaseUrl(config);
+            if (extractedBaseUrl) {
+              addUrl(extractedBaseUrl);
             }
           }
         } else if (appId === "gemini") {
@@ -248,6 +248,7 @@ export function AddProviderDialog({
         <Button
           type="submit"
           form="provider-form"
+          disabled={isFormSubmitting}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Plus className="h-4 w-4 mr-2" />
@@ -300,6 +301,7 @@ export function AddProviderDialog({
               submitLabel={t("common.add")}
               onSubmit={handleSubmit}
               onCancel={() => onOpenChange(false)}
+              onSubmittingChange={setIsFormSubmitting}
               showButtons={false}
             />
           </TabsContent>
@@ -315,6 +317,7 @@ export function AddProviderDialog({
           submitLabel={t("common.add")}
           onSubmit={handleSubmit}
           onCancel={() => onOpenChange(false)}
+          onSubmittingChange={setIsFormSubmitting}
           showButtons={false}
         />
       )}

@@ -115,7 +115,7 @@ pub async fn open_zip_file_dialog<R: tauri::Runtime>(
     let dialog = app.dialog();
     let result = dialog
         .file()
-        .add_filter("ZIP", &["zip"])
+        .add_filter("ZIP / Skill", &["zip", "skill"])
         .blocking_pick_file();
 
     Ok(result.map(|p| p.to_string()))

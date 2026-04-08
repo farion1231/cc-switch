@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- 圆角方形背景 -->
+  <rect x="0" y="0" width="200" height="200" rx="40" ry="40" fill="#3B82F6"/>
+
+  <!-- 中心白色圆环 -->
+  <circle cx="100" cy="100" r="45" fill="white"/>
+  <circle cx="100" cy="100" r="25" fill="#3B82F6"/>
+
+  <!-- 装饰小圆点 -->
+  <circle cx="50" cy="50" r="6" fill="white" opacity="0.6"/>
+  <circle cx="165" cy="70" r="5" fill="white" opacity="0.5"/>
+  <circle cx="170" cy="140" r="7" fill="white" opacity="0.4"/>
+
+  <!-- 右下角深蓝色装饰 -->
+  <defs>
+    <clipPath id="roundedCorner">
+      <rect x="0" y="0" width="200" height="200" rx="40" ry="40"/>
+    </clipPath>
+  </defs>
+  <path d="M 200 150 Q 175 175 150 200 L 200 200 Z" fill="#2563EB" opacity="0.6" clip-path="url(#roundedCorner)"/>
+</svg>

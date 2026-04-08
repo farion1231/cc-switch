@@ -5,10 +5,12 @@
 use std::collections::HashMap;
 
 use serde_json::{json, Value};
+use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
+use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::mcp::McpService;
@@ -29,6 +31,561 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("openrouterCompatMode");
     }
     v
+}
+
+pub(crate) fn provider_exists_in_live_config(
+    app_type: &AppType,
+    provider_id: &str,
+) -> Result<bool, AppError> {
+    match app_type {
+        AppType::OpenCode => crate::opencode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
+        AppType::OpenClaw => crate::openclaw_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
+        _ => Ok(false),
+    }
+}
+
+fn json_is_subset(target: &Value, source: &Value) -> bool {
+    match source {
+        Value::Object(source_map) => {
+            let Some(target_map) = target.as_object() else {
+                return false;
+            };
+            source_map.iter().all(|(key, source_value)| {
+                target_map
+                    .get(key)
+                    .is_some_and(|target_value| json_is_subset(target_value, source_value))
+            })
+        }
+        Value::Array(source_arr) => {
+            let Some(target_arr) = target.as_array() else {
+                return false;
+            };
+            json_array_contains_subset(target_arr, source_arr)
+        }
+        _ => target == source,
+    }
+}
+
+fn json_array_contains_subset(target_arr: &[Value], source_arr: &[Value]) -> bool {
+    let mut matched = vec![false; target_arr.len()];
+
+    source_arr.iter().all(|source_item| {
+        if let Some((index, _)) = target_arr.iter().enumerate().find(|(index, target_item)| {
+            !matched[*index] && json_is_subset(target_item, source_item)
+        }) {
+            matched[index] = true;
+            true
+        } else {
+            false
+        }
+    })
+}
+
+fn json_remove_array_items(target_arr: &mut Vec<Value>, source_arr: &[Value]) {
+    for source_item in source_arr {
+        if let Some(index) = target_arr
+            .iter()
+            .position(|target_item| json_is_subset(target_item, source_item))
+        {
+            target_arr.remove(index);
+        }
+    }
+}
+
+fn json_deep_merge(target: &mut Value, source: &Value) {
+    match (target, source) {
+        (Value::Object(target_map), Value::Object(source_map)) => {
+            for (key, source_value) in source_map {
+                match target_map.get_mut(key) {
+                    Some(target_value) => json_deep_merge(target_value, source_value),
+                    None => {
+                        target_map.insert(key.clone(), source_value.clone());
+                    }
+                }
+            }
+        }
+        (target_value, source_value) => {
+            *target_value = source_value.clone();
+        }
+    }
+}
+
+fn json_deep_remove(target: &mut Value, source: &Value) {
+    let (Some(target_map), Some(source_map)) = (target.as_object_mut(), source.as_object()) else {
+        return;
+    };
+
+    for (key, source_value) in source_map {
+        let mut remove_key = false;
+
+        if let Some(target_value) = target_map.get_mut(key) {
+            if source_value.is_object() && target_value.is_object() {
+                json_deep_remove(target_value, source_value);
+                remove_key = target_value.as_object().is_some_and(|obj| obj.is_empty());
+            } else if let (Some(target_arr), Some(source_arr)) =
+                (target_value.as_array_mut(), source_value.as_array())
+            {
+                json_remove_array_items(target_arr, source_arr);
+                remove_key = target_arr.is_empty();
+            } else if json_is_subset(target_value, source_value) {
+                remove_key = true;
+            }
+        }
+
+        if remove_key {
+            target_map.remove(key);
+        }
+    }
+}
+
+fn toml_value_is_subset(target: &toml_edit::Value, source: &toml_edit::Value) -> bool {
+    match (target, source) {
+        (toml_edit::Value::String(target), toml_edit::Value::String(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Integer(target), toml_edit::Value::Integer(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Float(target), toml_edit::Value::Float(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Boolean(target), toml_edit::Value::Boolean(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Datetime(target), toml_edit::Value::Datetime(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Array(target), toml_edit::Value::Array(source)) => {
+            toml_array_contains_subset(target, source)
+        }
+        (toml_edit::Value::InlineTable(target), toml_edit::Value::InlineTable(source)) => {
+            source.iter().all(|(key, source_item)| {
+                target
+                    .get(key)
+                    .is_some_and(|target_item| toml_value_is_subset(target_item, source_item))
+            })
+        }
+        _ => false,
+    }
+}
+
+fn toml_array_contains_subset(target: &toml_edit::Array, source: &toml_edit::Array) -> bool {
+    let mut matched = vec![false; target.len()];
+    let target_items: Vec<&toml_edit::Value> = target.iter().collect();
+
+    source.iter().all(|source_item| {
+        if let Some((index, _)) = target_items
+            .iter()
+            .enumerate()
+            .find(|(index, target_item)| {
+                !matched[*index] && toml_value_is_subset(target_item, source_item)
+            })
+        {
+            matched[index] = true;
+            true
+        } else {
+            false
+        }
+    })
+}
+
+fn toml_remove_array_items(target: &mut toml_edit::Array, source: &toml_edit::Array) {
+    for source_item in source.iter() {
+        let index = {
+            let target_items: Vec<&toml_edit::Value> = target.iter().collect();
+            target_items
+                .iter()
+                .enumerate()
+                .find(|(_, target_item)| toml_value_is_subset(target_item, source_item))
+                .map(|(index, _)| index)
+        };
+
+        if let Some(index) = index {
+            target.remove(index);
+        }
+    }
+}
+
+fn toml_item_is_subset(target: &Item, source: &Item) -> bool {
+    if let Some(source_table) = source.as_table_like() {
+        let Some(target_table) = target.as_table_like() else {
+            return false;
+        };
+        return source_table.iter().all(|(key, source_item)| {
+            target_table
+                .get(key)
+                .is_some_and(|target_item| toml_item_is_subset(target_item, source_item))
+        });
+    }
+
+    match (target.as_value(), source.as_value()) {
+        (Some(target_value), Some(source_value)) => {
+            toml_value_is_subset(target_value, source_value)
+        }
+        _ => false,
+    }
+}
+
+fn merge_toml_item(target: &mut Item, source: &Item) {
+    if let Some(source_table) = source.as_table_like() {
+        if let Some(target_table) = target.as_table_like_mut() {
+            merge_toml_table_like(target_table, source_table);
+            return;
+        }
+    }
+
+    *target = source.clone();
+}
+
+fn merge_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
+    for (key, source_item) in source.iter() {
+        match target.get_mut(key) {
+            Some(target_item) => merge_toml_item(target_item, source_item),
+            None => {
+                target.insert(key, source_item.clone());
+            }
+        }
+    }
+}
+
+fn remove_toml_item(target: &mut Item, source: &Item) {
+    if let Some(source_table) = source.as_table_like() {
+        if let Some(target_table) = target.as_table_like_mut() {
+            remove_toml_table_like(target_table, source_table);
+            if target_table.is_empty() {
+                *target = Item::None;
+            }
+            return;
+        }
+    }
+
+    if let Some(source_value) = source.as_value() {
+        let mut remove_item = false;
+
+        if let Some(target_value) = target.as_value_mut() {
+            match (target_value, source_value) {
+                (toml_edit::Value::Array(target_arr), toml_edit::Value::Array(source_arr)) => {
+                    toml_remove_array_items(target_arr, source_arr);
+                    remove_item = target_arr.is_empty();
+                }
+                (target_value, source_value)
+                    if toml_value_is_subset(target_value, source_value) =>
+                {
+                    remove_item = true;
+                }
+                _ => {}
+            }
+        }
+
+        if remove_item {
+            *target = Item::None;
+        }
+    }
+}
+
+fn remove_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
+    let keys: Vec<String> = source.iter().map(|(key, _)| key.to_string()).collect();
+
+    for key in keys {
+        let mut remove_key = false;
+        if let (Some(target_item), Some(source_item)) = (target.get_mut(&key), source.get(&key)) {
+            remove_toml_item(target_item, source_item);
+            remove_key = target_item.is_none()
+                || target_item
+                    .as_table_like()
+                    .is_some_and(|table_like| table_like.is_empty());
+        }
+
+        if remove_key {
+            target.remove(&key);
+        }
+    }
+}
+
+fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet: &str) -> bool {
+    let trimmed = snippet.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    match app_type {
+        AppType::Claude => match serde_json::from_str::<Value>(trimmed) {
+            Ok(source) if source.is_object() => json_is_subset(settings, &source),
+            _ => false,
+        },
+        AppType::Codex => {
+            let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
+            if config_toml.trim().is_empty() {
+                return false;
+            }
+
+            let target_doc = match config_toml.parse::<DocumentMut>() {
+                Ok(doc) => doc,
+                Err(_) => return false,
+            };
+            let source_doc = match trimmed.parse::<DocumentMut>() {
+                Ok(doc) => doc,
+                Err(_) => return false,
+            };
+
+            toml_item_is_subset(target_doc.as_item(), source_doc.as_item())
+        }
+        AppType::Gemini => match serde_json::from_str::<Value>(trimmed) {
+            Ok(Value::Object(source_map)) => {
+                let Some(target_map) = settings.get("env").and_then(Value::as_object) else {
+                    return false;
+                };
+                source_map.iter().all(|(key, source_value)| {
+                    target_map
+                        .get(key)
+                        .is_some_and(|target_value| json_is_subset(target_value, source_value))
+                })
+            }
+            _ => false,
+        },
+        AppType::OpenCode | AppType::OpenClaw => false,
+    }
+}
+
+pub(crate) fn provider_uses_common_config(
+    app_type: &AppType,
+    provider: &Provider,
+    snippet: Option<&str>,
+) -> bool {
+    match provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.common_config_enabled)
+    {
+        Some(explicit) => explicit && snippet.is_some_and(|value| !value.trim().is_empty()),
+        None => snippet.is_some_and(|value| {
+            settings_contain_common_config(app_type, &provider.settings_config, value)
+        }),
+    }
+}
+
+pub(crate) fn remove_common_config_from_settings(
+    app_type: &AppType,
+    settings: &Value,
+    snippet: &str,
+) -> Result<Value, AppError> {
+    let trimmed = snippet.trim();
+    if trimmed.is_empty() {
+        return Ok(settings.clone());
+    }
+
+    match app_type {
+        AppType::Claude => {
+            let source = serde_json::from_str::<Value>(trimmed)
+                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+            let mut result = settings.clone();
+            json_deep_remove(&mut result, &source);
+            Ok(result)
+        }
+        AppType::Codex => {
+            let mut result = settings.clone();
+            let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
+            let mut target_doc = if config_toml.trim().is_empty() {
+                DocumentMut::new()
+            } else {
+                config_toml.parse::<DocumentMut>().map_err(|e| {
+                    AppError::Message(format!(
+                        "Invalid Codex config.toml while removing common config: {e}"
+                    ))
+                })?
+            };
+            let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
+                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
+            })?;
+
+            remove_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("config".to_string(), Value::String(target_doc.to_string()));
+            }
+            Ok(result)
+        }
+        AppType::Gemini => {
+            let source = serde_json::from_str::<Value>(trimmed)
+                .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
+            let mut result = settings.clone();
+            if let Some(env) = result.get_mut("env") {
+                json_deep_remove(env, &source);
+            }
+            Ok(result)
+        }
+        AppType::OpenCode | AppType::OpenClaw => Ok(settings.clone()),
+    }
+}
+
+fn apply_common_config_to_settings(
+    app_type: &AppType,
+    settings: &Value,
+    snippet: &str,
+) -> Result<Value, AppError> {
+    let trimmed = snippet.trim();
+    if trimmed.is_empty() {
+        return Ok(settings.clone());
+    }
+
+    match app_type {
+        AppType::Claude => {
+            let source = serde_json::from_str::<Value>(trimmed)
+                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+            let mut result = settings.clone();
+            json_deep_merge(&mut result, &source);
+            Ok(result)
+        }
+        AppType::Codex => {
+            let mut result = settings.clone();
+            let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
+            let mut target_doc = if config_toml.trim().is_empty() {
+                DocumentMut::new()
+            } else {
+                config_toml.parse::<DocumentMut>().map_err(|e| {
+                    AppError::Message(format!(
+                        "Invalid Codex config.toml while applying common config: {e}"
+                    ))
+                })?
+            };
+            let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
+                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
+            })?;
+
+            merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("config".to_string(), Value::String(target_doc.to_string()));
+            }
+            Ok(result)
+        }
+        AppType::Gemini => {
+            let source = serde_json::from_str::<Value>(trimmed)
+                .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
+            let mut result = settings.clone();
+            if let Some(env) = result.get_mut("env") {
+                json_deep_merge(env, &source);
+            } else if let Some(obj) = result.as_object_mut() {
+                obj.insert("env".to_string(), source);
+            }
+            Ok(result)
+        }
+        AppType::OpenCode | AppType::OpenClaw => Ok(settings.clone()),
+    }
+}
+
+pub(crate) fn build_effective_settings_with_common_config(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<Value, AppError> {
+    let snippet = db.get_config_snippet(app_type.as_str())?;
+    let mut effective_settings = provider.settings_config.clone();
+
+    if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
+        if let Some(snippet_text) = snippet.as_deref() {
+            match apply_common_config_to_settings(app_type, &effective_settings, snippet_text) {
+                Ok(settings) => effective_settings = settings,
+                Err(err) => {
+                    log::warn!(
+                        "Failed to apply common config for {} provider '{}': {err}",
+                        app_type.as_str(),
+                        provider.id
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(effective_settings)
+}
+
+pub(crate) fn write_live_with_common_config(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config =
+        build_effective_settings_with_common_config(db, app_type, provider)?;
+
+    write_live_snapshot(app_type, &effective_provider)
+}
+
+pub(crate) fn strip_common_config_from_live_settings(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    live_settings: Value,
+) -> Value {
+    let snippet = match db.get_config_snippet(app_type.as_str()) {
+        Ok(snippet) => snippet,
+        Err(err) => {
+            log::warn!(
+                "Failed to load common config for {} while backfilling '{}': {err}",
+                app_type.as_str(),
+                provider.id
+            );
+            return live_settings;
+        }
+    };
+
+    if !provider_uses_common_config(app_type, provider, snippet.as_deref()) {
+        return live_settings;
+    }
+
+    let Some(snippet_text) = snippet.as_deref() else {
+        return live_settings;
+    };
+
+    match remove_common_config_from_settings(app_type, &live_settings, snippet_text) {
+        Ok(settings) => settings,
+        Err(err) => {
+            log::warn!(
+                "Failed to strip common config for {} provider '{}': {err}",
+                app_type.as_str(),
+                provider.id
+            );
+            live_settings
+        }
+    }
+}
+
+pub(crate) fn normalize_provider_common_config_for_storage(
+    db: &Database,
+    app_type: &AppType,
+    provider: &mut Provider,
+) -> Result<(), AppError> {
+    let uses_common_config = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.common_config_enabled)
+        .unwrap_or(false);
+
+    if !uses_common_config {
+        return Ok(());
+    }
+
+    let Some(snippet) = db.get_config_snippet(app_type.as_str())? else {
+        return Ok(());
+    };
+
+    if snippet.trim().is_empty() {
+        return Ok(());
+    }
+
+    match remove_common_config_from_settings(app_type, &provider.settings_config, &snippet) {
+        Ok(settings) => provider.settings_config = settings,
+        Err(err) => {
+            log::warn!(
+                "Failed to normalize common config before saving {} provider '{}': {err}",
+                app_type.as_str(),
+                provider.id
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// Live configuration snapshot for backup/restore
@@ -183,10 +740,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                             provider.id
                         );
                     } else {
-                        log::error!(
-                            "OpenCode provider '{}' has invalid config structure, skipping write",
+                        return Err(AppError::Message(format!(
+                            "OpenCode provider '{}' has invalid config structure for live config (must contain 'npm' or 'options')",
                             provider.id
-                        );
+                        )));
                     }
                 }
             }
@@ -225,10 +782,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                             provider.id
                         );
                     } else {
-                        log::error!(
-                            "OpenClaw provider '{}' has invalid config structure, skipping write",
+                        return Err(AppError::Message(format!(
+                            "OpenClaw provider '{}' has invalid config structure for live config (must contain 'baseUrl', 'api', or 'models')",
                             provider.id
-                        );
+                        )));
                     }
                 }
             }
@@ -237,462 +794,60 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     Ok(())
 }
 
-// ============================================================================
-// Key fields definitions for partial merge
-// ============================================================================
-
-/// Claude env-level key fields that belong to the provider.
-/// When adding a new field here, also update backfill_claude_key_fields().
-const CLAUDE_KEY_ENV_FIELDS: &[&str] = &[
-    // --- API auth & endpoint ---
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_API_KEY",
-    // --- Model selection ---
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_REASONING_MODEL",
-    "ANTHROPIC_SMALL_FAST_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "CLAUDE_CODE_SUBAGENT_MODEL",
-    // --- AWS Bedrock ---
-    "CLAUDE_CODE_USE_BEDROCK",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
-    "AWS_REGION",
-    "AWS_PROFILE",
-    "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
-    // --- Google Vertex AI ---
-    "CLAUDE_CODE_USE_VERTEX",
-    "ANTHROPIC_VERTEX_PROJECT_ID",
-    "CLOUD_ML_REGION",
-    // --- Microsoft Foundry ---
-    "CLAUDE_CODE_USE_FOUNDRY",
-    // --- Provider behavior ---
-    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
-    "API_TIMEOUT_MS",
-    "DISABLE_PROMPT_CACHING",
-];
-
-/// Claude top-level key fields (legacy + modern format).
-/// When adding a new field here, also update backfill_claude_key_fields().
-const CLAUDE_KEY_TOP_LEVEL: &[&str] = &[
-    "apiBaseUrl",     // legacy
-    "primaryModel",   // legacy
-    "smallFastModel", // legacy
-    "model",          // modern
-    "apiKey",         // Bedrock API Key auth
-];
-
-/// Codex TOML key fields.
-/// When adding a new field here, also update backfill_codex_key_fields().
-const CODEX_KEY_TOP_LEVEL: &[&str] = &[
-    "model_provider",
-    "model",
-    "model_reasoning_effort",
-    "review_model",
-    "plan_mode_reasoning_effort",
-];
-
-/// Gemini env-level key fields.
-/// When adding a new field here, also update backfill_gemini_key_fields().
-const GEMINI_KEY_ENV_FIELDS: &[&str] = &[
-    "GOOGLE_GEMINI_BASE_URL",
-    "GEMINI_API_KEY",
-    "GEMINI_MODEL",
-    "GOOGLE_API_KEY",
-];
-
-// ============================================================================
-// Partial merge: write only key fields to live config
-// ============================================================================
-
-/// Write only provider-specific key fields to live configuration,
-/// preserving all other user settings in the live file.
-///
-/// Used for switch-mode apps (Claude, Codex, Gemini) during:
-/// - `switch_normal()` — switching providers
-/// - `sync_current_to_live()` — startup sync
-/// - `add()` / `update()` when the provider is current
-pub(crate) fn write_live_partial(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
-    match app_type {
-        AppType::Claude => write_claude_live_partial(provider),
-        AppType::Codex => write_codex_live_partial(provider),
-        AppType::Gemini => write_gemini_live_partial(provider),
-        // Additive mode apps still use full snapshot
-        AppType::OpenCode | AppType::OpenClaw => write_live_snapshot(app_type, provider),
-    }
-}
-
-/// Apply a JSON merge patch (RFC 7396) directly to Claude live settings.json.
-/// Used for user-level preferences (attribution, thinking, etc.) that are
-/// independent of the active provider.
-pub fn patch_claude_live(patch: Value) -> Result<(), AppError> {
-    let path = get_claude_settings_path();
-    let mut live = if path.exists() {
-        read_json_file(&path).unwrap_or_else(|_| json!({}))
-    } else {
-        json!({})
-    };
-    json_merge_patch(&mut live, &patch);
-    let settings = sanitize_claude_settings_for_live(&live);
-    write_json_file(&path, &settings)?;
-    Ok(())
-}
-
-/// RFC 7396 JSON Merge Patch: null deletes, objects merge recursively, rest overwrites.
-fn json_merge_patch(target: &mut Value, patch: &Value) {
-    if let Some(patch_obj) = patch.as_object() {
-        if !target.is_object() {
-            *target = json!({});
-        }
-        let target_obj = target.as_object_mut().unwrap();
-        for (key, value) in patch_obj {
-            if value.is_null() {
-                target_obj.remove(key);
-            } else if value.is_object() {
-                let entry = target_obj.entry(key.clone()).or_insert(json!({}));
-                json_merge_patch(entry, value);
-                // Clean up empty container objects
-                if entry.as_object().is_some_and(|o| o.is_empty()) {
-                    target_obj.remove(key);
-                }
-            } else {
-                target_obj.insert(key.clone(), value.clone());
-            }
-        }
-    }
-}
-
-/// Claude: merge only key env and top-level fields into live settings.json
-fn write_claude_live_partial(provider: &Provider) -> Result<(), AppError> {
-    let path = get_claude_settings_path();
-
-    // 1. Read existing live config (start from empty if file doesn't exist)
-    let mut live = if path.exists() {
-        read_json_file(&path).unwrap_or_else(|_| json!({}))
-    } else {
-        json!({})
-    };
-
-    // 2. Ensure live.env exists as an object
-    if !live.get("env").is_some_and(|v| v.is_object()) {
-        live.as_object_mut()
-            .unwrap()
-            .insert("env".into(), json!({}));
-    }
-
-    // 3. Clear key env fields from live, then write from provider
-    let live_env = live.get_mut("env").unwrap().as_object_mut().unwrap();
-    for key in CLAUDE_KEY_ENV_FIELDS {
-        live_env.remove(*key);
-    }
-
-    if let Some(provider_env) = provider
-        .settings_config
-        .get("env")
-        .and_then(|v| v.as_object())
-    {
-        for key in CLAUDE_KEY_ENV_FIELDS {
-            if let Some(value) = provider_env.get(*key) {
-                live_env.insert(key.to_string(), value.clone());
-            }
-        }
-    }
-
-    // 4. Handle top-level legacy key fields
-    let live_obj = live.as_object_mut().unwrap();
-    for key in CLAUDE_KEY_TOP_LEVEL {
-        live_obj.remove(*key);
-    }
-    if let Some(provider_obj) = provider.settings_config.as_object() {
-        for key in CLAUDE_KEY_TOP_LEVEL {
-            if let Some(value) = provider_obj.get(*key) {
-                live_obj.insert(key.to_string(), value.clone());
-            }
-        }
-    }
-
-    // 5. Sanitize and write
-    let settings = sanitize_claude_settings_for_live(&live);
-    write_json_file(&path, &settings)?;
-    Ok(())
-}
-
-/// Codex: replace auth.json entirely, partially merge config.toml key fields
-fn write_codex_live_partial(provider: &Provider) -> Result<(), AppError> {
-    let obj = provider
-        .settings_config
-        .as_object()
-        .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
-
-    // auth.json is entirely provider-specific, replace it wholesale
-    let auth = obj
-        .get("auth")
-        .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
-
-    let provider_config_str = obj.get("config").and_then(|v| v.as_str()).unwrap_or("");
-
-    // Read existing config.toml (or start from empty)
-    let config_path = get_codex_config_path();
-    let existing_toml = if config_path.exists() {
-        std::fs::read_to_string(&config_path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    // Parse both existing and provider TOML
-    let mut live_doc = existing_toml
-        .parse::<toml_edit::DocumentMut>()
-        .unwrap_or_else(|_| toml_edit::DocumentMut::new());
-
-    // Remove key fields from live doc
-    let live_root = live_doc.as_table_mut();
-    for key in CODEX_KEY_TOP_LEVEL {
-        live_root.remove(key);
-    }
-    live_root.remove("model_providers");
-
-    // Parse provider TOML and extract key fields
-    if !provider_config_str.is_empty() {
-        if let Ok(provider_doc) = provider_config_str.parse::<toml_edit::DocumentMut>() {
-            let provider_root = provider_doc.as_table();
-
-            // Copy key top-level fields from provider
-            for key in CODEX_KEY_TOP_LEVEL {
-                if let Some(item) = provider_root.get(key) {
-                    live_root.insert(key, item.clone());
-                }
-            }
-
-            // Copy model_providers table from provider
-            if let Some(mp) = provider_root.get("model_providers") {
-                live_root.insert("model_providers", mp.clone());
-            }
-        }
-    }
-
-    // Write using atomic write
-    crate::codex_config::write_codex_live_atomic(auth, Some(&live_doc.to_string()))?;
-    Ok(())
-}
-
-/// Gemini: merge only key env fields, preserve settings.json (MCP etc.)
-fn write_gemini_live_partial(provider: &Provider) -> Result<(), AppError> {
-    use crate::gemini_config::{get_gemini_env_path, read_gemini_env, write_gemini_env_atomic};
-
-    let auth_type = detect_gemini_auth_type(provider);
-
-    // 1. Read existing env from live .env file
-    let mut env_map = if get_gemini_env_path().exists() {
-        read_gemini_env().unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
-
-    // 2. Remove key fields from existing env
-    for key in GEMINI_KEY_ENV_FIELDS {
-        env_map.remove(*key);
-    }
-
-    // 3. Extract key fields from provider and merge
-    if let Some(provider_env) = provider
-        .settings_config
-        .get("env")
-        .and_then(|v| v.as_object())
-    {
-        for key in GEMINI_KEY_ENV_FIELDS {
-            if let Some(value) = provider_env.get(*key).and_then(|v| v.as_str()) {
-                if !value.is_empty() {
-                    env_map.insert(key.to_string(), value.to_string());
-                }
-            }
-        }
-    }
-
-    // 4. Handle auth type specific behavior
-    match auth_type {
-        GeminiAuthType::GoogleOfficial => {
-            // Google official uses OAuth, clear all env
-            env_map.clear();
-            write_gemini_env_atomic(&env_map)?;
-        }
-        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
-            // Validate and write env
-            crate::gemini_config::validate_gemini_settings_strict(&provider.settings_config)?;
-            write_gemini_env_atomic(&env_map)?;
-        }
-    }
-
-    // 5. Handle settings.json (same as write_gemini_live — preserve existing MCP etc.)
-    use crate::gemini_config::get_gemini_settings_path;
-    let settings_path = get_gemini_settings_path();
-
-    if let Some(config_value) = provider.settings_config.get("config") {
-        if config_value.is_object() {
-            let mut merged = if settings_path.exists() {
-                read_json_file::<Value>(&settings_path).unwrap_or_else(|_| json!({}))
-            } else {
-                json!({})
-            };
-            if let (Some(merged_obj), Some(config_obj)) =
-                (merged.as_object_mut(), config_value.as_object())
-            {
-                for (k, v) in config_obj {
-                    merged_obj.insert(k.clone(), v.clone());
-                }
-            }
-            write_json_file(&settings_path, &merged)?;
-        } else if !config_value.is_null() {
-            return Err(AppError::localized(
-                "gemini.validation.invalid_config",
-                "Gemini 配置格式错误: config 必须是对象或 null",
-                "Gemini config invalid: config must be an object or null",
-            ));
-        }
-    }
-
-    // 6. Set security flag based on auth type
-    match auth_type {
-        GeminiAuthType::GoogleOfficial => ensure_google_oauth_security_flag(provider)?,
-        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
-            crate::gemini_config::write_packycode_settings()?;
-        }
-    }
-
-    Ok(())
-}
-
-// ============================================================================
-// Backfill: extract only key fields from live config
-// ============================================================================
-
-/// Extract only provider-specific key fields from a live config value.
-///
-/// Used during backfill to ensure the provider's `settings_config` converges
-/// to containing only key fields over time.
-pub(crate) fn backfill_key_fields(app_type: &AppType, live_config: &Value) -> Value {
-    match app_type {
-        AppType::Claude => backfill_claude_key_fields(live_config),
-        AppType::Codex => backfill_codex_key_fields(live_config),
-        AppType::Gemini => backfill_gemini_key_fields(live_config),
-        // Additive mode: return full config (no backfill needed)
-        _ => live_config.clone(),
-    }
-}
-
-fn backfill_claude_key_fields(live: &Value) -> Value {
-    let mut result = json!({});
-    let result_obj = result.as_object_mut().unwrap();
-
-    // Extract key env fields
-    if let Some(live_env) = live.get("env").and_then(|v| v.as_object()) {
-        let mut env_obj = serde_json::Map::new();
-        for key in CLAUDE_KEY_ENV_FIELDS {
-            if let Some(value) = live_env.get(*key) {
-                env_obj.insert(key.to_string(), value.clone());
-            }
-        }
-        if !env_obj.is_empty() {
-            result_obj.insert("env".to_string(), Value::Object(env_obj));
-        }
-    }
-
-    // Extract key top-level fields
-    if let Some(live_obj) = live.as_object() {
-        for key in CLAUDE_KEY_TOP_LEVEL {
-            if let Some(value) = live_obj.get(*key) {
-                result_obj.insert(key.to_string(), value.clone());
-            }
-        }
-    }
-
-    result
-}
-
-fn backfill_codex_key_fields(live: &Value) -> Value {
-    let mut result = json!({});
-    let result_obj = result.as_object_mut().unwrap();
-
-    // auth is entirely provider-specific — keep it as-is
-    if let Some(auth) = live.get("auth") {
-        result_obj.insert("auth".to_string(), auth.clone());
-    }
-
-    // Extract key TOML fields from config string
-    if let Some(config_str) = live.get("config").and_then(|v| v.as_str()) {
-        if let Ok(doc) = config_str.parse::<toml_edit::DocumentMut>() {
-            let mut new_doc = toml_edit::DocumentMut::new();
-            let new_root = new_doc.as_table_mut();
-
-            // Copy key top-level fields
-            for key in CODEX_KEY_TOP_LEVEL {
-                if let Some(item) = doc.as_table().get(key) {
-                    new_root.insert(key, item.clone());
-                }
-            }
-
-            // Copy model_providers table
-            if let Some(mp) = doc.as_table().get("model_providers") {
-                new_root.insert("model_providers", mp.clone());
-            }
-
-            let toml_str = new_doc.to_string();
-            if !toml_str.trim().is_empty() {
-                result_obj.insert("config".to_string(), Value::String(toml_str));
-            }
-        }
-    }
-
-    result
-}
-
-fn backfill_gemini_key_fields(live: &Value) -> Value {
-    let mut result = json!({});
-    let result_obj = result.as_object_mut().unwrap();
-
-    // Extract key env fields
-    if let Some(live_env) = live.get("env").and_then(|v| v.as_object()) {
-        let mut env_obj = serde_json::Map::new();
-        for key in GEMINI_KEY_ENV_FIELDS {
-            if let Some(value) = live_env.get(*key) {
-                env_obj.insert(key.to_string(), value.clone());
-            }
-        }
-        if !env_obj.is_empty() {
-            result_obj.insert("env".to_string(), Value::Object(env_obj));
-        }
-    }
-
-    result
-}
-
 /// Sync all providers to live configuration (for additive mode apps)
 ///
 /// Writes all providers from the database to the live configuration file.
 /// Used for OpenCode and other additive mode applications.
 fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
     let providers = state.db.get_all_providers(app_type.as_str())?;
+    let mut synced_count = 0usize;
 
     for provider in providers.values() {
-        if let Err(e) = write_live_snapshot(app_type, provider) {
+        if provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.live_config_managed)
+            == Some(false)
+        {
+            continue;
+        }
+
+        if let Err(e) = write_live_with_common_config(state.db.as_ref(), app_type, provider) {
             log::warn!(
                 "Failed to sync {:?} provider '{}' to live: {e}",
                 app_type,
                 provider.id
             );
-            // Continue syncing other providers, don't abort
+            continue;
+        }
+        synced_count += 1;
+    }
+
+    log::info!("Synced {synced_count} {app_type:?} providers to live config");
+    Ok(())
+}
+
+pub(crate) fn sync_current_provider_for_app_to_live(
+    state: &AppState,
+    app_type: &AppType,
+) -> Result<(), AppError> {
+    if app_type.is_additive_mode() {
+        sync_all_providers_to_live(state, app_type)?;
+    } else {
+        let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type)?
+        {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+
+        let providers = state.db.get_all_providers(app_type.as_str())?;
+        if let Some(provider) = providers.get(&current_id) {
+            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
         }
     }
 
-    log::info!(
-        "Synced {} {:?} providers to live config",
-        providers.len(),
-        app_type
-    );
+    McpService::sync_all_enabled(state)?;
+
     Ok(())
 }
 
@@ -719,7 +874,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
             let providers = state.db.get_all_providers(app_type.as_str())?;
             if let Some(provider) = providers.get(&current_id) {
-                write_live_partial(&app_type, provider)?;
+                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
             }
             // Note: get_effective_current_provider already validates existence,
             // so providers.get() should always succeed here
@@ -1072,12 +1227,16 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         };
 
         // Create provider
-        let provider = Provider::with_id(
+        let mut provider = Provider::with_id(
             id.clone(),
             config.name.clone().unwrap_or_else(|| id.clone()),
             settings_config,
             None,
         );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
 
         // Save to database
         if let Err(e) = state.db.save_provider("opencode", &provider) {
@@ -1142,7 +1301,11 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
             .unwrap_or_else(|| id.clone());
 
         // Create provider
-        let provider = Provider::with_id(id.clone(), display_name, settings_config, None);
+        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
 
         // Save to database
         if let Err(e) = state.db.save_provider("openclaw", &provider) {
@@ -1174,4 +1337,133 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-test"
+            }
+        });
+        let snippet = r#"{
+  "includeCoAuthoredBy": false,
+  "env": {
+    "CLAUDE_CODE_USE_BEDROCK": "1"
+  }
+}"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(applied["includeCoAuthoredBy"], json!(false));
+        assert_eq!(applied["env"]["CLAUDE_CODE_USE_BEDROCK"], json!("1"));
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
+        assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn codex_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
+        let settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            },
+            "config": "model_provider = \"openai\"\n[general]\nmodel = \"gpt-5\"\n"
+        });
+        let snippet = "[shared]\nreasoning = \"medium\"\n";
+
+        let applied = apply_common_config_to_settings(&AppType::Codex, &settings, snippet).unwrap();
+        let applied_config = applied["config"].as_str().unwrap_or_default();
+        assert!(applied_config.contains("[shared]"));
+        assert!(applied_config.contains("reasoning = \"medium\""));
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
+        assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn explicit_common_config_flag_overrides_legacy_subset_detection() {
+        let mut provider = Provider::with_id(
+            "claude-test".to_string(),
+            "Claude Test".to_string(),
+            json!({
+                "includeCoAuthoredBy": false
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            common_config_enabled: Some(false),
+            ..Default::default()
+        });
+
+        assert!(
+            !provider_uses_common_config(
+                &AppType::Claude,
+                &provider,
+                Some(r#"{ "includeCoAuthoredBy": false }"#),
+            ),
+            "explicit false should win over legacy subset detection"
+        );
+    }
+
+    #[test]
+    fn claude_common_config_array_subset_detection_and_strip_preserve_extra_items() {
+        let settings = json!({
+            "allowedTools": ["tool1", "tool2"]
+        });
+        let snippet = r#"{
+  "allowedTools": ["tool1"]
+}"#;
+
+        assert!(
+            settings_contain_common_config(&AppType::Claude, &settings, snippet),
+            "array subset should be detected for legacy providers"
+        );
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(
+            stripped,
+            json!({
+                "allowedTools": ["tool2"]
+            })
+        );
+    }
+
+    #[test]
+    fn codex_common_config_array_subset_detection_and_strip_preserve_extra_items() {
+        let settings = json!({
+            "auth": {},
+            "config": "allowed_tools = [\"tool1\", \"tool2\"]\n"
+        });
+        let snippet = "allowed_tools = [\"tool1\"]\n";
+
+        assert!(
+            settings_contain_common_config(&AppType::Codex, &settings, snippet),
+            "TOML array subset should be detected for legacy providers"
+        );
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Codex, &settings, snippet).unwrap();
+        assert_eq!(stripped["auth"], json!({}));
+        let stripped_config = stripped["config"].as_str().unwrap_or_default();
+        let parsed = stripped_config
+            .parse::<DocumentMut>()
+            .expect("stripped codex config should remain valid TOML");
+        let allowed_tools = parsed["allowed_tools"]
+            .as_array()
+            .expect("allowed_tools should remain an array");
+        let values: Vec<&str> = allowed_tools
+            .iter()
+            .map(|value| value.as_str().expect("tool id should be string"))
+            .collect();
+        assert_eq!(values, vec!["tool2"]);
+    }
 }

@@ -14,6 +14,7 @@ export interface GeminiPresetTheme {
 
 export interface GeminiProviderPreset {
   name: string;
+  nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
   apiKeyUrl?: string;
   settingsConfig: object;
@@ -56,11 +57,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://www.packyapi.com",
-        GEMINI_MODEL: "gemini-3-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://www.packyapi.com",
-    model: "gemini-3-pro",
+    model: "gemini-3.1-pro",
     description: "PackyCode",
     category: "third_party",
     isPartner: true,
@@ -78,11 +79,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.cubence.com",
-        GEMINI_MODEL: "gemini-3-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://api.cubence.com",
-    model: "gemini-3-pro",
+    model: "gemini-3.1-pro",
     description: "Cubence",
     category: "third_party",
     isPartner: true,
@@ -103,11 +104,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.com",
-        GEMINI_MODEL: "gemini-3-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://api.aigocode.com",
-    model: "gemini-3-pro",
+    model: "gemini-3.1-pro",
     description: "AIGoCode",
     category: "third_party",
     isPartner: true,
@@ -123,11 +124,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aicodemirror.com/api/gemini",
-        GEMINI_MODEL: "gemini-3-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://api.aicodemirror.com/api/gemini",
-    model: "gemini-3-pro",
+    model: "gemini-3.1-pro",
     description: "AICodeMirror",
     category: "third_party",
     isPartner: true,
@@ -141,16 +142,16 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "AICoding",
-    websiteUrl: "https://www.aicoding.sh",
-    apiKeyUrl: "https://www.aicoding.sh/i/CCSWITCH",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aicoding.sh",
-        GEMINI_MODEL: "gemini-3-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://api.aicoding.sh",
-    model: "gemini-3-pro",
+    model: "gemini-3.1-pro",
     description: "AICoding",
     category: "third_party",
     isPartner: true,
@@ -166,11 +167,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://crazyrouter.com",
-        GEMINI_MODEL: "gemini-3-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://crazyrouter.com",
-    model: "gemini-3-pro",
+    model: "gemini-3.1-pro",
     description: "CrazyRouter",
     category: "third_party",
     isPartner: true,
@@ -186,11 +187,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://node-hk.sssaicode.com/api",
-        GEMINI_MODEL: "gemini-3-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://node-hk.sssaicode.com/api",
-    model: "gemini-3-pro",
+    model: "gemini-3.1-pro",
     description: "SSSAiCode",
     category: "third_party",
     isPartner: true,
@@ -204,17 +205,37 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "CTok.ai",
+    websiteUrl: "https://ctok.ai",
+    apiKeyUrl: "https://ctok.ai",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.ctok.ai/v1beta",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://api.ctok.ai/v1beta",
+    model: "gemini-3.1-pro",
+    description: "CTok",
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "ctok",
+    endpointCandidates: ["https://api.ctok.ai/v1beta"],
+    icon: "ctok",
+    iconColor: "#000000",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://openrouter.ai/api",
-        GEMINI_MODEL: "gemini-3-pro-preview",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://openrouter.ai/api",
-    model: "gemini-3-pro",
+    model: "gemini-3.1-pro",
     description: "OpenRouter",
     category: "aggregator",
     icon: "openrouter",
@@ -226,10 +247,10 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "",
-        GEMINI_MODEL: "gemini-3-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
-    model: "gemini-3-pro",
+    model: "gemini-3.1-pro",
     description: "自定义 Gemini API 端点",
     category: "custom",
   },

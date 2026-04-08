@@ -93,6 +93,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  ctok: {
+    name: "ctok",
+    displayName: "CTok",
+    category: "ai-provider",
+    keywords: ["ctok", "ai", "programming"],
+    defaultColor: "#3B82F6",
+  },
   cubence: {
     name: "cubence",
     displayName: "Cubence",
@@ -373,12 +380,26 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["xiaomimimo", "xiaomi", "mimo"],
     defaultColor: "#000000",
   },
+  novita: {
+    name: "novita",
+    displayName: "Novita AI",
+    category: "ai-provider",
+    keywords: ["novita", "novita ai"],
+    defaultColor: "#000000",
+  },
   nvidia: {
     name: "nvidia",
     displayName: "NVIDIA",
     category: "ai-provider",
     keywords: ["nvidia", "nim", "gpu"],
     defaultColor: "#74B71B",
+  },
+  stepfun: {
+    name: "stepfun",
+    displayName: "StepFun",
+    category: "ai-provider",
+    keywords: ["stepfun", "step", "jieyue", "阶跃星辰"],
+    defaultColor: "#005AFF",
   },
 };
 

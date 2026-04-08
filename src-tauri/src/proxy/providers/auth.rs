@@ -112,6 +112,13 @@ pub enum AuthStrategy {
     ///
     /// 用于 Gemini CLI 等需要 OAuth 的场景
     GoogleOAuth,
+
+    /// GitHub Copilot 认证方式
+    ///
+    /// - Header: `Authorization: Bearer <copilot_token>`
+    ///
+    /// 使用动态获取的 Copilot Token（通过 GitHub OAuth 设备码流程获取）
+    GitHubCopilot,
 }
 
 #[cfg(test)]
@@ -226,6 +233,7 @@ mod tests {
             AuthStrategy::Bearer,
             AuthStrategy::Google,
             AuthStrategy::GoogleOAuth,
+            AuthStrategy::GitHubCopilot,
         ];
 
         for (i, s1) in strategies.iter().enumerate() {

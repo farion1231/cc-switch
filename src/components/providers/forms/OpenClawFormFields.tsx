@@ -16,8 +16,30 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import { toast } from "sonner";
+import {
+  Download,
+  Plus,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ApiKeySection } from "./shared";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import { openclawApiProtocols } from "@/config/openclawProviderPresets";
 import type { ProviderCategory, OpenClawModel } from "@/types";
 
@@ -42,6 +64,10 @@ interface OpenClawFormFieldsProps {
   // Models
   models: OpenClawModel[];
   onModelsChange: (models: OpenClawModel[]) => void;
+
+  // User-Agent
+  userAgent: boolean;
+  onUserAgentChange: (checked: boolean) => void;
 }
 
 export function OpenClawFormFields({
@@ -58,11 +84,15 @@ export function OpenClawFormFields({
   onApiChange,
   models,
   onModelsChange,
+  userAgent,
+  onUserAgentChange,
 }: OpenClawFormFieldsProps) {
   const { t } = useTranslation();
   const [expandedModels, setExpandedModels] = useState<Record<number, boolean>>(
     {},
   );
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
 
   // Stable key tracking for models list
   const modelKeysRef = useRef<string[]>([]);
@@ -95,9 +125,38 @@ export function OpenClawFormFields({
         contextWindow: undefined,
         maxTokens: undefined,
         cost: undefined,
+        input: ["text"],
       },
     ]);
   };
+
+  // Fetch models from API
+  const handleFetchModels = useCallback(() => {
+    if (!baseUrl || !apiKey) {
+      showFetchModelsError(null, t, {
+        hasApiKey: !!apiKey,
+        hasBaseUrl: !!baseUrl,
+      });
+      return;
+    }
+    setIsFetchingModels(true);
+    fetchModelsForConfig(baseUrl, apiKey)
+      .then((models) => {
+        setFetchedModels(models);
+        if (models.length === 0) {
+          toast.info(t("providerForm.fetchModelsEmpty"));
+        } else {
+          toast.success(
+            t("providerForm.fetchModelsSuccess", { count: models.length }),
+          );
+        }
+      })
+      .catch((err) => {
+        console.warn("[ModelFetch] Failed:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => setIsFetchingModels(false));
+  }, [baseUrl, apiKey, t]);
 
   // Remove a model entry
   const handleRemoveModel = (index: number) => {
@@ -205,22 +264,54 @@ export function OpenClawFormFields({
         partnerPromotionKey={partnerPromotionKey}
       />
 
+      {/* User-Agent */}
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <FormLabel>
+            {t("openclaw.userAgent", { defaultValue: "发送 User-Agent" })}
+          </FormLabel>
+          <p className="text-xs text-muted-foreground">
+            {t("openclaw.userAgentHint", {
+              defaultValue: "部分供应商需要浏览器 User-Agent 才能正常访问。",
+            })}
+          </p>
+        </div>
+        <Switch checked={userAgent} onCheckedChange={onUserAgentChange} />
+      </div>
+
       {/* Models Editor */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <FormLabel>
             {t("openclaw.models", { defaultValue: "模型列表" })}
           </FormLabel>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleAddModel}
-            className="h-7 gap-1"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("openclaw.addModel", { defaultValue: "添加模型" })}
-          </Button>
+          <div className="flex gap-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleFetchModels}
+              disabled={isFetchingModels}
+              className="h-7 gap-1"
+            >
+              {isFetchingModels ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              {t("providerForm.fetchModels")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddModel}
+              className="h-7 gap-1"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("openclaw.addModel", { defaultValue: "添加模型" })}
+            </Button>
+          </div>
         </div>
 
         {models.length === 0 ? (
@@ -236,21 +327,90 @@ export function OpenClawFormFields({
                 key={modelKeys[index]}
                 className="p-3 border border-border/50 rounded-lg space-y-3"
               >
+                {/* Role badge */}
+                <div className="flex items-center">
+                  <span
+                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                      index === 0
+                        ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {index === 0
+                      ? t("openclaw.primaryModel", {
+                          defaultValue: "默认模型",
+                        })
+                      : t("openclaw.fallbackModel", {
+                          defaultValue: "回退模型",
+                        })}
+                  </span>
+                </div>
                 {/* Model ID and Name row */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1 space-y-1">
                     <label className="text-xs text-muted-foreground">
                       {t("openclaw.modelId", { defaultValue: "模型 ID" })}
                     </label>
-                    <Input
-                      value={model.id}
-                      onChange={(e) =>
-                        handleModelChange(index, "id", e.target.value)
-                      }
-                      placeholder={t("openclaw.modelIdPlaceholder", {
-                        defaultValue: "claude-3-sonnet",
-                      })}
-                    />
+                    <div className="flex gap-1">
+                      <Input
+                        value={model.id}
+                        onChange={(e) =>
+                          handleModelChange(index, "id", e.target.value)
+                        }
+                        placeholder={t("openclaw.modelIdPlaceholder", {
+                          defaultValue: "claude-3-sonnet",
+                        })}
+                        className="flex-1"
+                      />
+                      {fetchedModels.length > 0 && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="shrink-0"
+                            >
+                              <ChevronDown className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            align="end"
+                            className="max-h-64 overflow-y-auto z-[200]"
+                          >
+                            {Object.entries(
+                              fetchedModels.reduce(
+                                (acc, m) => {
+                                  const v = m.ownedBy || "Other";
+                                  if (!acc[v]) acc[v] = [];
+                                  acc[v].push(m);
+                                  return acc;
+                                },
+                                {} as Record<string, FetchedModel[]>,
+                              ),
+                            )
+                              .sort(([a], [b]) => a.localeCompare(b))
+                              .map(([vendor, vModels], vi) => (
+                                <div key={vendor}>
+                                  {vi > 0 && <DropdownMenuSeparator />}
+                                  <DropdownMenuLabel>
+                                    {vendor}
+                                  </DropdownMenuLabel>
+                                  {vModels.map((m) => (
+                                    <DropdownMenuItem
+                                      key={m.id}
+                                      onSelect={() =>
+                                        handleModelChange(index, "id", m.id)
+                                      }
+                                    >
+                                      {m.id}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </div>
+                              ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
                   </div>
                   <div className="flex-1 space-y-1">
                     <label className="text-xs text-muted-foreground">
@@ -300,7 +460,68 @@ export function OpenClawFormFields({
                     </Button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="space-y-3 pt-2">
-                    {/* Context Window, Max Tokens and Reasoning row */}
+                    {/* Reasoning, Input Types row */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 space-y-1">
+                        <label className="text-xs text-muted-foreground">
+                          {t("openclaw.reasoning", {
+                            defaultValue: "推理模式",
+                          })}
+                        </label>
+                        <div className="flex items-center h-9 gap-2">
+                          <Switch
+                            checked={model.reasoning ?? false}
+                            onCheckedChange={(checked) =>
+                              handleModelChange(index, "reasoning", checked)
+                            }
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {model.reasoning
+                              ? t("openclaw.reasoningOn", {
+                                  defaultValue: "启用",
+                                })
+                              : t("openclaw.reasoningOff", {
+                                  defaultValue: "关闭",
+                                })}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        <label className="text-xs text-muted-foreground">
+                          {t("openclaw.inputTypes", {
+                            defaultValue: "输入类型",
+                          })}
+                        </label>
+                        {/* "text" is checked by default but can be unchecked —
+                            some models genuinely don't support text input, and
+                            OpenClaw works fine with an empty or image-only array. */}
+                        <div className="flex items-center gap-4 h-9">
+                          {(["text", "image"] as const).map((type) => (
+                            <label
+                              key={type}
+                              className="flex items-center gap-1.5 cursor-pointer select-none"
+                            >
+                              <Checkbox
+                                checked={(model.input ?? ["text"]).includes(
+                                  type,
+                                )}
+                                onCheckedChange={(checked) => {
+                                  const current = model.input ?? ["text"];
+                                  const next = checked
+                                    ? [...new Set([...current, type])]
+                                    : current.filter((v) => v !== type);
+                                  handleModelChange(index, "input", next);
+                                }}
+                              />
+                              <span className="text-xs">{type}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex-1" />
+                    </div>
+
+                    {/* Context Window and Max Tokens row */}
                     <div className="flex items-center gap-2">
                       <div className="flex-1 space-y-1">
                         <label className="text-xs text-muted-foreground">
@@ -344,30 +565,7 @@ export function OpenClawFormFields({
                           placeholder="32000"
                         />
                       </div>
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("openclaw.reasoning", {
-                            defaultValue: "推理模式",
-                          })}
-                        </label>
-                        <div className="flex items-center h-9 gap-2">
-                          <Switch
-                            checked={model.reasoning ?? false}
-                            onCheckedChange={(checked) =>
-                              handleModelChange(index, "reasoning", checked)
-                            }
-                          />
-                          <span className="text-xs text-muted-foreground">
-                            {model.reasoning
-                              ? t("openclaw.reasoningOn", {
-                                  defaultValue: "启用",
-                                })
-                              : t("openclaw.reasoningOff", {
-                                  defaultValue: "关闭",
-                                })}
-                          </span>
-                        </div>
-                      </div>
+                      <div className="flex-1" />
                     </div>
 
                     {/* Cost row */}
@@ -463,7 +661,7 @@ export function OpenClawFormFields({
         <p className="text-xs text-muted-foreground">
           {t("openclaw.modelsHint", {
             defaultValue:
-              "配置该供应商支持的模型。模型 ID 用于 API 调用，显示名称用于界面展示。",
+              "配置该供应商支持的模型。第一个模型为默认模型（Primary），其余为回退模型（Fallback）。拖拽或调整顺序可更改默认模型。",
           })}
         </p>
       </div>

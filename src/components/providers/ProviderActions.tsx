@@ -3,12 +3,12 @@ import {
   Check,
   Copy,
   Edit,
-  // Loader2, // Hidden: stream check feature disabled
+  Loader2,
   Minus,
   Play,
   Plus,
   Terminal,
-  // TestTube2, // Hidden: stream check feature disabled
+  TestTube2,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -28,7 +28,7 @@ interface ProviderActionsProps {
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
-  onConfigureUsage: () => void;
+  onConfigureUsage?: () => void;
   onDelete: () => void;
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
@@ -45,13 +45,13 @@ export function ProviderActions({
   appId,
   isCurrent,
   isInConfig = false,
-  isTesting: _isTesting, // Hidden: stream check feature disabled
+  isTesting,
   isProxyTakeover = false,
   isOmo = false,
   onSwitch,
   onEdit,
   onDuplicate,
-  onTest: _onTest, // Hidden: stream check feature disabled
+  onTest,
   onConfigureUsage,
   onDelete,
   onRemoveFromConfig,
@@ -246,7 +246,6 @@ export function ProviderActions({
           <Copy className="h-4 w-4" />
         </Button>
 
-        {/* Hidden: stream check feature disabled
         {onTest && (
           <Button
             size="icon"
@@ -263,17 +262,18 @@ export function ProviderActions({
             )}
           </Button>
         )}
-        */}
 
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onConfigureUsage}
-          title={t("provider.configureUsage")}
-          className={iconButtonClass}
-        >
-          <BarChart3 className="h-4 w-4" />
-        </Button>
+        {onConfigureUsage && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onConfigureUsage}
+            title={t("provider.configureUsage")}
+            className={iconButtonClass}
+          >
+            <BarChart3 className="h-4 w-4" />
+          </Button>
+        )}
 
         {onOpenTerminal && (
           <Button

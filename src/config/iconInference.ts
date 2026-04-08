@@ -15,6 +15,8 @@ const iconMappings = {
   aliyun: { icon: "alibaba", iconColor: "#FF6A00" },
   kimi: { icon: "kimi", iconColor: "#6366F1" },
   moonshot: { icon: "moonshot", iconColor: "#6366F1" },
+  stepfun: { icon: "stepfun", iconColor: "#005AFF" },
+  step: { icon: "stepfun", iconColor: "#005AFF" },
   baidu: { icon: "baidu", iconColor: "#2932E1" },
   tencent: { icon: "tencent", iconColor: "#00A4FF" },
   hunyuan: { icon: "hunyuan", iconColor: "#00A4FF" },
@@ -25,6 +27,7 @@ const iconMappings = {
   cohere: { icon: "cohere", iconColor: "#39594D" },
   perplexity: { icon: "perplexity", iconColor: "#20808D" },
   huggingface: { icon: "huggingface", iconColor: "#FFD21E" },
+  novita: { icon: "novita", iconColor: "#000000" },
 
   // 云平台
   aws: { icon: "aws", iconColor: "#FF9900" },

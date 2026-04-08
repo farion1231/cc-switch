@@ -1,9 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 import FlexSearch from "flexsearch";
 import type { SessionMeta } from "@/types";
-
-// FlexSearch Index 类型
-type FlexSearchIndex = InstanceType<typeof FlexSearch.Index>;
 
 interface UseSessionSearchOptions {
   sessions: SessionMeta[];
@@ -12,7 +9,6 @@ interface UseSessionSearchOptions {
 
 interface UseSessionSearchResult {
   search: (query: string) => SessionMeta[];
-  isIndexing: boolean;
 }
 
 /**
@@ -23,27 +19,14 @@ export function useSessionSearch({
   sessions,
   providerFilter,
 }: UseSessionSearchOptions): UseSessionSearchResult {
-  const [isIndexing, setIsIndexing] = useState(false);
-
-  // 会话元数据索引
-  const indexRef = useRef<FlexSearchIndex | null>(null);
-  // 索引 ID 到 session 的映射
-  const sessionByIdxRef = useRef<SessionMeta[]>([]);
-
-  // 初始化索引
-  useEffect(() => {
-    setIsIndexing(true);
-
-    // 创建索引实例
+  const index = useMemo(() => {
     // 使用 forward tokenizer 支持中文前缀搜索
-    const index = new FlexSearch.Index({
+    const nextIndex = new FlexSearch.Index({
       tokenize: "forward",
       resolution: 9,
     });
 
-    // 索引所有会话
     sessions.forEach((session, idx) => {
-      // 索引会话元数据
       const metaContent = [
         session.sessionId,
         session.title,
@@ -54,13 +37,10 @@ export function useSessionSearch({
         .filter(Boolean)
         .join(" ");
 
-      index.add(idx, metaContent);
+      nextIndex.add(idx, metaContent);
     });
 
-    indexRef.current = index;
-    sessionByIdxRef.current = sessions;
-
-    setIsIndexing(false);
+    return nextIndex;
   }, [sessions]);
 
   // 搜索函数
@@ -83,37 +63,12 @@ export function useSessionSearch({
         });
       }
 
-      const index = indexRef.current;
-
-      if (!index) {
-        // 索引未就绪，使用简单搜索
-        return filtered
-          .filter((session) => {
-            const haystack = [
-              session.sessionId,
-              session.title,
-              session.summary,
-              session.projectDir,
-              session.sourcePath,
-            ]
-              .filter(Boolean)
-              .join(" ")
-              .toLowerCase();
-            return haystack.includes(needle);
-          })
-          .sort((a, b) => {
-            const aTs = a.lastActiveAt ?? a.createdAt ?? 0;
-            const bTs = b.lastActiveAt ?? b.createdAt ?? 0;
-            return bTs - aTs;
-          });
-      }
-
       // 使用 FlexSearch 搜索
       const results = index.search(needle, { limit: 100 }) as number[];
 
       // 转换为 session 并过滤
       const matchedSessions = results
-        .map((idx) => sessionByIdxRef.current[idx])
+        .map((idx) => sessions[idx])
         .filter(
           (session) =>
             session &&
@@ -127,8 +82,8 @@ export function useSessionSearch({
         return bTs - aTs;
       });
     },
-    [sessions, providerFilter],
+    [index, providerFilter, sessions],
   );
 
-  return useMemo(() => ({ search, isIndexing }), [search, isIndexing]);
+  return useMemo(() => ({ search }), [search]);
 }

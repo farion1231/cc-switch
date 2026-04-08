@@ -77,39 +77,10 @@ end tell"#
 }
 
 fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    // Ghostty usage: open -na Ghostty --args +work-dir=... -e shell -c command
-
-    // Using `open` to launch.
-    let mut args = vec!["-na", "Ghostty", "--args"];
-
-    // Ghostty uses --working-directory for working directory (or +work-dir, but --working-directory is standard in newer versions/compat)
-    // Note: The user's error output didn't show the working dir arg failure, so we assume flag is okay or we stick to compatible ones.
-    // Documentation says --working-directory is supported in CLI.
-    let work_dir_arg = if let Some(dir) = cwd {
-        format!("--working-directory={dir}")
-    } else {
-        "".to_string()
-    };
-
-    if !work_dir_arg.is_empty() {
-        args.push(&work_dir_arg);
-    }
-
-    // Command execution
-    args.push("-e");
-
-    // We pass the command and its arguments separately.
-    // The previous issue was passing the entire "cmd args" string as a single argument to -e,
-    // which led Ghostty to look for a binary named "cmd args".
-    // Splitting by whitespace allows Ghostty to see ["cmd", "args"].
-    // Note: This assumes simple commands without quoted arguments containing spaces.
-    let full_command = build_shell_command(command, None);
-    for part in full_command.split_whitespace() {
-        args.push(part);
-    }
+    let args = build_ghostty_args(command, cwd);
 
     let status = Command::new("open")
-        .args(&args)
+        .args(args.iter().map(String::as_str))
         .status()
         .map_err(|e| format!("Failed to launch Ghostty: {e}"))?;
 
@@ -118,6 +89,40 @@ fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     } else {
         Err("Failed to launch Ghostty. Make sure it is installed.".to_string())
     }
+}
+
+fn build_ghostty_args(command: &str, cwd: Option<&str>) -> Vec<String> {
+    let input = ghostty_raw_input(command);
+
+    let mut args = vec![
+        "-na".to_string(),
+        "Ghostty".to_string(),
+        "--args".to_string(),
+        "--quit-after-last-window-closed=true".to_string(),
+    ];
+
+    if let Some(dir) = cwd {
+        if !dir.trim().is_empty() {
+            args.push(format!("--working-directory={dir}"));
+        }
+    }
+
+    args.push(format!("--input={input}"));
+    args
+}
+
+fn ghostty_raw_input(command: &str) -> String {
+    let mut escaped = String::from("raw:");
+    for ch in command.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped.push_str("\\n");
+    escaped
 }
 
 fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
@@ -254,4 +259,50 @@ fn shell_escape(value: &str) -> String {
 
 fn escape_osascript(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ghostty_uses_shell_mode_for_resume_commands() {
+        let args = build_ghostty_args("claude --resume abc-123", Some("/tmp/project dir"));
+
+        assert_eq!(
+            args,
+            vec![
+                "-na",
+                "Ghostty",
+                "--args",
+                "--quit-after-last-window-closed=true",
+                "--working-directory=/tmp/project dir",
+                "--input=raw:claude --resume abc-123\\n",
+            ]
+        );
+    }
+
+    #[test]
+    fn ghostty_keeps_command_without_cwd_prefix_when_not_provided() {
+        let args = build_ghostty_args("claude --resume abc-123", None);
+
+        assert_eq!(
+            args,
+            vec![
+                "-na",
+                "Ghostty",
+                "--args",
+                "--quit-after-last-window-closed=true",
+                "--input=raw:claude --resume abc-123\\n",
+            ]
+        );
+    }
+
+    #[test]
+    fn ghostty_escapes_newlines_and_backslashes_in_input() {
+        assert_eq!(
+            ghostty_raw_input("echo foo\\\\bar\npwd"),
+            "raw:echo foo\\\\\\\\bar\\npwd\\n"
+        );
+    }
 }

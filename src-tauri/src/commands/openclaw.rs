@@ -26,6 +26,21 @@ pub fn get_openclaw_live_provider_ids() -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Get a single OpenClaw provider fragment from live config.
+#[tauri::command]
+pub fn get_openclaw_live_provider(
+    #[allow(non_snake_case)] providerId: String,
+) -> Result<Option<serde_json::Value>, String> {
+    openclaw_config::get_provider(&providerId).map_err(|e| e.to_string())
+}
+
+/// Scan openclaw.json for known configuration hazards.
+#[tauri::command]
+pub fn scan_openclaw_config_health() -> Result<Vec<openclaw_config::OpenClawHealthWarning>, String>
+{
+    openclaw_config::scan_openclaw_config_health().map_err(|e| e.to_string())
+}
+
 // ============================================================================
 // Agents Configuration Commands
 // ============================================================================
@@ -41,7 +56,7 @@ pub fn get_openclaw_default_model() -> Result<Option<openclaw_config::OpenClawDe
 #[tauri::command]
 pub fn set_openclaw_default_model(
     model: openclaw_config::OpenClawDefaultModel,
-) -> Result<(), String> {
+) -> Result<openclaw_config::OpenClawWriteOutcome, String> {
     openclaw_config::set_default_model(&model).map_err(|e| e.to_string())
 }
 
@@ -56,7 +71,7 @@ pub fn get_openclaw_model_catalog(
 #[tauri::command]
 pub fn set_openclaw_model_catalog(
     catalog: HashMap<String, openclaw_config::OpenClawModelCatalogEntry>,
-) -> Result<(), String> {
+) -> Result<openclaw_config::OpenClawWriteOutcome, String> {
     openclaw_config::set_model_catalog(&catalog).map_err(|e| e.to_string())
 }
 
@@ -71,7 +86,7 @@ pub fn get_openclaw_agents_defaults(
 #[tauri::command]
 pub fn set_openclaw_agents_defaults(
     defaults: openclaw_config::OpenClawAgentsDefaults,
-) -> Result<(), String> {
+) -> Result<openclaw_config::OpenClawWriteOutcome, String> {
     openclaw_config::set_agents_defaults(&defaults).map_err(|e| e.to_string())
 }
 
@@ -87,7 +102,9 @@ pub fn get_openclaw_env() -> Result<openclaw_config::OpenClawEnvConfig, String> 
 
 /// Set OpenClaw env config (env section of openclaw.json)
 #[tauri::command]
-pub fn set_openclaw_env(env: openclaw_config::OpenClawEnvConfig) -> Result<(), String> {
+pub fn set_openclaw_env(
+    env: openclaw_config::OpenClawEnvConfig,
+) -> Result<openclaw_config::OpenClawWriteOutcome, String> {
     openclaw_config::set_env_config(&env).map_err(|e| e.to_string())
 }
 
@@ -103,6 +120,8 @@ pub fn get_openclaw_tools() -> Result<openclaw_config::OpenClawToolsConfig, Stri
 
 /// Set OpenClaw tools config (tools section of openclaw.json)
 #[tauri::command]
-pub fn set_openclaw_tools(tools: openclaw_config::OpenClawToolsConfig) -> Result<(), String> {
+pub fn set_openclaw_tools(
+    tools: openclaw_config::OpenClawToolsConfig,
+) -> Result<openclaw_config::OpenClawWriteOutcome, String> {
     openclaw_config::set_tools_config(&tools).map_err(|e| e.to_string())
 }

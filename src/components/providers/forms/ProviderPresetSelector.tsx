@@ -65,7 +65,7 @@ export function ProviderPresetSelector({
       case "omo":
         return t("providerForm.omoHint", {
           defaultValue:
-            "💡 OMO 配置管理 Agent 模型分配，写入 oh-my-opencode.jsonc",
+            "💡 OMO 配置管理 Agent 模型分配，兼容 oh-my-openagent.jsonc / oh-my-opencode.jsonc",
         });
       default:
         return t("providerPreset.hint", {
@@ -159,7 +159,9 @@ export function ProviderPresetSelector({
                 }
               >
                 {renderPresetIcon(entry.preset)}
-                {entry.preset.name}
+                {entry.preset.nameKey
+                  ? t(entry.preset.nameKey)
+                  : entry.preset.name}
                 {isPartner && (
                   <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
                     <Star className="h-2.5 w-2.5 fill-current" />
