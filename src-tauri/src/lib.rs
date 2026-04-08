@@ -8,6 +8,7 @@ mod codex_config;
 mod codex_history_migration;
 mod codex_state_db;
 mod commands;
+mod cmux_macos;
 mod config;
 mod database;
 mod deeplink;
@@ -1421,6 +1422,7 @@ pub fn run() {
             commands::probe_tool_installations,
             // Provider terminal
             commands::open_provider_terminal,
+            commands::restart_cmux_for_external_access,
             // Universal Provider management
             commands::get_universal_providers,
             commands::get_universal_provider,
