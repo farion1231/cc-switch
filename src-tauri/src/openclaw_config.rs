@@ -878,10 +878,21 @@ pub fn get_env_config() -> Result<OpenClawEnvConfig, AppError> {
         .map_err(|e| AppError::Config(format!("Failed to parse env config: {e}")))
 }
 
+fn ordered_env_value(env: &OpenClawEnvConfig) -> Value {
+    let mut entries: Vec<_> = env.vars.iter().collect();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut map = Map::new();
+    for (key, value) in entries {
+        map.insert(key.clone(), value.clone());
+    }
+
+    Value::Object(map)
+}
+
 /// Write the env config section
 pub fn set_env_config(env: &OpenClawEnvConfig) -> Result<OpenClawWriteOutcome, AppError> {
-    let value = serde_json::to_value(env).map_err(|e| AppError::JsonSerialize { source: e })?;
-    write_root_section("env", &value)
+    write_root_section("env", &ordered_env_value(env))
 }
 
 // ============================================================================

@@ -1,6 +1,7 @@
 //! 流式健康检查命令
 
 use crate::app_config::AppType;
+use crate::bridges::stream_check as stream_check_bridge;
 use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::services::stream_check::{
@@ -10,7 +11,6 @@ use crate::store::AppState;
 use std::collections::HashSet;
 use tauri::State;
 
-/// 流式健康检查（单个供应商）
 #[tauri::command]
 pub async fn stream_check_provider(
     state: State<'_, AppState>,
@@ -54,7 +54,6 @@ pub async fn stream_check_provider(
     Ok(result)
 }
 
-/// 批量流式健康检查
 #[tauri::command]
 pub async fn stream_check_all_providers(
     state: State<'_, AppState>,
@@ -137,19 +136,17 @@ pub async fn stream_check_all_providers(
     Ok(results)
 }
 
-/// 获取流式检查配置
 #[tauri::command]
-pub fn get_stream_check_config(state: State<'_, AppState>) -> Result<StreamCheckConfig, AppError> {
-    state.db.get_stream_check_config()
+pub fn get_stream_check_config(_state: State<'_, AppState>) -> Result<StreamCheckConfig, AppError> {
+    stream_check_bridge::get_config()
 }
 
-/// 保存流式检查配置
 #[tauri::command]
 pub fn save_stream_check_config(
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
     config: StreamCheckConfig,
 ) -> Result<(), AppError> {
-    state.db.save_stream_check_config(&config)
+    stream_check_bridge::save_config(config)
 }
 
 async fn resolve_copilot_auth_override(

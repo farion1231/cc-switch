@@ -772,9 +772,11 @@ mod tests {
         db.set_pricing_model_source(app_type, "response").await?;
         seed_pricing(&db)?;
 
-        let mut meta = ProviderMeta::default();
-        meta.cost_multiplier = Some("2".to_string());
-        meta.pricing_model_source = Some("request".to_string());
+        let meta = ProviderMeta {
+            cost_multiplier: Some("2".to_string()),
+            pricing_model_source: Some("request".to_string()),
+            ..ProviderMeta::default()
+        };
         insert_provider(&db, "provider-1", app_type, meta)?;
 
         let state = build_state(db.clone());

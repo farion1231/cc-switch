@@ -1,0 +1,33 @@
+{
+  "settings": {
+    "preferredTerminal": "kitty"
+  },
+  "providers": {
+    "codex": {
+      "merge-provider": {
+        "id": "merge-provider",
+        "name": "Merge Provider",
+        "settingsConfig": {
+          "auth": {
+            "OPENAI_API_KEY": "merge-provider-key"
+          },
+          "config": "base_url = \"https://merge.provider.mock/v1\"\n"
+        },
+        "createdAt": 1700000000000
+      }
+    }
+  },
+  "prompts": {
+    "claude": {
+      "merged-guide": {
+        "id": "merged-guide",
+        "name": "merged-guide",
+        "content": "Merged prompt content",
+        "description": "Merged from fixture",
+        "enabled": false,
+        "createdAt": 1700000000,
+        "updatedAt": 1700000000
+      }
+    }
+  }
+}

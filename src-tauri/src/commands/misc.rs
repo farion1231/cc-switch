@@ -1,8 +1,8 @@
-#![allow(non_snake_case)]
+#![allow(non_snake_case, dead_code)]
 
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
-use crate::services::ProviderService;
+use crate::provider_bridge;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
@@ -67,12 +67,7 @@ pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
 /// 判断是否为便携版（绿色版）运行
 #[tauri::command]
 pub async fn is_portable_mode() -> Result<bool, String> {
-    let exe_path = std::env::current_exe().map_err(|e| format!("获取可执行路径失败: {e}"))?;
-    if let Some(dir) = exe_path.parent() {
-        Ok(dir.join("portable.ini").is_file())
-    } else {
-        Ok(false)
-    }
+    cc_switch_core::RuntimeService::is_portable_mode().map_err(|e| e.to_string())
 }
 
 /// 获取应用启动阶段的初始化错误（若有）。
@@ -149,40 +144,34 @@ pub async fn get_tool_versions(
     tools: Option<Vec<String>>,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
 ) -> Result<Vec<ToolVersion>, String> {
-    // Windows: completely disable tool version detection to prevent
-    // accidentally launching apps (e.g. Claude Code) via protocol handlers.
-    #[cfg(target_os = "windows")]
-    {
-        let _ = (tools, wsl_shell_by_tool);
-        return Ok(Vec::new());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let requested: Vec<&str> = if let Some(tools) = tools.as_ref() {
-            let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
-            VALID_TOOLS
-                .iter()
-                .copied()
-                .filter(|t| set.contains(t))
-                .collect()
-        } else {
-            VALID_TOOLS.to_vec()
-        };
-        let mut results = Vec::new();
-
-        for tool in requested {
-            let pref = wsl_shell_by_tool.as_ref().and_then(|m| m.get(tool));
-            let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
-            let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
-
-            results.push(
-                get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag).await,
-            );
-        }
-
-        Ok(results)
-    }
+    let prefs = wsl_shell_by_tool.map(|items| {
+        items
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key,
+                    cc_switch_core::WslShellPreference {
+                        wsl_shell: value.wsl_shell,
+                        wsl_shell_flag: value.wsl_shell_flag,
+                    },
+                )
+            })
+            .collect()
+    });
+    let versions = cc_switch_core::RuntimeService::get_tool_versions(tools, prefs, true)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(versions
+        .into_iter()
+        .map(|item| ToolVersion {
+            name: item.name,
+            version: item.version,
+            latest_version: item.latest_version,
+            error: item.error,
+            env_type: item.env_type,
+            wsl_distro: item.wsl_distro,
+        })
+        .collect())
 }
 
 /// 获取单个工具的版本信息（内部实现）
@@ -733,7 +722,7 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn open_provider_terminal(
-    state: State<'_, crate::store::AppState>,
+    _state: State<'_, crate::store::AppState>,
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
@@ -742,7 +731,7 @@ pub async fn open_provider_terminal(
     let launch_cwd = resolve_launch_cwd(cwd)?;
 
     // 获取提供商配置
-    let providers = ProviderService::list(state.inner(), app_type.clone())
+    let providers = provider_bridge::get_providers(app_type.clone())
         .map_err(|e| format!("获取提供商列表失败: {e}"))?;
 
     let provider = providers

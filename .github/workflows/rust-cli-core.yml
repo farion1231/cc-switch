@@ -1,0 +1,44 @@
+name: Rust CLI/Core
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+      - crates/**
+      - qa/cli-e2e/**
+      - src-tauri/**
+      - .github/workflows/rust-cli-core.yml
+  workflow_dispatch:
+
+jobs:
+  core-cli:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test shared Rust crates
+        run: cargo test -p cc-switch-core -p cc-switch-cli
+
+      - name: Build CLI e2e harness
+        run: cargo build --manifest-path qa/cli-e2e/Cargo.toml
+
+  tauri-parity:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Tauri parity suite
+        run: cargo test -p cc-switch --test tauri_parity

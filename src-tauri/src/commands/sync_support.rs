@@ -1,16 +1,16 @@
-use serde_json::{json, Value};
-use std::sync::Arc;
-
-use crate::database::Database;
 use crate::error::AppError;
-use crate::services::provider::ProviderService;
-use crate::settings;
-use crate::store::AppState;
+use serde_json::{json, Value};
 
-pub(crate) fn run_post_import_sync(db: Arc<Database>) -> Result<(), AppError> {
-    let app_state = AppState::new(db);
-    ProviderService::sync_current_to_live(&app_state)?;
-    settings::reload_settings()?;
+pub(crate) fn run_post_import_sync(
+    _db: std::sync::Arc<crate::database::Database>,
+) -> Result<(), AppError> {
+    let state = cc_switch_core::AppState::new(
+        cc_switch_core::Database::new().map_err(|e| AppError::Message(e.to_string()))?,
+    );
+    state.run_startup_maintenance();
+    cc_switch_core::ProviderService::sync_current_to_live(&state)
+        .map_err(|e| AppError::Message(e.to_string()))?;
+    cc_switch_core::settings::reload_settings().map_err(|e| AppError::Message(e.to_string()))?;
     Ok(())
 }
 

@@ -1,0 +1,8 @@
+{
+  "type": "stdio",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@demo/mcp-server"
+  ]
+}

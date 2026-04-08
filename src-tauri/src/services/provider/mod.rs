@@ -2350,7 +2350,7 @@ pub(crate) fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
     changed
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct ProviderSortUpdate {
     pub id: String,
     #[serde(rename = "sortIndex")]

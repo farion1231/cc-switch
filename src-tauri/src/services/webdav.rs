@@ -3,6 +3,8 @@
 //! Low-level HTTP primitives for WebDAV operations (PUT, GET, HEAD, MKCOL, PROPFIND).
 //! The sync protocol logic lives in [`super::webdav_sync`].
 
+#![allow(dead_code)]
+
 use reqwest::{Method, RequestBuilder, StatusCode, Url};
 use std::time::Duration;
 
