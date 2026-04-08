@@ -123,13 +123,14 @@ pub fn import_skills_from_apps(
 /// 发现可安装的 Skills（从仓库获取）
 #[tauri::command]
 pub async fn discover_available_skills(
+    force_refresh: Option<bool>,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<DiscoverableSkill>, String> {
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
     service
         .0
-        .discover_available(repos)
+        .discover_available_with_cache(repos, force_refresh.unwrap_or(false))
         .await
         .map_err(|e| e.to_string())
 }
