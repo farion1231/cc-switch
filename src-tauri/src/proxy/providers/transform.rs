@@ -208,6 +208,8 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
     let mut parts = Vec::new();
     let mut inherited_cache_control: Option<Value> = None;
     let mut cache_control_conflict = false;
+    let mut saw_cache_control = false;
+    let mut saw_missing_cache_control = false;
     messages.retain(|message| {
         if message.get("role").and_then(|value| value.as_str()) != Some("system") {
             return true;
@@ -229,11 +231,14 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
         }
 
         if let Some(cache_control) = message.get("cache_control") {
+            saw_cache_control = true;
             match &inherited_cache_control {
                 None => inherited_cache_control = Some(cache_control.clone()),
                 Some(existing) if existing == cache_control => {}
                 Some(_) => cache_control_conflict = true,
             }
+        } else {
+            saw_missing_cache_control = true;
         }
 
         false
@@ -241,7 +246,7 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
 
     if !parts.is_empty() {
         let mut merged = json!({"role": "system", "content": parts.join("\n")});
-        if !cache_control_conflict {
+        if !(cache_control_conflict || (saw_cache_control && saw_missing_cache_control)) {
             if let Some(cache_control) = inherited_cache_control {
                 merged["cache_control"] = cache_control;
             }
@@ -629,18 +634,15 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_normalizes_fragmented_system_messages() {
+    fn test_anthropic_to_openai_preserves_matching_system_cache_control_when_merging() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
             "system": [
                 {"type": "text", "text": "You are Claude Code.", "cache_control": {"type": "ephemeral"}},
-                {"type": "text", "text": "Be concise."}
+                {"type": "text", "text": "Be concise.", "cache_control": {"type": "ephemeral"}}
             ],
-            "messages": [
-                {"role": "system", "content": "Follow repo conventions."},
-                {"role": "user", "content": "Hello"}
-            ]
+            "messages": [{"role": "user", "content": "Hello"}]
         });
 
         let result = anthropic_to_openai(input, None).unwrap();
@@ -648,10 +650,28 @@ mod tests {
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
-            "You are Claude Code.\nBe concise.\nFollow repo conventions."
+            "You are Claude Code.\nBe concise."
         );
         assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
         assert_eq!(result["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_drops_mixed_present_absent_system_cache_control_when_merging() {
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "You are Claude Code.", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "Be concise."}
+            ],
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input, None).unwrap();
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(result["messages"][0]["content"], "You are Claude Code.\nBe concise.");
+        assert!(result["messages"][0].get("cache_control").is_none());
     }
 
     #[test]
