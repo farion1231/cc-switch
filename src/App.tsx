@@ -1035,7 +1035,7 @@ function App() {
               )}
             <div
               ref={toolbarRef}
-              className="flex flex-1 min-w-0 overflow-x-hidden items-center"
+              className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2"
             >
               <div
                 className="flex shrink-0 items-center gap-1.5 ml-auto"
