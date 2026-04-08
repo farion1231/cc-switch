@@ -671,20 +671,18 @@ impl CopilotAuthManager {
                 } else {
                     // 超过 1 小时，重新生成 Machine ID
                     let new_machine_id = self.generate_machine_id(&account_id);
-                    log::info!(
-                        "[CopilotAuth] 账号 {} 超过 1 小时后重新登录，生成新 Machine ID: {}",
-                        account_id,
-                        &new_machine_id[..16]
+                    log::debug!(
+                        "[CopilotAuth] 账号 {} 超过 1 小时后重新登录，已生成新 Machine ID",
+                        account_id
                     );
                     new_machine_id
                 }
             } else {
                 // 新账号，生成 Machine ID
                 let new_machine_id = self.generate_machine_id(&account_id);
-                log::info!(
-                    "[CopilotAuth] 为新账号 {} 生成 Machine ID: {}",
-                    account_id,
-                    &new_machine_id[..16]
+                log::debug!(
+                    "[CopilotAuth] 为新账号 {} 生成 Machine ID",
+                    account_id
                 );
                 new_machine_id
             }
@@ -952,6 +950,17 @@ impl CopilotAuthManager {
             }
         }
 
+        // 加锁前先检查账号是否存在，避免为不存在的账号永久插入锁
+        {
+            let accounts = self.accounts.read().await;
+            if !accounts.contains_key(account_id) {
+                log::debug!(
+                    "[CopilotAuth] 账号 {account_id} 不存在，使用默认 endpoint"
+                );
+                return DEFAULT_COPILOT_API_ENDPOINT.to_string();
+            }
+        }
+
         // 用锁串行化同一账号的并发拉取，避免对 GitHub API 的重复请求
         let lock = self.get_endpoint_lock(account_id).await;
         let _guard = lock.lock().await;
@@ -1140,12 +1149,13 @@ impl CopilotAuthManager {
 
         if self.storage_path.exists() {
             if let Err(err) = std::fs::remove_file(&self.storage_path) {
+                // NotFound 可以忽略（文件可能已被删除）
                 if err.kind() != std::io::ErrorKind::NotFound {
-                    log::warn!(
-                        "[CopilotAuth] Failed to remove persisted auth file {}: {}",
+                    return Err(CopilotAuthError::IoError(format!(
+                        "Failed to remove persisted auth file {}: {}",
                         self.storage_path.display(),
                         err
-                    );
+                    )));
                 }
             }
         }
@@ -1648,7 +1658,7 @@ impl CopilotAuthManager {
             for (account_id, account_data) in store.accounts.iter_mut() {
                 if account_data.machine_id.is_none() {
                     account_data.machine_id = Some(self.generate_machine_id(account_id));
-                    log::info!("[CopilotAuth] 为现有账号 {} 生成 Machine ID", account_id);
+                    log::debug!("[CopilotAuth] 为现有账号 {} 生成 Machine ID", account_id);
                     needs_save = true;
                 }
 
@@ -1733,10 +1743,9 @@ impl CopilotAuthManager {
                     // 生成 Machine ID（迁移时也需要，基于账号 ID）
                     let account_id = user.id.to_string();
                     let machine_id = self.generate_machine_id(&account_id);
-                    log::info!(
-                        "[CopilotAuth] 为迁移账号 {} 生成 Machine ID: {}",
-                        account_id,
-                        &machine_id[..16]
+                    log::debug!(
+                        "[CopilotAuth] 为迁移账号 {} 生成 Machine ID",
+                        account_id
                     );
 
                     // 添加账号
