@@ -574,6 +574,10 @@ pub fn run() {
                 log::warn!("迁移 app_config_dir 失败: {e}");
             }
 
+            // 迁移旧的 AppleScript login item 到 LaunchAgent（macOS 13+ 兼容）
+            #[cfg(target_os = "macos")]
+            auto_launch::migrate_from_applescript();
+
             // 启动阶段不再无条件保存,避免意外覆盖用户配置。
 
             // 注册 deep-link URL 处理器（使用正确的 DeepLinkExt API）
