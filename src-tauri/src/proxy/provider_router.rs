@@ -34,7 +34,13 @@ impl ProviderRouter {
     /// 返回按优先级排序的可用供应商列表：
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
-    pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
+    ///
+    /// `tag_filter`：若指定，则只返回 tags 中包含该值的供应商（来自 X-CC-SELECT 请求头）
+    pub async fn select_providers(
+        &self,
+        app_type: &str,
+        tag_filter: Option<&str>,
+    ) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
@@ -101,6 +107,22 @@ impl ProviderRouter {
                 return Err(AppError::AllProvidersCircuitOpen);
             } else {
                 log::warn!("[{app_type}] [FO-005] 未配置供应商");
+                return Err(AppError::NoProvidersConfigured);
+            }
+        }
+
+        // 若指定了 tag 过滤（来自 X-CC-SELECT 请求头），仅保留含该 tag 的供应商
+        if let Some(tag) = tag_filter {
+            result.retain(|p| {
+                p.tags
+                    .as_ref()
+                    .map(|tags| tags.iter().any(|t| t == tag))
+                    .unwrap_or(false)
+            });
+            if result.is_empty() {
+                log::warn!(
+                    "[{app_type}] [FO-006] X-CC-SELECT 过滤后无可用供应商（tag={tag}）"
+                );
                 return Err(AppError::NoProvidersConfigured);
             }
         }
@@ -343,7 +365,7 @@ mod tests {
         db.add_to_failover_queue("claude", "b").unwrap();
 
         let router = ProviderRouter::new(db.clone());
-        let providers = router.select_providers("claude").await.unwrap();
+        let providers = router.select_providers("claude", None).await.unwrap();
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "a");
@@ -376,7 +398,7 @@ mod tests {
         db.update_proxy_config_for_app(config).await.unwrap();
 
         let router = ProviderRouter::new(db.clone());
-        let providers = router.select_providers("claude").await.unwrap();
+        let providers = router.select_providers("claude", None).await.unwrap();
 
         assert_eq!(providers.len(), 2);
         // 故障转移开启时：仅按队列顺序选择（忽略当前供应商）
@@ -408,7 +430,7 @@ mod tests {
         db.update_proxy_config_for_app(config).await.unwrap();
 
         let router = ProviderRouter::new(db.clone());
-        let providers = router.select_providers("claude").await.unwrap();
+        let providers = router.select_providers("claude", None).await.unwrap();
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "b");
@@ -451,7 +473,7 @@ mod tests {
             .await
             .unwrap();
 
-        let providers = router.select_providers("claude").await.unwrap();
+        let providers = router.select_providers("claude", None).await.unwrap();
         assert_eq!(providers.len(), 2);
 
         assert!(router.allow_provider_request("b", "claude").await.allowed);

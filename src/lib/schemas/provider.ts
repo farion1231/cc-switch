@@ -55,6 +55,8 @@ export const providerSchema = z.object({
   // 图标配置
   icon: z.string().optional(),
   iconColor: z.string().optional(),
+  // 标签（存储为逗号分隔的字符串，提交时转换为数组）
+  tags: z.string().optional(),
 });
 
 export type ProviderFormData = z.infer<typeof providerSchema>;

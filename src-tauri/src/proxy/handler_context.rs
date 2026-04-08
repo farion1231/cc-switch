@@ -122,11 +122,22 @@ impl RequestContext {
             session_result.client_provided
         );
 
+        // 提取 X-CC-SELECT 标签过滤（用于按 tag 选择供应商）
+        let tag_filter = headers
+            .get("x-cc-select")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        if let Some(ref tag) = tag_filter {
+            log::debug!("[{tag}] X-CC-SELECT: {tag}", tag = tag);
+        }
+
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
         let providers = state
             .provider_router
-            .select_providers(app_type_str)
+            .select_providers(app_type_str, tag_filter.as_deref())
             .await
             .map_err(|e| match e {
                 crate::error::AppError::AllProvidersCircuitOpen => {

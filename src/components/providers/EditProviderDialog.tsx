@@ -150,6 +150,7 @@ export function EditProviderDialog({
       meta: provider.meta,
       icon: provider.icon,
       iconColor: provider.iconColor,
+      tags: provider.tags?.join(", ") ?? "",
     };
   }, [
     open, // 修复：编辑保存后再次打开显示旧数据，依赖 open 确保每次打开时重新读取最新 provider 数据
@@ -183,6 +184,7 @@ export function EditProviderDialog({
         settingsConfig: parsedConfig,
         icon: values.icon?.trim() || undefined,
         iconColor: values.iconColor?.trim() || undefined,
+        tags: values.tags,
         ...(values.presetCategory ? { category: values.presetCategory } : {}),
         // 保留或更新 meta 字段
         ...(values.meta ? { meta: values.meta } : {}),
