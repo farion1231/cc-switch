@@ -357,9 +357,17 @@ export function ProviderCard({
           <div className="ml-auto">
             <div className="flex items-center gap-1">
               {isCopilot ? (
-                <CopilotQuotaFooter meta={provider.meta} inline={true} />
+                <CopilotQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
               ) : isCodexOauth ? (
-                <CodexOauthQuotaFooter meta={provider.meta} inline={true} />
+                <CodexOauthQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
               ) : isOfficial ? (
                 <SubscriptionQuotaFooter appId={appId} inline={true} />
               ) : hasMultiplePlans ? (

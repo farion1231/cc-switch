@@ -13,7 +13,17 @@ export interface CopilotQuota {
   queriedAt: number | null;
 }
 
-export function useCopilotQuota(accountId: string | null, enabled: boolean) {
+export interface UseCopilotQuotaOptions {
+  enabled?: boolean;
+  /** 是否启用自动轮询（5 分钟）与窗口 focus 重取 */
+  autoQuery?: boolean;
+}
+
+export function useCopilotQuota(
+  accountId: string | null,
+  options: UseCopilotQuotaOptions = {},
+) {
+  const { enabled = true, autoQuery = false } = options;
   return useQuery<CopilotQuota>({
     queryKey: ["copilot", "quota", accountId ?? "default"],
     queryFn: async (): Promise<CopilotQuota> => {
@@ -44,8 +54,9 @@ export function useCopilotQuota(accountId: string | null, enabled: boolean) {
       };
     },
     enabled,
-    refetchInterval: REFETCH_INTERVAL,
-    refetchOnWindowFocus: true,
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });

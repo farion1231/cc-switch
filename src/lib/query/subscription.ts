@@ -19,6 +19,12 @@ export function useSubscriptionQuota(appId: AppId, enabled: boolean) {
   });
 }
 
+export interface UseCodexOauthQuotaOptions {
+  enabled?: boolean;
+  /** 是否启用自动轮询（5 分钟）与窗口 focus 重取 */
+  autoQuery?: boolean;
+}
+
 /**
  * Codex OAuth (ChatGPT Plus/Pro 反代) 订阅额度查询 hook
  *
@@ -30,15 +36,17 @@ export function useSubscriptionQuota(appId: AppId, enabled: boolean) {
  */
 export function useCodexOauthQuota(
   meta: ProviderMeta | undefined,
-  enabled: boolean,
+  options: UseCodexOauthQuotaOptions = {},
 ) {
+  const { enabled = true, autoQuery = false } = options;
   const accountId = resolveManagedAccountId(meta, PROVIDER_TYPES.CODEX_OAUTH);
   return useQuery({
     queryKey: ["codex_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getCodexOauthQuota(accountId),
     enabled,
-    refetchInterval: REFETCH_INTERVAL,
-    refetchOnWindowFocus: true,
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });

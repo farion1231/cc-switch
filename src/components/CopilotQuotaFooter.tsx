@@ -13,6 +13,8 @@ import {
 interface CopilotQuotaFooterProps {
   meta?: ProviderMeta;
   inline?: boolean;
+  /** 是否为当前激活的供应商 */
+  isCurrent?: boolean;
 }
 
 /** 格式化相对时间 */
@@ -33,6 +35,7 @@ function formatRelativeTime(
 const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
   meta,
   inline = false,
+  isCurrent = false,
 }) => {
   const { t } = useTranslation();
   const accountId = resolveManagedAccountId(
@@ -44,7 +47,7 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
     data: quota,
     isFetching: loading,
     refetch,
-  } = useCopilotQuota(accountId, true);
+  } = useCopilotQuota(accountId, { enabled: true, autoQuery: isCurrent });
 
   const [now, setNow] = React.useState(Date.now());
   React.useEffect(() => {

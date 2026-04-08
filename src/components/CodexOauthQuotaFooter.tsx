@@ -6,6 +6,8 @@ import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 interface CodexOauthQuotaFooterProps {
   meta?: ProviderMeta;
   inline?: boolean;
+  /** 是否为当前激活的供应商 */
+  isCurrent?: boolean;
 }
 
 /**
@@ -17,12 +19,13 @@ interface CodexOauthQuotaFooterProps {
 const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
   meta,
   inline = false,
+  isCurrent = false,
 }) => {
   const {
     data: quota,
     isFetching: loading,
     refetch,
-  } = useCodexOauthQuota(meta, true);
+  } = useCodexOauthQuota(meta, { enabled: true, autoQuery: isCurrent });
 
   return (
     <SubscriptionQuotaView
