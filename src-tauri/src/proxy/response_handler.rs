@@ -71,6 +71,7 @@ impl StreamHandler {
         async_stream::stream! {
             let mut _last_activity = Instant::now();
             let mut buffer = String::new();
+            let mut utf8_remainder: Vec<u8> = Vec::new();
 
             tokio::pin!(stream);
 
@@ -82,8 +83,7 @@ impl StreamHandler {
                         _last_activity = Instant::now();
 
                         // 解析 SSE 事件
-                        let text = String::from_utf8_lossy(&bytes);
-                        buffer.push_str(&text);
+                        crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                         // 提取完整事件
                         while let Some(pos) = buffer.find("\n\n") {

@@ -568,6 +568,7 @@ pub fn create_logged_passthrough_stream(
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
+        let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut is_first_chunk = true;
 
@@ -619,8 +620,7 @@ pub fn create_logged_passthrough_stream(
                         );
                     }
                     is_first_chunk = false;
-                    let text = String::from_utf8_lossy(&bytes);
-                    buffer.push_str(&text);
+                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                     // 尝试解析并记录完整的 SSE 事件
                     while let Some(pos) = buffer.find("\n\n") {
