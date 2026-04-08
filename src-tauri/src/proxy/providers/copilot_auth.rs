@@ -1145,12 +1145,13 @@ impl CopilotAuthManager {
         if self.storage_path.exists() {
             if let Err(err) = std::fs::remove_file(&self.storage_path) {
                 // NotFound 可以忽略（文件可能已被删除）
+                // 其他错误只记录警告，不阻止登出（内存状态已清理，用户体验上已登出）
                 if err.kind() != std::io::ErrorKind::NotFound {
-                    return Err(CopilotAuthError::IoError(format!(
-                        "Failed to remove persisted auth file {}: {}",
+                    log::warn!(
+                        "[CopilotAuth] 删除认证文件失败 {}: {}，内存状态已清理",
                         self.storage_path.display(),
                         err
-                    )));
+                    );
                 }
             }
         }
