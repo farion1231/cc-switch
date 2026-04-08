@@ -202,7 +202,7 @@ impl StreamCheckService {
         // （baseUrl / apiKey 直接作为根字段而非嵌套在 env），并且协议由 `api`
         // 或 `npm` 字段显式指定。它们不走 get_adapter 路径，而是直接分发。
         if matches!(app_type, AppType::OpenCode | AppType::OpenClaw) {
-            return Self::check_once_opencode_like(app_type, provider, config, start).await;
+            return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
 
         let adapter = get_adapter(app_type);
@@ -267,7 +267,7 @@ impl StreamCheckService {
             }
             AppType::OpenCode | AppType::OpenClaw => {
                 // Already handled via early dispatch above
-                unreachable!("OpenCode/OpenClaw 已通过 check_once_opencode_like 处理")
+                unreachable!("OpenCode/OpenClaw 已通过 check_once_without_adapter 处理")
             }
         };
 
@@ -645,7 +645,7 @@ impl StreamCheckService {
         }
     }
 
-    /// OpenCode / OpenClaw 的独立分发入口
+    /// OpenCode / OpenClaw 的独立分发入口（绕过 `get_adapter`）
     ///
     /// 这两个应用的 `settings_config` 与 Claude/Codex/Gemini 完全不同：
     /// - OpenClaw: `{ baseUrl, apiKey, api, models: [...] }`，`api` 字段标识协议
@@ -653,7 +653,7 @@ impl StreamCheckService {
     ///
     /// 因此不能复用 `get_adapter`（会 fallback 到 CodexAdapter 而提取失败），
     /// 改为独立解析 base_url/api_key/协议，再分发到现有的 check_*_stream 函数。
-    async fn check_once_opencode_like(
+    async fn check_once_without_adapter(
         app_type: &AppType,
         provider: &Provider,
         config: &StreamCheckConfig,
@@ -688,7 +688,7 @@ impl StreamCheckService {
                 )
                 .await
             }
-            _ => unreachable!("check_once_opencode_like 只处理 OpenCode/OpenClaw"),
+            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw"),
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -740,7 +740,7 @@ impl StreamCheckService {
     /// - `openai-responses`     → check_claude_stream + api_format="openai_responses"
     /// - `anthropic-messages`   → check_claude_stream + api_format="anthropic" (ClaudeAuth 策略)
     /// - `google-generative-ai` → check_gemini_stream (Google API Key 策略)
-    /// - `bedrock-converse-stream` → 不支持（需要 AWS SigV4 签名，Phase 4 会美化错误消息）
+    /// - `bedrock-converse-stream` → 不支持（需要 AWS SigV4 签名）
     async fn check_openclaw_stream(
         client: &Client,
         provider: &Provider,
@@ -913,7 +913,7 @@ impl StreamCheckService {
     /// - `@ai-sdk/openai`            → check_claude_stream + api_format="openai_responses"
     /// - `@ai-sdk/anthropic`         → check_claude_stream + api_format="anthropic"
     /// - `@ai-sdk/google`            → check_gemini_stream (Google API Key 策略)
-    /// - `@ai-sdk/amazon-bedrock`    → 不支持（Phase 4 会美化错误消息）
+    /// - `@ai-sdk/amazon-bedrock`    → 不支持（需要 AWS SigV4 签名）
     ///
     /// URL/API Key 存放在 `settings_config.options.{baseURL,apiKey}`，注意
     /// `baseURL` 大写 L（与 OpenClaw 的 `baseUrl` 首字母小写 u 不同）。
@@ -1013,6 +1013,11 @@ impl StreamCheckService {
     /// - 用户显式填写的 `options.baseURL` 总是优先
     /// - 否则根据 `npm` 返回 AI SDK 包自带的默认端点
     /// - `@ai-sdk/openai-compatible` 没有默认端点，必须显式填
+    ///
+    /// 注意：这里的默认端点对应 AI SDK 包的行为（例如 `@ai-sdk/openai`
+    /// 自带 `/v1` 路径后缀），与 `proxy/providers/mod.rs` 里的
+    /// `ProviderType::default_endpoint()` 语义不同——后者是代理层的上游
+    /// 默认值，不带 `/v1`。两者维护的是不同系统的默认值，不能简单共享。
     fn resolve_opencode_base_url(
         provider: &Provider,
         npm: Option<&str>,
