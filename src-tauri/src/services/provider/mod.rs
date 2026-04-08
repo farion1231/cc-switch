@@ -49,6 +49,51 @@ pub struct SwitchResult {
     pub warnings: Vec<String>,
 }
 
+fn proxy_required_reason(app_type: &AppType, provider: &Provider) -> Option<&'static str> {
+    if provider.category.as_deref() == Some("official") {
+        return None;
+    }
+
+    let meta = provider.meta.as_ref();
+    let is_copilot_provider = matches!(
+        (app_type, meta.and_then(|m| m.provider_type.as_deref())),
+        (AppType::Claude, Some("github_copilot"))
+    );
+
+    if is_copilot_provider {
+        return Some("使用 GitHub Copilot 作为 Claude 供应商");
+    }
+
+    match (
+        app_type,
+        meta.and_then(|m| m.api_format.as_deref()),
+        meta.and_then(|m| m.is_full_url),
+    ) {
+        (AppType::Claude, Some("openai_chat"), _) => Some("使用 OpenAI Chat 接口格式"),
+        (AppType::Claude, Some("openai_responses"), _) => Some("使用 OpenAI Responses 接口格式"),
+        (AppType::Claude | AppType::Codex, _, Some(true)) => Some("开启了完整 URL 连接模式"),
+        _ => None,
+    }
+}
+
+fn ensure_proxy_ready_for_switch(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    let Some(reason) = proxy_required_reason(app_type, provider) else {
+        return Ok(());
+    };
+
+    if futures::executor::block_on(state.proxy_service.is_running()) {
+        return Ok(());
+    }
+
+    Err(AppError::Message(format!(
+        "此供应商{reason}，需要代理服务才能正常使用，请先启动代理"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1378,6 +1423,8 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        ensure_proxy_ready_for_switch(state, &app_type, _provider)?;
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {

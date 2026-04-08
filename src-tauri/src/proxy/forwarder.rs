@@ -908,11 +908,7 @@ impl RequestForwarder {
 
                 // 只在动态 endpoint 与当前 base_url 不同时替换
                 if dynamic_endpoint != base_url {
-                    log::debug!(
-                        "[Copilot] 使用动态 API endpoint: {} (原: {})",
-                        dynamic_endpoint,
-                        base_url
-                    );
+                    log::debug!("[Copilot] 已启用动态 API endpoint");
                     base_url = dynamic_endpoint;
                 }
             }
@@ -994,10 +990,10 @@ impl RequestForwarder {
                             );
 
                             log::debug!(
-                                "[Copilot] 成功获取 Copilot token (account={}, machine_id={}, session_id={})",
+                                "[Copilot] 成功获取 Copilot token (account={}, has_machine_id={}, has_session_id={})",
                                 account_id.as_deref().unwrap_or("default"),
-                                machine_id.as_ref().map(|s| &s[..16]).unwrap_or("none"),
-                                session_id.as_ref().map(|s| &s[..16]).unwrap_or("none"),
+                                machine_id.is_some(),
+                                session_id.is_some(),
                             );
                         }
                         Err(e) => {

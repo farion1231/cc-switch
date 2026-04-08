@@ -399,7 +399,6 @@ impl CopilotAuthManager {
             Self::spawn_session_refresh_task(
                 account_id,
                 Arc::clone(&self.accounts),
-                Arc::clone(&self.conversation_sessions),
                 Arc::clone(&self.session_refresh_tasks),
             )
             .await;
@@ -536,7 +535,6 @@ impl CopilotAuthManager {
         Self::spawn_session_refresh_task(
             account_id.clone(),
             Arc::clone(&self.accounts),
-            Arc::clone(&self.conversation_sessions),
             Arc::clone(&self.session_refresh_tasks),
         )
         .await;
@@ -1140,6 +1138,18 @@ impl CopilotAuthManager {
             endpoint_locks.clear();
         }
 
+        if self.storage_path.exists() {
+            if let Err(err) = std::fs::remove_file(&self.storage_path) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!(
+                        "[CopilotAuth] Failed to remove persisted auth file {}: {}",
+                        self.storage_path.display(),
+                        err
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -1290,7 +1300,6 @@ impl CopilotAuthManager {
         new_session_id: String,
         now: i64,
         accounts: &Arc<RwLock<HashMap<String, GitHubAccountData>>>,
-        conversation_sessions: &Arc<RwLock<HashMap<String, String>>>,
     ) -> bool {
         let mut accounts_guard = accounts.write().await;
         if let Some(account_data) = accounts_guard.get_mut(account_id) {
@@ -1298,15 +1307,6 @@ impl CopilotAuthManager {
             account_data.session_refreshed_at = Some(now);
         } else {
             return false;
-        }
-        drop(accounts_guard);
-
-        let prefix = format!("{account_id}:");
-        let mut conversation_sessions_guard = conversation_sessions.write().await;
-        for (key, session_id) in conversation_sessions_guard.iter_mut() {
-            if key.starts_with(&prefix) {
-                *session_id = new_session_id.clone();
-            }
         }
 
         true
@@ -1418,7 +1418,6 @@ impl CopilotAuthManager {
     async fn spawn_session_refresh_task(
         account_id: String,
         accounts: Arc<RwLock<HashMap<String, GitHubAccountData>>>,
-        conversation_sessions: Arc<RwLock<HashMap<String, String>>>,
         session_refresh_tasks: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
     ) {
         use tokio::time::{sleep, Duration};
@@ -1460,7 +1459,6 @@ impl CopilotAuthManager {
                     new_session_id,
                     now,
                     &accounts_clone,
-                    &conversation_sessions,
                 )
                 .await
                 {
@@ -1907,7 +1905,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_conversation_session_can_follow_refreshed_account_session() {
+    async fn test_conversation_sessions_remain_isolated_after_account_refresh() {
         let temp = tempdir().unwrap();
         let manager = CopilotAuthManager::new(temp.path().to_path_buf());
 
@@ -1919,8 +1917,11 @@ mod tests {
             );
         }
 
-        let (_, original_session) = manager
+        let (_, original_session_a) = manager
             .get_account_ids_for_conversation(Some("12345"), Some("conversation-1"))
+            .await;
+        let (_, original_session_b) = manager
+            .get_account_ids_for_conversation(Some("12345"), Some("conversation-2"))
             .await;
         let refreshed_session = "refreshed-session".to_string();
         let updated = CopilotAuthManager::apply_refreshed_session_id(
@@ -1928,17 +1929,24 @@ mod tests {
             refreshed_session.clone(),
             chrono::Utc::now().timestamp(),
             &manager.accounts,
-            &manager.conversation_sessions,
         )
         .await;
 
-        let (_, updated_session) = manager
+        let (_, updated_session_a) = manager
             .get_account_ids_for_conversation(Some("12345"), Some("conversation-1"))
+            .await;
+        let (_, updated_session_b) = manager
+            .get_account_ids_for_conversation(Some("12345"), Some("conversation-2"))
+            .await;
+        let (_, fallback_session) = manager
+            .get_account_ids_for_conversation(Some("12345"), None)
             .await;
 
         assert!(updated);
-        assert_ne!(original_session, updated_session);
-        assert_eq!(updated_session, Some(refreshed_session));
+        assert_eq!(updated_session_a, original_session_a);
+        assert_eq!(updated_session_b, original_session_b);
+        assert_ne!(updated_session_a, updated_session_b);
+        assert_eq!(fallback_session, Some(refreshed_session));
     }
 
     #[test]
@@ -2245,6 +2253,30 @@ mod tests {
             assert!(api_endpoints.is_empty());
         }
     }
+
+    #[tokio::test]
+    async fn test_clear_auth_removes_persisted_auth_file() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "12345".to_string(),
+                test_account_data("gho_test", "alice", 12345, None, 1700000000),
+            );
+        }
+        manager.save_to_disk().await.unwrap();
+        assert!(manager.storage_path.exists());
+
+        manager.clear_auth().await.unwrap();
+
+        assert!(
+            !manager.storage_path.exists(),
+            "persisted auth file should be removed when clearing all auth"
+        );
+    }
+
     #[tokio::test]
     async fn test_clear_auth_aborts_session_refresh_tasks() {
         let temp_dir = tempdir().unwrap();

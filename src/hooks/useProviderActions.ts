@@ -183,6 +183,7 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
               "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
           }),
         );
+        return;
       }
 
       try {
