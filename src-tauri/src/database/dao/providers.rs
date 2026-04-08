@@ -3,7 +3,7 @@ use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
 use rusqlite::params;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type OmoProviderRow = (
     String,
@@ -500,6 +500,25 @@ impl Database {
             icon_color: None,
             in_failover_queue: false,
         }))
+    }
+
+    /// 仅获取指定 app 下所有 provider 的 id 集合。
+    ///
+    /// 比 `get_all_providers` 轻量得多：只读 id 列、无 endpoint 子查询。
+    /// 用于只需要做存在性检查的场景（如 additive 模式的 live 同步去重）。
+    pub fn get_provider_ids(&self, app_type: &str) -> Result<HashSet<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare("SELECT id FROM providers WHERE app_type = ?1")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![app_type], |row| row.get::<_, String>(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut ids = HashSet::new();
+        for row in rows {
+            ids.insert(row.map_err(|e| AppError::Database(e.to_string()))?);
+        }
+        Ok(ids)
     }
 
     /// 判断指定 app 下是否存在非官方种子的供应商。

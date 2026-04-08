@@ -1209,11 +1209,11 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     let mut imported = 0;
-    let existing = state.db.get_all_providers("opencode")?;
+    let existing_ids = state.db.get_provider_ids("opencode")?;
 
     for (id, config) in providers {
         // Skip if already exists in database
-        if existing.contains_key(&id) {
+        if existing_ids.contains(&id) {
             log::debug!("OpenCode provider '{id}' already exists in database, skipping");
             continue;
         }
@@ -1266,7 +1266,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     let mut imported = 0;
-    let existing = state.db.get_all_providers("openclaw")?;
+    let existing_ids = state.db.get_provider_ids("openclaw")?;
 
     for (id, config) in providers {
         // Validate: skip entries with empty id or no models
@@ -1280,7 +1280,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         }
 
         // Skip if already exists in database
-        if existing.contains_key(&id) {
+        if existing_ids.contains(&id) {
             log::debug!("OpenClaw provider '{id}' already exists in database, skipping");
             continue;
         }

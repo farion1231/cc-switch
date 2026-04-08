@@ -502,6 +502,30 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
+            // 1.6. 自动同步 OpenCode / OpenClaw 的 live providers 到数据库
+            //
+            // additive 模式（OpenCode / OpenClaw）的 import 函数本身按 id 幂等，
+            // 已有的 provider 会被跳过，所以每次启动都跑是安全的——既保证新装
+            // 用户开箱可见 live 中的供应商，也让外部修改的 live 文件能在重启
+            // 后同步到数据库（与之前依赖前端"导入当前配置"按钮手动触发不同）。
+            //
+            // 底层 read_*_config 在文件不存在时返回默认空配置，因此新装且无
+            // live 文件的用户走 Ok(0) 路径，不会产生错误日志噪音。
+            match crate::services::provider::import_opencode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} OpenCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new OpenCode providers to import"),
+                Err(e) => log::warn!("✗ Failed to import OpenCode providers: {e}"),
+            }
+            match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new OpenClaw providers to import"),
+                Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
+            }
+
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
                 let has_omo = app_state
