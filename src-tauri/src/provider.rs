@@ -299,6 +299,54 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// 模型路由配置（支持单个 Provider 根据请求模型动态切换 API 格式和目标端点）
+    #[serde(rename = "modelRoutingConfig", skip_serializing_if = "Option::is_none")]
+    pub model_routing_config: Option<ModelRoutingConfig>,
+}
+
+/// 模型路由配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRoutingConfig {
+    /// 是否启用路由配置
+    pub enabled: bool,
+    /// 路由规则列表
+    #[serde(default)]
+    pub routes: Vec<ModelRoute>,
+    /// 兜底配置（当没有匹配的路由时使用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<RouteFallback>,
+}
+
+/// 单个模型路由规则
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRoute {
+    /// 源模型名称（不区分大小写匹配）
+    #[serde(rename = "sourceModel")]
+    pub source_model: String,
+    /// 路由目标配置
+    pub target: RouteTarget,
+}
+
+/// 路由目标配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteTarget {
+    /// 目标 Base URL
+    #[serde(rename = "baseUrl")]
+    pub base_url: String,
+    /// 目标 API 格式
+    #[serde(rename = "apiFormat")]
+    pub api_format: String,
+    /// 目标模型名称
+    #[serde(rename = "modelName")]
+    pub model_name: String,
+}
+
+/// 路由兜底配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteFallback {
+    /// 兜底 API 格式
+    #[serde(rename = "apiFormat")]
+    pub api_format: String,
 }
 
 impl ProviderMeta {

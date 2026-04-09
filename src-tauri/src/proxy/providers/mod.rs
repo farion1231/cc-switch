@@ -33,6 +33,7 @@ pub use adapter::ProviderAdapter;
 pub use auth::{AuthInfo, AuthStrategy};
 pub use claude::{
     claude_api_format_needs_transform, get_claude_api_format,
+    get_claude_api_format_with_model, get_routed_base_url,
     transform_claude_request_for_api_format, ClaudeAdapter,
 };
 pub use codex::CodexAdapter;

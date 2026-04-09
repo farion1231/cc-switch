@@ -208,6 +208,13 @@ export function ProviderForm({
       initialData?.meta?.pricingModelSource,
     ),
   }));
+  const [modelRoutingConfig, setModelRoutingConfig] = useState(() =>
+    initialData?.meta?.modelRoutingConfig ?? {
+      enabled: false,
+      routes: [],
+      fallback: undefined,
+    },
+  );
 
   const { category } = useProviderCategory({
     appId,
@@ -1097,6 +1104,7 @@ export function ProviderForm({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      modelRoutingConfig: modelRoutingConfig.enabled ? modelRoutingConfig : undefined,
     };
 
     await onSubmit(payload);
@@ -1849,9 +1857,11 @@ export function ProviderForm({
                 testConfig={testConfig}
                 proxyConfig={proxyConfig}
                 pricingConfig={pricingConfig}
+                modelRoutingConfig={modelRoutingConfig}
                 onTestConfigChange={setTestConfig}
                 onProxyConfigChange={setProxyConfig}
                 onPricingConfigChange={setPricingConfig}
+                onModelRoutingConfigChange={setModelRoutingConfig}
               />
             )}
 

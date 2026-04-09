@@ -760,6 +760,9 @@ impl RequestForwarder {
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
 
+        // 提取原始模型名称（在模型映射之前，用于模型路由）
+        let original_model = body.get("model").and_then(|m| m.as_str());
+
         // 应用模型映射（独立于格式转换）
         let (mapped_body, _original_model, _mapped_model) =
             super::model_mapper::apply_model_mapping(body.clone(), provider);
@@ -861,9 +864,20 @@ impl RequestForwarder {
                 }
             }
         }
+
+        // Claude 模型路由：根据请求模型动态修改 base_url
+        // 只在非 Copilot 且非 full_url 模式下处理
+        if adapter.name() == "Claude" && !is_copilot && !is_full_url {
+            base_url = crate::proxy::providers::get_routed_base_url(
+                provider,
+                original_model,
+                &base_url,
+            );
+        }
+
         let resolved_claude_api_format = if adapter.name() == "Claude" {
             Some(
-                self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
+                self.resolve_claude_api_format(provider, &mapped_body, is_copilot, original_model)
                     .await,
             )
         } else {
@@ -1362,9 +1376,12 @@ impl RequestForwarder {
         provider: &Provider,
         body: &Value,
         is_copilot: bool,
+        original_model: Option<&str>,
     ) -> String {
         if !is_copilot {
-            return super::providers::get_claude_api_format(provider).to_string();
+            // 使用支持模型路由的 get_claude_api_format_with_model
+            return crate::proxy::providers::get_claude_api_format_with_model(provider, original_model)
+                .to_string();
         }
 
         let model = body.get("model").and_then(|value| value.as_str());

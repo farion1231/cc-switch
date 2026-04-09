@@ -20,8 +20,17 @@ use crate::proxy::error::ProxyError;
 /// 获取 Claude 供应商的 API 格式
 ///
 /// 供 handler/forwarder 外部使用的公开函数。
-/// 优先级：meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
+/// 优先级：model_routing_config > meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
 pub fn get_claude_api_format(provider: &Provider) -> &'static str {
+    get_claude_api_format_with_model(provider, None)
+}
+
+/// 获取 Claude 供应商的 API 格式（支持模型路由）
+///
+/// # Arguments
+/// * `provider` - Provider 实例
+/// * `model_name` - 请求中的模型名称（可选，用于模型路由匹配）
+pub fn get_claude_api_format_with_model(provider: &Provider, model_name: Option<&str>) -> &'static str {
     // 0) Codex OAuth 强制使用 openai_responses（不可被覆盖）
     if let Some(meta) = provider.meta.as_ref() {
         if meta.provider_type.as_deref() == Some("codex_oauth") {
@@ -29,7 +38,27 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         }
     }
 
-    // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
+    // 1) 检查 model_routing_config（支持根据请求模型动态选择 API 格式）
+    if let Some(meta) = provider.meta.as_ref() {
+        if let Some(ref routing_config) = meta.model_routing_config {
+            if routing_config.enabled {
+                if let Some(model) = model_name {
+                    // 大小写不敏感匹配
+                    if let Some(route) = routing_config.routes.iter().find(|r| {
+                        r.source_model.eq_ignore_ascii_case(model)
+                    }) {
+                        return Box::leak(route.target.api_format.clone().into_boxed_str());
+                    }
+                }
+                // 匹配不到时使用 fallback
+                if let Some(ref fallback) = routing_config.fallback {
+                    return Box::leak(fallback.api_format.clone().into_boxed_str());
+                }
+            }
+        }
+    }
+
+    // 2) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
     if let Some(meta) = provider.meta.as_ref() {
         if let Some(api_format) = meta.api_format.as_deref() {
             return match api_format {
@@ -40,7 +69,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         }
     }
 
-    // 2) Backward compatibility: legacy settings_config.api_format
+    // 3) Backward compatibility: legacy settings_config.api_format
     if let Some(api_format) = provider
         .settings_config
         .get("api_format")
@@ -53,7 +82,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         };
     }
 
-    // 3) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
+    // 4) Backward compatibility: legacy openrouter_compat_mode (bool/number/string)
     let raw = provider.settings_config.get("openrouter_compat_mode");
     let enabled = match raw {
         Some(serde_json::Value::Bool(v)) => *v,
@@ -70,6 +99,32 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
     } else {
         "anthropic"
     }
+}
+
+/// 根据模型路由获取目标 Base URL
+///
+/// # Arguments
+/// * `provider` - Provider 实例
+/// * `model_name` - 请求中的模型名称（用于路由匹配）
+/// * `default_url` - 默认的 Base URL（Provider 配置的原始 URL）
+pub fn get_routed_base_url(provider: &Provider, model_name: Option<&str>, default_url: &str) -> String {
+    // 检查 model_routing_config
+    if let Some(meta) = provider.meta.as_ref() {
+        if let Some(ref routing_config) = meta.model_routing_config {
+            if routing_config.enabled {
+                if let Some(model) = model_name {
+                    // 大小写不敏感匹配
+                    if let Some(route) = routing_config.routes.iter().find(|r| {
+                        r.source_model.eq_ignore_ascii_case(model)
+                    }) {
+                        return route.target.base_url.clone();
+                    }
+                }
+            }
+        }
+    }
+    // 返回默认 URL
+    default_url.to_string()
 }
 
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
