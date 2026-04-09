@@ -57,6 +57,15 @@
     "mustBeObject": "Configuration must be a JSON object, not an array or other type",
     "invalidJson": "Invalid JSON format"
   },
+  "commonConfig": {
+    "guideTitle": "What is a Common Config Snippet?",
+    "guidePurpose": "It lets you share non-sensitive settings (plugins, environment variables, etc.) across different providers. These settings won't be lost when you switch providers.",
+    "guideUsage": "How to use: ① Click \"Extract from Editor\" to save the common parts  ② Check \"Write Common Config\" when creating a new provider",
+    "guideReExtract": "If you've newly installed plugins or hooks, re-extract the common config so they sync to other providers.",
+    "guideReassurance": "Don't worry — your original configuration is safely stored in the default provider and won't be lost.",
+    "emptyTitle": "No common config snippet yet",
+    "emptyHint": "Click \"Extract from Editor\" below to extract reusable parts from your current configuration"
+  },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
     "writeCommonConfig": "Write Common Config",
