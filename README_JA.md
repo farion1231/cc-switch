@@ -117,6 +117,13 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <td>LionCC のご支援に感謝します！LionCC は究極の開発体験を追求する「Vibe Coders」のために生まれました。Claude Code、Codex、OpenClaw 向けに安定・低遅延・お得な価格の計算リソースサービスを提供し、最大 50% のコスト削減を実現します。登録後、カスタマーサービスの WeChat（HSQBJ088888888）を追加し、合言葉「cc-switch」を送信すると、10 ドル分のクレジット（1,000 万トークン）がもらえます。その他のコラボレーションについてはブログ @LionCC.ai をフォローしてください。<a href="https://vibecodingapi.ai">こちら</a>から登録してください！</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://ddshub.short.gy/ccswitch"><img src="assets/partners/logos/dds.png" alt="DDS" width="150"></a></td>
+<td>本プロジェクトのスポンサーである DDS に感謝いたします！ DDS（呆呆獣 / DDS Hub）は、Claude に特化した信頼性とパフォーマンスの高い API プロキシサービスです。個人および企業ユーザーの皆様に、圧倒的なコストパフォーマンスを誇る Claude 直結アクセラレーションサービスを提供しています。Claude Haiku / Opus / Sonnet などのフルスペックモデルを完全サポートし、安定した低遅延のアクセスを実現します。
+1,000人民元以上のチャージで領収書（発票）の発行が可能です。さらに、企業のお客様にはカスタマイズされたグループ管理や専用テクニカルサポートをご提供しています。
+CC Switch ユーザー限定特典： 専用リンクからご<a href="https://ddshub.short.gy/ccswitch">登録</a>いただくと、初回チャージ時に 10% の追加ボーナスクレジット をプレゼントいたします！（※チャージ完了後、グループ管理人へご連絡の上お受け取りください。）</td>
+</tr>
+
 </table>
 
 </details>
