@@ -393,6 +393,11 @@ impl Database {
                         Self::migrate_v5_to_v6(conn)?;
                         Self::set_user_version(conn, 6)?;
                     }
+                    6 => {
+                        log::info!("迁移数据库从 v6 到 v7（添加性能索引）");
+                        Self::migrate_v6_to_v7(conn)?;
+                        Self::set_user_version(conn, 7)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1042,6 +1047,36 @@ impl Database {
         }
 
         log::info!("v5 -> v6 迁移完成：已添加使用量日聚合表，统一 copilot 模板类型");
+        Ok(())
+    }
+
+    /// v6 -> v7 迁移：添加性能索引
+    fn migrate_v6_to_v7(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "provider_health")? {
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_provider_health_app ON provider_health(app_type)",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("创建 provider_health app 索引失败: {e}")))?;
+
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_provider_health_provider ON provider_health(provider_id)",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("创建 provider_health provider 索引失败: {e}")))?;
+        }
+
+        if Self::table_exists(conn, "providers")?
+            && Self::has_column(conn, "providers", "sort_index")?
+        {
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_providers_app_sort ON providers(app_type, sort_index)",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("创建 providers app_sort 索引失败: {e}")))?;
+        }
+
+        log::info!("v6 -> v7 迁移完成：已添加性能索引");
         Ok(())
     }
 
