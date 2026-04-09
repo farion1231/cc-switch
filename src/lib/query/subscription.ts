@@ -7,13 +7,18 @@ import { PROVIDER_TYPES } from "@/config/constants";
 
 const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
-export function useSubscriptionQuota(appId: AppId, enabled: boolean) {
+export function useSubscriptionQuota(
+  appId: AppId,
+  enabled: boolean,
+  autoQuery = false,
+) {
   return useQuery({
     queryKey: ["subscription", "quota", appId],
     queryFn: () => subscriptionApi.getQuota(appId),
     enabled: enabled && ["claude", "codex", "gemini"].includes(appId),
-    refetchInterval: REFETCH_INTERVAL,
-    refetchOnWindowFocus: true,
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });

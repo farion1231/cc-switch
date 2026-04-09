@@ -369,7 +369,7 @@ export function ProviderCard({
                   isCurrent={isCurrent}
                 />
               ) : isOfficial ? (
-                <SubscriptionQuotaFooter appId={appId} inline={true} />
+                <SubscriptionQuotaFooter appId={appId} inline={true} isCurrent={isCurrent} />
               ) : hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                   <span className="font-medium">

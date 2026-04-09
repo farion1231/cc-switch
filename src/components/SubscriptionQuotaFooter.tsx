@@ -8,6 +8,7 @@ import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 interface SubscriptionQuotaFooterProps {
   appId: AppId;
   inline?: boolean;
+  isCurrent?: boolean;
 }
 
 interface SubscriptionQuotaViewProps {
@@ -386,12 +387,15 @@ const TierBar: React.FC<{
 const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   appId,
   inline = false,
+  isCurrent = false,
 }) => {
   const {
     data: quota,
     isFetching: loading,
     refetch,
-  } = useSubscriptionQuota(appId, true);
+  } = useSubscriptionQuota(appId, isCurrent, isCurrent);
+
+  if (!isCurrent) return null;
 
   return (
     <SubscriptionQuotaView
