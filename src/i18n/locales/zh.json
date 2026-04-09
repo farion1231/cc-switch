@@ -42,6 +42,12 @@
     "enabled": "已开启",
     "notSet": "未设置"
   },
+  "firstRunNotice": {
+    "title": "欢迎使用 CC Switch",
+    "bodyDefault": "CC Switch 可以帮你在 Claude Code / Codex / Gemini CLI 的多个供应商之间一键切换。如果你之前已经配置过这些工具，CC Switch 会自动把现有设置保存为名为 “default” 的供应商，保证你的配置不会丢失。",
+    "bodyOfficial": "列表里还预置了 “官方（Official）” 供应商，随时点一下即可切回官方默认配置。切换前 CC Switch 会自动把当前配置备份回 default，可以放心来回切。CC Switch 就是这样工作的 😊",
+    "confirm": "我知道了"
+  },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
     "show": "显示API Key",

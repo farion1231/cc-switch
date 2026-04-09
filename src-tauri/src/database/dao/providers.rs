@@ -502,6 +502,20 @@ impl Database {
         }))
     }
 
+    /// 判断 providers 表是否为空（全 app_type 一起算）。
+    ///
+    /// 用于区分"全新安装"和"升级用户"：在启动流程 import/seed 之前调用。
+    /// 使用 `EXISTS` 短路查询，比 `COUNT(*)` 在将来表变大时更高效。
+    pub fn is_providers_empty(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let exists: bool = conn
+            .query_row("SELECT EXISTS(SELECT 1 FROM providers)", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(!exists)
+    }
+
     /// 仅获取指定 app 下所有 provider 的 id 集合。
     ///
     /// 比 `get_all_providers` 轻量得多：只读 id 列、无 endpoint 子查询。
@@ -568,11 +582,11 @@ impl Database {
     pub fn init_default_official_providers(&self) -> Result<usize, AppError> {
         use crate::database::dao::providers_seed::OFFICIAL_SEEDS;
 
-        // flag 检查：已执行过则跳过
-        if let Ok(Some(flag)) = self.get_setting("official_providers_seeded") {
-            if flag == "true" || flag == "1" {
-                return Ok(0);
-            }
+        if self
+            .get_bool_flag("official_providers_seeded")
+            .unwrap_or(false)
+        {
+            return Ok(0);
         }
 
         let mut inserted = 0_usize;

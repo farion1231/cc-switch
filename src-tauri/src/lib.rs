@@ -472,6 +472,15 @@ pub fn run() {
             // 先 import 后 seed 是有意为之：先把用户手动配置的 settings.json / auth.json / .env
             // 落成 "default" provider 设为 current，再追加官方预设（is_current=false）。
             // 这样用户切到官方预设时，回填机制会保护原 live 配置不丢失。
+            //
+            // 捕获首次运行快照：所有全新装用户都会看到欢迎弹窗介绍 CC Switch 的工作方式。
+            // 读失败时默认不弹，宁可漏弹也不要因为故障打扰用户。
+            let first_run_already_confirmed = crate::settings::get_settings()
+                .first_run_notice_confirmed
+                .unwrap_or(false);
+            let fresh_install_at_startup =
+                app_state.db.is_providers_empty().unwrap_or(false);
+
             for app_type in
                 crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
             {
@@ -500,6 +509,12 @@ pub fn run() {
                 }
                 Ok(_) => {}
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
+            }
+
+            // 老用户 / 已确认的路径由 `fresh_install_at_startup` 自行拦截，这里不做写入。
+            // 字段只由前端在用户点击"我知道了"时 save_settings 回写，语义是"用户显式确认过"。
+            if !first_run_already_confirmed && fresh_install_at_startup {
+                log::info!("✓ First-run welcome notice pending");
             }
 
             // 1.6. 自动同步 OpenCode / OpenClaw 的 live providers 到数据库

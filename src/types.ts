@@ -264,6 +264,8 @@ export interface Settings {
   enableFailoverToggle?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
+  // User has confirmed the first-run welcome notice
+  firstRunNoticeConfirmed?: boolean;
   // User has confirmed the auto-sync traffic warning
   autoSyncConfirmed?: boolean;
   // 首选语言（可选，默认中文）
