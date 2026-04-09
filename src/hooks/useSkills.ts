@@ -8,6 +8,7 @@ import {
   skillsApi,
   type SkillBackupEntry,
   type DiscoverableSkill,
+  type GitSkillInstallRequest,
   type ImportSkillSelection,
   type InstalledSkill,
 } from "@/lib/api/skills";
@@ -270,11 +271,32 @@ export function useInstallSkillsFromZip() {
       filePath: string;
       currentApp: AppId;
     }) => skillsApi.installFromZip(filePath, currentApp),
-    onSuccess: (installedSkills) => {
-      // 直接更新 installed 缓存
-      queryClient.setQueryData<InstalledSkill[]>(
+    onSuccess: (installedSkills: InstalledSkill[]) => {
+      queryClient.setQueryData<InstalledSkill[] | undefined>(
         ["skills", "installed"],
-        (oldData) => {
+        (oldData: InstalledSkill[] | undefined): InstalledSkill[] => {
+          if (!oldData) return installedSkills;
+          return [...oldData, ...installedSkills];
+        },
+      );
+    },
+  });
+}
+
+export function useInstallSkillsFromGitUrl() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      request,
+      currentApp,
+    }: {
+      request: GitSkillInstallRequest;
+      currentApp: AppId;
+    }) => skillsApi.installFromGitUrl(request, currentApp),
+    onSuccess: (installedSkills: InstalledSkill[]) => {
+      queryClient.setQueryData<InstalledSkill[] | undefined>(
+        ["skills", "installed"],
+        (oldData: InstalledSkill[] | undefined): InstalledSkill[] => {
           if (!oldData) return installedSkills;
           return [...oldData, ...installedSkills];
         },
@@ -288,6 +310,7 @@ export function useInstallSkillsFromZip() {
 export type {
   InstalledSkill,
   DiscoverableSkill,
+  GitSkillInstallRequest,
   ImportSkillSelection,
   SkillBackupEntry,
   AppId,

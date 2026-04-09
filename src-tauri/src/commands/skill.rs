@@ -7,8 +7,8 @@
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, Skill, SkillBackupEntry, SkillRepo, SkillService,
-    SkillUninstallResult,
+    DiscoverableSkill, GitSkillInstallRequest, ImportSkillSelection, Skill, SkillBackupEntry,
+    SkillRepo, SkillService, SkillUninstallResult,
 };
 use crate::store::AppState;
 use std::sync::Arc;
@@ -257,6 +257,7 @@ pub fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>,
 /// 添加技能仓库
 #[tauri::command]
 pub fn add_skill_repo(repo: SkillRepo, app_state: State<'_, AppState>) -> Result<bool, String> {
+    SkillService::validate_skill_repo(&repo).map_err(|e| e.to_string())?;
     app_state
         .db
         .save_skill_repo(&repo)
@@ -289,4 +290,16 @@ pub fn install_skills_from_zip(
     let path = std::path::Path::new(&file_path);
 
     SkillService::install_from_zip(&app_state.db, path, &app_type).map_err(|e| e.to_string())
+}
+
+/// 从 Git URL 安装 Skills
+#[tauri::command]
+pub fn install_skills_from_git_url(
+    request: GitSkillInstallRequest,
+    current_app: String,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<InstalledSkill>, String> {
+    let app_type = parse_app_type(&current_app)?;
+    SkillService::install_from_git_url(&app_state.db, &request, &app_type)
+        .map_err(|e| e.to_string())
 }

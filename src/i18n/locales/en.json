@@ -1589,6 +1589,12 @@
       "parseMetadataFailed": "Failed to parse skill metadata",
       "getHomeDirFailed": "Unable to get user home directory",
       "noSkillsInZip": "No skills found in ZIP file (requires SKILL.md file)",
+      "invalidGitUrl": "Only HTTPS Git repository URLs ending with .git are supported",
+      "gitNotFound": "System git command was not found",
+      "gitCloneFailed": "Failed to clone repository: {{message}}",
+      "skillSelectorRequired": "This repository contains multiple skills. Please provide a skill path",
+      "gitSubmodulesNotSupported": "Skill repositories with Git submodules are not supported yet",
+      "skillSymlinkNotAllowed": "Skill directory contains a symlink and was rejected for safety: {{path}}",
       "networkError": "Network error",
       "fsError": "File system error",
       "unknownError": "Unknown error",
@@ -1600,14 +1606,15 @@
         "checkDiskSpace": "Please check disk space",
         "checkPermission": "Please check directory permissions",
         "uninstallFirst": "Please uninstall the existing skill with the same name first",
-        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)"
+        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)",
+        "installGit": "Please install git and ensure the `git` command is available in your PATH"
       }
     },
     "repo": {
       "title": "Manage Skill Repositories",
       "description": "Add or remove GitHub skill repository sources",
       "url": "Repository URL",
-      "urlPlaceholder": "owner/name or https://github.com/owner/name",
+      "urlPlaceholder": "owner/name, GitHub URL, or GitLab URL",
       "branch": "Branch",
       "branchPlaceholder": "main",
       "path": "Skills Path",
@@ -1680,6 +1687,23 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
+    },
+    "installFromGitUrl": {
+      "button": "Install from URL",
+      "title": "Install from Git URL",
+      "description": "Enter an HTTPS Git repository URL and choose which skill to install. Multi-skill repositories require a skill path.",
+      "url": "Repository URL",
+      "urlPlaceholder": "https://example.com/team/skills.git",
+      "skill": "Skill path",
+      "skillPlaceholder": "dbus-caller-verification-check",
+      "skillHint": "Required for multi-skill repositories; optional when the repository contains only one skill.",
+      "branch": "Branch (optional)",
+      "branchPlaceholder": "main",
+      "warning": "Only HTTPS Git repositories are supported. Installation uses the system git command for a shallow clone and rejects skills containing symlinks.",
+      "submit": "Install",
+      "installing": "Installing...",
+      "successSingle": "Skill {{name}} installed",
+      "successMultiple": "Successfully installed {{count}} skills"
     }
   },
   "deeplink": {

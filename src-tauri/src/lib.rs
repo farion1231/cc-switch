@@ -46,7 +46,7 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
-    skill::{migrate_skills_to_ssot, ImportSkillSelection},
+    skill::{migrate_skills_to_ssot, GitSkillInstallRequest, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
 };
@@ -973,6 +973,7 @@ pub fn run() {
             commands::add_skill_repo,
             commands::remove_skill_repo,
             commands::install_skills_from_zip,
+            commands::install_skills_from_git_url,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,

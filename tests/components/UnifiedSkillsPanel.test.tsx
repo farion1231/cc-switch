@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
@@ -11,6 +11,7 @@ const toggleSkillAppMock = vi.fn();
 const uninstallSkillMock = vi.fn();
 const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
+const installFromGitUrlMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
 
@@ -64,6 +65,10 @@ vi.mock("@/hooks/useSkills", () => ({
   useInstallSkillsFromZip: () => ({
     mutateAsync: installFromZipMock,
   }),
+  useInstallSkillsFromGitUrl: () => ({
+    mutateAsync: installFromGitUrlMock,
+    isPending: false,
+  }),
 }));
 
 describe("UnifiedSkillsPanel", () => {
@@ -83,6 +88,7 @@ describe("UnifiedSkillsPanel", () => {
     uninstallSkillMock.mockReset();
     importSkillsMock.mockReset();
     installFromZipMock.mockReset();
+    installFromGitUrlMock.mockReset();
     deleteSkillBackupMock.mockReset();
     restoreSkillBackupMock.mockReset();
   });
@@ -106,6 +112,44 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("skills.import")).toBeInTheDocument();
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
+    });
+  });
+
+  it("opens git url install dialog and submits request", async () => {
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    installFromGitUrlMock.mockResolvedValue([
+      { id: "git:test:demo", name: "Demo", directory: "demo", apps: {} },
+    ]);
+
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openInstallFromGitUrl();
+    });
+
+    fireEvent.change(screen.getByLabelText("skills.installFromGitUrl.url"), {
+      target: { value: "https://example.com/repo.git" },
+    });
+    fireEvent.change(screen.getByLabelText("skills.installFromGitUrl.skill"), {
+      target: { value: "demo-skill" },
+    });
+    fireEvent.click(screen.getByText("skills.installFromGitUrl.submit"));
+
+    await waitFor(() => {
+      expect(installFromGitUrlMock).toHaveBeenCalledWith({
+        request: {
+          repoUrl: "https://example.com/repo.git",
+          skill: "demo-skill",
+          branch: undefined,
+        },
+        currentApp: "claude",
+      });
     });
   });
 });

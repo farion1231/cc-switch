@@ -18,6 +18,7 @@ import {
   FolderArchive,
   Search,
   FolderOpen,
+  Link2,
   KeyRound,
   Shield,
   Cpu,
@@ -1097,6 +1098,17 @@ function App() {
                     >
                       <FolderArchive className="w-4 h-4 mr-2" />
                       {t("skills.installFromZip.button")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        unifiedSkillsPanelRef.current?.openInstallFromGitUrl()
+                      }
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Link2 className="w-4 h-4 mr-2" />
+                      {t("skills.installFromGitUrl.button")}
                     </Button>
                     <Button
                       variant="ghost"

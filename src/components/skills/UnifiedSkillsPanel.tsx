@@ -4,6 +4,7 @@ import { Sparkles, Trash2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
+  type GitSkillInstallRequest,
   type ImportSkillSelection,
   type SkillBackupEntry,
   useDeleteSkillBackup,
@@ -14,12 +15,14 @@ import {
   useUninstallSkill,
   useScanUnmanagedSkills,
   useImportSkillsFromApps,
+  useInstallSkillsFromGitUrl,
   useInstallSkillsFromZip,
   type InstalledSkill,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
+import { formatSkillError } from "@/lib/errors/skillErrorParser";
 import { toast } from "sonner";
 import { MCP_SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
@@ -33,6 +36,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
@@ -43,6 +48,7 @@ export interface UnifiedSkillsPanelHandle {
   openDiscovery: () => void;
   openImport: () => void;
   openInstallFromZip: () => void;
+  openInstallFromGitUrl: () => void;
   openRestoreFromBackup: () => void;
 }
 
@@ -67,6 +73,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     onConfirm: () => void;
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [gitDialogOpen, setGitDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
 
   const { data: skills, isLoading } = useInstalledSkills();
@@ -83,6 +90,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     useScanUnmanagedSkills();
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
+  const installFromGitUrlMutation = useInstallSkillsFromGitUrl();
 
   const enabledCounts = useMemo(() => {
     const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0, openclaw: 0 };
@@ -191,6 +199,46 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
+  const handleOpenInstallFromGitUrl = async () => {
+    setGitDialogOpen(true);
+  };
+
+  const handleInstallFromGitUrl = async (request: GitSkillInstallRequest) => {
+    try {
+      const installed = await installFromGitUrlMutation.mutateAsync({
+        request: {
+          ...request,
+          repoUrl: request.repoUrl.trim(),
+          skill: request.skill?.trim() || undefined,
+          branch: request.branch?.trim() || undefined,
+        },
+        currentApp,
+      });
+      setGitDialogOpen(false);
+
+      if (installed.length === 1) {
+        toast.success(
+          t("skills.installFromGitUrl.successSingle", { name: installed[0].name }),
+          { closeButton: true },
+        );
+      } else {
+        toast.success(
+          t("skills.installFromGitUrl.successMultiple", {
+            count: installed.length,
+          }),
+          { closeButton: true },
+        );
+      }
+    } catch (error) {
+      const { title, description } = formatSkillError(
+        String(error),
+        t,
+        "skills.installFailed",
+      );
+      toast.error(title, { description, closeButton: true });
+    }
+  };
+
   const handleOpenRestoreFromBackup = async () => {
     setRestoreDialogOpen(true);
     try {
@@ -255,6 +303,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     openDiscovery: onOpenDiscovery,
     openImport: handleOpenImport,
     openInstallFromZip: handleInstallFromZip,
+    openInstallFromGitUrl: handleOpenInstallFromGitUrl,
     openRestoreFromBackup: handleOpenRestoreFromBackup,
   }));
 
@@ -320,6 +369,13 @@ const UnifiedSkillsPanel = React.forwardRef<
           onClose={() => setImportDialogOpen(false)}
         />
       )}
+
+      <InstallGitUrlDialog
+        open={gitDialogOpen}
+        isInstalling={installFromGitUrlMutation.isPending}
+        onSubmit={handleInstallFromGitUrl}
+        onClose={() => setGitDialogOpen(false)}
+      />
 
       <RestoreSkillsDialog
         backups={skillBackups}
@@ -442,6 +498,103 @@ interface RestoreSkillsDialogProps {
   onClose: () => void;
   open: boolean;
 }
+
+interface InstallGitUrlDialogProps {
+  open: boolean;
+  isInstalling: boolean;
+  onSubmit: (request: GitSkillInstallRequest) => void;
+  onClose: () => void;
+}
+
+const InstallGitUrlDialog: React.FC<InstallGitUrlDialogProps> = ({
+  open,
+  isInstalling,
+  onSubmit,
+  onClose,
+}) => {
+  const { t } = useTranslation();
+  const [repoUrl, setRepoUrl] = useState("");
+  const [skill, setSkill] = useState("");
+  const [branch, setBranch] = useState("");
+
+  const handleSubmit = () => {
+    onSubmit({
+      repoUrl: repoUrl.trim(),
+      skill: skill.trim() || undefined,
+      branch: branch.trim() || undefined,
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="max-w-xl" zIndex="alert">
+        <DialogHeader>
+          <DialogTitle>{t("skills.installFromGitUrl.title")}</DialogTitle>
+          <DialogDescription>
+            {t("skills.installFromGitUrl.description")}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 px-6 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="git-skill-url">{t("skills.installFromGitUrl.url")}</Label>
+            <Input
+              id="git-skill-url"
+              aria-label={t("skills.installFromGitUrl.url")}
+              placeholder={t("skills.installFromGitUrl.urlPlaceholder")}
+              value={repoUrl}
+              onChange={(event) => setRepoUrl(event.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="git-skill-name">{t("skills.installFromGitUrl.skill")}</Label>
+            <Input
+              id="git-skill-name"
+              aria-label={t("skills.installFromGitUrl.skill")}
+              placeholder={t("skills.installFromGitUrl.skillPlaceholder")}
+              value={skill}
+              onChange={(event) => setSkill(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("skills.installFromGitUrl.skillHint")}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="git-skill-branch">{t("skills.installFromGitUrl.branch")}</Label>
+            <Input
+              id="git-skill-branch"
+              aria-label={t("skills.installFromGitUrl.branch")}
+              placeholder={t("skills.installFromGitUrl.branchPlaceholder")}
+              value={branch}
+              onChange={(event) => setBranch(event.target.value)}
+            />
+          </div>
+
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-muted-foreground">
+            {t("skills.installFromGitUrl.warning")}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="button"
+            onClick={handleSubmit}
+            disabled={isInstalling || !repoUrl.trim()}
+          >
+            {isInstalling
+              ? t("skills.installFromGitUrl.installing")
+              : t("skills.installFromGitUrl.submit")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
   backups,
