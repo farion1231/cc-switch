@@ -112,6 +112,11 @@ Claude Code / Codex / Gemini official channels at 38% / 2% / 9% of original pric
 <td>Thanks to ChefShop AI for sponsoring this project! ChefShop AI is a premium account service provider tailored for heavy AI subscription users. The platform offers official top-up and stable account services for mainstream large models including ChatGPT Plus/Pro, Claude Max, Grok Super/Heavy, and Gemini. Click <a href="https://chefshop.ai">here</a> to purchase!</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://vibecodingapi.ai"><img src="assets/partners/logos/lioncc.png" alt="LionCC" width="150"></a></td>
+<td>Thanks to LionCC for sponsoring this project! LionCC is built for Vibe Coders who pursue the ultimate development experience. We provide stable, low-latency, and competitively priced computing services for Claude Code, Codex, and OpenClaw, saving up to 50% in costs. After registering, add customer service on WeChat (HSQBJ088888888) with the code "cc-switch" to receive $10 in free credits (10 million tokens). For other collaborations, follow the blog @LionCC.ai. Click <a href="https://vibecodingapi.ai">here</a> to register!</td>
+</tr>
+
 </table>
 
 </details>
