@@ -268,6 +268,8 @@ export interface Settings {
   firstRunNoticeConfirmed?: boolean;
   // User has confirmed the auto-sync traffic warning
   autoSyncConfirmed?: boolean;
+  // User has confirmed the common config first-run notice
+  commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
 
