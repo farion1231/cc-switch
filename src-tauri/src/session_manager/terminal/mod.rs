@@ -78,10 +78,19 @@ end tell"#
 }
 
 fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    let args = build_ghostty_args(command, cwd);
+    let full_command = build_shell_command(command, cwd);
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
     let status = Command::new("open")
-        .args(args.iter().map(String::as_str))
+        .arg("-na")
+        .arg("Ghostty")
+        .arg("--args")
+        .arg("--quit-after-last-window-closed=true")
+        .arg("-e")
+        .arg(&shell)
+        .arg("-l")
+        .arg("-c")
+        .arg(&full_command)
         .status()
         .map_err(|e| format!("Failed to launch Ghostty: {e}"))?;
 
@@ -90,40 +99,6 @@ fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     } else {
         Err("Failed to launch Ghostty. Make sure it is installed.".to_string())
     }
-}
-
-fn build_ghostty_args(command: &str, cwd: Option<&str>) -> Vec<String> {
-    let input = ghostty_raw_input(command);
-
-    let mut args = vec![
-        "-na".to_string(),
-        "Ghostty".to_string(),
-        "--args".to_string(),
-        "--quit-after-last-window-closed=true".to_string(),
-    ];
-
-    if let Some(dir) = cwd {
-        if !dir.trim().is_empty() {
-            args.push(format!("--working-directory={dir}"));
-        }
-    }
-
-    args.push(format!("--input={input}"));
-    args
-}
-
-fn ghostty_raw_input(command: &str) -> String {
-    let mut escaped = String::from("raw:");
-    for ch in command.chars() {
-        match ch {
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            _ => escaped.push(ch),
-        }
-    }
-    escaped.push_str("\\n");
-    escaped
 }
 
 fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
@@ -300,43 +275,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ghostty_uses_shell_mode_for_resume_commands() {
-        let args = build_ghostty_args("claude --resume abc-123", Some("/tmp/project dir"));
-
+    fn build_shell_command_prefixes_cwd_for_ghostty_shell_execution() {
         assert_eq!(
-            args,
-            vec![
-                "-na",
-                "Ghostty",
-                "--args",
-                "--quit-after-last-window-closed=true",
-                "--working-directory=/tmp/project dir",
-                "--input=raw:claude --resume abc-123\\n",
-            ]
+            build_shell_command("claude --resume abc-123", Some("/tmp/project dir")),
+            "cd \"/tmp/project dir\" && claude --resume abc-123"
         );
     }
 
     #[test]
-    fn ghostty_keeps_command_without_cwd_prefix_when_not_provided() {
-        let args = build_ghostty_args("claude --resume abc-123", None);
-
+    fn build_shell_command_keeps_command_without_cwd_prefix_when_not_provided() {
         assert_eq!(
-            args,
-            vec![
-                "-na",
-                "Ghostty",
-                "--args",
-                "--quit-after-last-window-closed=true",
-                "--input=raw:claude --resume abc-123\\n",
-            ]
-        );
-    }
-
-    #[test]
-    fn ghostty_escapes_newlines_and_backslashes_in_input() {
-        assert_eq!(
-            ghostty_raw_input("echo foo\\\\bar\npwd"),
-            "raw:echo foo\\\\\\\\bar\\npwd\\n"
+            build_shell_command("claude --resume abc-123", None),
+            "claude --resume abc-123"
         );
     }
 
