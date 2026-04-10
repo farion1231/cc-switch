@@ -880,6 +880,37 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "TheRouter",
+    websiteUrl: "https://therouter.ai",
+    apiKeyUrl: "https://dashboard.therouter.ai",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TheRouter",
+      options: {
+        baseURL: "https://api.therouter.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
+        "openai/gpt-5.3-codex": { name: "GPT-5.3 Codex" },
+        "openai/gpt-5.2": { name: "GPT-5.2" },
+        "google/gemini-3-flash-preview": {
+          name: "Gemini 3 Flash Preview",
+        },
+        "qwen/qwen3-coder-480b": { name: "Qwen3 Coder 480B" },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",
