@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import {
   Select,
   SelectContent,
@@ -6,7 +8,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { isMac, isWindows, isLinux } from "@/lib/platform";
+import { settingsApi } from "@/lib/api/settings";
 
 // Terminal options per platform
 const MACOS_TERMINALS = [
@@ -16,6 +20,7 @@ const MACOS_TERMINALS = [
   { value: "kitty", labelKey: "settings.terminal.options.macos.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.macos.ghostty" },
   { value: "wezterm", labelKey: "settings.terminal.options.macos.wezterm" },
+  { value: "cmux", labelKey: "settings.terminal.options.macos.cmux" },
 ] as const;
 
 const WINDOWS_TERMINALS = [
@@ -80,9 +85,26 @@ export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
   const { t } = useTranslation();
   const terminals = getTerminalOptions();
   const defaultTerminal = getDefaultTerminal();
+  const [cmuxRestarting, setCmuxRestarting] = useState(false);
 
   // Use value or default
   const currentValue = value || defaultTerminal;
+
+  const handleCmuxRestart = async () => {
+    setCmuxRestarting(true);
+    try {
+      await settingsApi.restartCmuxForExternalAccess();
+      toast.success(t("settings.terminal.cmuxRestartSuccess"));
+    } catch (e) {
+      toast.error(
+        t("settings.terminal.cmuxRestartFailed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    } finally {
+      setCmuxRestarting(false);
+    }
+  };
 
   return (
     <section className="space-y-2">
@@ -107,6 +129,24 @@ export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
       <p className="text-xs text-muted-foreground">
         {t("settings.terminal.fallbackHint")}
       </p>
+      {isMac() && currentValue === "cmux" ? (
+        <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">
+            {t("settings.terminal.cmuxSocketHint")}
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={cmuxRestarting}
+            onClick={() => void handleCmuxRestart()}
+          >
+            {cmuxRestarting
+              ? t("settings.terminal.cmuxRestarting")
+              : t("settings.terminal.cmuxRestartButton")}
+          </Button>
+        </div>
+      ) : null}
     </section>
   );
 }

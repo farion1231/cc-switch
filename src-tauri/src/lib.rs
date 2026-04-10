@@ -5,6 +5,7 @@ mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
 mod commands;
+mod cmux_macos;
 mod config;
 mod database;
 mod deeplink;
@@ -1206,6 +1207,7 @@ pub fn run() {
             commands::get_tool_versions,
             // Provider terminal
             commands::open_provider_terminal,
+            commands::restart_cmux_for_external_access,
             // Universal Provider management
             commands::get_universal_providers,
             commands::get_universal_provider,
