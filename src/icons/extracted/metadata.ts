@@ -345,6 +345,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  xcode: {
+    name: "xcode",
+    displayName: "Xcode",
+    category: "tool",
+    keywords: ["apple", "xcode", "ide"],
+    defaultColor: "currentColor",
+  },
   zhipu: {
     name: "zhipu",
     displayName: "Zhipu AI",

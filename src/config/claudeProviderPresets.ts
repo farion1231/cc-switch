@@ -634,7 +634,7 @@ export const providerPresets: ProviderPreset[] = [
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "x-code", // 促销信息 i18n key
-    icon: "x-code",
+    icon: "xcode",
     iconColor: "#000000",
   },
   {
