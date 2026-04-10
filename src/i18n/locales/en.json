@@ -535,7 +535,8 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
-          "wezterm": "WezTerm"
+          "wezterm": "WezTerm",
+          "kaku": "Kaku"
         },
         "windows": {
           "cmd": "Command Prompt",
