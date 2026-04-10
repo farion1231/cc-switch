@@ -292,6 +292,36 @@ export function getPresetModelDefaults(
 
 export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Shengsuanyun",
+      options: {
+        baseURL: "https://router.shengsuanyun.com/api/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",

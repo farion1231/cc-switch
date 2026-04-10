@@ -2,6 +2,7 @@
 // Do not edit manually
 
 import _dds from "./dds.svg?url";
+import _shengsuanyun from "./shengsuanyun.svg?url";
 import _xcode from "./xcode.svg?url";
 
 export const icons: Record<string, string> = {
@@ -78,6 +79,7 @@ export const icons: Record<string, string> = {
 
 export const iconUrls: Record<string, string> = {
   dds: _dds,
+  shengsuanyun: _shengsuanyun,
   xcode: _xcode,
 };
 

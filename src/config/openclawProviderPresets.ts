@@ -58,6 +58,52 @@ export const openclawApiProtocols = [
  * OpenClaw provider presets list
  */
 export const openclawProviderPresets: OpenClawProviderPreset[] = [
+  {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      baseUrl: "https://router.shengsuanyun.com/api",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-6",
+          name: "Claude Opus 4.6",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "shengsuanyun/claude-opus-4-6",
+        fallbacks: ["shengsuanyun/claude-sonnet-4-6"],
+      },
+      modelCatalog: {
+        "shengsuanyun/claude-opus-4-6": { alias: "Opus" },
+        "shengsuanyun/claude-sonnet-4-6": { alias: "Sonnet" },
+      },
+    },
+  },
   // ========== Chinese Officials ==========
   {
     name: "DeepSeek",

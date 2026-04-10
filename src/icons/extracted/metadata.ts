@@ -366,6 +366,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["openrouter", "router", "aggregator"],
     defaultColor: "#6566F1",
   },
+  shengsuanyun: {
+    name: "shengsuanyun",
+    displayName: "Shengsuanyun",
+    category: "ai-provider",
+    keywords: ["shengsuanyun", "shengsuanyun"],
+    defaultColor: "currentColor",
+  },
   lioncc: {
     name: "lioncc",
     displayName: "LionCC",

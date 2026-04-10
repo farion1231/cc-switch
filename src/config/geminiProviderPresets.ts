@@ -51,6 +51,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#4285F4",
   },
   {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://router.shengsuanyun.com/api",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://router.shengsuanyun.com/api",
+    model: "gemini-3.1-pro",
+    description: "Shengsuanyun",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
