@@ -994,6 +994,31 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "PIPELLM",
+    websiteUrl: "https://www.pipellm.ai",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "PIPELLM",
+      options: {
+        baseURL: "https://api.pipellm.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
 
   {
     name: "PackyCode",
