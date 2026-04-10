@@ -1,9 +1,29 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const ICONS_DIR = path.join(__dirname, '../src/icons/extracted');
 const INDEX_FILE = path.join(ICONS_DIR, 'index.ts');
 const METADATA_FILE = path.join(ICONS_DIR, 'metadata.ts');
+
+// Supported image extensions
+const SUPPORTED_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.ico'];
+
+// ── Manual render mode control ──────────────────────────────────────
+// SVG icons listed here will be imported as URLs and rendered via <img>.
+// All other SVGs will be inlined as strings and rendered via dangerouslySetInnerHTML.
+// Raster images (png/jpg/…) are always URL-based regardless of this list.
+//
+// Add an icon name here when:
+//   - The SVG file is too large to inline (e.g. > 100 KB)
+//   - The SVG doesn't render correctly when inlined in HTML
+const URL_ICONS = new Set([
+  'dds',
+]);
+// ─────────────────────────────────────────────────────────────────────
 
 // Known metadata from previous configuration
 const KNOWN_METADATA = {
@@ -43,48 +63,133 @@ const KNOWN_METADATA = {
   link: { name: 'link', displayName: 'Link', category: 'other', keywords: ['url', 'hyperlink'], defaultColor: '#6B7280' },
 };
 
-// Get all SVG files
-const files = fs.readdirSync(ICONS_DIR).filter(file => file.endsWith('.svg'));
+// Sanitize a filename into a valid JS identifier for import variable names
+function toImportVar(name) {
+  return '_' + name.replace(/[^a-zA-Z0-9_]/g, '_');
+}
 
-console.log(`Found ${files.length} SVG files.`);
+// Strip XML declarations and DOCTYPE from SVG content for safe HTML embedding
+function cleanSvgForInline(svg) {
+  return svg
+    .replace(/<\?xml[^?]*\?>\s*/g, '')
+    .replace(/<!DOCTYPE[^>]*>\s*/g, '')
+    .trim();
+}
 
-// Generate index.ts
-const indexContent = `// Auto-generated icon index
-// Do not edit manually
+// Get all supported image files
+const files = fs.readdirSync(ICONS_DIR).filter(file =>
+  SUPPORTED_EXTENSIONS.includes(path.extname(file).toLowerCase())
+);
 
-export const icons: Record<string, string> = {
-${files.map(file => {
-  const name = path.basename(file, '.svg');
-  const svg = fs.readFileSync(path.join(ICONS_DIR, file), 'utf-8');
+console.log(`Found ${files.length} icon files.`);
+
+// Classify files
+const inlineFiles = [];  // SVGs to inline as strings (dangerouslySetInnerHTML)
+const urlFiles = [];     // SVGs/raster to import as URLs (<img>)
+const seenNames = new Map();
+
+for (const file of files) {
+  const ext = path.extname(file).toLowerCase();
+  const name = path.basename(file, path.extname(file)).toLowerCase();
+
+  // Duplicate name detection: prefer SVG over raster
+  if (seenNames.has(name)) {
+    const existing = seenNames.get(name);
+    const existingExt = path.extname(existing).toLowerCase();
+    if (ext === '.svg' && existingExt !== '.svg') {
+      console.warn(`Warning: duplicate icon name "${name}" — ${file} (SVG) replaces ${existing}`);
+      inlineFiles.splice(inlineFiles.indexOf(existing), 1);
+      urlFiles.splice(urlFiles.indexOf(existing), 1);
+    } else {
+      console.warn(`Warning: duplicate icon name "${name}" — skipping ${file}, keeping ${existing}`);
+      continue;
+    }
+  }
+  seenNames.set(name, file);
+
+  if (ext === '.svg' && !URL_ICONS.has(name)) {
+    inlineFiles.push(file);
+  } else {
+    urlFiles.push(file);
+    const reason = ext !== '.svg' ? 'raster' : 'listed in URL_ICONS';
+    console.log(`  URL import (${reason}): ${file}`);
+  }
+}
+
+console.log(`  Inline SVGs: ${inlineFiles.length}, URL-based: ${urlFiles.length}`);
+
+// ── Generate index.ts ──
+
+const urlImports = urlFiles.map(file => {
+  const ext = path.extname(file).toLowerCase();
+  const name = path.basename(file, path.extname(file)).toLowerCase();
+  const varName = toImportVar(name);
+  const importSuffix = ext === '.svg' ? '?url' : '';
+  return `import ${varName} from './${file}${importSuffix}';`;
+}).join('\n');
+
+const inlineEntries = inlineFiles.map(file => {
+  const name = path.basename(file, '.svg').toLowerCase();
+  const raw = fs.readFileSync(path.join(ICONS_DIR, file), 'utf-8');
+  const svg = cleanSvgForInline(raw);
   const escaped = svg.replace(/`/g, '\\`').replace(/\$/g, '\\$');
   return `  '${name}': \`${escaped}\`,`;
-}).join('\n')}
+}).join('\n');
+
+const urlEntries = urlFiles.map(file => {
+  const name = path.basename(file, path.extname(file)).toLowerCase();
+  const varName = toImportVar(name);
+  return `  '${name}': ${varName},`;
+}).join('\n');
+
+const indexContent = `// Auto-generated icon index
+// Do not edit manually
+${urlImports ? '\n' + urlImports + '\n' : ''}
+export const icons: Record<string, string> = {
+${inlineEntries}
 };
 
-export const iconList = Object.keys(icons);
+export const iconUrls: Record<string, string> = {
+${urlEntries}
+};
+
+export const iconList = [...Object.keys(icons), ...Object.keys(iconUrls)].sort();
 
 export function getIcon(name: string): string {
   return icons[name.toLowerCase()] || '';
 }
 
-export function hasIcon(name: string): boolean {
-  return name.toLowerCase() in icons;
+export function getIconUrl(name: string): string {
+  return iconUrls[name.toLowerCase()] || '';
 }
+
+export function hasIcon(name: string): boolean {
+  const key = name.toLowerCase();
+  return key in icons || key in iconUrls;
+}
+
+export function isUrlIcon(name: string): boolean {
+  return name.toLowerCase() in iconUrls;
+}
+
+export { getIconMetadata } from './metadata';
 `;
 
 fs.writeFileSync(INDEX_FILE, indexContent);
-console.log(`Generated ${INDEX_FILE}`);
+console.log(`Generated ${INDEX_FILE} (inline: ${inlineFiles.length}, url: ${urlFiles.length})`);
 
-// Generate metadata.ts
-const metadataEntries = files.map(file => {
-  const name = path.basename(file, '.svg').toLowerCase();
+// ── Generate metadata.ts ──
+
+const allFiles = [...inlineFiles, ...urlFiles];
+const metadataEntries = allFiles.map(file => {
+  const ext = path.extname(file);
+  const name = path.basename(file, ext).toLowerCase();
   const known = KNOWN_METADATA[name];
-  
+
   if (known) {
     return `  ${name}: ${JSON.stringify(known)},`;
   }
-  
-  // Default metadata for unknown icons
+
   return `  '${name}': { name: '${name}', displayName: '${name}', category: 'other', keywords: [], defaultColor: 'currentColor' },`;
 });
 
