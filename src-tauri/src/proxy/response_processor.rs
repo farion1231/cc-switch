@@ -291,13 +291,19 @@ pub async fn handle_non_streaming(
 /// 通用响应处理入口
 ///
 /// 根据响应类型自动选择流式或非流式处理
+///
+/// `force_streaming`: 当请求体中明确要求流式响应时（如 `stream: true`），
+/// 即使上游响应头未携带 `text/event-stream` 也强制走流式处理路径。
+/// 这解决了某些上游（如 Codex Responses API）返回非标准 Content-Type
+/// 但实际内容为 SSE 格式的兼容性问题。
 pub async fn process_response(
     response: ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    force_streaming: bool,
 ) -> Result<Response, ProxyError> {
-    if is_sse_response(&response) {
+    if force_streaming || is_sse_response(&response) {
         Ok(handle_streaming(response, ctx, state, parser_config).await)
     } else {
         handle_non_streaming(response, ctx, state, parser_config).await
