@@ -1377,6 +1377,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      options: {
+        apiKey: "",
+        baseURL: "https://e-flowcode.cc/v1",
+      },
+      models: {
+        "gpt-5.2-codex": {
+          name: "gpt-5.2-codex",
+        },
+        "gpt-5.3-codex": {
+          name: "gpt-5.3-codex",
+        },
+      },
+    },
+    category: "third_party",
+    icon: "eflowcode",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "AWS Bedrock",
     websiteUrl: "https://aws.amazon.com/bedrock/",
     settingsConfig: {

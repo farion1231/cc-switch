@@ -261,6 +261,41 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "lioncc",
   },
   {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://e-flowcode.cc",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+      config: {
+        general: {
+          previewFeatures: true,
+          sessionRetention: {
+            enabled: true,
+            maxAge: "30d",
+            warningAcknowledged: true,
+          },
+        },
+        mcpServers: {},
+        security: {
+          auth: {
+            selectedType: "gemini-api-key",
+          },
+        },
+      },
+    },
+    baseURL: "https://e-flowcode.cc",
+    model: "gemini-3.1-pro-preview",
+    description: "E-FlowCode",
+    category: "third_party",
+    endpointCandidates: ["https://e-flowcode.cc"],
+    icon: "eflowcode",
+    iconColor: "#000000",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",

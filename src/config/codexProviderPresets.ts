@@ -382,6 +382,31 @@ requires_openai_auth = true`,
     icon: "lioncc",
   },
   {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    auth: {
+      OPENAI_API_KEY: "",
+    },
+    config: `model_provider = "e-flowcode"
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+disable_response_storage = true
+personality = "pragmatic"
+
+[model_providers.e-flowcode]
+name = "e-flowcode"
+base_url = "https://e-flowcode.cc/v1"
+wire_api = "responses"
+requires_openai_auth = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 9000000`,
+    category: "third_party",
+    endpointCandidates: ["https://e-flowcode.cc/v1"],
+    icon: "eflowcode",
+    iconColor: "#000000",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",

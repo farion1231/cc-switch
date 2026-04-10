@@ -366,6 +366,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["openrouter", "router", "aggregator"],
     defaultColor: "#6566F1",
   },
+  eflowcode: {
+    name: "eflowcode",
+    displayName: "E-FlowCode",
+    category: "ai-provider",
+    keywords: ["eflowcode", "e-flowcode", "flow"],
+    defaultColor: "currentColor",
+  },
   shengsuanyun: {
     name: "shengsuanyun",
     displayName: "Shengsuanyun",

@@ -1577,6 +1577,68 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    settingsConfig: {
+      api: "openai-responses",
+      apiKey: "",
+      baseUrl: "https://e-flowcode.cc/v1",
+      headers: {
+        "User-Agent":
+          "codex_cli_rs/0.77.0 (Windows 10.0.26100; x86_64) WindowsTerminal",
+      },
+      models: [
+        {
+          contextWindow: 200000,
+          cost: {
+            cacheRead: 0,
+            cacheWrite: 0,
+            input: 0,
+            output: 0,
+          },
+          id: "gpt-5.3-codex",
+          maxTokens: 32000,
+          name: "gpt-5.3-codex",
+        },
+        {
+          id: "gpt-5.4",
+          name: "gpt-5.4",
+        },
+        {
+          id: "gpt-5.2-codex",
+          name: "gpt-5.2-codex",
+        },
+        {
+          id: "gpt-5.2",
+          name: "gpt-5.2",
+        },
+      ],
+    },
+    category: "third_party",
+    icon: "eflowcode",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "eflowcode/gpt-5.3-codex",
+        fallbacks: ["eflowcode/gpt-5.4", "eflowcode/gpt-5.2-codex"],
+      },
+      modelCatalog: {
+        "eflowcode/gpt-5.3-codex": { alias: "gpt-5.3-codex" },
+        "eflowcode/gpt-5.4": { alias: "gpt-5.4" },
+        "eflowcode/gpt-5.2-codex": { alias: "gpt-5.2-codex" },
+        "eflowcode/gpt-5.2": { alias: "gpt-5.2" },
+      },
+    },
+  },
   // ========== Cloud Providers ==========
   {
     name: "AWS Bedrock",

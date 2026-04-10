@@ -686,6 +686,28 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    settingsConfig: {
+      effortLevel: "high",
+      env: {
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_BASE_URL: "https://e-flowcode.cc",
+      },
+      enabledPlugins: {
+        "superpowers@superpowers-marketplace": true,
+      },
+      includeCoAuthoredBy: false,
+      ENABLE_TOOL_SEARCH: true,
+      skipWebFetchPreflight: true,
+    },
+    category: "third_party",
+    endpointCandidates: ["https://e-flowcode.cc"],
+    icon: "eflowcode",
+    iconColor: "#000000",
+  },
+  {
     name: "LionCCAPI",
     websiteUrl: "https://vibecodingapi.ai",
     settingsConfig: {
