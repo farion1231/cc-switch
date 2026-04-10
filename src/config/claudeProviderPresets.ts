@@ -654,7 +654,7 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "ddshub",
+    name: "DDSHub",
     websiteUrl: "https://www.ddshub.cc",
     apiKeyUrl: "https://ddshub.short.gy/ccswitch",
     settingsConfig: {
