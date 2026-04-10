@@ -407,6 +407,27 @@ model_auto_compact_token_limit = 9000000`,
     iconColor: "#000000",
   },
   {
+    name: "PIPELLM",
+    websiteUrl: "https://www.pipellm.ai",
+    apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
+    auth: {
+      OPENAI_API_KEY: "",
+    },
+    config: `model_provider = "custom"
+model = "gpt-5.4"
+model_reasoning_effort = "medium"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://cc-api.pipellm.ai/v1"`,
+    category: "aggregator",
+    endpointCandidates: ["https://cc-api.pipellm.ai/v1"],
+    icon: "pipellm",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",

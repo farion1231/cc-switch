@@ -997,24 +997,27 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "PIPELLM",
     websiteUrl: "https://www.pipellm.ai",
+    apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "PIPELLM",
       options: {
-        baseURL: "https://api.pipellm.ai/v1",
+        baseURL: "https://cc-api.pipellm.ai",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "claude-opus-4-6": { name: "Claude Opus 4.6" },
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-6": { name: "claude-opus-4-6" },
+        "claude-sonnet-4-6": { name: "claude-sonnet-4-6" },
+        "claude-haiku-4-5-20251001": { name: "claude-haiku-4-5-20251001" },
       },
     },
     category: "aggregator",
+    icon: "pipellm",
     templateValues: {
       apiKey: {
         label: "API Key",
-        placeholder: "",
+        placeholder: "pipe-...",
         editorValue: "",
       },
     },

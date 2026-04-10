@@ -3,6 +3,7 @@
 
 import _dds from "./dds.svg?url";
 import _eflowcode from "./eflowcode.png";
+import _pipellm from "./pipellm.png";
 import _shengsuanyun from "./shengsuanyun.svg?url";
 import _xcode from "./xcode.svg?url";
 
@@ -81,6 +82,7 @@ export const icons: Record<string, string> = {
 export const iconUrls: Record<string, string> = {
   dds: _dds,
   eflowcode: _eflowcode,
+  pipellm: _pipellm,
   shengsuanyun: _shengsuanyun,
   xcode: _xcode,
 };
