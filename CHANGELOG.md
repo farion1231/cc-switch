@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Development since v3.12.3 focuses on quota visibility, provider workflow upgrades, stronger proxy compatibility, and lower-overhead tray / session workflows.
+
+### Added
+
+- **Lightweight Mode**: Added a tray-only mode that destroys the main window and keeps CC Switch running from the system tray, with the window recreated when users reopen it.
+- **Provider Model Auto-Fetch**: Added OpenAI-compatible `/v1/models` discovery for Claude, Codex, Gemini, OpenCode, and OpenClaw provider forms, including grouped dropdown selection and failure-specific error messages.
+- **Quota & Balance Visibility**: Added inline quota or balance display for official Claude / Codex / Gemini providers, GitHub Copilot premium interactions, Codex OAuth providers, Token Plan providers (Kimi / Zhipu GLM / MiniMax), and official balance queries for DeepSeek, StepFun, SiliconFlow, OpenRouter, and Novita AI.
+- **Skills Discovery & Batch Updates**: Added SHA-256 based skill update detection, per-skill and batch update actions, a storage-location toggle between CC Switch and `~/.agents/skills`, and public `skills.sh` search integration.
+- **Session Workflow Upgrades**: Added batch delete in Session Manager, a directory picker before launching Claude terminal restore commands, usage import from Claude / Codex / Gemini session logs without requiring proxy interception, and per-app usage filtering for Claude / Codex / Gemini dashboards.
+- **Codex OAuth Reverse Proxy**: Added ChatGPT Plus / Pro based Codex OAuth reverse proxy support for Claude provider cards, including managed OAuth login and inline subscription quota display.
+- **OpenCode / OpenClaw Stream Check Coverage**: Added OpenCode npm package mapping plus support for OpenClaw `openai-completions` and the remaining OpenClaw protocol variants in Stream Check.
+- **Full URL Endpoint Mode**: Added a provider option that treats `base_url` as a complete upstream endpoint so proxy forwarding and stream checks can work with vendors that require nonstandard URL layouts.
+- **OpenCode StepFun Step Plan Preset**: Added a StepFun Step Plan provider preset for OpenCode.
+- **Copilot Interaction Optimizer**: Added request classification and routing logic to reduce unnecessary GitHub Copilot premium interaction consumption.
+
+### Changed
+
+- **Tray Menu Organization**: Reworked the tray menu into per-app submenus to prevent overflow and make background provider switching scale better with larger provider lists.
+- **Proxy Forwarding Stack**: Refactored proxy forwarding onto a Hyper-based client with transparent header forwarding, improved endpoint rewriting, and better support for dynamic upstream endpoints.
+- **OAuth Auth Center UI Polish**: Tightened the Auth Center copy, layout, and icon presentation so the Codex OAuth login flow feels cleaner and less cluttered.
+- **Provider Key Lifecycle & Live Sync**: Reworked additive provider create / rename / duplicate flows so live config writes, cleanup, and rollback stay consistent across OpenCode / OpenClaw and takeover scenarios.
+- **Codex OAuth Defaults**: Updated the Codex OAuth preset to the GPT-5.4 model family.
+
+### Fixed
+
+- **Copilot Authentication & Proxy Compatibility**: Fixed GitHub Copilot authentication regressions, corrected enterprise / dynamic endpoint handling, repaired clipboard verification-code copying on macOS and Linux, and fixed Responses routing when Copilot-backed Claude providers target OpenAI models.
+- **Streaming Parser Compatibility**: Fixed SSE parsing to accept fields with optional spaces, improving compatibility with non-strict streaming implementations.
+- **UTF-8 Stream Chunk Boundaries**: Fixed intermittent garbled output (U+FFFD replacement characters) in Claude Code when multi-byte UTF-8 sequences such as Chinese characters or emoji were split across TCP stream chunks via the Copilot reverse proxy, by preserving incomplete trailing bytes across chunks in all four SSE streaming paths instead of lossy decoding.
+- **Fragmented System Prompt Normalization**: Fixed strict OpenAI-compatible chat backends (Nvidia, Qwen-style) rejecting requests when converted Claude payloads contained multiple system messages, by merging system content into a single leading system message during the Anthropic → OpenAI chat transformation.
+- **Provider Switch State Corruption**: Serialized per-app provider switches to prevent concurrent failover or hot-switch operations from leaving `is_current`, settings state, and live backup state out of sync.
+- **Claude Takeover Live Config Drift**: Fixed provider edits while Claude takeover is active so live settings remain aligned with the latest provider state without breaking takeover restore behavior.
+- **WebDAV Password Retention & Validation**: Fixed the WebDAV password field so saved credentials remain visible after refresh and treated `MKCOL 405` responses correctly during connection validation.
+- **Provider Card Action States**: Fixed additive-mode highlight behavior, aligned usage display layout across provider cards, replaced hard proxy-switch blocking with a warning path, and disabled unsupported test / usage actions for Copilot and Codex OAuth cards.
+- **Usage Accuracy & Pricing**: Fixed MiniMax quota math and 0%→100% progression, corrected CNY→USD pricing plus missing model definitions, improved Gemini session-log syncing, and resolved session-based usage entries being shown as unknown providers.
+- **Usage Editor & Skills UI Regressions**: Fixed usage query fields being reset while editing extractor code, corrected broken `skills.sh` links and empty descriptions, and fixed auto-query defaults plus number-input clearing in usage configuration.
+- **Chinese Skills Terminology**: Unified Skills-related labels across settings panels in the `zh` locale so storage and sync options use consistent wording.
+- **Environment & Preset Compatibility**: Added Bun global bin detection in CLI scan, adapted to the oh-my-openagent rename with backward compatibility, corrected the OpenCode `kimi-for-coding` preset, gated Gemini keychain parsing to macOS, and fixed an OpenClaw serializer panic on empty collections.
+- **Linux UI Unresponsive on Startup**: Fixed a bug where the window UI (including native title bar buttons) couldn't receive clicks on Linux until the user manually maximized and restored the window. Root causes: (1) Tauri webview did not acquire keyboard focus after `show()` on Linux, so the first click was consumed by X11/Wayland click-to-activate (Tauri #10746, wry #637); (2) GTK surface's input region failed to renegotiate on the `visible:false → show()` path under some WebKitGTK/compositor combinations, leaving the entire window unresponsive. Mitigations: set `WEBKIT_DISABLE_COMPOSITING_MODE=1` at startup, and added a new `linux_fix::nudge_main_window` helper that performs `set_focus` + a ±1px no-op resize ~200ms after show, equivalent to a visually invisible "maximize-and-restore". Wired into all window-re-show paths (normal startup, deeplink, single_instance, tray `show_main`, lightweight exit).
+- **Linux Drag Region on Header**: Removed `data-tauri-drag-region` from the top header bar on Linux to avoid triggering `gtk_window_begin_move_drag` paths affected by Tauri #13440 under Wayland. macOS drag behavior is preserved.
+- **OpenCode / OpenClaw Stream Check Edge Cases**: Fixed custom-header passthrough, OpenClaw custom auth-header detection, Bedrock error messaging, and OpenCode default `baseURL` fallback handling in Stream Check.
+
+### Docs
+
+- **User Manual Refresh**: Updated the EN / ZH / JA manuals for tray submenus, lightweight mode, provider model fetching, session management, workspace files, WebDAV v2 behavior, OpenCode / OpenClaw activation, and other provider workflow improvements.
+- **Community & Contribution Docs**: Added `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, bilingual issue / PR templates, Dependabot config, and CI quality checks.
+- **Release Notes Risk Notice**: Added a Copilot reverse proxy risk notice and anchored highlight links in the v3.12.3 release notes across all three languages.
+
 ---
 
 ## [3.12.3] - 2026-03-24

@@ -23,6 +23,13 @@ use crate::proxy::error::ProxyError;
 /// 供 handler/forwarder 外部使用的公开函数。
 /// 优先级：meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
 pub fn get_claude_api_format(provider: &Provider) -> &'static str {
+    // 0) Codex OAuth 强制使用 openai_responses（不可被覆盖）
+    if let Some(meta) = provider.meta.as_ref() {
+        if meta.provider_type.as_deref() == Some("codex_oauth") {
+            return "openai_responses";
+        }
+    }
+
     // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
     if let Some(meta) = provider.meta.as_ref() {
         if let Some(api_format) = meta.api_format.as_deref() {
@@ -88,8 +95,21 @@ pub fn transform_claude_request_for_api_format(
         .and_then(|m| m.prompt_cache_key.as_deref());
 
     match api_format {
-        "openai_responses" => super::transform_responses::anthropic_to_responses(body, cache_key),
-        "openai_chat" => super::transform::anthropic_to_openai(body, cache_key),
+        "openai_responses" => {
+            // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
+            // + include: ["reasoning.encrypted_content"]，由 transform 层统一处理。
+            let is_codex_oauth = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.provider_type.as_deref())
+                == Some("codex_oauth");
+            super::transform_responses::anthropic_to_responses(
+                body,
+                Some(cache_key),
+                is_codex_oauth,
+            )
+        }
+        "openai_chat" => super::transform::anthropic_to_openai(body, Some(cache_key)),
         "gemini_native" => super::transform_gemini::anthropic_to_gemini_with_shadow(
             body,
             shadow_store,
@@ -112,10 +132,12 @@ impl ClaudeAdapter {
     ///
     /// 根据 base_url 和 auth_mode 检测具体的供应商类型：
     /// - GitHubCopilot: meta.provider_type 为 github_copilot 或 base_url 包含 githubcopilot.com
+    /// - CodexOAuth: meta.provider_type 为 codex_oauth
     /// - OpenRouter: base_url 包含 openrouter.ai
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
+        // 检测 Gemini Native 格式
         if self.get_api_format(provider) == "gemini_native" {
             return match self.extract_key(provider) {
                 Some(key) if key.starts_with("ya29.") || key.starts_with('{') => {
@@ -123,6 +145,11 @@ impl ClaudeAdapter {
                 }
                 _ => ProviderType::Gemini,
             };
+        }
+
+        // 检测 Codex OAuth (ChatGPT Plus/Pro)
+        if self.is_codex_oauth(provider) {
+            return ProviderType::CodexOAuth;
         }
 
         // 检测 GitHub Copilot
@@ -141,6 +168,16 @@ impl ClaudeAdapter {
         }
 
         ProviderType::Claude
+    }
+
+    /// 检测是否为 Codex OAuth 供应商（ChatGPT Plus/Pro 反代）
+    fn is_codex_oauth(&self, provider: &Provider) -> bool {
+        if let Some(meta) = provider.meta.as_ref() {
+            if meta.provider_type.as_deref() == Some("codex_oauth") {
+                return true;
+            }
+        }
+        false
     }
 
     /// 检测是否为 GitHub Copilot 供应商
@@ -274,6 +311,11 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        // Codex OAuth: 强制使用 ChatGPT 后端 API 端点（忽略用户配置的 base_url）
+        if self.is_codex_oauth(provider) {
+            return Ok("https://chatgpt.com/backend-api/codex".to_string());
+        }
+
         // 1. 从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
             if let Some(url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
@@ -324,6 +366,15 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
+        // Codex OAuth (ChatGPT Plus/Pro) 同样使用占位符
+        // 实际的 access_token 由 CodexOAuthManager 动态提供
+        if provider_type == ProviderType::CodexOAuth {
+            return Some(AuthInfo::new(
+                "codex_oauth_placeholder".to_string(),
+                AuthStrategy::CodexOAuth,
+            ));
+        }
+
         let key = self.extract_key(provider)?;
 
         match provider_type {
@@ -344,6 +395,12 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
+        // Codex OAuth: 所有请求统一走 /responses 端点
+        if base_url == "https://chatgpt.com/backend-api/codex" {
+            let _ = endpoint; // 忽略原始 endpoint
+            return "https://chatgpt.com/backend-api/codex/responses".to_string();
+        }
+
         // NOTE:
         // 过去 OpenRouter 只有 OpenAI Chat Completions 兼容接口，需要把 Claude 的 `/v1/messages`
         // 映射到 `/v1/chat/completions`，并做 Anthropic ↔ OpenAI 的格式转换。
@@ -390,6 +447,20 @@ impl ProviderAdapter for ClaudeAdapter {
                     (
                         HeaderName::from_static("x-goog-api-client"),
                         HeaderValue::from_static("GeminiCLI/1.0"),
+                    ),
+                ]
+            }
+            AuthStrategy::CodexOAuth => {
+                // 注意：bearer token 由 forwarder 动态注入到 auth.api_key
+                // ChatGPT-Account-Id 由 forwarder 注入额外 header
+                vec![
+                    (
+                        HeaderName::from_static("authorization"),
+                        HeaderValue::from_str(&bearer).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("originator"),
+                        HeaderValue::from_static("cc-switch"),
                     ),
                 ]
             }
@@ -454,6 +525,11 @@ impl ProviderAdapter for ClaudeAdapter {
     fn needs_transform(&self, provider: &Provider) -> bool {
         // GitHub Copilot 总是需要格式转换 (Anthropic → OpenAI)
         if self.is_github_copilot(provider) {
+            return true;
+        }
+
+        // Codex OAuth 总是需要格式转换 (Anthropic → OpenAI Responses API)
+        if self.is_codex_oauth(provider) {
             return true;
         }
 

@@ -13,6 +13,8 @@ mod gemini_config;
 mod gemini_mcp;
 mod init_status;
 mod lightweight;
+#[cfg(target_os = "linux")]
+mod linux_fix;
 mod mcp;
 mod openclaw_config;
 mod opencode_config;
@@ -132,6 +134,10 @@ fn handle_deeplink_url(
                     let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
+                    #[cfg(target_os = "linux")]
+                    {
+                        linux_fix::nudge_main_window(window.clone());
+                    }
                     log::info!("✓ Window shown and focused");
                 }
             }
@@ -229,6 +235,10 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
+                #[cfg(target_os = "linux")]
+                {
+                    linux_fix::nudge_main_window(window.clone());
+                }
             }
         }));
     }
@@ -455,6 +465,80 @@ pub fn run() {
                 }
                 Ok(_) => {} // 未开启迁移标志，静默跳过
                 Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
+            }
+
+            // 1.5. 自动导入 live 配置 + seed 官方预设供应商（Claude / Codex / Gemini）
+            //
+            // 先 import 后 seed 是有意为之：先把用户手动配置的 settings.json / auth.json / .env
+            // 落成 "default" provider 设为 current，再追加官方预设（is_current=false）。
+            // 这样用户切到官方预设时，回填机制会保护原 live 配置不丢失。
+            //
+            // 捕获首次运行快照：所有全新装用户都会看到欢迎弹窗介绍 CC Switch 的工作方式。
+            // 读失败时默认不弹，宁可漏弹也不要因为故障打扰用户。
+            let first_run_already_confirmed = crate::settings::get_settings()
+                .first_run_notice_confirmed
+                .unwrap_or(false);
+            let fresh_install_at_startup =
+                app_state.db.is_providers_empty().unwrap_or(false);
+
+            for app_type in
+                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
+            {
+                match crate::services::provider::import_default_config(
+                    &app_state,
+                    app_type.clone(),
+                ) {
+                    Ok(true) => log::info!(
+                        "✓ Imported live config for {} as default provider",
+                        app_type.as_str()
+                    ),
+                    Ok(false) => log::debug!(
+                        "○ {} already has providers; live import skipped",
+                        app_type.as_str()
+                    ),
+                    Err(e) => log::debug!(
+                        "○ No live config to import for {}: {e}",
+                        app_type.as_str()
+                    ),
+                }
+            }
+
+            match app_state.db.init_default_official_providers() {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Seeded {count} official provider(s)");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
+            }
+
+            // 老用户 / 已确认的路径由 `fresh_install_at_startup` 自行拦截，这里不做写入。
+            // 字段只由前端在用户点击"我知道了"时 save_settings 回写，语义是"用户显式确认过"。
+            if !first_run_already_confirmed && fresh_install_at_startup {
+                log::info!("✓ First-run welcome notice pending");
+            }
+
+            // 1.6. 自动同步 OpenCode / OpenClaw 的 live providers 到数据库
+            //
+            // additive 模式（OpenCode / OpenClaw）的 import 函数本身按 id 幂等，
+            // 已有的 provider 会被跳过，所以每次启动都跑是安全的——既保证新装
+            // 用户开箱可见 live 中的供应商，也让外部修改的 live 文件能在重启
+            // 后同步到数据库（与之前依赖前端"导入当前配置"按钮手动触发不同）。
+            //
+            // 底层 read_*_config 在文件不存在时返回默认空配置，因此新装且无
+            // live 文件的用户走 Ok(0) 路径，不会产生错误日志噪音。
+            match crate::services::provider::import_opencode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} OpenCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new OpenCode providers to import"),
+                Err(e) => log::warn!("✗ Failed to import OpenCode providers: {e}"),
+            }
+            match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new OpenClaw providers to import"),
+                Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
             }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
@@ -715,6 +799,18 @@ pub fn run() {
                 log::info!("✓ CopilotAuthManager initialized");
             }
 
+            // 初始化 CodexOAuthManager (ChatGPT Plus/Pro 反代)
+            {
+                use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+                use commands::CodexOAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let codex_oauth_manager = CodexOAuthManager::new(app_config_dir);
+                app.manage(CodexOAuthState(Arc::new(RwLock::new(codex_oauth_manager))));
+                log::info!("✓ CodexOAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -796,6 +892,65 @@ pub fn run() {
                         }
                     }
                 });
+
+                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
+                let db_for_session_sync = state.db.clone();
+                tauri::async_runtime::spawn(async move {
+                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
+
+                    // 首次同步
+                    if let Err(e) =
+                        crate::services::session_usage::sync_claude_session_logs(
+                            &db_for_session_sync,
+                        )
+                    {
+                        log::warn!("Session usage initial sync failed: {e}");
+                    }
+                    if let Err(e) =
+                        crate::services::session_usage_codex::sync_codex_usage(
+                            &db_for_session_sync,
+                        )
+                    {
+                        log::warn!("Codex usage initial sync failed: {e}");
+                    }
+                    if let Err(e) =
+                        crate::services::session_usage_gemini::sync_gemini_usage(
+                            &db_for_session_sync,
+                        )
+                    {
+                        log::warn!("Gemini usage initial sync failed: {e}");
+                    }
+
+                    // 定期同步
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                        SESSION_SYNC_INTERVAL_SECS,
+                    ));
+                    interval.tick().await; // skip immediate first tick
+                    loop {
+                        interval.tick().await;
+                        if let Err(e) =
+                            crate::services::session_usage::sync_claude_session_logs(
+                                &db_for_session_sync,
+                            )
+                        {
+                            log::warn!("Session usage periodic sync failed: {e}");
+                        }
+                        if let Err(e) =
+                            crate::services::session_usage_codex::sync_codex_usage(
+                                &db_for_session_sync,
+                            )
+                        {
+                            log::warn!("Codex usage periodic sync failed: {e}");
+                        }
+                        if let Err(e) =
+                            crate::services::session_usage_gemini::sync_gemini_usage(
+                                &db_for_session_sync,
+                            )
+                        {
+                            log::warn!("Gemini usage periodic sync failed: {e}");
+                        }
+                    }
+                });
             });
 
             // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
@@ -828,6 +983,14 @@ pub fn run() {
                     // 正常启动模式：显示窗口
                     let _ = window.show();
                     log::info!("正常启动模式：主窗口已显示");
+
+                    // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
+                    // 启动时 webview 未获取焦点 + surface 尺寸协商失败，导致点击无效。
+                    // 这里做 set_focus + 伪 resize，等价于无视觉版本的"最大化-还原"。
+                    #[cfg(target_os = "linux")]
+                    {
+                        linux_fix::nudge_main_window(window.clone());
+                    }
                 }
             }
 
@@ -892,7 +1055,9 @@ pub fn run() {
             commands::testUsageScript,
             // subscription quota
             commands::get_subscription_quota,
+            commands::get_codex_oauth_quota,
             commands::get_coding_plan_quota,
+            commands::get_balance,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
             commands::upsert_mcp_server_in_config,
@@ -962,6 +1127,10 @@ pub fn run() {
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
             commands::discover_available_skills,
+            commands::check_skill_updates,
+            commands::update_skill,
+            commands::migrate_skill_storage,
+            commands::search_skills_sh,
             // Skill management (legacy API compatibility)
             commands::get_skills,
             commands::get_skills_for_app,
@@ -1020,6 +1189,9 @@ pub fn run() {
             commands::update_model_pricing,
             commands::delete_model_pricing,
             commands::check_provider_limits,
+            // Session usage sync
+            commands::sync_session_usage,
+            commands::get_usage_data_sources,
             // Stream health check
             commands::stream_check_provider,
             commands::stream_check_all_providers,

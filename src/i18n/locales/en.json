@@ -42,6 +42,12 @@
     "enabled": "Enabled",
     "notSet": "Not Set"
   },
+  "firstRunNotice": {
+    "title": "Welcome to CC Switch",
+    "bodyDefault": "CC Switch lets you switch between multiple Claude Code / Codex / Gemini CLI providers with a single click. If you already had these tools configured, CC Switch has saved your existing setup as a provider named “default” so none of your previous configuration is lost.",
+    "bodyOfficial": "An “Official” preset is also included in the list — click it any time you want to switch back to the official default. CC Switch automatically backs up your current config to “default” before switching, so you can move back and forth freely. That's how CC Switch works 😊",
+    "confirm": "Got it"
+  },
   "apiKeyInput": {
     "placeholder": "Enter API Key",
     "show": "Show API Key",
@@ -50,6 +56,15 @@
   "jsonEditor": {
     "mustBeObject": "Configuration must be a JSON object, not an array or other type",
     "invalidJson": "Invalid JSON format"
+  },
+  "commonConfig": {
+    "guideTitle": "What is a Common Config Snippet?",
+    "guidePurpose": "It lets you share non-sensitive settings (plugins, environment variables, etc.) across different providers. These settings won't be lost when you switch providers.",
+    "guideUsage": "How to use: ① Click \"Extract from Editor\" to save the common parts  ② Check \"Write Common Config\" when creating a new provider",
+    "guideReExtract": "If you've newly installed plugins or hooks, re-extract the common config so they sync to other providers.",
+    "guideReassurance": "Don't worry — your original configuration is safely stored in the default provider and won't be lost.",
+    "emptyTitle": "No common config snippet yet",
+    "emptyHint": "Click \"Extract from Editor\" below to extract reusable parts from your current configuration"
   },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
@@ -217,6 +232,11 @@
       "title": "Enable Auto Sync",
       "message": "When auto sync is enabled, every database change will be automatically uploaded to the WebDAV server.\n\nThis may result in significant network traffic. Please ensure your network and WebDAV service can handle frequent data transfers.",
       "confirm": "I understand, enable"
+    },
+    "commonConfig": {
+      "title": "About Common Config",
+      "message": "The \"Common Config Snippet\" lets you share plugins, environment variables, and other settings across different providers — so they won't be lost when you switch.\n\nHow to use:\n① Edit a provider → click \"Edit Common Config\" → \"Extract from Editor\"\n② When creating a new provider, check \"Write Common Config\" (enabled by default)\n\nIf you've newly installed plugins or hooks, re-extract the common config to keep them in sync.",
+      "confirm": "Got it"
     }
   },
   "settings": {
@@ -225,6 +245,13 @@
     "tabGeneral": "General",
     "tabAdvanced": "Advanced",
     "tabProxy": "Proxy",
+    "authCenter": {
+      "title": "OAuth Authentication Center",
+      "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
+      "beta": "Beta",
+      "copilotDescription": "Manage GitHub Copilot accounts",
+      "codexOauthDescription": "Manage ChatGPT accounts"
+    },
     "advanced": {
       "configDir": {
         "title": "Configuration Directory",
@@ -477,6 +504,18 @@
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
+    },
+    "skillStorage": {
+      "title": "Skill Storage Location",
+      "description": "Choose where CC Switch stores the master copies of your skills",
+      "ccSwitch": "CC Switch",
+      "unified": "~/.agents/skills",
+      "ccSwitchHint": "Skills are stored in ~/.cc-switch/skills/ and synced to each app via symlink or copy.",
+      "unifiedHint": "Skills are stored in ~/.agents/skills/, the Agent Skills open standard. Compatible tools (Claude Code, Codex, Gemini CLI, etc.) discover skills here natively.",
+      "confirmTitle": "Migrate Skill Storage",
+      "confirmMessage": "{{count}} skill(s) will be moved to the new location. Continue?",
+      "migrationSuccess": "Successfully migrated {{count}} skill(s)",
+      "migrationPartial": "Migrated {{migrated}} skill(s), {{errors}} error(s). Check logs for details."
     },
     "skillSync": {
       "title": "Skill Sync Method",
@@ -836,6 +875,27 @@
     "migrationFailed": "Legacy auth migration failed: {{error}}",
     "loadModelsFailed": "Failed to load Copilot models"
   },
+  "codexOauth": {
+    "authStatus": "Auth status",
+    "notAuthenticated": "Not authenticated",
+    "loginWithChatGPT": "Sign in with ChatGPT",
+    "loginRequired": "Please sign in to ChatGPT first",
+    "waitingForAuth": "Waiting for authorization...",
+    "enterCode": "Enter the code in your browser:",
+    "accountCount": "{{count}} account(s)",
+    "selectAccount": "Select account",
+    "selectAccountPlaceholder": "Choose a ChatGPT account",
+    "useDefaultAccount": "Use default account",
+    "loggedInAccounts": "Logged in accounts",
+    "defaultAccount": "Default",
+    "selected": "Selected",
+    "removeAccount": "Remove account",
+    "setAsDefault": "Set as default",
+    "addAnotherAccount": "Add another account",
+    "logoutAll": "Logout all accounts",
+    "retry": "Retry",
+    "copyCode": "Copy code"
+  },
   "endpointTest": {
     "title": "API Endpoint Management",
     "endpoints": "endpoints",
@@ -1009,6 +1069,31 @@
     "unknownProvider": "Unknown Provider",
     "stream": "Stream",
     "nonStream": "Non-stream",
+    "source": "Source",
+    "requestsLabel": "requests",
+    "costLabel": "total cost",
+    "appFilter": {
+      "all": "All",
+      "claude": "Claude Code",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    },
+    "dataSources": "Data Sources",
+    "dataSource": {
+      "proxy": "Proxy",
+      "session_log": "Session Log",
+      "codex_db": "Codex DB",
+      "codex_session": "Codex Session",
+      "gemini_session": "Gemini Session"
+    },
+    "sessionSync": {
+      "trigger": "Sync session logs",
+      "import": "Import Sessions",
+      "resync": "Sync",
+      "imported": "Imported {{count}} records from session logs",
+      "upToDate": "Session logs are up to date",
+      "failed": "Session sync failed"
+    },
     "totalRecords": "{{total}} records total",
     "modelPricing": "Model Pricing",
     "loadPricingError": "Failed to load pricing data",
@@ -1094,8 +1179,10 @@
     "templateNewAPI": "NewAPI",
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
+    "templateBalance": "Official",
     "copilotAutoAuth": "Auto OAuth authentication, no manual credentials needed",
     "tokenPlanHint": "Automatically uses the provider's API Key and Base URL to query Token Plan quota",
+    "balanceHint": "Automatically uses the provider's API Key to query account balance",
     "resetDate": "Reset date",
     "premiumRequests": "Premium Requests",
     "credentialsConfig": "Credentials",
@@ -1574,6 +1661,18 @@
     "installFailed": "Failed to install",
     "uninstallSuccess": "Skill {{name}} uninstalled",
     "uninstallFailed": "Failed to uninstall",
+    "update": "Update",
+    "updating": "Updating...",
+    "updateAvailable": "Update",
+    "updateSuccess": "Skill {{name}} updated to latest version",
+    "updateFailed": "Failed to update",
+    "checkUpdates": "Check Updates",
+    "checkingUpdates": "Checking...",
+    "noUpdates": "All skills are up to date",
+    "updatesFound": "{{count}} skill(s) have updates available",
+    "updateAll": "Update All ({{count}})",
+    "updatingAll": "Updating...",
+    "updateAllSuccess": "Successfully updated {{count}} skill(s)",
     "error": {
       "skillNotFound": "Skill not found: {{directory}}",
       "missingRepoInfo": "Missing repository info (owner or name)",
@@ -1627,6 +1726,19 @@
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or repo...",
+    "searchSource": {
+      "repos": "Repos",
+      "skillssh": "skills.sh"
+    },
+    "skillssh": {
+      "searchPlaceholder": "Search skills.sh (min 2 chars)...",
+      "installs": "{{count}} installs",
+      "loadMore": "Load More",
+      "loading": "Searching skills.sh...",
+      "noResults": "No skills found for \"{{query}}\"",
+      "error": "Failed to search skills.sh",
+      "poweredBy": "Powered by skills.sh"
+    },
     "filter": {
       "placeholder": "Filter by status",
       "all": "All",
@@ -2292,6 +2404,7 @@
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "Weekly",
+    "copilotPremium": "Premium",
     "utilization": "{{value}}%",
     "resetsIn": "Resets in {{time}}",
     "extraUsage": "Extra Usage",

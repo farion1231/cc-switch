@@ -15,6 +15,7 @@ mod adapter;
 mod auth;
 mod claude;
 mod codex;
+pub mod codex_oauth_auth;
 pub mod copilot_auth;
 mod gemini;
 pub(crate) mod gemini_schema;
@@ -62,6 +63,8 @@ pub enum ProviderType {
     OpenRouter,
     /// GitHub Copilot (OAuth + Copilot Token，需要 Anthropic ↔ OpenAI 转换)
     GitHubCopilot,
+    /// OpenAI Codex (ChatGPT Plus/Pro OAuth，需要 Anthropic ↔ Responses API 转换)
+    CodexOAuth,
 }
 
 impl ProviderType {
@@ -74,6 +77,7 @@ impl ProviderType {
     pub fn needs_transform(&self) -> bool {
         match self {
             ProviderType::GitHubCopilot => true,
+            ProviderType::CodexOAuth => true,
             ProviderType::OpenRouter => false,
             _ => false,
         }
@@ -90,6 +94,7 @@ impl ProviderType {
             }
             ProviderType::OpenRouter => "https://openrouter.ai/api",
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
+            ProviderType::CodexOAuth => "https://chatgpt.com/backend-api/codex",
         }
     }
 
@@ -112,6 +117,9 @@ impl ProviderType {
                 if let Some(meta) = provider.meta.as_ref() {
                     if meta.provider_type.as_deref() == Some("github_copilot") {
                         return ProviderType::GitHubCopilot;
+                    }
+                    if meta.provider_type.as_deref() == Some("codex_oauth") {
+                        return ProviderType::CodexOAuth;
                     }
                 }
 
@@ -187,6 +195,7 @@ impl ProviderType {
             ProviderType::GeminiCli => "gemini_cli",
             ProviderType::OpenRouter => "openrouter",
             ProviderType::GitHubCopilot => "github_copilot",
+            ProviderType::CodexOAuth => "codex_oauth",
         }
     }
 }
@@ -211,6 +220,7 @@ impl std::str::FromStr for ProviderType {
             "github_copilot" | "github-copilot" | "githubcopilot" => {
                 Ok(ProviderType::GitHubCopilot)
             }
+            "codex_oauth" | "codex-oauth" | "codexoauth" => Ok(ProviderType::CodexOAuth),
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -240,7 +250,8 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         ProviderType::Claude
         | ProviderType::ClaudeAuth
         | ProviderType::OpenRouter
-        | ProviderType::GitHubCopilot => Box::new(ClaudeAdapter::new()),
+        | ProviderType::GitHubCopilot
+        | ProviderType::CodexOAuth => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
     }

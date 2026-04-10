@@ -14,6 +14,7 @@ use std::str::FromStr;
 // 常量定义
 const TEMPLATE_TYPE_GITHUB_COPILOT: &str = "github_copilot";
 const TEMPLATE_TYPE_TOKEN_PLAN: &str = "token_plan";
+const TEMPLATE_TYPE_BALANCE: &str = "balance";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 /// 获取所有供应商
@@ -266,6 +267,30 @@ pub async fn queryProviderUsage(
             data: if data.is_empty() { None } else { Some(data) },
             error: None,
         });
+    }
+
+    // ── 官方余额查询路径 ──
+    if template_type == TEMPLATE_TYPE_BALANCE {
+        let settings_config = provider
+            .map(|p| &p.settings_config)
+            .cloned()
+            .unwrap_or_default();
+        let env = settings_config.get("env");
+        let base_url = env
+            .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let api_key = env
+            .and_then(|e| {
+                e.get("ANTHROPIC_AUTH_TOKEN")
+                    .or_else(|| e.get("ANTHROPIC_API_KEY"))
+            })
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        return crate::services::balance::get_balance(base_url, api_key)
+            .await
+            .map_err(|e| format!("Failed to query balance: {e}"));
     }
 
     // ── 通用 JS 脚本路径 ──

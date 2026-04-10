@@ -11,8 +11,11 @@ pub fn get_usage_summary(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
+    app_type: Option<String>,
 ) -> Result<UsageSummary, AppError> {
-    state.db.get_usage_summary(start_date, end_date)
+    state
+        .db
+        .get_usage_summary(start_date, end_date, app_type.as_deref())
 }
 
 /// 获取每日趋势
@@ -21,20 +24,29 @@ pub fn get_usage_trends(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
+    app_type: Option<String>,
 ) -> Result<Vec<DailyStats>, AppError> {
-    state.db.get_daily_trends(start_date, end_date)
+    state
+        .db
+        .get_daily_trends(start_date, end_date, app_type.as_deref())
 }
 
 /// 获取 Provider 统计
 #[tauri::command]
-pub fn get_provider_stats(state: State<'_, AppState>) -> Result<Vec<ProviderStats>, AppError> {
-    state.db.get_provider_stats()
+pub fn get_provider_stats(
+    state: State<'_, AppState>,
+    app_type: Option<String>,
+) -> Result<Vec<ProviderStats>, AppError> {
+    state.db.get_provider_stats(app_type.as_deref())
 }
 
 /// 获取模型统计
 #[tauri::command]
-pub fn get_model_stats(state: State<'_, AppState>) -> Result<Vec<ModelStats>, AppError> {
-    state.db.get_model_stats()
+pub fn get_model_stats(
+    state: State<'_, AppState>,
+    app_type: Option<String>,
+) -> Result<Vec<ModelStats>, AppError> {
+    state.db.get_model_stats(app_type.as_deref())
 }
 
 /// 获取请求日志列表
@@ -164,6 +176,51 @@ pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Res
 
     log::info!("已删除模型定价: {model_id}");
     Ok(())
+}
+
+/// 手动触发会话日志同步
+#[tauri::command]
+pub fn sync_session_usage(
+    state: State<'_, AppState>,
+) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    // 同步 Claude 会话日志
+    let mut result = crate::services::session_usage::sync_claude_session_logs(&state.db)?;
+
+    // 同步 Codex 使用数据
+    match crate::services::session_usage_codex::sync_codex_usage(&state.db) {
+        Ok(codex_result) => {
+            result.imported += codex_result.imported;
+            result.skipped += codex_result.skipped;
+            result.files_scanned += codex_result.files_scanned;
+            result.errors.extend(codex_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Codex 同步失败: {e}"));
+        }
+    }
+
+    // 同步 Gemini 使用数据
+    match crate::services::session_usage_gemini::sync_gemini_usage(&state.db) {
+        Ok(gemini_result) => {
+            result.imported += gemini_result.imported;
+            result.skipped += gemini_result.skipped;
+            result.files_scanned += gemini_result.files_scanned;
+            result.errors.extend(gemini_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Gemini 同步失败: {e}"));
+        }
+    }
+
+    Ok(result)
+}
+
+/// 获取数据来源分布
+#[tauri::command]
+pub fn get_usage_data_sources(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
+    crate::services::session_usage::get_data_source_breakdown(&state.db)
 }
 
 /// 模型定价信息
