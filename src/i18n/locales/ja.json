@@ -243,6 +243,7 @@
     "title": "設定",
     "general": "一般",
     "tabGeneral": "一般",
+    "tabAuth": "認証",
     "tabAdvanced": "詳細",
     "tabProxy": "プロキシ",
     "authCenter": {

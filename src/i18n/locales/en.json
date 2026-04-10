@@ -243,6 +243,7 @@
     "title": "Settings",
     "general": "General",
     "tabGeneral": "General",
+    "tabAuth": "Auth",
     "tabAdvanced": "Advanced",
     "tabProxy": "Proxy",
     "authCenter": {
