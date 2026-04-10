@@ -2277,6 +2277,7 @@
     "enabledModelsCount": "{{count}} configured models available",
     "source": "from:",
     "otherFieldsJson": "Other Fields (JSON)",
+    "slimOtherFieldsHint": "Use this area for top-level OMO Slim config such as council, fallback, multiplexer, disabled_mcps, and todoContinuation.",
     "searchOrType": "Search or type custom value...",
     "noMatches": "No matches",
     "jsonMustBeObject": "{{field}} must be a JSON object",
@@ -2353,7 +2354,8 @@
       "librarian": "Librarian",
       "explorer": "Explorer",
       "designer": "Designer",
-      "fixer": "Fixer"
+      "fixer": "Fixer",
+      "council": "Council"
     },
     "slimAgentTooltip": {
       "orchestrator": "Writes executable code, orchestrates multi-agent workflow, summons experts",
@@ -2361,7 +2363,8 @@
       "librarian": "Documentation lookup, GitHub code search (read-only)",
       "explorer": "Regex search, AST pattern matching, file discovery (read-only)",
       "designer": "Modern responsive design, CSS/Tailwind expertise",
-      "fixer": "Code implementation, refactoring, testing, verification"
+      "fixer": "Code implementation, refactoring, testing, verification",
+      "council": "Multi-model consensus agent. Runs multiple read-only councillors in parallel, then lets the master synthesize the final answer."
     }
   },
   "openclawConfig": {
