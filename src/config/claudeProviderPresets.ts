@@ -796,7 +796,7 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "Codex (ChatGPT Plus/Pro)",
+    name: "Codex",
     websiteUrl: "https://openai.com/chatgpt/pricing",
     settingsConfig: {
       env: {
