@@ -2275,6 +2275,7 @@
     "enabledModelsCount": "設定済みモデル {{count}} 件",
     "source": "出典:",
     "otherFieldsJson": "その他のフィールド (JSON)",
+    "slimOtherFieldsHint": "council、fallback、multiplexer、disabled_mcps、todoContinuation など、OMO Slim のトップレベル設定はここに記述します。",
     "searchOrType": "検索またはカスタム値を入力...",
     "noMatches": "一致する項目がありません",
     "jsonMustBeObject": "{{field}} は JSON オブジェクトである必要があります",
@@ -2351,7 +2352,8 @@
       "librarian": "ライブラリアン",
       "explorer": "エクスプローラー",
       "designer": "デザイナー",
-      "fixer": "フィクサー"
+      "fixer": "フィクサー",
+      "council": "カウンシル"
     },
     "slimAgentTooltip": {
       "orchestrator": "実行コードの作成、マルチエージェントワークフローの調整、エキスパートの召喚",
@@ -2359,7 +2361,8 @@
       "librarian": "ドキュメント検索、GitHubコード検索（読み取り専用）",
       "explorer": "正規表現検索、ASTパターンマッチング、ファイル検出（読み取り専用）",
       "designer": "モダンなレスポンシブデザイン、CSS/Tailwindの専門知識",
-      "fixer": "コード実装、リファクタリング、テスト、検証"
+      "fixer": "コード実装、リファクタリング、テスト、検証",
+      "council": "複数モデルの合議エージェント。複数の読み取り専用 councillor を並列実行し、master が最終回答を統合します。"
     }
   },
   "openclawConfig": {

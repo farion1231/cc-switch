@@ -2275,6 +2275,7 @@
     "enabledModelsCount": "可选已配置模型 {{count}} 个",
     "source": "来源:",
     "otherFieldsJson": "其他字段 (JSON)",
+    "slimOtherFieldsHint": "OMO Slim 的 council、fallback、multiplexer、disabled_mcps、todoContinuation 等顶层配置请写在这里。",
     "searchOrType": "搜索或输入自定义值...",
     "noMatches": "无匹配项",
     "jsonMustBeObject": "{{field}} 必须是 JSON 对象",
@@ -2351,7 +2352,8 @@
       "librarian": "图书管理员",
       "explorer": "探索者",
       "designer": "设计师",
-      "fixer": "修复者"
+      "fixer": "修复者",
+      "council": "议会"
     },
     "slimAgentTooltip": {
       "orchestrator": "编写执行代码，编排多代理工作流，召唤专家",
@@ -2359,7 +2361,8 @@
       "librarian": "文档查询、GitHub 代码搜索（只读）",
       "explorer": "正则搜索、AST 模式匹配、文件发现（只读）",
       "designer": "现代响应式设计、CSS/Tailwind 精通",
-      "fixer": "代码实现、重构、测试、验证"
+      "fixer": "代码实现、重构、测试、验证",
+      "council": "多模型共识代理，并行运行多个只读 councillor，再由 master 汇总最终答案。"
     }
   },
   "openclawConfig": {
