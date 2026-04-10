@@ -1136,9 +1136,7 @@ impl Database {
                      WHERE model_id = ?1",
                     rusqlite::params![model_id, input, output, cache_read, cache_creation],
                 )
-                .map_err(|e| {
-                    AppError::Database(format!("更新模型 {model_id} 定价失败: {e}"))
-                })?;
+                .map_err(|e| AppError::Database(format!("更新模型 {model_id} 定价失败: {e}")))?;
             }
         }
 
