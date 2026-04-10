@@ -670,6 +670,20 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "LionCCAPI",
+    websiteUrl: "https://vibecodingapi.ai",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://vibecodingapi.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lionccapi",
+    icon: "lioncc",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",

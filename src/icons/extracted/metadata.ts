@@ -366,6 +366,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["openrouter", "router", "aggregator"],
     defaultColor: "#6566F1",
   },
+  lioncc: {
+    name: "lioncc",
+    displayName: "LionCC",
+    category: "ai-provider",
+    keywords: ["lioncc", "lion"],
+    defaultColor: "#F9DA3C",
+  },
   longcat: {
     name: "longcat",
     displayName: "LongCat",

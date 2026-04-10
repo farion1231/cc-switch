@@ -1446,6 +1446,50 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "LionCCAPI",
+    websiteUrl: "https://vibecodingapi.ai",
+    settingsConfig: {
+      baseUrl: "https://vibecodingapi.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-6",
+          name: "Claude Opus 4.6",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lionccapi",
+    icon: "lioncc",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "lionccapi/claude-opus-4-6",
+        fallbacks: ["lionccapi/claude-sonnet-4-6"],
+      },
+      modelCatalog: {
+        "lionccapi/claude-opus-4-6": { alias: "Opus" },
+        "lionccapi/claude-sonnet-4-6": { alias: "Sonnet" },
+      },
+    },
+  },
   // ========== Cloud Providers ==========
   {
     name: "AWS Bedrock",
