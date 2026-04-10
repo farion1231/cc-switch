@@ -9,6 +9,7 @@ const iconMappings = {
   deepseek: { icon: "deepseek", iconColor: "#1E88E5" },
   zhipu: { icon: "zhipu", iconColor: "#0F62FE" },
   glm: { icon: "zhipu", iconColor: "#0F62FE" },
+  zai: { icon: "zai", iconColor: "#2D2D2D" },
   qwen: { icon: "qwen", iconColor: "#FF6A00" },
   bailian: { icon: "bailian", iconColor: "#624AFF" },
   alibaba: { icon: "alibaba", iconColor: "#FF6A00" },
