@@ -86,6 +86,21 @@ export function RequestLogTable({
     setPage(0);
   };
 
+  const applySelectFilter = <K extends keyof LogFilters>(
+    key: K,
+    value: LogFilters[K],
+  ) => {
+    setDraftFilters((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+    setAppliedFilters((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+    setPage(0);
+  };
+
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
 
@@ -101,15 +116,9 @@ export function RequestLogTable({
                 ? dashboardAppType
                 : draftFilters.appType || "all"
             }
-            onValueChange={(v) => {
-              const next = {
-                ...draftFilters,
-                appType: v === "all" ? undefined : v,
-              };
-              setDraftFilters(next);
-              setAppliedFilters(next);
-              setPage(0);
-            }}
+            onValueChange={(v) =>
+              applySelectFilter("appType", v === "all" ? undefined : v)
+            }
             disabled={!!dashboardAppTypeActive}
           >
             <SelectTrigger className="h-8 w-[110px] bg-background text-xs">
@@ -126,20 +135,16 @@ export function RequestLogTable({
           {/* Status code */}
           <Select
             value={draftFilters.statusCode?.toString() || "all"}
-            onValueChange={(v) => {
-              const next = {
-                ...draftFilters,
-                statusCode:
-                  v === "all"
-                    ? undefined
-                    : Number.isFinite(Number.parseInt(v, 10))
-                      ? Number.parseInt(v, 10)
-                      : undefined,
-              };
-              setDraftFilters(next);
-              setAppliedFilters(next);
-              setPage(0);
-            }}
+            onValueChange={(v) =>
+              applySelectFilter(
+                "statusCode",
+                v === "all"
+                  ? undefined
+                  : Number.isFinite(Number.parseInt(v, 10))
+                    ? Number.parseInt(v, 10)
+                    : undefined,
+              )
+            }
           >
             <SelectTrigger className="h-8 w-[100px] bg-background text-xs">
               <SelectValue placeholder={t("usage.statusCode")} />

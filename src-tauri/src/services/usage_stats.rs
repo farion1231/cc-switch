@@ -166,7 +166,7 @@ fn compute_rollup_date_bounds(
         Some(ts) => {
             let local = local_datetime_from_timestamp(ts)?;
             let day = local.date_naive();
-            if local.time().num_seconds_from_midnight() == (24 * 60 * 60 - 1) {
+            if local.time().hour() == 23 && local.time().minute() == 59 {
                 Some(day.format("%Y-%m-%d").to_string())
             } else {
                 day.pred_opt()
@@ -1460,6 +1460,67 @@ mod tests {
         assert_eq!(summary.total_requests, 20);
         assert_eq!(summary.total_input_tokens, 2000);
         assert_eq!(summary.total_output_tokens, 1000);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_usage_summary_includes_end_day_rollup_for_minute_precision_end_time(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let start = local_ts(2024, 1, 1, 0, 0, 0);
+        let end = local_ts(2024, 1, 2, 23, 59, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "2024-01-01",
+                    "claude",
+                    "p1",
+                    "claude-3",
+                    10,
+                    10,
+                    1000,
+                    500,
+                    0,
+                    0,
+                    "1.00",
+                    100
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "2024-01-02",
+                    "claude",
+                    "p1",
+                    "claude-3",
+                    20,
+                    19,
+                    2000,
+                    1000,
+                    0,
+                    0,
+                    "2.00",
+                    120
+                ],
+            )?;
+        }
+
+        let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"))?;
+        assert_eq!(summary.total_requests, 30);
+        assert_eq!(summary.total_input_tokens, 3000);
+        assert_eq!(summary.total_output_tokens, 1500);
 
         Ok(())
     }
