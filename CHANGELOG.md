@@ -5,7 +5,7 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.13.0] - 2026-04-10
 
 Development since v3.12.3 focuses on quota visibility, provider workflow upgrades, stronger proxy compatibility, and lower-overhead tray / session workflows.
 
@@ -13,7 +13,7 @@ Development since v3.12.3 focuses on quota visibility, provider workflow upgrade
 
 - **Lightweight Mode**: Added a tray-only mode that destroys the main window and keeps CC Switch running from the system tray, with the window recreated when users reopen it.
 - **Provider Model Auto-Fetch**: Added OpenAI-compatible `/v1/models` discovery for Claude, Codex, Gemini, OpenCode, and OpenClaw provider forms, including grouped dropdown selection and failure-specific error messages.
-- **Quota & Balance Visibility**: Added inline quota or balance display for official Claude / Codex / Gemini providers, GitHub Copilot premium interactions, Codex OAuth providers, Token Plan providers (Kimi / Zhipu GLM / MiniMax), and official balance queries for DeepSeek, StepFun, SiliconFlow, OpenRouter, and Novita AI.
+- **Quota & Balance Visibility**: Added inline quota or balance display for official Claude / Codex / Gemini providers, GitHub Copilot premium interactions, Codex OAuth providers, Token Plan providers (Kimi / Zhipu GLM / MiniMax), and official balance queries for DeepSeek, StepFun, SiliconFlow, OpenRouter, and Novita AI. Copilot / ChatGPT OAuth and CLI subscription quota now only auto-poll for the currently active provider, preventing unnecessary API calls and misleading displays on non-current cards.
 - **Skills Discovery & Batch Updates**: Added SHA-256 based skill update detection, per-skill and batch update actions, a storage-location toggle between CC Switch and `~/.agents/skills`, and public `skills.sh` search integration.
 - **Session Workflow Upgrades**: Added batch delete in Session Manager, a directory picker before launching Claude terminal restore commands, usage import from Claude / Codex / Gemini session logs without requiring proxy interception, and per-app usage filtering for Claude / Codex / Gemini dashboards.
 - **Codex OAuth Reverse Proxy**: Added ChatGPT Plus / Pro based Codex OAuth reverse proxy support for Claude provider cards, including managed OAuth login and inline subscription quota display.
@@ -21,6 +21,22 @@ Development since v3.12.3 focuses on quota visibility, provider workflow upgrade
 - **Full URL Endpoint Mode**: Added a provider option that treats `base_url` as a complete upstream endpoint so proxy forwarding and stream checks can work with vendors that require nonstandard URL layouts.
 - **OpenCode StepFun Step Plan Preset**: Added a StepFun Step Plan provider preset for OpenCode.
 - **Copilot Interaction Optimizer**: Added request classification and routing logic to reduce unnecessary GitHub Copilot premium interaction consumption.
+- **First-Run Welcome Dialog**: Added a one-time welcome dialog on fresh installs explaining how existing configuration is preserved as a default provider and how the bundled official preset enables one-click revert. Upgrade users are excluded.
+- **Official Provider Seeding**: Added automatic seeding of Claude Official, OpenAI Official, and Google Official provider entries on startup, giving every user a one-click path back to the official endpoint.
+- **OpenCode / OpenClaw Auto-Import**: Added automatic startup import of live OpenCode and OpenClaw provider configurations, matching the auto-import behavior already present for Claude, Codex, and Gemini.
+- **Common Config Editor Guidance**: Added an informational guide and empty-state prompt to the Common Config snippet editor modal for Claude, Codex, and Gemini, with i18n support.
+- **Common Config First-Run Notice**: Added a one-time informational dialog explaining Common Config Snippets when users first open the provider add/edit form.
+- **Claude Session Titles**: Added meaningful title extraction for Claude sessions using a priority chain: custom-title metadata, first real user message, then directory basename fallback.
+- **Session Search Highlighting**: Added keyword highlighting in session titles and messages during Session Manager search.
+- **URL-Based Provider Icons**: Added a dual rendering mode to the icon system supporting Vite URL imports for large SVGs and raster images (PNG, JPG, WebP), keeping small SVGs inlined.
+- **Kaku Terminal Support**: Added Kaku as a selectable terminal for session launch on macOS, reusing the WezTerm-compatible launch path.
+- **OMO Slim Council Support**: Restored first-class council support as a built-in oh-my-opencode-slim agent with updated metadata and UI copy.
+- **TheRouter Provider Preset**: Added TheRouter provider presets across Claude, Codex, Gemini, OpenCode, and OpenClaw.
+- **DDSHub Provider Preset**: Added DDSHub as a third-party partner provider for Claude with icon and partner promotion text.
+- **LionCCAPI Provider Preset**: Added LionCCAPI as a third-party partner provider across all five apps with anthropic-messages protocol for OpenCode and OpenClaw.
+- **Shengsuanyun Provider Preset**: Added Shengsuanyun (胜算云) as an aggregator partner provider across all five apps with URL-based icon and localized display name.
+- **PIPELLM Provider Preset**: Added PIPELLM provider preset across Claude, Codex, OpenCode, and OpenClaw with full model definitions and icon.
+- **E-FlowCode Provider Preset**: Added E-FlowCode provider preset across all five apps with per-app protocol configuration.
 
 ### Changed
 
@@ -47,12 +63,19 @@ Development since v3.12.3 focuses on quota visibility, provider workflow upgrade
 - **Linux UI Unresponsive on Startup**: Fixed a bug where the window UI (including native title bar buttons) couldn't receive clicks on Linux until the user manually maximized and restored the window. Root causes: (1) Tauri webview did not acquire keyboard focus after `show()` on Linux, so the first click was consumed by X11/Wayland click-to-activate (Tauri #10746, wry #637); (2) GTK surface's input region failed to renegotiate on the `visible:false → show()` path under some WebKitGTK/compositor combinations, leaving the entire window unresponsive. Mitigations: set `WEBKIT_DISABLE_COMPOSITING_MODE=1` at startup, and added a new `linux_fix::nudge_main_window` helper that performs `set_focus` + a ±1px no-op resize ~200ms after show, equivalent to a visually invisible "maximize-and-restore". Wired into all window-re-show paths (normal startup, deeplink, single_instance, tray `show_main`, lightweight exit).
 - **Linux Drag Region on Header**: Removed `data-tauri-drag-region` from the top header bar on Linux to avoid triggering `gtk_window_begin_move_drag` paths affected by Tauri #13440 under Wayland. macOS drag behavior is preserved.
 - **OpenCode / OpenClaw Stream Check Edge Cases**: Fixed custom-header passthrough, OpenClaw custom auth-header detection, Bedrock error messaging, and OpenCode default `baseURL` fallback handling in Stream Check.
+- **Duplicate Toast on Provider Switch**: Fixed double toast notifications (proxy-required warning followed by switch-success) when switching to Copilot, ChatGPT, or OpenAI-format providers with the proxy not running.
+- **Session Search Accuracy & Chinese Support**: Fixed session search result truncation across providers and switched FlexSearch tokenizer to full mode for proper Chinese substring matching.
+- **Adaptive Thinking Reasoning Effort**: Fixed `resolve_reasoning_effort()` mapping adaptive thinking to `xhigh` instead of incorrectly using `high` in OpenAI format conversions.
+- **Thinking Model Fallback Display**: Fixed the Claude provider form showing an empty Thinking model field after saving only a main model by applying read-only fallback to ANTHROPIC_MODEL.
+- **Auth Tab Localization**: Fixed missing i18n translation keys for the settings auth tab label across all locale bundles.
+- **Schema Migration Guard**: Fixed database migrations failing when skills or model_pricing tables did not exist by adding table-existence checks before ALTER and UPDATE operations.
 
 ### Docs
 
 - **User Manual Refresh**: Updated the EN / ZH / JA manuals for tray submenus, lightweight mode, provider model fetching, session management, workspace files, WebDAV v2 behavior, OpenCode / OpenClaw activation, and other provider workflow improvements.
 - **Community & Contribution Docs**: Added `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, bilingual issue / PR templates, Dependabot config, and CI quality checks.
 - **Release Notes Risk Notice**: Added a Copilot reverse proxy risk notice and anchored highlight links in the v3.12.3 release notes across all three languages.
+- **Sponsor Partners**: Added Shengsuanyun, LionCC, and DDS as sponsor partners in README across all languages.
 
 ---
 

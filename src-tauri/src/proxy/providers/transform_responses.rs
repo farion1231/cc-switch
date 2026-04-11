@@ -1047,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn test_responses_thinking_adaptive_sets_reasoning_high() {
+    fn test_responses_thinking_adaptive_sets_reasoning_xhigh() {
         let input = json!({
             "model": "gpt-5.4",
             "max_tokens": 1024,
@@ -1056,7 +1056,7 @@ mod tests {
         });
 
         let result = anthropic_to_responses(input, None, false).unwrap();
-        assert_eq!(result["reasoning"]["effort"], "high");
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
     }
 
     #[test]

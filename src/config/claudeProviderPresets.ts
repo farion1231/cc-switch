@@ -107,6 +107,22 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#4285F4",
   },
   {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://router.shengsuanyun.com/api",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     settingsConfig: {
@@ -660,7 +676,7 @@ export const providerPresets: ProviderPreset[] = [
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "x-code", // 促销信息 i18n key
-    icon: "x-code",
+    icon: "xcode",
     iconColor: "#000000",
   },
   {
@@ -680,6 +696,58 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "DDSHub",
+    websiteUrl: "https://www.ddshub.cc",
+    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://www.ddshub.cc",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "third_party",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "ddshub", // 促销信息 i18n key
+    icon: "dds",
+    iconColor: "#000000",
+  },
+  {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    settingsConfig: {
+      effortLevel: "high",
+      env: {
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_BASE_URL: "https://e-flowcode.cc",
+      },
+      enabledPlugins: {
+        "superpowers@superpowers-marketplace": true,
+      },
+      includeCoAuthoredBy: false,
+      ENABLE_TOOL_SEARCH: true,
+      skipWebFetchPreflight: true,
+    },
+    category: "third_party",
+    endpointCandidates: ["https://e-flowcode.cc"],
+    icon: "eflowcode",
+    iconColor: "#000000",
+  },
+  {
+    name: "LionCCAPI",
+    websiteUrl: "https://vibecodingapi.ai",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://vibecodingapi.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lionccapi",
+    icon: "lioncc",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
@@ -696,6 +764,24 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
+  },
+  {
+    name: "TheRouter",
+    websiteUrl: "https://therouter.ai",
+    apiKeyUrl: "https://dashboard.therouter.ai",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.therouter.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "anthropic/claude-sonnet-4.6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-4.6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.6",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.therouter.ai"],
   },
   {
     name: "Novita AI",
@@ -736,7 +822,7 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "Codex (ChatGPT Plus/Pro)",
+    name: "Codex",
     websiteUrl: "https://openai.com/chatgpt/pricing",
     settingsConfig: {
       env: {
@@ -774,6 +860,24 @@ export const providerPresets: ProviderPreset[] = [
     apiFormat: "openai_chat",
     icon: "nvidia",
     iconColor: "#000000",
+  },
+  {
+    name: "PIPELLM",
+    websiteUrl: "https://www.pipellm.ai",
+    apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://cc-api.pipellm.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-opus-4-6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5-20251001",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-6",
+      },
+      includeCoAuthoredBy: false,
+    },
+    category: "aggregator",
+    icon: "pipellm",
   },
   {
     name: "Xiaomi MiMo",

@@ -1072,8 +1072,15 @@ impl Database {
 
     /// v6 -> v7: Skills 更新检测支持（content_hash + updated_at）
     fn migrate_v6_to_v7(conn: &Connection) -> Result<(), AppError> {
-        Self::add_column_if_missing(conn, "skills", "content_hash", "TEXT")?;
-        Self::add_column_if_missing(conn, "skills", "updated_at", "INTEGER NOT NULL DEFAULT 0")?;
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "content_hash", "TEXT")?;
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "updated_at",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
         log::info!("v6 -> v7 迁移完成：已添加 content_hash 和 updated_at 列");
         Ok(())
     }
@@ -1103,32 +1110,34 @@ impl Database {
         .map_err(|e| AppError::Database(format!("创建 session_log_sync 表失败: {e}")))?;
 
         // 3. 修正国产模型定价：之前误将 CNY 值存为 USD 字段，统一转换为 USD
-        let pricing_fixes: &[(&str, &str, &str, &str, &str)] = &[
-            ("deepseek-v3.2", "0.28", "0.42", "0.028", "0"),
-            ("deepseek-v3.1", "0.55", "1.67", "0.055", "0"),
-            ("deepseek-v3", "0.28", "1.11", "0.028", "0"),
-            ("doubao-seed-code", "0.17", "1.11", "0.02", "0"),
-            ("kimi-k2-thinking", "0.55", "2.20", "0.10", "0"),
-            ("kimi-k2-0905", "0.55", "2.20", "0.10", "0"),
-            ("kimi-k2-turbo", "1.11", "8.06", "0.14", "0"),
-            ("minimax-m2.1", "0.27", "0.95", "0.03", "0"),
-            ("minimax-m2.1-lightning", "0.27", "2.33", "0.03", "0"),
-            ("minimax-m2", "0.27", "0.95", "0.03", "0"),
-            ("glm-4.7", "0.39", "1.75", "0.04", "0"),
-            ("glm-4.6", "0.28", "1.11", "0.03", "0"),
-            ("mimo-v2-flash", "0.09", "0.29", "0.009", "0"),
-        ];
-        for (model_id, input, output, cache_read, cache_creation) in pricing_fixes {
-            conn.execute(
-                "UPDATE model_pricing SET
-                    input_cost_per_million = ?2,
-                    output_cost_per_million = ?3,
-                    cache_read_cost_per_million = ?4,
-                    cache_creation_cost_per_million = ?5
-                 WHERE model_id = ?1",
-                rusqlite::params![model_id, input, output, cache_read, cache_creation],
-            )
-            .map_err(|e| AppError::Database(format!("更新模型 {model_id} 定价失败: {e}")))?;
+        if Self::table_exists(conn, "model_pricing")? {
+            let pricing_fixes: &[(&str, &str, &str, &str, &str)] = &[
+                ("deepseek-v3.2", "0.28", "0.42", "0.028", "0"),
+                ("deepseek-v3.1", "0.55", "1.67", "0.055", "0"),
+                ("deepseek-v3", "0.28", "1.11", "0.028", "0"),
+                ("doubao-seed-code", "0.17", "1.11", "0.02", "0"),
+                ("kimi-k2-thinking", "0.55", "2.20", "0.10", "0"),
+                ("kimi-k2-0905", "0.55", "2.20", "0.10", "0"),
+                ("kimi-k2-turbo", "1.11", "8.06", "0.14", "0"),
+                ("minimax-m2.1", "0.27", "0.95", "0.03", "0"),
+                ("minimax-m2.1-lightning", "0.27", "2.33", "0.03", "0"),
+                ("minimax-m2", "0.27", "0.95", "0.03", "0"),
+                ("glm-4.7", "0.39", "1.75", "0.04", "0"),
+                ("glm-4.6", "0.28", "1.11", "0.03", "0"),
+                ("mimo-v2-flash", "0.09", "0.29", "0.009", "0"),
+            ];
+            for (model_id, input, output, cache_read, cache_creation) in pricing_fixes {
+                conn.execute(
+                    "UPDATE model_pricing SET
+                        input_cost_per_million = ?2,
+                        output_cost_per_million = ?3,
+                        cache_read_cost_per_million = ?4,
+                        cache_creation_cost_per_million = ?5
+                     WHERE model_id = ?1",
+                    rusqlite::params![model_id, input, output, cache_read, cache_creation],
+                )
+                .map_err(|e| AppError::Database(format!("更新模型 {model_id} 定价失败: {e}")))?;
+            }
         }
 
         log::info!("v7 -> v8 迁移完成：data_source 列、session_log_sync 表、修正 13 个模型定价");

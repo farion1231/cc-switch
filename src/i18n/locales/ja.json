@@ -243,6 +243,7 @@
     "title": "設定",
     "general": "一般",
     "tabGeneral": "一般",
+    "tabAuth": "認証",
     "tabAdvanced": "詳細",
     "tabProxy": "プロキシ",
     "authCenter": {
@@ -535,7 +536,8 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
-          "wezterm": "WezTerm"
+          "wezterm": "WezTerm",
+          "kaku": "Kaku"
         },
         "windows": {
           "cmd": "コマンドプロンプト",
@@ -772,7 +774,10 @@
       "ucloud": "Compshare は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、5元のプラットフォーム体験クレジットがもらえます！",
       "micu": "Micu は CC Switch の公式パートナーです",
       "x-code": "XCodeAPI は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、初回注文で 10% の追加クレジットがもらえます（管理者に連絡して受け取り）",
-      "ctok": "公式サイトで CTok コミュニティに参加し、プランを購読してください。"
+      "ctok": "公式サイトで CTok コミュニティに参加し、プランを購読してください。",
+      "ddshub": "DDSHub は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、初回チャージで 10% の追加クレジットがもらえます（グループ管理者に連絡して受け取り）！",
+      "lionccapi": "LionCCAPIはCC Switchユーザーに特別特典を提供しています。登録後、WeChat HSQBJ088888888を追加し、「cc-switch」と伝えると$10分のクレジットがもらえます！",
+      "shengsuanyun": "胜算云はCC Switchユーザーに特別特典を提供しています。このリンクから登録すると、10元分の無料クレジットと初回チャージ10%ボーナスがもらえます！"
     },
     "presets": {
       "ucloud": "Compshare"
@@ -2278,6 +2283,7 @@
     "enabledModelsCount": "設定済みモデル {{count}} 件",
     "source": "出典:",
     "otherFieldsJson": "その他のフィールド (JSON)",
+    "slimOtherFieldsHint": "council、fallback、multiplexer、disabled_mcps、todoContinuation など、OMO Slim のトップレベル設定はここに記述します。",
     "searchOrType": "検索またはカスタム値を入力...",
     "noMatches": "一致する項目がありません",
     "jsonMustBeObject": "{{field}} は JSON オブジェクトである必要があります",
@@ -2354,7 +2360,8 @@
       "librarian": "ライブラリアン",
       "explorer": "エクスプローラー",
       "designer": "デザイナー",
-      "fixer": "フィクサー"
+      "fixer": "フィクサー",
+      "council": "カウンシル"
     },
     "slimAgentTooltip": {
       "orchestrator": "実行コードの作成、マルチエージェントワークフローの調整、エキスパートの召喚",
@@ -2362,7 +2369,8 @@
       "librarian": "ドキュメント検索、GitHubコード検索（読み取り専用）",
       "explorer": "正規表現検索、ASTパターンマッチング、ファイル検出（読み取り専用）",
       "designer": "モダンなレスポンシブデザイン、CSS/Tailwindの専門知識",
-      "fixer": "コード実装、リファクタリング、テスト、検証"
+      "fixer": "コード実装、リファクタリング、テスト、検証",
+      "council": "複数モデルの合議エージェント。複数の読み取り専用 councillor を並列実行し、master が最終回答を統合します。"
     }
   },
   "openclawConfig": {

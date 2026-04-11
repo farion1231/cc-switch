@@ -184,7 +184,9 @@ describe("SessionManagerPage", () => {
     });
 
     await waitFor(() =>
-      expect(screen.getAllByText("Alpha Session")).toHaveLength(2),
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
     );
 
     fireEvent.click(screen.getByRole("button", { name: /删除会话/i }));

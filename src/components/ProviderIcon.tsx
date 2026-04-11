@@ -1,5 +1,11 @@
 import React, { useMemo } from "react";
-import { getIcon, hasIcon, getIconMetadata } from "@/icons/extracted";
+import {
+  getIcon,
+  hasIcon,
+  getIconMetadata,
+  getIconUrl,
+  isUrlIcon,
+} from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 
 interface ProviderIconProps {
@@ -19,10 +25,18 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   className,
   showFallback = true,
 }) => {
-  // 获取图标 SVG
+  // 获取内联 SVG 字符串
   const iconSvg = useMemo(() => {
-    if (icon && hasIcon(icon)) {
+    if (icon && !isUrlIcon(icon) && hasIcon(icon)) {
       return getIcon(icon);
+    }
+    return "";
+  }, [icon]);
+
+  // 获取图标 URL（URL_ICONS 列表中的 SVG / 光栅图片）
+  const iconUrl = useMemo(() => {
+    if (icon && isUrlIcon(icon)) {
+      return getIconUrl(icon);
     }
     return "";
   }, [icon]);
@@ -33,7 +47,6 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     return {
       width: sizeValue,
       height: sizeValue,
-      // 内嵌 SVG 使用 1em 作为尺寸基准，这里同步 fontSize 让图标实际跟随 size 放大
       fontSize: sizeValue,
       lineHeight: 1,
     };
@@ -41,14 +54,11 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
 
   // 获取有效颜色：优先使用传入的有效 color，否则从元数据获取 defaultColor
   const effectiveColor = useMemo(() => {
-    // 只有当 color 是有效的非空字符串时才使用
     if (color && typeof color === "string" && color.trim() !== "") {
       return color;
     }
-    // 否则从元数据获取 defaultColor
     if (icon) {
       const metadata = getIconMetadata(icon);
-      // 只有当 defaultColor 不是 currentColor 时才使用
       if (metadata?.defaultColor && metadata.defaultColor !== "currentColor") {
         return metadata.defaultColor;
       }
@@ -56,7 +66,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     return undefined;
   }, [color, icon]);
 
-  // 如果有图标，显示图标
+  // 内联 SVG 渲染（支持 CSS currentColor 着色）
   if (iconSvg) {
     return (
       <span
@@ -66,6 +76,22 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
         )}
         style={{ ...sizeStyle, color: effectiveColor }}
         dangerouslySetInnerHTML={{ __html: iconSvg }}
+      />
+    );
+  }
+
+  // URL-based 图标（大型 SVG / 光栅图片）：以 <img> 渲染
+  if (iconUrl) {
+    return (
+      <img
+        src={iconUrl}
+        alt={name}
+        className={cn(
+          "inline-flex items-center justify-center flex-shrink-0 object-contain",
+          className,
+        )}
+        style={{ width: sizeStyle.width, height: sizeStyle.height }}
+        loading="lazy"
       />
     );
   }

@@ -243,6 +243,7 @@
     "title": "Settings",
     "general": "General",
     "tabGeneral": "General",
+    "tabAuth": "Auth",
     "tabAdvanced": "Advanced",
     "tabProxy": "Proxy",
     "authCenter": {
@@ -535,7 +536,8 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
-          "wezterm": "WezTerm"
+          "wezterm": "WezTerm",
+          "kaku": "Kaku"
         },
         "windows": {
           "cmd": "Command Prompt",
@@ -772,7 +774,10 @@
       "ucloud": "Compshare offers an exclusive bonus for CC Switch users — register via this link to get ¥5 platform trial credit!",
       "micu": "Micu is an official partner of CC Switch",
       "x-code": "XCodeAPI offers a special bonus for CC Switch users — register via this link and get 10% extra credit on your first order (contact admin to claim)",
-      "ctok": "Join the CTok community on the official website and subscribe to a plan."
+      "ctok": "Join the CTok community on the official website and subscribe to a plan.",
+      "ddshub": "DDSHub offers a special bonus for CC Switch users — register via this link and get 10% extra credit on your first top-up (contact group admin to claim)!",
+      "lionccapi": "LionCCAPI offers exclusive benefits for CC Switch users. After registration, add WeChat HSQBJ088888888 and mention 'cc-switch' to receive $10 free credits!",
+      "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!"
     },
     "presets": {
       "ucloud": "Compshare"
@@ -2278,6 +2283,7 @@
     "enabledModelsCount": "{{count}} configured models available",
     "source": "from:",
     "otherFieldsJson": "Other Fields (JSON)",
+    "slimOtherFieldsHint": "Use this area for top-level OMO Slim config such as council, fallback, multiplexer, disabled_mcps, and todoContinuation.",
     "searchOrType": "Search or type custom value...",
     "noMatches": "No matches",
     "jsonMustBeObject": "{{field}} must be a JSON object",
@@ -2354,7 +2360,8 @@
       "librarian": "Librarian",
       "explorer": "Explorer",
       "designer": "Designer",
-      "fixer": "Fixer"
+      "fixer": "Fixer",
+      "council": "Council"
     },
     "slimAgentTooltip": {
       "orchestrator": "Writes executable code, orchestrates multi-agent workflow, summons experts",
@@ -2362,7 +2369,8 @@
       "librarian": "Documentation lookup, GitHub code search (read-only)",
       "explorer": "Regex search, AST pattern matching, file discovery (read-only)",
       "designer": "Modern responsive design, CSS/Tailwind expertise",
-      "fixer": "Code implementation, refactoring, testing, verification"
+      "fixer": "Code implementation, refactoring, testing, verification",
+      "council": "Multi-model consensus agent. Runs multiple read-only councillors in parallel, then lets the master synthesize the final answer."
     }
   },
   "openclawConfig": {

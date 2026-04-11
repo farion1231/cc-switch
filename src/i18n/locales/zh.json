@@ -243,6 +243,7 @@
     "title": "设置",
     "general": "通用",
     "tabGeneral": "通用",
+    "tabAuth": "认证",
     "tabAdvanced": "高级",
     "tabProxy": "代理",
     "authCenter": {
@@ -535,7 +536,8 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
-          "wezterm": "WezTerm"
+          "wezterm": "WezTerm",
+          "kaku": "Kaku"
         },
         "windows": {
           "cmd": "命令提示符",
@@ -772,10 +774,14 @@
       "ucloud": "优云智算为CC Switch 的用户提供了特殊优惠，通过此链接注册，可以获得五元平台体验金！",
       "micu": "Micu 是 CC Switch 的官方合作伙伴",
       "x-code": "XCodeAPI 为CC Switch 的用户提供特别福利，使用此链接注册后首单加赠10%的额度(联系站长领取)",
-      "ctok": "官网加入CTok社群，订阅套餐。"
+      "ctok": "官网加入CTok社群，订阅套餐。",
+      "ddshub": "呆呆兽为CC Switch 的用户提供了特别福利，通过此链接注册后，首单充值可额外赠送 10% 额度（联系群主领取）！",
+      "lionccapi": "LionCCAPI 为 CC Switch 的用户提供了特别福利，注册后添加客服微信HSQBJ088888888，发暗号cc-switch备注即可送10美金额度！",
+      "shengsuanyun": "胜算云为 CC Switch 的用户提供了特别福利，使用此链接注册的新用户可获 10 元模力及首充 10% 赠送！"
     },
     "presets": {
-      "ucloud": "优云智算"
+      "ucloud": "优云智算",
+      "shengsuanyun": "胜算云"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -2278,6 +2284,7 @@
     "enabledModelsCount": "可选已配置模型 {{count}} 个",
     "source": "来源:",
     "otherFieldsJson": "其他字段 (JSON)",
+    "slimOtherFieldsHint": "OMO Slim 的 council、fallback、multiplexer、disabled_mcps、todoContinuation 等顶层配置请写在这里。",
     "searchOrType": "搜索或输入自定义值...",
     "noMatches": "无匹配项",
     "jsonMustBeObject": "{{field}} 必须是 JSON 对象",
@@ -2354,7 +2361,8 @@
       "librarian": "图书管理员",
       "explorer": "探索者",
       "designer": "设计师",
-      "fixer": "修复者"
+      "fixer": "修复者",
+      "council": "议会"
     },
     "slimAgentTooltip": {
       "orchestrator": "编写执行代码，编排多代理工作流，召唤专家",
@@ -2362,7 +2370,8 @@
       "librarian": "文档查询、GitHub 代码搜索（只读）",
       "explorer": "正则搜索、AST 模式匹配、文件发现（只读）",
       "designer": "现代响应式设计、CSS/Tailwind 精通",
-      "fixer": "代码实现、重构、测试、验证"
+      "fixer": "代码实现、重构、测试、验证",
+      "council": "多模型共识代理，并行运行多个只读 councillor，再由 master 汇总最终答案。"
     }
   },
   "openclawConfig": {
