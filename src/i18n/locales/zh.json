@@ -108,6 +108,7 @@
     "currentlyUsing": "当前使用",
     "enable": "启用",
     "inUse": "使用中",
+    "blockedByProxy": "已拦截",
     "editProvider": "编辑供应商",
     "editProviderHint": "更新配置后将立即应用到当前供应商。",
     "deleteProvider": "删除供应商",
@@ -206,7 +207,9 @@
     "openclawDefaultModelSetFailed": "设置默认模型失败",
     "openclawNoModels": "该供应商没有配置模型",
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
-    "windowControlFailed": "窗口控制失败：{{error}}"
+    "windowControlFailed": "窗口控制失败：{{error}}",
+    "officialBlockedByProxy": "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁",
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用代理接管"
   },
   "confirm": {
     "deleteProvider": "删除供应商",

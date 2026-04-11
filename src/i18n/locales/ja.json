@@ -108,6 +108,7 @@
     "currentlyUsing": "現在使用中",
     "enable": "有効化",
     "inUse": "使用中",
+    "blockedByProxy": "ブロック",
     "editProvider": "プロバイダーを編集",
     "editProviderHint": "保存すると現在のプロバイダーにすぐ反映されます。",
     "deleteProvider": "プロバイダーを削除",
@@ -206,7 +207,9 @@
     "openclawDefaultModelSetFailed": "デフォルトモデルの設定に失敗しました",
     "openclawNoModels": "モデルが設定されていません",
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
-    "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}"
+    "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
+    "officialBlockedByProxy": "プロキシ接管モード中は公式プロバイダーに切り替えできません。プロキシ経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。プロキシ接管を使用する前にサードパーティプロバイダーに切り替えてください。"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",

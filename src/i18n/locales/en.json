@@ -108,6 +108,7 @@
     "currentlyUsing": "Currently Using",
     "enable": "Enable",
     "inUse": "In Use",
+    "blockedByProxy": "Blocked",
     "editProvider": "Edit Provider",
     "editProviderHint": "Configuration will be applied to the current provider immediately after update.",
     "deleteProvider": "Delete Provider",
@@ -206,7 +207,9 @@
     "openclawDefaultModelSetFailed": "Failed to set default model",
     "openclawNoModels": "No models configured",
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
-    "windowControlFailed": "Window control failed: {{error}}"
+    "windowControlFailed": "Window control failed: {{error}}",
+    "officialBlockedByProxy": "Cannot switch to official provider while proxy takeover is active. Using proxy with official APIs may cause account bans.",
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using proxy takeover."
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
