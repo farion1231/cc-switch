@@ -670,7 +670,10 @@ mod tests {
 
         let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
-        assert_eq!(result["messages"][0]["content"], "You are Claude Code.\nBe concise.");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "You are Claude Code.\nBe concise."
+        );
         assert!(result["messages"][0].get("cache_control").is_none());
     }
 
@@ -688,7 +691,10 @@ mod tests {
 
         let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
-        assert_eq!(result["messages"][0]["content"], "You are Claude Code.\nBe concise.");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "You are Claude Code.\nBe concise."
+        );
         assert!(result["messages"][0].get("cache_control").is_none());
     }
 
