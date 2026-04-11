@@ -166,7 +166,7 @@ export interface ProviderMeta {
   apiKeyField?: ClaudeApiKeyField;
   // 是否将 base_url 视为完整 API 端点（代理直接使用此 URL，不拼接路径）
   isFullUrl?: boolean;
-  // Prompt cache key for OpenAI-compatible endpoints (improves cache hit rate)
+  // Prompt cache key for OpenAI Responses-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
