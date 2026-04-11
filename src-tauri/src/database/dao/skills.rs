@@ -22,7 +22,8 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
+                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
+                        installed_at, content_hash, updated_at
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -45,6 +46,8 @@ impl Database {
                         opencode: row.get(11)?,
                     },
                     installed_at: row.get(12)?,
+                    content_hash: row.get(13)?,
+                    updated_at: row.get::<_, i64>(14).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -63,7 +66,8 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at
+                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
+                        installed_at, content_hash, updated_at
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -85,6 +89,8 @@ impl Database {
                     opencode: row.get(11)?,
                 },
                 installed_at: row.get(12)?,
+                content_hash: row.get(13)?,
+                updated_at: row.get::<_, i64>(14).unwrap_or(0),
             })
         });
 
@@ -101,8 +107,9 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, installed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
+              installed_at, content_hash, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 skill.id,
                 skill.name,
@@ -117,6 +124,8 @@ impl Database {
                 skill.apps.gemini,
                 skill.apps.opencode,
                 skill.installed_at,
+                skill.content_hash,
+                skill.updated_at,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -147,6 +156,23 @@ impl Database {
             .execute(
                 "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_opencode = ?4 WHERE id = ?5",
                 params![apps.claude, apps.codex, apps.gemini, apps.opencode, id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(affected > 0)
+    }
+
+    /// 更新 Skill 的内容哈希和更新时间
+    pub fn update_skill_hash(
+        &self,
+        id: &str,
+        content_hash: &str,
+        updated_at: i64,
+    ) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let affected = conn
+            .execute(
+                "UPDATE skills SET content_hash = ?1, updated_at = ?2 WHERE id = ?3",
+                params![content_hash, updated_at, id],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)

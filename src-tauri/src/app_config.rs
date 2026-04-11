@@ -174,6 +174,12 @@ pub struct InstalledSkill {
     pub apps: SkillApps,
     /// 安装时间（Unix 时间戳）
     pub installed_at: i64,
+    /// 内容哈希（SHA-256，用于更新检测）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    /// 最近更新时间（Unix 时间戳，0 = 从未更新）
+    #[serde(default)]
+    pub updated_at: i64,
 }
 
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）
