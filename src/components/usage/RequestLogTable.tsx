@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -65,6 +65,15 @@ export function RequestLogTable({
   const logs = result?.data ?? [];
   const total = result?.total ?? 0;
   const totalPages = Math.ceil(total / pageSize);
+
+  useEffect(() => {
+    setPage(0);
+  }, [
+    dashboardAppType,
+    range.customEndDate,
+    range.customStartDate,
+    range.preset,
+  ]);
 
   const handleSearch = () => {
     setAppliedFilters(draftFilters);
@@ -368,6 +377,9 @@ export function RequestLogTable({
                 variant="outline"
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
+                aria-label={t("usage.previousPage", {
+                  defaultValue: "Previous page",
+                })}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -379,6 +391,9 @@ export function RequestLogTable({
                 variant="outline"
                 disabled={page >= totalPages - 1}
                 onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                aria-label={t("usage.nextPage", {
+                  defaultValue: "Next page",
+                })}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
