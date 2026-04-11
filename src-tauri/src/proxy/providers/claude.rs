@@ -92,7 +92,8 @@ pub fn transform_claude_request_for_api_format(
     let cache_key = provider
         .meta
         .as_ref()
-        .and_then(|m| m.prompt_cache_key.as_deref());
+        .and_then(|m| m.prompt_cache_key.as_deref())
+        .unwrap_or(&provider.id);
 
     match api_format {
         "openai_responses" => {
