@@ -834,9 +834,7 @@ function App() {
                       onDuplicate={handleDuplicateProvider}
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
-                      onOpenTerminal={
-                        activeApp === "claude" ? handleOpenTerminal : undefined
-                      }
+                      onOpenTerminal={handleOpenTerminal}
                       onCreate={() => setIsAddOpen(true)}
                       onSetAsDefault={
                         activeApp === "openclaw" ? setAsDefaultModel : undefined
