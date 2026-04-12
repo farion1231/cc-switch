@@ -1890,7 +1890,10 @@ impl ProviderService {
                 }
             }
 
-            if let Some(model) = provider_config.get_mut("model").and_then(Value::as_object_mut) {
+            if let Some(model) = provider_config
+                .get_mut("model")
+                .and_then(Value::as_object_mut)
+            {
                 model.remove("name");
                 if model.is_empty() {
                     provider_config.remove("model");

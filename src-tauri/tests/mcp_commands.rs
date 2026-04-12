@@ -596,10 +596,9 @@ fn enabling_qwen_mcp_writes_settings_json_and_preserves_existing_fields() {
     McpService::toggle_app(&state, "qwen-http", AppType::Qwen, true)
         .expect("toggle qwen should succeed");
 
-    let value: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(&settings_path).expect("read qwen settings"),
-    )
-    .expect("parse qwen settings");
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings_path).expect("read qwen settings"))
+            .expect("parse qwen settings");
 
     assert_eq!(value["theme"], json!("dark"));
     assert_eq!(value["mcp"]["allowed"], json!(["trusted-server"]));

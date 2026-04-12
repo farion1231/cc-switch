@@ -31,6 +31,20 @@ export interface RequestLog {
   statusCode: number;
   errorMessage?: string;
   createdAt: number;
+  dataSource?: string;
+}
+
+export interface SessionSyncResult {
+  imported: number;
+  skipped: number;
+  filesScanned: number;
+  errors: string[];
+}
+
+export interface DataSourceSummary {
+  dataSource: string;
+  requestCount: number;
+  totalCostUsd: string;
 }
 
 export interface PaginatedLogs {
@@ -108,6 +122,8 @@ export interface ProviderLimitStatus {
 }
 
 export type TimeRange = "1d" | "7d" | "30d";
+
+export type AppTypeFilter = "all" | "claude" | "codex" | "gemini";
 
 export interface StatsFilters {
   timeRange: TimeRange;

@@ -12,12 +12,14 @@ impl Database {
     /// 获取所有 MCP 服务器
     pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
         let conn = lock_conn!(self.conn);
-        let mut stmt = conn.prepare(
-            "SELECT id, name, server_config, description, homepage, docs, tags,
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, server_config, description, homepage, docs, tags,
                     enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_qwen
              FROM mcp_servers
-             ORDER BY name ASC, id ASC"
-        ).map_err(|e| AppError::Database(e.to_string()))?;
+             ORDER BY name ASC, id ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         let server_iter = stmt
             .query_map([], |row| {

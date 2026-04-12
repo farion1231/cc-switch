@@ -867,8 +867,12 @@ fn provider_service_switch_qwen_applies_common_config_and_preserves_shared_setti
             ..Default::default()
         });
 
-        manager.providers.insert("old-provider".to_string(), old_provider);
-        manager.providers.insert("new-provider".to_string(), new_provider);
+        manager
+            .providers
+            .insert("old-provider".to_string(), old_provider);
+        manager
+            .providers
+            .insert("new-provider".to_string(), new_provider);
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");

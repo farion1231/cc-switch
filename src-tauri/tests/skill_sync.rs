@@ -112,6 +112,8 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
                 opencode: false,
             },
             installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
         })
         .expect("save disabled skill");
 
@@ -157,6 +159,8 @@ fn uninstall_skill_creates_backup_before_removing_ssot() {
                 opencode: false,
             },
             installed_at: 123,
+            content_hash: None,
+            updated_at: 0,
         })
         .expect("save skill");
 
@@ -226,6 +230,8 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
                 opencode: false,
             },
             installed_at: 456,
+            content_hash: None,
+            updated_at: 0,
         })
         .expect("save skill");
 
@@ -308,6 +314,8 @@ fn delete_skill_backup_removes_backup_directory() {
                 opencode: false,
             },
             installed_at: 789,
+            content_hash: None,
+            updated_at: 0,
         })
         .expect("save skill");
 

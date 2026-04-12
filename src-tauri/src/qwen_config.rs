@@ -463,10 +463,7 @@ mod tests {
                 json!("openai")
             );
             assert_eq!(saved_settings["model"]["name"], json!("qwen3-coder-plus"));
-            assert_eq!(
-                env_map.get("OPENAI_API_KEY"),
-                Some(&"new-key".to_string())
-            );
+            assert_eq!(env_map.get("OPENAI_API_KEY"), Some(&"new-key".to_string()));
         });
     }
 
