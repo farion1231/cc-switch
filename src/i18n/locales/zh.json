@@ -1029,7 +1029,13 @@
     "modelExtraFieldKeyPlaceholder": "variants",
     "sdkOptions": "SDK 选项",
     "modelOptionKeyPlaceholder": "provider",
-    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}",
+    "tokenLimits": "Token 限制",
+    "limitContext": "上下文窗口",
+    "limitOutput": "最大输出",
+    "limitContextPlaceholder": "如 128000",
+    "limitOutputPlaceholder": "如 4096",
+    "tokenLimitsHint": "设置此模型的上下文窗口和最大输出 token 限制"
   },
   "providerPreset": {
     "label": "预设供应商",
