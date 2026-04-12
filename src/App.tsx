@@ -164,7 +164,8 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
-  const useAppWindowControls = settingsData?.useAppWindowControls ?? false;
+  const useAppWindowControls =
+    isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
   const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
@@ -431,6 +432,9 @@ function App() {
   }, []);
 
   useEffect(() => {
+    // settingsData 未加载时跳过，避免用 fallback false 覆盖 Rust 侧已设好的装饰状态
+    if (!settingsData) return;
+
     const syncWindowDecorations = async () => {
       try {
         await getCurrentWindow().setDecorations(!useAppWindowControls);
@@ -440,7 +444,7 @@ function App() {
     };
 
     void syncWindowDecorations();
-  }, [useAppWindowControls]);
+  }, [useAppWindowControls, settingsData]);
 
   useEffect(() => {
     const checkEnvOnStartup = async () => {
