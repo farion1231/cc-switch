@@ -406,18 +406,34 @@ fn build_script_with_vars(
     access_token: Option<&str>,
     user_id: Option<&str>,
 ) -> String {
-    let mut replaced = script_code
-        .replace("{{apiKey}}", api_key)
-        .replace("{{baseUrl}}", base_url);
+    let mut replaced = replace_template_aliases(
+        script_code,
+        &[("{{apiKey}}", api_key), ("{{apikey}}", api_key)],
+    );
+    replaced = replace_template_aliases(
+        &replaced,
+        &[("{{baseUrl}}", base_url), ("{{baseurl}}", base_url)],
+    );
 
     if let Some(token) = access_token {
-        replaced = replaced.replace("{{accessToken}}", token);
+        replaced = replace_template_aliases(
+            &replaced,
+            &[("{{accessToken}}", token), ("{{accesstoken}}", token)],
+        );
     }
     if let Some(uid) = user_id {
-        replaced = replaced.replace("{{userId}}", uid);
+        replaced = replace_template_aliases(&replaced, &[("{{userId}}", uid), ("{{userid}}", uid)]);
     }
 
     replaced
+}
+
+fn replace_template_aliases(input: &str, aliases: &[(&str, &str)]) -> String {
+    aliases
+        .iter()
+        .fold(input.to_string(), |acc, (alias, value)| {
+            acc.replace(alias, value)
+        })
 }
 
 /// 验证 base_url 的基本安全性
@@ -892,5 +908,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_build_script_with_vars_supports_legacy_lowercase_aliases() {
+        let script = r#"
+        ({
+          request: {
+            url: "{{baseurl}}/usage?key={{apikey}}",
+            method: "GET",
+            headers: {
+              Authorization: "Bearer {{apikey}}",
+              "X-Access-Token": "{{accesstoken}}",
+              "X-User-Id": "{{userid}}"
+            }
+          },
+          extractor: () => ({ key: "{{apikey}}" })
+        })
+        "#;
+
+        let replaced = build_script_with_vars(
+            script,
+            "test-api-key",
+            "https://api.example.com/v1",
+            Some("token-123"),
+            Some("user-456"),
+        );
+
+        assert!(replaced.contains("https://api.example.com/v1/usage?key=test-api-key"));
+        assert!(replaced.contains("Bearer test-api-key"));
+        assert!(replaced.contains("\"X-Access-Token\": \"token-123\""));
+        assert!(replaced.contains("\"X-User-Id\": \"user-456\""));
+        assert!(!replaced.contains("{{apikey}}"));
+        assert!(!replaced.contains("{{baseurl}}"));
+        assert!(!replaced.contains("{{accesstoken}}"));
+        assert!(!replaced.contains("{{userid}}"));
     }
 }
