@@ -9,10 +9,10 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
+    TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
-const TITLE_MAX_CHARS: usize = 80;
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let root = get_claude_config_dir().join("projects");
