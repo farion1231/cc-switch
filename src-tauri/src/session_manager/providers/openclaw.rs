@@ -18,6 +18,15 @@ use super::utils::{
 
 const PROVIDER_ID: &str = "openclaw";
 
+/// Strip trailing `\n[message_id: ...]` metadata injected by OpenClaw gateway.
+fn strip_message_id_suffix(text: &str) -> &str {
+    if let Some(pos) = text.rfind("\n[message_id:") {
+        text[..pos].trim_end()
+    } else {
+        text
+    }
+}
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let agents_dir = get_openclaw_dir().join("agents");
     if !agents_dir.exists() {
@@ -215,14 +224,15 @@ fn parse_session(path: &Path, display_names: Option<&HashMap<String, String>>) -
         if event_type == "message" {
             if let Some(message) = value.get("message") {
                 let text = message.get("content").map(extract_text).unwrap_or_default();
-                if !text.trim().is_empty() {
+                let cleaned = strip_message_id_suffix(&text);
+                if !cleaned.trim().is_empty() {
                     if first_user_message.is_none()
                         && message.get("role").and_then(Value::as_str) == Some("user")
                     {
-                        first_user_message = Some(text.trim().to_string());
+                        first_user_message = Some(cleaned.trim().to_string());
                     }
                     if summary.is_none() {
-                        summary = Some(text);
+                        summary = Some(cleaned.trim().to_string());
                     }
                 }
             }

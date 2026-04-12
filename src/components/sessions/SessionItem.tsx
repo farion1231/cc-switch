@@ -85,7 +85,7 @@ export function SessionItem({
               {getProviderLabel(session.providerId, t)}
             </TooltipContent>
           </Tooltip>
-          <span className="text-sm font-medium truncate flex-1">
+          <span className="text-sm font-medium line-clamp-2 flex-1">
             {searchQuery ? highlightText(title, searchQuery) : title}
           </span>
           <ChevronRight
