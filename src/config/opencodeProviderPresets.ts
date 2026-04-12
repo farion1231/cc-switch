@@ -292,6 +292,36 @@ export function getPresetModelDefaults(
 
 export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Shengsuanyun",
+      options: {
+        baseURL: "https://router.shengsuanyun.com/api/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
@@ -880,6 +910,37 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "TheRouter",
+    websiteUrl: "https://therouter.ai",
+    apiKeyUrl: "https://dashboard.therouter.ai",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TheRouter",
+      options: {
+        baseURL: "https://api.therouter.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
+        "openai/gpt-5.3-codex": { name: "GPT-5.3 Codex" },
+        "openai/gpt-5.2": { name: "GPT-5.2" },
+        "google/gemini-3-flash-preview": {
+          name: "Gemini 3 Flash Preview",
+        },
+        "qwen/qwen3-coder-480b": { name: "Qwen3 Coder 480B" },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",
@@ -929,6 +990,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "PIPELLM",
+    websiteUrl: "https://www.pipellm.ai",
+    apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "PIPELLM",
+      options: {
+        baseURL: "https://cc-api.pipellm.ai",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-4-6": { name: "claude-opus-4-6" },
+        "claude-sonnet-4-6": { name: "claude-sonnet-4-6" },
+        "claude-haiku-4-5-20251001": { name: "claude-haiku-4-5-20251001" },
+      },
+    },
+    category: "aggregator",
+    icon: "pipellm",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "pipe-...",
         editorValue: "",
       },
     },
@@ -1222,7 +1311,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "x-code",
-    icon: "x-code",
+    icon: "xcode",
     iconColor: "#000000",
     templateValues: {
       apiKey: {
@@ -1258,6 +1347,64 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "LionCCAPI",
+    websiteUrl: "https://vibecodingapi.ai",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "LionCCAPI",
+      options: {
+        baseURL: "https://vibecodingapi.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lionccapi",
+    icon: "lioncc",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      options: {
+        apiKey: "",
+        baseURL: "https://e-flowcode.cc/v1",
+      },
+      models: {
+        "gpt-5.2-codex": {
+          name: "gpt-5.2-codex",
+        },
+        "gpt-5.3-codex": {
+          name: "gpt-5.3-codex",
+        },
+      },
+    },
+    category: "third_party",
+    icon: "eflowcode",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
         editorValue: "",
       },
     },

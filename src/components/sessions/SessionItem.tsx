@@ -15,6 +15,7 @@ import {
   getProviderIconName,
   getProviderLabel,
   getSessionKey,
+  highlightText,
 } from "./utils";
 
 interface SessionItemProps {
@@ -23,6 +24,7 @@ interface SessionItemProps {
   selectionMode: boolean;
   isChecked: boolean;
   isCheckDisabled?: boolean;
+  searchQuery?: string;
   onSelect: (key: string) => void;
   onToggleChecked: (checked: boolean) => void;
 }
@@ -33,6 +35,7 @@ export function SessionItem({
   selectionMode,
   isChecked,
   isCheckDisabled = false,
+  searchQuery,
   onSelect,
   onToggleChecked,
 }: SessionItemProps) {
@@ -82,7 +85,9 @@ export function SessionItem({
               {getProviderLabel(session.providerId, t)}
             </TooltipContent>
           </Tooltip>
-          <span className="text-sm font-medium truncate flex-1">{title}</span>
+          <span className="text-sm font-medium truncate flex-1">
+            {searchQuery ? highlightText(title, searchQuery) : title}
+          </span>
           <ChevronRight
             className={cn(
               "size-4 text-muted-foreground/50 shrink-0 transition-transform",

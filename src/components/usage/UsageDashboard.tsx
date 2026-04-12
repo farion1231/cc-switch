@@ -6,7 +6,8 @@ import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
-import type { TimeRange } from "@/types/usage";
+import type { AppTypeFilter, TimeRange } from "@/types/usage";
+import { useUsageSummary } from "@/lib/query/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
@@ -25,11 +26,21 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
+import { cn } from "@/lib/utils";
+import { fmtUsd, parseFiniteNumber } from "./format";
+
+const APP_FILTER_OPTIONS: AppTypeFilter[] = [
+  "all",
+  "claude",
+  "codex",
+  "gemini",
+];
 
 export function UsageDashboard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [timeRange, setTimeRange] = useState<TimeRange>("1d");
+  const [appType, setAppType] = useState<AppTypeFilter>("all");
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
 
   const refreshIntervalOptionsMs = [0, 5000, 10000, 30000, 60000] as const;
@@ -45,6 +56,11 @@ export function UsageDashboard() {
   };
 
   const days = timeRange === "1d" ? 1 : timeRange === "7d" ? 7 : 30;
+
+  // Summary data for the app filter bar
+  const { data: summaryData } = useUsageSummary(days, appType, {
+    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+  });
 
   return (
     <motion.div
@@ -100,9 +116,49 @@ export function UsageDashboard() {
         </Tabs>
       </div>
 
-      <UsageSummaryCards days={days} refreshIntervalMs={refreshIntervalMs} />
+      {/* App type filter bar (replaces DataSourceBar) */}
+      <div className="rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {APP_FILTER_OPTIONS.map((type) => (
+            <button
+              key={type}
+              type="button"
+              onClick={() => setAppType(type)}
+              className={cn(
+                "px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                appType === type
+                  ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
+                  : "text-muted-foreground hover:text-primary hover:bg-muted/50 border border-transparent",
+              )}
+            >
+              {t(`usage.appFilter.${type}`)}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+          <span>
+            {(summaryData?.totalRequests ?? 0).toLocaleString()}{" "}
+            {t("usage.requestsLabel")}
+          </span>
+          <span className="text-border">|</span>
+          <span>
+            {fmtUsd(parseFiniteNumber(summaryData?.totalCost) ?? 0, 4)}{" "}
+            {t("usage.costLabel")}
+          </span>
+        </div>
+      </div>
 
-      <UsageTrendChart days={days} refreshIntervalMs={refreshIntervalMs} />
+      <UsageSummaryCards
+        days={days}
+        appType={appType}
+        refreshIntervalMs={refreshIntervalMs}
+      />
+
+      <UsageTrendChart
+        days={days}
+        appType={appType}
+        refreshIntervalMs={refreshIntervalMs}
+      />
 
       <div className="space-y-4">
         <Tabs defaultValue="logs" className="w-full">
@@ -129,15 +185,24 @@ export function UsageDashboard() {
             transition={{ delay: 0.2 }}
           >
             <TabsContent value="logs" className="mt-0">
-              <RequestLogTable refreshIntervalMs={refreshIntervalMs} />
+              <RequestLogTable
+                appType={appType}
+                refreshIntervalMs={refreshIntervalMs}
+              />
             </TabsContent>
 
             <TabsContent value="providers" className="mt-0">
-              <ProviderStatsTable refreshIntervalMs={refreshIntervalMs} />
+              <ProviderStatsTable
+                appType={appType}
+                refreshIntervalMs={refreshIntervalMs}
+              />
             </TabsContent>
 
             <TabsContent value="models" className="mt-0">
-              <ModelStatsTable refreshIntervalMs={refreshIntervalMs} />
+              <ModelStatsTable
+                appType={appType}
+                refreshIntervalMs={refreshIntervalMs}
+              />
             </TabsContent>
           </motion.div>
         </Tabs>
