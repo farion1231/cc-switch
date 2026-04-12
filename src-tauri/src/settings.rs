@@ -6,7 +6,7 @@ use std::sync::{OnceLock, RwLock};
 
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::services::skill::SyncMethod;
+use crate::services::skill::{SkillStorageLocation, SyncMethod};
 
 /// 自定义端点配置（历史兼容，实际存储在 provider.meta.custom_endpoints）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +207,12 @@ pub struct AppSettings {
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
+    /// User has confirmed the first-run welcome notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_run_notice_confirmed: Option<bool>,
+    /// User has confirmed the common config first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub common_config_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
@@ -247,6 +253,9 @@ pub struct AppSettings {
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
     #[serde(default)]
     pub skill_sync_method: SyncMethod,
+    /// Skill 存储位置：cc_switch（默认）或 unified（~/.agents/skills/）
+    #[serde(default)]
+    pub skill_storage_location: SkillStorageLocation,
 
     // ===== WebDAV 同步设置 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -266,7 +275,7 @@ pub struct AppSettings {
 
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
-    /// - macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty"
+    /// - macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty" | "wezterm" | "kaku"
     /// - Windows: "cmd" | "powershell" | "wt" (Windows Terminal)
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -297,6 +306,8 @@ impl Default for AppSettings {
             stream_check_confirmed: None,
             enable_failover_toggle: false,
             failover_confirmed: None,
+            first_run_notice_confirmed: None,
+            common_config_confirmed: None,
             language: None,
             visible_apps: None,
             claude_config_dir: None,
@@ -310,6 +321,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             skill_sync_method: SyncMethod::default(),
+            skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
             webdav_backup: None,
             backup_interval_hours: None,
@@ -643,6 +655,26 @@ pub fn get_skill_sync_method() -> SyncMethod {
             e.into_inner()
         })
         .skill_sync_method
+}
+
+// ===== Skill 存储位置管理函数 =====
+
+/// 获取 Skill 存储位置配置
+pub fn get_skill_storage_location() -> SkillStorageLocation {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .skill_storage_location
+}
+
+/// 设置 Skill 存储位置
+pub fn set_skill_storage_location(location: SkillStorageLocation) -> Result<(), AppError> {
+    mutate_settings(|s| {
+        s.skill_storage_location = location;
+    })
 }
 
 // ===== 备份策略管理函数 =====

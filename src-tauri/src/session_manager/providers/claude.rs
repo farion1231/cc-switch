@@ -12,6 +12,7 @@ use super::utils::{
 };
 
 const PROVIDER_ID: &str = "claude";
+const TITLE_MAX_CHARS: usize = 80;
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let root = get_claude_config_dir().join("projects");
@@ -129,8 +130,9 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
+    let mut first_user_message: Option<String> = None;
 
-    // Extract metadata from head lines
+    // Extract metadata and first user message from head lines
     for line in &head {
         let value: Value = match serde_json::from_str(line) {
             Ok(parsed) => parsed,
@@ -151,11 +153,41 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         if created_at.is_none() {
             created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
+        // Extract first real user message as title candidate
+        // Skip system-injected caveats and slash commands (e.g. /clear, /compact)
+        if first_user_message.is_none() {
+            let is_user = value.get("type").and_then(Value::as_str) == Some("user")
+                || value
+                    .get("message")
+                    .and_then(|m| m.get("role"))
+                    .and_then(Value::as_str)
+                    == Some("user");
+            if is_user {
+                if let Some(message) = value.get("message") {
+                    let text = message.get("content").map(extract_text).unwrap_or_default();
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty()
+                        && !trimmed.contains("<local-command-caveat>")
+                        && !trimmed.starts_with("<command-name>")
+                    {
+                        first_user_message = Some(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        if session_id.is_some()
+            && project_dir.is_some()
+            && created_at.is_some()
+            && first_user_message.is_some()
+        {
+            break;
+        }
     }
 
-    // Extract last_active_at and summary from tail lines (reverse order)
+    // Extract last_active_at, summary, and custom-title from tail lines (reverse order)
     let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
+    let mut custom_title: Option<String> = None;
 
     for line in tail.iter().rev() {
         let value: Value = match serde_json::from_str(line) {
@@ -164,6 +196,16 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         };
         if last_active_at.is_none() {
             last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
+        }
+        // Look for custom-title entry (take the last one, i.e. first in reverse)
+        if custom_title.is_none()
+            && value.get("type").and_then(Value::as_str) == Some("custom-title")
+        {
+            custom_title = value
+                .get("customTitle")
+                .and_then(Value::as_str)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
         }
         if summary.is_none() {
             if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
@@ -176,7 +218,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 }
             }
         }
-        if last_active_at.is_some() && summary.is_some() {
+        if last_active_at.is_some() && summary.is_some() && custom_title.is_some() {
             break;
         }
     }
@@ -184,10 +226,16 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
 
-    let title = project_dir
-        .as_deref()
-        .and_then(path_basename)
-        .map(|value| value.to_string());
+    // Title priority: custom-title > first user message > directory basename
+    let title = custom_title
+        .map(|t| truncate_summary(&t, TITLE_MAX_CHARS))
+        .or_else(|| first_user_message.map(|t| truncate_summary(&t, TITLE_MAX_CHARS)))
+        .or_else(|| {
+            project_dir
+                .as_deref()
+                .and_then(path_basename)
+                .map(|v| v.to_string())
+        });
 
     let summary = summary.map(|text| truncate_summary(&text, 160));
 
@@ -335,5 +383,118 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "user");
         assert!(msgs[0].content.contains("Please continue"));
+    }
+
+    #[test]
+    fn parse_session_uses_first_user_message_as_title() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-abc.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-abc\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"How do I deploy?\"},\"sessionId\":\"session-abc\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Here is how...\"},\"timestamp\":\"2026-03-06T10:02:00Z\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("How do I deploy?"));
+    }
+
+    #[test]
+    fn parse_session_custom_title_overrides_first_message() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-def.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-def\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"fix something\"},\"sessionId\":\"session-def\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"timestamp\":\"2026-03-06T10:02:00Z\"}\n",
+                "{\"type\":\"custom-title\",\"customTitle\":\"fix-login-bug\",\"sessionId\":\"session-def\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("fix-login-bug"));
+    }
+
+    #[test]
+    fn parse_session_falls_back_to_dir_basename() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-ghi.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-ghi\",\"cwd\":\"/tmp/my-project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        // No user message and no custom-title → falls back to dir basename
+        assert_eq!(meta.title.as_deref(), Some("my-project"));
+    }
+
+    #[test]
+    fn parse_session_truncates_long_title() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-trunc.jsonl");
+        let long_msg = "a".repeat(200);
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"sessionId\":\"session-trunc\",\"cwd\":\"/tmp/p\",\"timestamp\":\"2026-03-06T10:00:00Z\"}}\n\
+                 {{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"{long_msg}\"}},\"sessionId\":\"session-trunc\",\"timestamp\":\"2026-03-06T10:01:00Z\"}}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        let title = meta.title.unwrap();
+        assert!(title.len() <= TITLE_MAX_CHARS + 3); // +3 for "..."
+        assert!(title.ends_with("..."));
+    }
+
+    #[test]
+    fn parse_session_new_format_with_snapshot() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-new.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"file-history-snapshot\",\"messageId\":\"msg-1\",\"snapshot\":{},\"isSnapshotUpdate\":false}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"请帮我重构这个函数\"},\"sessionId\":\"session-new\",\"timestamp\":\"2026-03-06T10:00:00Z\",\"cwd\":\"/tmp/project\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"OK\"},\"timestamp\":\"2026-03-06T10:01:00Z\",\"cwd\":\"/tmp/project\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("请帮我重构这个函数"));
+    }
+
+    #[test]
+    fn parse_session_skips_command_caveat_and_slash_commands() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-clear.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"file-history-snapshot\",\"messageId\":\"msg-1\",\"snapshot\":{},\"isSnapshotUpdate\":false}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"<local-command-caveat>Caveat: The messages below were generated by the user while running local commands.</local-command-caveat>\"},\"sessionId\":\"session-clear\",\"timestamp\":\"2026-03-06T10:00:00Z\",\"cwd\":\"/tmp/project\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"<command-name>/clear</command-name>\\n<command-message>clear</command-message>\"},\"sessionId\":\"session-clear\",\"timestamp\":\"2026-03-06T10:00:01Z\",\"cwd\":\"/tmp/project\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"timestamp\":\"2026-03-06T10:00:02Z\",\"cwd\":\"/tmp/project\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"帮我看看工作区的改动\"},\"sessionId\":\"session-clear\",\"timestamp\":\"2026-03-06T10:01:00Z\",\"cwd\":\"/tmp/project\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("帮我看看工作区的改动"));
     }
 }

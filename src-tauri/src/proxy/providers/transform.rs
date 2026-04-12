@@ -35,7 +35,7 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
 ///    `low`/`medium`/`high` map 1:1; `max` maps to `xhigh`
 ///    (supported by mainstream GPT models). Unknown values are ignored.
 /// 2. Fallback: `thinking.type` + `budget_tokens`:
-///    - `adaptive` → `high` (mirrors optimizer semantics where adaptive ≈ max effort)
+///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
 ///    - `enabled` with budget → `low` (<4 000) / `medium` (4 000–15 999) / `high` (≥16 000)
 ///    - `enabled` without budget → `high` (conservative default)
 ///    - `disabled` / absent → `None`
@@ -57,7 +57,7 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
     // --- Priority 2: thinking.type + budget_tokens fallback ---
     let thinking = body.get("thinking")?;
     match thinking.get("type").and_then(|t| t.as_str()) {
-        Some("adaptive") => Some("high"),
+        Some("adaptive") => Some("xhigh"),
         Some("enabled") => {
             let budget = thinking.get("budget_tokens").and_then(|b| b.as_u64());
             match budget {
@@ -1019,9 +1019,9 @@ mod tests {
     }
 
     #[test]
-    fn test_thinking_adaptive_maps_high() {
+    fn test_thinking_adaptive_maps_xhigh() {
         let body = json!({"thinking": {"type": "adaptive"}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("high"));
+        assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
     }
 
     #[test]
@@ -1100,7 +1100,7 @@ mod tests {
         });
 
         let result = anthropic_to_openai(input, None).unwrap();
-        assert_eq!(result["reasoning_effort"], "high");
+        assert_eq!(result["reasoning_effort"], "xhigh");
     }
 
     #[test]

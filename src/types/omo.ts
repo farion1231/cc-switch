@@ -362,6 +362,14 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
     recommended: "gpt-5.4",
     group: "sub",
   },
+  {
+    key: "council",
+    display: "Council",
+    descKey: "omo.slimAgentDesc.council",
+    tooltipKey: "omo.slimAgentTooltip.council",
+    recommended: "gpt-5.4-mini",
+    group: "sub",
+  },
 ];
 
 export const OMO_SLIM_DISABLEABLE_AGENTS = [
@@ -371,6 +379,7 @@ export const OMO_SLIM_DISABLEABLE_AGENTS = [
   { value: "explorer", label: "Explorer" },
   { value: "designer", label: "Designer" },
   { value: "fixer", label: "Fixer" },
+  { value: "council", label: "Council" },
 ] as const;
 
 export const OMO_SLIM_DISABLEABLE_MCPS = [

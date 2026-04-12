@@ -14,10 +14,11 @@ function parseModelsFromConfig(settingsConfig: string) {
     const env = cfg?.env || {};
     const model =
       typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
-    const reasoning =
+    const explicitReasoning =
       typeof env.ANTHROPIC_REASONING_MODEL === "string"
         ? env.ANTHROPIC_REASONING_MODEL
         : "";
+    const reasoning = explicitReasoning || model;
     const small =
       typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
         ? env.ANTHROPIC_SMALL_FAST_MODEL
@@ -92,10 +93,11 @@ export function useModelState({
       const env = cfg?.env || {};
       const model =
         typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
-      const reasoning =
+      const explicitReasoning =
         typeof env.ANTHROPIC_REASONING_MODEL === "string"
           ? env.ANTHROPIC_REASONING_MODEL
           : "";
+      const reasoning = explicitReasoning || model;
       const small =
         typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
           ? env.ANTHROPIC_SMALL_FAST_MODEL
@@ -148,16 +150,17 @@ export function useModelState({
           ? JSON.parse(settingsConfig)
           : { env: {} };
         if (!currentConfig.env) currentConfig.env = {};
+        const env = currentConfig.env as Record<string, unknown>;
 
         // 新键仅写入；旧键不再写入
         const trimmed = value.trim();
         if (trimmed) {
-          currentConfig.env[field] = trimmed;
+          env[field] = trimmed;
         } else {
-          delete currentConfig.env[field];
+          delete env[field];
         }
         // 删除旧键
-        delete currentConfig.env["ANTHROPIC_SMALL_FAST_MODEL"];
+        delete env["ANTHROPIC_SMALL_FAST_MODEL"];
 
         onConfigChange(JSON.stringify(currentConfig, null, 2));
       } catch (err) {
