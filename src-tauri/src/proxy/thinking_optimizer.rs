@@ -25,7 +25,7 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     }
 
     if model.contains("opus-4-6") || model.contains("sonnet-4-6") {
-        log::info!("[OPT] thinking: adaptive({})", model);
+        log::info!("[OPT] thinking: adaptive({model})");
         body["thinking"] = json!({"type": "adaptive"});
         body["output_config"] = json!({"effort": "max"});
         append_beta(body, "context-1m-2025-08-07");
@@ -33,7 +33,7 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     }
 
     // legacy path
-    log::info!("[OPT] thinking: legacy({})", model);
+    log::info!("[OPT] thinking: legacy({model})");
 
     let max_tokens = body
         .get("max_tokens")

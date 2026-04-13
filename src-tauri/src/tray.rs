@@ -14,6 +14,7 @@ use crate::store::AppState;
 pub struct TrayTexts {
     pub show_main: &'static str,
     pub no_provider_hint: &'static str,
+    pub lightweight_mode: &'static str,
     pub quit: &'static str,
     pub _auto_label: &'static str,
 }
@@ -24,6 +25,7 @@ impl TrayTexts {
             "en" => Self {
                 show_main: "Open main window",
                 no_provider_hint: "  (No providers yet, please add them from the main window)",
+                lightweight_mode: "Lightweight Mode",
                 quit: "Quit",
                 _auto_label: "Auto (Failover)",
             },
@@ -31,12 +33,14 @@ impl TrayTexts {
                 show_main: "メインウィンドウを開く",
                 no_provider_hint:
                     "  (プロバイダーがまだありません。メイン画面から追加してください)",
+                lightweight_mode: "軽量モード",
                 quit: "終了",
                 _auto_label: "自動 (フェイルオーバー)",
             },
             _ => Self {
                 show_main: "打开主界面",
                 no_provider_hint: "  (无供应商，请在主界面添加)",
+                lightweight_mode: "轻量模式",
                 quit: "退出",
                 _auto_label: "自动 (故障转移)",
             },
@@ -382,6 +386,18 @@ pub fn create_tray_menu(
         menu_builder = menu_builder.separator();
     }
 
+    let lightweight_item = CheckMenuItem::with_id(
+        app,
+        "lightweight_mode",
+        tray_texts.lightweight_mode,
+        true,
+        crate::lightweight::is_lightweight_mode(),
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
+
+    menu_builder = menu_builder.item(&lightweight_item).separator();
+
     // 退出菜单（分隔符已在上面的 section 循环中添加）
     let quit_item = MenuItem::with_id(app, "quit", tray_texts.quit, true, None::<&str>)
         .map_err(|e| AppError::Message(format!("创建退出菜单失败: {e}")))?;
@@ -391,6 +407,20 @@ pub fn create_tray_menu(
     menu_builder
         .build()
         .map_err(|e| AppError::Message(format!("构建菜单失败: {e}")))
+}
+
+pub fn refresh_tray_menu(app: &tauri::AppHandle) {
+    use crate::store::AppState;
+
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(new_menu) = create_tray_menu(app, state.inner()) {
+            if let Some(tray) = app.tray_by_id("main") {
+                if let Err(e) = tray.set_menu(Some(new_menu)) {
+                    log::error!("刷新托盘菜单失败: {e}");
+                }
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -430,6 +460,19 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 {
                     apply_tray_policy(app, true);
                 }
+            } else if crate::lightweight::is_lightweight_mode() {
+                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+                    log::error!("退出轻量模式重建窗口失败: {e}");
+                }
+            }
+        }
+        "lightweight_mode" => {
+            if crate::lightweight::is_lightweight_mode() {
+                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+                    log::error!("退出轻量模式失败: {e}");
+                }
+            } else if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
+                log::error!("进入轻量模式失败: {e}");
             }
         }
         "quit" => {

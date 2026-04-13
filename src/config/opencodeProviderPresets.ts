@@ -453,10 +453,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     websiteUrl: "https://www.kimi.com/coding/docs/",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
+      npm: "@ai-sdk/anthropic",
       name: "Kimi For Coding",
       options: {
-        baseURL: "https://api.kimi.com/v1",
+        baseURL: "https://api.kimi.com/coding/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -470,8 +470,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://api.kimi.com/v1",
-        defaultValue: "https://api.kimi.com/v1",
+        placeholder: "https://api.kimi.com/coding/v1",
+        defaultValue: "https://api.kimi.com/coding/v1",
         editorValue: "",
       },
       apiKey: {
@@ -507,6 +507,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         defaultValue: "https://api.stepfun.ai/v1",
         editorValue: "",
       },
+      apiKey: {
+        label: "API Key",
+        placeholder: "step-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "StepFun Step Plan",
+    websiteUrl: "https://platform.stepfun.com/docs/zh/step-plan/overview",
+    apiKeyUrl: "https://platform.stepfun.com/interface-key",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StepFun Step Plan",
+      options: {
+        baseURL: "https://api.stepfun.com/step_plan/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "step-3.5-flash": { name: "Step 3.5 Flash" },
+      },
+    },
+    category: "cn_official",
+    icon: "stepfun",
+    iconColor: "#005AFF",
+    templateValues: {
       apiKey: {
         label: "API Key",
         placeholder: "step-...",
@@ -1316,7 +1343,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
 
   {
     name: "Oh My OpenCode",
-    websiteUrl: "https://github.com/code-yeongyu/oh-my-opencode",
+    websiteUrl: "https://github.com/code-yeongyu/oh-my-openagent",
     settingsConfig: {
       npm: "",
       options: {},

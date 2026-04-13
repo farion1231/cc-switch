@@ -5,16 +5,19 @@
 use super::{
     handler_config::UsageParserConfig,
     handler_context::{RequestContext, StreamingTimeoutConfig},
+    hyper_client::ProxyResponse,
     server::ProxyState,
+    sse::strip_sse_field,
     usage::parser::TokenUsage,
     ProxyError,
 };
+use axum::http::header::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
-use reqwest::header::HeaderMap;
 use serde_json::Value;
 use std::{
+    io::Read,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -24,23 +27,122 @@ use std::{
 use tokio::sync::Mutex;
 
 // ============================================================================
+// 响应解压
+// ============================================================================
+
+/// 根据 content-encoding 解压响应体字节
+///
+/// reqwest 自动解压已禁用（为了透传 accept-encoding），需要手动解压。
+fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    match content_encoding {
+        "gzip" | "x-gzip" => {
+            let mut decoder = flate2::read::GzDecoder::new(body);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed)?;
+            Ok(decompressed)
+        }
+        "deflate" => {
+            let mut decoder = flate2::read::DeflateDecoder::new(body);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed)?;
+            Ok(decompressed)
+        }
+        "br" => {
+            let mut decompressed = Vec::new();
+            brotli::BrotliDecompress(&mut std::io::Cursor::new(body), &mut decompressed)?;
+            Ok(decompressed)
+        }
+        _ => {
+            log::warn!("未知的 content-encoding: {content_encoding}，跳过解压");
+            Ok(body.to_vec())
+        }
+    }
+}
+
+/// 从响应头提取 content-encoding（忽略 identity 和 chunked）
+fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("content-encoding")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && s != "identity")
+}
+
+/// 移除在重建响应体后会失真的实体头。
+pub(crate) fn strip_entity_headers_for_rebuilt_body(headers: &mut HeaderMap) {
+    headers.remove(axum::http::header::CONTENT_ENCODING);
+    headers.remove(axum::http::header::CONTENT_LENGTH);
+    headers.remove(axum::http::header::TRANSFER_ENCODING);
+}
+
+/// 读取响应体并在需要时解压，确保 headers 与返回 body 一致。
+///
+/// `body_timeout`: 整包超时。当非零时用 `tokio::time::timeout` 包住 `.bytes()` 调用，
+/// 防止上游发完响应头后卡住 body 导致请求永远挂住。
+/// 传入 `Duration::ZERO` 表示不启用超时（故障转移关闭时）。
+pub(crate) async fn read_decoded_body(
+    response: ProxyResponse,
+    tag: &str,
+    body_timeout: Duration,
+) -> Result<(HeaderMap, http::StatusCode, Bytes), ProxyError> {
+    let mut headers = response.headers().clone();
+    let status = response.status();
+    let raw_bytes = if body_timeout.is_zero() {
+        response.bytes().await?
+    } else {
+        tokio::time::timeout(body_timeout, response.bytes())
+            .await
+            .map_err(|_| {
+                ProxyError::Timeout(format!(
+                    "响应体读取超时: {}s（上游发完响应头后 body 未到达）",
+                    body_timeout.as_secs()
+                ))
+            })??
+    };
+
+    log::debug!(
+        "[{tag}] 已接收上游响应体: status={}, bytes={}, headers={}",
+        status.as_u16(),
+        raw_bytes.len(),
+        format_headers(&headers)
+    );
+
+    let mut body_bytes = raw_bytes.clone();
+    let mut decoded = false;
+
+    if let Some(encoding) = get_content_encoding(&headers) {
+        log::debug!("[{tag}] 解压非流式响应: content-encoding={encoding}");
+        match decompress_body(&encoding, &raw_bytes) {
+            Ok(decompressed) => {
+                body_bytes = Bytes::from(decompressed);
+                decoded = true;
+            }
+            Err(e) => {
+                log::warn!("[{tag}] 解压失败 ({encoding}): {e}，使用原始数据");
+            }
+        }
+    }
+
+    if decoded {
+        strip_entity_headers_for_rebuilt_body(&mut headers);
+    }
+
+    Ok((headers, status, body_bytes))
+}
+
+// ============================================================================
 // 公共接口
 // ============================================================================
 
 /// 检测响应是否为 SSE 流式响应
 #[inline]
-pub fn is_sse_response(response: &reqwest::Response) -> bool {
-    response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .map(|ct| ct.contains("text/event-stream"))
-        .unwrap_or(false)
+pub fn is_sse_response(response: &ProxyResponse) -> bool {
+    response.is_sse()
 }
 
 /// 处理流式响应
 pub async fn handle_streaming(
-    response: reqwest::Response,
+    response: ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
@@ -52,6 +154,15 @@ pub async fn handle_streaming(
         status.as_u16(),
         format_headers(response.headers())
     );
+    // 检查流式响应是否被压缩（SSE 通常不压缩，如果压缩则 SSE 解析会失败）
+    if let Some(encoding) = get_content_encoding(response.headers()) {
+        log::warn!(
+            "[{}] 流式响应含 content-encoding={encoding}，SSE 解析可能失败。\
+             上游在 accept-encoding 透传后压缩了 SSE 流。",
+            ctx.tag
+        );
+    }
+
     let mut builder = axum::response::Response::builder().status(status);
 
     // 复制响应头
@@ -60,9 +171,7 @@ pub async fn handle_streaming(
     }
 
     // 创建字节流
-    let stream = response
-        .bytes_stream()
-        .map(|chunk| chunk.map_err(|e| std::io::Error::other(e.to_string())));
+    let stream = response.bytes_stream();
 
     // 创建使用量收集器
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);
@@ -86,26 +195,20 @@ pub async fn handle_streaming(
 
 /// 处理非流式响应
 pub async fn handle_non_streaming(
-    response: reqwest::Response,
+    response: ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
 ) -> Result<Response, ProxyError> {
-    let response_headers = response.headers().clone();
-    let status = response.status();
-
-    // 读取响应体
-    let body_bytes = response.bytes().await.map_err(|e| {
-        log::error!("[{}] 读取响应失败: {e}", ctx.tag);
-        ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
-    })?;
-    log::debug!(
-        "[{}] 已接收上游响应体: status={}, bytes={}, headers={}",
-        ctx.tag,
-        status.as_u16(),
-        body_bytes.len(),
-        format_headers(&response_headers)
-    );
+    // 整包超时：仅在故障转移开启且配置值非零时生效
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            Duration::ZERO
+        };
+    let (response_headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
 
     log::debug!(
         "[{}] 上游响应体内容: {}",
@@ -189,7 +292,7 @@ pub async fn handle_non_streaming(
 ///
 /// 根据响应类型自动选择流式或非流式处理
 pub async fn process_response(
-    response: reqwest::Response,
+    response: ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
@@ -527,7 +630,7 @@ pub fn create_logged_passthrough_stream(
                         if !event_text.trim().is_empty() {
                             // 提取 data 部分并尝试解析为 JSON
                             for line in event_text.lines() {
-                                if let Some(data) = line.strip_prefix("data: ") {
+                                if let Some(data) = strip_sse_field(line, "data") {
                                     if data.trim() != "[DONE]" {
                                         if let Ok(json_value) = serde_json::from_str::<Value>(data) {
                                             if let Some(c) = &collector {
@@ -590,6 +693,27 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    #[test]
+    fn test_strip_sse_field_accepts_optional_space() {
+        assert_eq!(
+            super::strip_sse_field("data: {\"ok\":true}", "data"),
+            Some("{\"ok\":true}")
+        );
+        assert_eq!(
+            super::strip_sse_field("data:{\"ok\":true}", "data"),
+            Some("{\"ok\":true}")
+        );
+        assert_eq!(
+            super::strip_sse_field("event: message_start", "event"),
+            Some("message_start")
+        );
+        assert_eq!(
+            super::strip_sse_field("event:message_start", "event"),
+            Some("message_start")
+        );
+        assert_eq!(super::strip_sse_field("id:1", "data"), None);
+    }
 
     fn build_state(db: Arc<Database>) -> ProxyState {
         ProxyState {

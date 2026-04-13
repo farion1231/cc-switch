@@ -123,6 +123,7 @@ export function ProviderCard({
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
+  const isAdditiveMode = appId === "opencode" && !isAnyOmo;
 
   const { data: health } = useProviderHealth(provider.id, appId);
 
@@ -209,9 +210,12 @@ export function ProviderCard({
           : isCurrent;
 
   const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
+  const hasPersistentConfigHighlight = isAdditiveMode && isInConfig;
   const shouldUseBlue =
     (isAnyOmo && isActiveProvider) ||
-    (!isAnyOmo && !isProxyTakeover && isActiveProvider);
+    (!isAnyOmo &&
+      !isProxyTakeover &&
+      (isActiveProvider || hasPersistentConfigHighlight));
 
   return (
     <div
@@ -224,7 +228,8 @@ export function ProviderCard({
         shouldUseGreen &&
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
-        !isActiveProvider && "hover:shadow-sm",
+        !(isActiveProvider || hasPersistentConfigHighlight) &&
+          "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
@@ -234,8 +239,10 @@ export function ProviderCard({
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
           shouldUseGreen && "from-emerald-500/10",
           shouldUseBlue && "from-blue-500/10",
-          !isActiveProvider && "from-primary/10",
-          isActiveProvider ? "opacity-100" : "opacity-0",
+          !shouldUseGreen && !shouldUseBlue && "from-primary/10",
+          isActiveProvider || hasPersistentConfigHighlight
+            ? "opacity-100"
+            : "opacity-0",
         )}
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

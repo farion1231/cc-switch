@@ -267,7 +267,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     setShowUsageConfirm(false);
     try {
       if (settingsData) {
-        await settingsApi.save({ ...settingsData, usageConfirmed: true });
+        const { webdavSync: _, ...rest } = settingsData;
+        await settingsApi.save({ ...rest, usageConfirmed: true });
         await queryClient.invalidateQueries({ queryKey: ["settings"] });
       }
     } catch (error) {
@@ -872,7 +873,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               <JsonEditor
                 id="usage-code"
                 value={script.code || ""}
-                onChange={(value) => setScript({ ...script, code: value })}
+                onChange={(value) =>
+                  setScript((prev) => ({ ...prev, code: value }))
+                }
                 height={480}
                 language="javascript"
                 showMinimap={false}
