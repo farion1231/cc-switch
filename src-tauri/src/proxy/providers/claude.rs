@@ -177,6 +177,15 @@ pub fn transform_claude_request_for_api_format(
             .or(explicit_cache_key)
             .unwrap_or(&provider.id)
     };
+
+    let stream_include_usage = provider.stream_include_usage();
+    if stream_include_usage {
+        log::info!(
+            "[ClaudeAdapter] Provider '{}' stream_include_usage enabled",
+            provider.name
+        );
+    }
+
     match api_format {
         "openai_responses" => {
             // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
@@ -195,6 +204,7 @@ pub fn transform_claude_request_for_api_format(
             let mut result = super::transform::anthropic_to_openai_with_reasoning_content(
                 body,
                 preserve_reasoning_content,
+                stream_include_usage,
             )?;
             // Inject prompt_cache_key only if explicitly configured in meta
             if let Some(key) = provider
