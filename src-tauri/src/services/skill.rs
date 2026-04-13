@@ -476,9 +476,9 @@ impl SkillService {
         let location = crate::settings::get_skill_storage_location();
         let dir = match location {
             SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
-            SkillStorageLocation::Unified => crate::config::get_home_dir()
-                .join(".agents")
-                .join("skills"),
+            SkillStorageLocation::Unified => {
+                crate::config::get_home_dir().join(".agents").join("skills")
+            }
         };
         fs::create_dir_all(&dir)?;
         Ok(dir)
@@ -1157,9 +1157,9 @@ impl SkillService {
         let old_dir = Self::get_ssot_dir()?;
         let new_dir = match target {
             SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
-            SkillStorageLocation::Unified => crate::config::get_home_dir()
-                .join(".agents")
-                .join("skills"),
+            SkillStorageLocation::Unified => {
+                crate::config::get_home_dir().join(".agents").join("skills")
+            }
         };
         fs::create_dir_all(&new_dir)?;
 
