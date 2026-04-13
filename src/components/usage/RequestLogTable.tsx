@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -31,24 +31,33 @@ import {
 interface RequestLogTableProps {
   appType?: string;
   refreshIntervalMs: number;
+  timeRange?: "1d" | "7d" | "30d";
 }
 
 const ONE_DAY_SECONDS = 24 * 60 * 60;
 const MAX_FIXED_RANGE_SECONDS = 30 * ONE_DAY_SECONDS;
+
+const TIME_RANGE_SECONDS: Record<string, number> = {
+  "1d": ONE_DAY_SECONDS,
+  "7d": 7 * ONE_DAY_SECONDS,
+  "30d": 30 * ONE_DAY_SECONDS,
+};
 
 type TimeMode = "rolling" | "fixed";
 
 export function RequestLogTable({
   appType: dashboardAppType,
   refreshIntervalMs,
+  timeRange = "1d",
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
 
+  const rollingWindowSeconds = TIME_RANGE_SECONDS[timeRange] ?? ONE_DAY_SECONDS;
+
   const getRollingRange = () => {
     const now = Math.floor(Date.now() / 1000);
-    const oneDayAgo = now - ONE_DAY_SECONDS;
-    return { startDate: oneDayAgo, endDate: now };
+    return { startDate: now - rollingWindowSeconds, endDate: now };
   };
 
   const [appliedTimeMode, setAppliedTimeMode] = useState<TimeMode>("rolling");
@@ -61,6 +70,11 @@ export function RequestLogTable({
   const pageSize = 20;
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  // Reset page when the dashboard time range changes
+  useEffect(() => {
+    setPage(0);
+  }, [timeRange]);
+
   // When dashboard-level app filter is active (not "all"), override the local appType filter
   const dashboardAppTypeActive = dashboardAppType && dashboardAppType !== "all";
   const effectiveFilters: LogFilters = dashboardAppTypeActive
@@ -70,7 +84,7 @@ export function RequestLogTable({
   const { data: result, isLoading } = useRequestLogs({
     filters: effectiveFilters,
     timeMode: appliedTimeMode,
-    rollingWindowSeconds: ONE_DAY_SECONDS,
+    rollingWindowSeconds,
     page,
     pageSize,
     options: {

@@ -188,6 +188,7 @@ export function UsageDashboard() {
               <RequestLogTable
                 appType={appType}
                 refreshIntervalMs={refreshIntervalMs}
+                timeRange={timeRange}
               />
             </TabsContent>
 
