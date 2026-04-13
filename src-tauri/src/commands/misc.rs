@@ -182,6 +182,9 @@ async fn get_single_tool_version_impl(
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
 
+    #[cfg(not(target_os = "windows"))]
+    let _ = wsl_shell_by_tool;
+
     // 收集多环境版本信息
     let mut envs: Vec<ToolEnvVersion> = Vec::new();
 
@@ -544,6 +547,7 @@ fn try_get_version_wsl(
 /// 注意：此函数实际上不会被调用，因为 `wsl_distro_from_path` 在非 Windows 平台总是返回 None。
 /// 保留此函数是为了保持 API 一致性，防止未来重构时遗漏。
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn try_get_version_wsl(
     _tool: &str,
     _distro: &str,

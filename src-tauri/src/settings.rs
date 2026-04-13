@@ -547,6 +547,7 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
 
 /// 获取所有已安装的 WSL 发行版列表。
 /// 返回 `None` 表示 WSL 不可用或未安装任何发行版。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn get_wsl_distros() -> Option<Vec<String>> {
     #[cfg(target_os = "windows")]
     {

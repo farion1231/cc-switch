@@ -187,6 +187,8 @@ pub(crate) fn expand_wsl_dirs(primary_dir: &Path, default_subdir: &[&str]) -> Ve
     let mut dirs = vec![primary_dir.to_path_buf()];
     #[cfg(not(target_os = "windows"))]
     let dirs = vec![primary_dir.to_path_buf()];
+    #[cfg(not(target_os = "windows"))]
+    let _ = default_subdir;
 
     #[cfg(target_os = "windows")]
     {
