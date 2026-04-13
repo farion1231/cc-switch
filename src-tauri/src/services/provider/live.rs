@@ -1105,6 +1105,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 
 /// Claude env-level key fields that belong to the provider.
 /// When adding a new field here, also update backfill_claude_key_fields().
+#[allow(dead_code)]
 const CLAUDE_KEY_ENV_FIELDS: &[&str] = &[
     // --- API auth & endpoint ---
     "ANTHROPIC_BASE_URL",
@@ -1141,6 +1142,7 @@ const CLAUDE_KEY_ENV_FIELDS: &[&str] = &[
 
 /// Claude top-level key fields (legacy + modern format).
 /// When adding a new field here, also update backfill_claude_key_fields().
+#[allow(dead_code)]
 const CLAUDE_KEY_TOP_LEVEL: &[&str] = &[
     "apiBaseUrl",     // legacy
     "primaryModel",   // legacy
@@ -1151,6 +1153,7 @@ const CLAUDE_KEY_TOP_LEVEL: &[&str] = &[
 
 /// Codex TOML key fields.
 /// When adding a new field here, also update backfill_codex_key_fields().
+#[allow(dead_code)]
 const CODEX_KEY_TOP_LEVEL: &[&str] = &[
     "model_provider",
     "model",
@@ -1161,6 +1164,7 @@ const CODEX_KEY_TOP_LEVEL: &[&str] = &[
 
 /// Gemini env-level key fields.
 /// When adding a new field here, also update backfill_gemini_key_fields().
+#[allow(dead_code)]
 const GEMINI_KEY_ENV_FIELDS: &[&str] = &[
     "GOOGLE_GEMINI_BASE_URL",
     "GEMINI_API_KEY",
@@ -1179,6 +1183,7 @@ const GEMINI_KEY_ENV_FIELDS: &[&str] = &[
 /// - `switch_normal()` — switching providers
 /// - `sync_current_to_live()` — startup sync
 /// - `add()` / `update()` when the provider is current
+#[allow(dead_code)]
 pub(crate) fn write_live_partial(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => write_claude_live_partial(provider),
@@ -1192,6 +1197,7 @@ pub(crate) fn write_live_partial(app_type: &AppType, provider: &Provider) -> Res
 /// Apply a JSON merge patch (RFC 7396) directly to Claude live settings.json.
 /// Used for user-level preferences (attribution, thinking, etc.) that are
 /// independent of the active provider.
+#[allow(dead_code)]
 pub fn patch_claude_live(patch: Value) -> Result<(), AppError> {
     for_each_claude_settings_path(|_, path| {
         let mut live = if path.exists() {
@@ -1207,6 +1213,7 @@ pub fn patch_claude_live(patch: Value) -> Result<(), AppError> {
 }
 
 /// RFC 7396 JSON Merge Patch: null deletes, objects merge recursively, rest overwrites.
+#[allow(dead_code)]
 fn json_merge_patch(target: &mut Value, patch: &Value) {
     if let Some(patch_obj) = patch.as_object() {
         if !target.is_object() {
@@ -1231,6 +1238,7 @@ fn json_merge_patch(target: &mut Value, patch: &Value) {
 }
 
 /// Claude: merge only key env and top-level fields into live settings.json
+#[allow(dead_code)]
 fn write_claude_live_partial(provider: &Provider) -> Result<(), AppError> {
     for_each_claude_settings_path(|_, path| {
         // 1. Read existing live config (start from empty if file doesn't exist)
@@ -1286,6 +1294,7 @@ fn write_claude_live_partial(provider: &Provider) -> Result<(), AppError> {
 }
 
 /// Codex: replace auth.json entirely, partially merge config.toml key fields
+#[allow(dead_code)]
 fn write_codex_live_partial(provider: &Provider) -> Result<(), AppError> {
     let obj = provider
         .settings_config
@@ -1339,6 +1348,7 @@ fn write_codex_live_partial(provider: &Provider) -> Result<(), AppError> {
 }
 
 /// Gemini: merge only key env fields, preserve settings.json (MCP etc.)
+#[allow(dead_code)]
 fn write_gemini_live_partial(provider: &Provider) -> Result<(), AppError> {
     let auth_type = detect_gemini_auth_type(provider);
 
@@ -1419,6 +1429,7 @@ fn write_gemini_live_partial(provider: &Provider) -> Result<(), AppError> {
 ///
 /// Used during backfill to ensure the provider's `settings_config` converges
 /// to containing only key fields over time.
+#[allow(dead_code)]
 pub(crate) fn backfill_key_fields(app_type: &AppType, live_config: &Value) -> Value {
     match app_type {
         AppType::Claude => backfill_claude_key_fields(live_config),
@@ -1429,6 +1440,7 @@ pub(crate) fn backfill_key_fields(app_type: &AppType, live_config: &Value) -> Va
     }
 }
 
+#[allow(dead_code)]
 fn backfill_claude_key_fields(live: &Value) -> Value {
     let mut result = json!({});
     let result_obj = result.as_object_mut().unwrap();
@@ -1458,6 +1470,7 @@ fn backfill_claude_key_fields(live: &Value) -> Value {
     result
 }
 
+#[allow(dead_code)]
 fn backfill_codex_key_fields(live: &Value) -> Value {
     let mut result = json!({});
     let result_obj = result.as_object_mut().unwrap();
@@ -1495,6 +1508,7 @@ fn backfill_codex_key_fields(live: &Value) -> Value {
     result
 }
 
+#[allow(dead_code)]
 fn backfill_gemini_key_fields(live: &Value) -> Value {
     let mut result = json!({});
     let result_obj = result.as_object_mut().unwrap();

@@ -153,6 +153,7 @@ pub fn read_gemini_env() -> Result<HashMap<String, String>, AppError> {
 }
 
 /// 写入 Gemini .env 文件（原子操作）
+#[allow(dead_code)]
 pub fn write_gemini_env_atomic(map: &HashMap<String, String>) -> Result<(), AppError> {
     let path = get_gemini_env_path();
 
@@ -291,6 +292,7 @@ pub fn get_gemini_settings_path() -> PathBuf {
 ///
 /// # 参数
 /// - `selected_type`: 要设置的 selectedType 值（如 "gemini-api-key" 或 "oauth-personal"）
+#[allow(dead_code)]
 fn update_selected_type(selected_type: &str) -> Result<(), AppError> {
     let settings_path = get_gemini_settings_path();
 
@@ -348,6 +350,7 @@ fn update_selected_type(selected_type: &str) -> Result<(), AppError> {
 /// ```
 ///
 /// 保留文件中的其他所有字段。
+#[allow(dead_code)]
 pub fn write_packycode_settings() -> Result<(), AppError> {
     update_selected_type("gemini-api-key")
 }
@@ -366,6 +369,7 @@ pub fn write_packycode_settings() -> Result<(), AppError> {
 /// ```
 ///
 /// 保留文件中的其他所有字段。
+#[allow(dead_code)]
 pub fn write_google_oauth_settings() -> Result<(), AppError> {
     update_selected_type("oauth-personal")
 }

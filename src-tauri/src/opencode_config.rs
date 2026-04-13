@@ -81,6 +81,7 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
         .unwrap_or_default())
 }
 
+#[allow(dead_code)]
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     let mut full_config = read_opencode_config()?;
 
@@ -98,6 +99,7 @@ pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     write_opencode_config(&full_config)
 }
 
+#[allow(dead_code)]
 pub fn remove_provider(id: &str) -> Result<(), AppError> {
     let mut config = read_opencode_config()?;
 
@@ -126,6 +128,7 @@ pub fn get_typed_providers() -> Result<IndexMap<String, OpenCodeProviderConfig>,
     Ok(result)
 }
 
+#[allow(dead_code)]
 pub fn set_typed_provider(id: &str, config: &OpenCodeProviderConfig) -> Result<(), AppError> {
     let value = serde_json::to_value(config).map_err(|e| AppError::JsonSerialize { source: e })?;
     set_provider(id, value)

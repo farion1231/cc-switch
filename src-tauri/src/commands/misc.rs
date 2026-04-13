@@ -182,16 +182,15 @@ async fn get_single_tool_version_impl(
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
 
-    // 获取该工具的用户 WSL 偏好设置
-    let pref = wsl_shell_by_tool.and_then(|m| m.get(tool));
-    let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
-    let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
-
     // 收集多环境版本信息
     let mut envs: Vec<ToolEnvVersion> = Vec::new();
 
     #[cfg(target_os = "windows")]
     {
+        let pref = wsl_shell_by_tool.and_then(|m| m.get(tool));
+        let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
+        let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
+
         // Windows: 检测本地版本
         let (windows_version, windows_error) = {
             let direct_result = try_get_version(tool);
@@ -917,7 +916,7 @@ fn launch_terminal_with_env(
     #[cfg(target_os = "windows")]
     {
         launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -1272,6 +1271,7 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     cwd.map(|dir| {
         format!(
@@ -1282,6 +1282,7 @@ fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     .unwrap_or_default()
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }

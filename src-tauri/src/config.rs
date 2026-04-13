@@ -95,7 +95,10 @@ pub fn get_claude_settings_path() -> PathBuf {
 /// - 去重（Windows 下不区分大小写）
 pub fn get_claude_settings_paths() -> Vec<PathBuf> {
     let primary_dir = get_claude_config_dir();
+    #[cfg(windows)]
     let mut dirs = vec![primary_dir.clone()];
+    #[cfg(not(windows))]
+    let dirs = vec![primary_dir.clone()];
 
     #[cfg(windows)]
     {

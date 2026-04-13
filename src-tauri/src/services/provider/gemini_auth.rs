@@ -94,6 +94,7 @@ fn contains_packycode_keyword(value: &str) -> bool {
 /// Google Official Gemini uses OAuth personal authentication, no API Key needed.
 ///
 /// This is a convenience wrapper around `detect_gemini_auth_type`.
+#[allow(dead_code)]
 pub(crate) fn is_google_official_gemini(provider: &Provider) -> bool {
     detect_gemini_auth_type(provider) == GeminiAuthType::GoogleOfficial
 }
@@ -129,6 +130,7 @@ pub(crate) fn is_google_official_gemini(provider: &Provider) -> bool {
 /// # Error handling
 ///
 /// If provider is not Google Official, function returns `Ok(())` immediately without any operation.
+#[allow(dead_code)]
 pub(crate) fn ensure_google_oauth_security_flag(provider: &Provider) -> Result<(), AppError> {
     if !is_google_official_gemini(provider) {
         return Ok(());

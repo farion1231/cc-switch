@@ -9,7 +9,9 @@ use super::{
     failover_switch::FailoverSwitchManager,
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
-    providers::{get_adapter, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType},
+    providers::{
+        get_adapter, uses_anthropic_protocol, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
+    },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,

@@ -183,7 +183,10 @@ pub fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 ///
 /// This is used to support Windows + WSL dual-environment config sync.
 pub(crate) fn expand_wsl_dirs(primary_dir: &Path, default_subdir: &[&str]) -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
     let mut dirs = vec![primary_dir.to_path_buf()];
+    #[cfg(not(target_os = "windows"))]
+    let dirs = vec![primary_dir.to_path_buf()];
 
     #[cfg(target_os = "windows")]
     {
