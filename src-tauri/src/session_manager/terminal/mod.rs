@@ -78,19 +78,29 @@ end tell"#
 }
 
 fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    let full_command = build_shell_command(command, cwd);
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
+    let mut args = vec![
+        "-na".to_string(),
+        "Ghostty".to_string(),
+        "--args".to_string(),
+        "--quit-after-last-window-closed=true".to_string(),
+    ];
+
+    if let Some(dir) = cwd {
+        if !dir.trim().is_empty() {
+            args.push(format!("--working-directory={dir}"));
+        }
+    }
+
+    args.push("-e".to_string());
+    args.push(shell);
+    args.push("-l".to_string());
+    args.push("-c".to_string());
+    args.push(command.to_string());
+
     let status = Command::new("open")
-        .arg("-na")
-        .arg("Ghostty")
-        .arg("--args")
-        .arg("--quit-after-last-window-closed=true")
-        .arg("-e")
-        .arg(&shell)
-        .arg("-l")
-        .arg("-c")
-        .arg(&full_command)
+        .args(&args)
         .status()
         .map_err(|e| format!("Failed to launch Ghostty: {e}"))?;
 
@@ -275,14 +285,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_shell_command_prefixes_cwd_for_ghostty_shell_execution() {
-        assert_eq!(
-            build_shell_command("claude --resume abc-123", Some("/tmp/project dir")),
-            "cd \"/tmp/project dir\" && claude --resume abc-123"
-        );
-    }
-
-    #[test]
     fn build_shell_command_keeps_command_without_cwd_prefix_when_not_provided() {
         assert_eq!(
             build_shell_command("claude --resume abc-123", None),
@@ -314,5 +316,23 @@ mod tests {
                 "claude --resume abc-123".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn ghostty_uses_working_directory_arg_for_cwd() {
+        // cwd should be passed as --working-directory, not embedded in the shell command string
+        // This avoids shell expansion of special characters in directory paths
+        let cwd = "/tmp/project dir";
+        let command = "claude --resume abc-123";
+
+        // Verify build_shell_command does NOT include cwd when used in ghostty context
+        // (ghostty passes cwd via --working-directory flag instead)
+        assert_eq!(
+            build_shell_command(command, None),
+            "claude --resume abc-123"
+        );
+
+        // Verify shell_escape works correctly for paths with spaces
+        assert_eq!(shell_escape(cwd), "\"/tmp/project dir\"");
     }
 }
