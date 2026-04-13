@@ -71,8 +71,10 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
     }
 }
 
-/// Anthropic 请求 → OpenAI Chat Completions 请求
-pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
+/// Anthropic 请求 → OpenAI 请求
+///
+/// `cache_key`: optional prompt_cache_key to inject for improved cache routing
+pub fn anthropic_to_openai(body: Value, cache_key: Option<&str>) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
     // NOTE: 模型映射由上游统一处理（proxy::model_mapper），格式转换层只做结构转换。
@@ -173,6 +175,11 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
         result["tool_choice"] = v.clone();
     }
 
+    // Inject prompt_cache_key for improved cache routing on OpenAI-compatible endpoints
+    if let Some(key) = cache_key {
+        result["prompt_cache_key"] = json!(key);
+    }
+
     Ok(result)
 }
 
@@ -199,10 +206,6 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
     }
 
     let mut parts = Vec::new();
-    let mut inherited_cache_control: Option<Value> = None;
-    let mut cache_control_conflict = false;
-    let mut saw_cache_control = false;
-    let mut saw_missing_cache_control = false;
     messages.retain(|message| {
         if message.get("role").and_then(|value| value.as_str()) != Some("system") {
             return true;
@@ -223,28 +226,11 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
             _ => {}
         }
 
-        if let Some(cache_control) = message.get("cache_control") {
-            saw_cache_control = true;
-            match &inherited_cache_control {
-                None => inherited_cache_control = Some(cache_control.clone()),
-                Some(existing) if existing == cache_control => {}
-                Some(_) => cache_control_conflict = true,
-            }
-        } else {
-            saw_missing_cache_control = true;
-        }
-
         false
     });
 
     if !parts.is_empty() {
-        let mut merged = json!({"role": "system", "content": parts.join("\n")});
-        if !(cache_control_conflict || (saw_cache_control && saw_missing_cache_control)) {
-            if let Some(cache_control) = inherited_cache_control {
-                merged["cache_control"] = cache_control;
-            }
-        }
-        messages.insert(0, merged);
+        messages.insert(0, json!({"role": "system", "content": parts.join("\n")}));
     }
 }
 
@@ -583,7 +569,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["model"], "claude-3-opus");
         assert_eq!(result["max_tokens"], 1024);
         assert_eq!(result["messages"][0]["role"], "user");
@@ -599,7 +585,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
@@ -621,74 +607,34 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
     }
 
     #[test]
-    fn test_anthropic_to_openai_preserves_matching_system_cache_control_when_merging() {
+    fn test_anthropic_to_openai_normalizes_fragmented_system_messages() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
             "system": [
-                {"type": "text", "text": "You are Claude Code.", "cache_control": {"type": "ephemeral"}},
-                {"type": "text", "text": "Be concise.", "cache_control": {"type": "ephemeral"}}
+                {"type": "text", "text": "You are Claude Code."},
+                {"type": "text", "text": "Be concise."}
             ],
-            "messages": [{"role": "user", "content": "Hello"}]
+            "messages": [
+                {"role": "system", "content": "Follow repo conventions."},
+                {"role": "user", "content": "Hello"}
+            ]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["messages"].as_array().unwrap().len(), 2);
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
-            "You are Claude Code.\nBe concise."
+            "You are Claude Code.\nBe concise.\nFollow repo conventions."
         );
-        assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
         assert_eq!(result["messages"][1]["role"], "user");
-    }
-
-    #[test]
-    fn test_anthropic_to_openai_drops_mixed_present_absent_system_cache_control_when_merging() {
-        let input = json!({
-            "model": "claude-3-sonnet",
-            "max_tokens": 1024,
-            "system": [
-                {"type": "text", "text": "You are Claude Code.", "cache_control": {"type": "ephemeral"}},
-                {"type": "text", "text": "Be concise."}
-            ],
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai(input, None).unwrap();
-        assert_eq!(result["messages"][0]["role"], "system");
-        assert_eq!(
-            result["messages"][0]["content"],
-            "You are Claude Code.\nBe concise."
-        );
-        assert!(result["messages"][0].get("cache_control").is_none());
-    }
-
-    #[test]
-    fn test_anthropic_to_openai_drops_conflicting_system_cache_control_when_merging() {
-        let input = json!({
-            "model": "claude-3-sonnet",
-            "max_tokens": 1024,
-            "system": [
-                {"type": "text", "text": "You are Claude Code.", "cache_control": {"type": "ephemeral"}},
-                {"type": "text", "text": "Be concise.", "cache_control": {"type": "ephemeral", "ttl": "5m"}}
-            ],
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai(input, None).unwrap();
-        assert_eq!(result["messages"][0]["role"], "system");
-        assert_eq!(
-            result["messages"][0]["content"],
-            "You are Claude Code.\nBe concise."
-        );
-        assert!(result["messages"][0].get("cache_control").is_none());
     }
 
     #[test]
@@ -705,7 +651,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert!(msg.get("tool_calls").is_some());
@@ -725,7 +671,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "tool");
         assert_eq!(msg["tool_call_id"], "call_123");
@@ -797,19 +743,31 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["model"], "gpt-4o");
     }
 
     #[test]
-    fn test_anthropic_to_openai_does_not_inject_prompt_cache_key() {
+    fn test_anthropic_to_openai_with_cache_key() {
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, Some("provider-123")).unwrap();
+        assert_eq!(result["prompt_cache_key"], "provider-123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_no_cache_key() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input, None).unwrap();
         assert!(result.get("prompt_cache_key").is_none());
     }
 
@@ -835,7 +793,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         // System message cache_control preserved
         assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
         // Text block cache_control preserved
@@ -1089,7 +1047,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert!(result.get("reasoning_effort").is_none());
     }
 
@@ -1102,7 +1060,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["reasoning_effort"], "medium");
     }
 
@@ -1115,7 +1073,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["reasoning_effort"], "xhigh");
     }
 
@@ -1128,7 +1086,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["reasoning_effort"], "low");
     }
 
@@ -1141,7 +1099,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["reasoning_effort"], "xhigh");
     }
 
@@ -1153,7 +1111,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert!(result.get("reasoning_effort").is_none());
     }
 
@@ -1166,7 +1124,7 @@ mod tests {
                 "messages": [{"role": "user", "content": "Hello"}]
             });
 
-            let result = anthropic_to_openai(input).unwrap();
+            let result = anthropic_to_openai(input, None).unwrap();
             assert!(
                 result.get("max_tokens").is_none(),
                 "{model} should not have max_tokens"
@@ -1186,7 +1144,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, None).unwrap();
         assert_eq!(result["max_tokens"], 1024);
         assert!(result.get("max_completion_tokens").is_none());
     }

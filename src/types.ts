@@ -166,7 +166,7 @@ export interface ProviderMeta {
   apiKeyField?: ClaudeApiKeyField;
   // 是否将 base_url 视为完整 API 端点（代理直接使用此 URL，不拼接路径）
   isFullUrl?: boolean;
-  // Prompt cache key for OpenAI Responses-compatible endpoints (improves cache hit rate)
+  // Prompt cache key for OpenAI-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
@@ -244,8 +244,6 @@ export interface Settings {
   showInTray: boolean;
   // 点击关闭按钮时是否最小化到托盘而不是关闭应用
   minimizeToTrayOnClose: boolean;
-  // 是否启用应用级窗口控制按钮（最小化/最大化/关闭）
-  useAppWindowControls?: boolean;
   // 启用 Claude 插件联动（写入 ~/.claude/config.json 的 primaryApiKey）
   enableClaudePluginIntegration?: boolean;
   // 跳过 Claude Code 初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding）

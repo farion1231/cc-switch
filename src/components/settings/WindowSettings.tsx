@@ -3,7 +3,6 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { AnimatePresence, motion } from "framer-motion";
-import { isLinux } from "@/lib/platform";
 
 interface WindowSettingsProps {
   settings: SettingsFormState;
@@ -76,18 +75,6 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
             onChange({ minimizeToTrayOnClose: value })
           }
         />
-
-        {isLinux() && (
-          <ToggleRow
-            icon={<AppWindow className="h-4 w-4 text-amber-500" />}
-            title={t("settings.useAppWindowControls")}
-            description={t("settings.useAppWindowControlsDescription")}
-            checked={!!settings.useAppWindowControls}
-            onCheckedChange={(value) =>
-              onChange({ useAppWindowControls: value })
-            }
-          />
-        )}
       </div>
     </section>
   );

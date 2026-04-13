@@ -372,7 +372,7 @@ impl StreamCheckService {
             anthropic_to_responses(anthropic_body, Some(&provider.id), is_codex_oauth)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_openai_chat {
-            anthropic_to_openai(anthropic_body)
+            anthropic_to_openai(anthropic_body, Some(&provider.id))
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else {
             anthropic_body

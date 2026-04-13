@@ -91,11 +91,7 @@
     "switchToChinese": "中国語に切り替え",
     "switchToEnglish": "英語に切り替え",
     "enterEditMode": "編集モードに入る",
-    "exitEditMode": "編集モードを終了",
-    "windowMinimize": "ウィンドウを最小化",
-    "windowMaximize": "ウィンドウを最大化",
-    "windowRestore": "ウィンドウを元に戻す",
-    "windowClose": "ウィンドウを閉じる"
+    "exitEditMode": "編集モードを終了"
   },
   "provider": {
     "tabProvider": "プロバイダー",
@@ -205,8 +201,7 @@
     "openclawDefaultModelSet": "デフォルトモデルに設定しました",
     "openclawDefaultModelSetFailed": "デフォルトモデルの設定に失敗しました",
     "openclawNoModels": "モデルが設定されていません",
-    "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
-    "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}"
+    "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -499,8 +494,6 @@
     "autoLaunchFailed": "自動起動の設定に失敗しました",
     "minimizeToTray": "閉じるときトレイへ最小化",
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
-    "useAppWindowControls": "アプリ内ウィンドウボタンを有効化",
-    "useAppWindowControlsDescription": "有効にすると、アプリヘッダーに最小化・最大化/復元・閉じるボタンを表示します。",
     "enableClaudePluginIntegration": "Claude Code 拡張に適用",
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
@@ -559,6 +552,18 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty"
         }
+      }
+    },
+    "editors": {
+      "title": "サードパーティエディタ",
+      "description": "以下のエディタがこの端末にインストールされているかを検出します（今後の連携のため）",
+      "notSupported": "このプラットフォームでは自動検出は未対応です（Windows のみ）",
+      "detecting": "検出中…",
+      "loadFailed": "検出に失敗しました",
+      "detectedPath": "パス: {{path}}",
+      "status": {
+        "installed": "検出済み",
+        "notInstalled": "未インストール"
       }
     },
     "configDirectoryOverride": "設定ディレクトリの上書き（詳細）",
