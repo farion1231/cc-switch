@@ -1107,6 +1107,8 @@
       "failed": "セッション同期に失敗しました"
     },
     "totalRecords": "全 {{total}} 件",
+    "goToPage": "移動",
+    "pageInputPlaceholder": "ページ",
     "modelPricing": "モデル料金",
     "loadPricingError": "料金データの読み込みに失敗しました",
     "modelPricingDesc": "各モデルのトークンコストを設定",

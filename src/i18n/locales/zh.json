@@ -1108,6 +1108,8 @@
       "failed": "会话同步失败"
     },
     "totalRecords": "共 {{total}} 条记录",
+    "goToPage": "跳转",
+    "pageInputPlaceholder": "页码",
     "modelPricing": "模型定价",
     "loadPricingError": "加载定价数据失败",
     "modelPricingDesc": "配置各模型的 Token 成本",

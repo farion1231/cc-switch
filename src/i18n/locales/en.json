@@ -1107,6 +1107,8 @@
       "failed": "Session sync failed"
     },
     "totalRecords": "{{total}} records total",
+    "goToPage": "Go",
+    "pageInputPlaceholder": "Page",
     "modelPricing": "Model Pricing",
     "loadPricingError": "Failed to load pricing data",
     "modelPricingDesc": "Configure token costs for each model",
