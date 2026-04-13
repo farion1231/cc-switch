@@ -93,7 +93,7 @@ impl ProxyService {
     }
 
     fn gemini_env_paths() -> Vec<PathBuf> {
-        use crate::gemini_config::{get_gemini_env_path, get_gemini_dir};
+        use crate::gemini_config::{get_gemini_dir, get_gemini_env_path};
 
         let env_primary = get_gemini_env_path();
         let primary_dir = env_primary
@@ -1865,14 +1865,18 @@ impl ProxyService {
         for (idx, (auth_path, config_path)) in pairs.iter().enumerate() {
             let write_one = || -> Result<(), String> {
                 if let Some(parent) = auth_path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("创建 Codex 配置目录失败 ({}): {e}", parent.display()))?;
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        format!("创建 Codex 配置目录失败 ({}): {e}", parent.display())
+                    })?;
                 }
 
                 // 读取旧内容用于回滚
                 let old_auth = if auth_path.exists() {
                     Some(std::fs::read(auth_path).map_err(|e| {
-                        format!("读取 Codex auth 用于回滚失败 ({}): {e}", auth_path.display())
+                        format!(
+                            "读取 Codex auth 用于回滚失败 ({}): {e}",
+                            auth_path.display()
+                        )
                     })?)
                 } else {
                     None
@@ -1882,7 +1886,10 @@ impl ProxyService {
                 if let Some(cfg) = config_str {
                     if !cfg.trim().is_empty() {
                         toml::from_str::<toml::Table>(cfg).map_err(|e| {
-                            format!("Codex config.toml 语法错误 ({}): {e}", config_path.display())
+                            format!(
+                                "Codex config.toml 语法错误 ({}): {e}",
+                                config_path.display()
+                            )
                         })?;
                     }
                 }
@@ -1898,9 +1905,9 @@ impl ProxyService {
 
                 // 再写 config（仅当提供 config 字段时才写入；保持与原逻辑一致）
                 if let Some(cfg) = config_str {
-                    if let Err(e) = write_text_file(config_path, cfg)
-                        .map_err(|e| format!("写入 Codex config 失败 ({}): {e}", config_path.display()))
-                    {
+                    if let Err(e) = write_text_file(config_path, cfg).map_err(|e| {
+                        format!("写入 Codex config 失败 ({}): {e}", config_path.display())
+                    }) {
                         // 回滚 auth（仅当本次确实写过 auth 时才回滚）
                         if wrote_auth {
                             if let Some(bytes) = old_auth {

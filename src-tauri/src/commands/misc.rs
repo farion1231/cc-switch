@@ -216,12 +216,8 @@ async fn get_single_tool_version_impl(
         // 检测 WSL 环境中的版本
         let wsl_distros = crate::utils::wsl::get_all_wsl_distros();
         for distro in wsl_distros {
-            let (wsl_version, wsl_error) = try_get_version_wsl(
-                tool,
-                &distro,
-                tool_wsl_shell,
-                tool_wsl_shell_flag,
-            );
+            let (wsl_version, wsl_error) =
+                try_get_version_wsl(tool, &distro, tool_wsl_shell, tool_wsl_shell_flag);
             // 只添加有版本或错误信息的环境
             if wsl_version.is_some() || wsl_error.is_some() {
                 envs.push(ToolEnvVersion {

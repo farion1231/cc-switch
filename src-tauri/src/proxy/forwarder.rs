@@ -1086,23 +1086,23 @@ impl RequestForwarder {
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value =
             if adapter.name() == "Claude" && uses_anthropic_protocol(provider) {
-            const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
-            Some(if let Some(beta) = headers.get("anthropic-beta") {
-                if let Ok(beta_str) = beta.to_str() {
-                    if beta_str.contains(CLAUDE_CODE_BETA) {
-                        beta_str.to_string()
+                const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
+                Some(if let Some(beta) = headers.get("anthropic-beta") {
+                    if let Ok(beta_str) = beta.to_str() {
+                        if beta_str.contains(CLAUDE_CODE_BETA) {
+                            beta_str.to_string()
+                        } else {
+                            format!("{CLAUDE_CODE_BETA},{beta_str}")
+                        }
                     } else {
-                        format!("{CLAUDE_CODE_BETA},{beta_str}")
+                        CLAUDE_CODE_BETA.to_string()
                     }
                 } else {
                     CLAUDE_CODE_BETA.to_string()
-                }
+                })
             } else {
-                CLAUDE_CODE_BETA.to_string()
-            })
-        } else {
-            None
-        };
+                None
+            };
 
         // ============================================================
         // 构建有序 HeaderMap — 内联替换，保持客户端原始顺序
@@ -1247,9 +1247,7 @@ impl RequestForwarder {
         }
 
         // anthropic-version：仅在缺失时补充默认值
-        if adapter.name() == "Claude"
-            && uses_anthropic_protocol(provider)
-            && !saw_anthropic_version
+        if adapter.name() == "Claude" && uses_anthropic_protocol(provider) && !saw_anthropic_version
         {
             ordered_headers.append(
                 "anthropic-version",

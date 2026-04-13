@@ -20,9 +20,7 @@ use crate::provider::Provider;
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
-use super::gemini_auth::{
-    detect_gemini_auth_type, GeminiAuthType,
-};
+use super::gemini_auth::{detect_gemini_auth_type, GeminiAuthType};
 use super::normalize_claude_models_in_value;
 
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
@@ -234,7 +232,11 @@ fn set_gemini_selected_type_at(
     write_json_file(settings_path, &settings_content)
 }
 
-fn upsert_opencode_provider_at(path: &Path, provider_id: &str, config: Value) -> Result<(), AppError> {
+fn upsert_opencode_provider_at(
+    path: &Path,
+    provider_id: &str,
+    config: Value,
+) -> Result<(), AppError> {
     let mut full_config = if path.exists() {
         read_json_file::<Value>(path)
             .unwrap_or_else(|_| json!({ "$schema": "https://opencode.ai/config.json" }))
@@ -271,7 +273,11 @@ fn remove_opencode_provider_at(path: &Path, provider_id: &str) -> Result<(), App
     write_json_file(path, &config)
 }
 
-fn upsert_openclaw_provider_at(path: &Path, provider_id: &str, provider_config: Value) -> Result<(), AppError> {
+fn upsert_openclaw_provider_at(
+    path: &Path,
+    provider_id: &str,
+    provider_config: Value,
+) -> Result<(), AppError> {
     let mut full_config = if path.exists() {
         read_json_file::<Value>(path).unwrap_or_else(|_| {
             json!({

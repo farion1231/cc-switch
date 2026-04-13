@@ -550,7 +550,11 @@ pub fn get_wsl_distros() -> Option<Vec<String>> {
     #[cfg(target_os = "windows")]
     {
         let distros = crate::utils::wsl::get_all_wsl_distros();
-        if distros.is_empty() { None } else { Some(distros) }
+        if distros.is_empty() {
+            None
+        } else {
+            Some(distros)
+        }
     }
     #[cfg(not(target_os = "windows"))]
     None
