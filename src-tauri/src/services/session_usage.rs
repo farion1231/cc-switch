@@ -155,7 +155,7 @@ fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
 
 /// 收集所有子 Agent 的会话文件
 ///
-/// 扫描路径: ~/.claude/projects/<project>/<sessionId>/subagents/agent-*.jsonl
+/// 扫描路径: ~/.claude/projects/<project>/<sessionId>/subagents/**/agent-*.jsonl
 fn collect_subagent_files(projects_dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
@@ -187,53 +187,41 @@ fn collect_subagent_files(projects_dir: &Path) -> Vec<PathBuf> {
                 continue;
             }
 
-            // 扫描 subagents/ 目录下的 agent-*.jsonl 文件
-            if let Ok(agent_entries) = fs::read_dir(&subagents_dir) {
-                for agent_entry in agent_entries.flatten() {
-                    let agent_path = agent_entry.path();
-                    let file_name = agent_path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("");
-                    if file_name.starts_with("agent-")
-                        && agent_path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-                    {
-                        files.push(agent_path);
-                    }
-                }
-            }
-
-            // 同时扫描嵌套子目录 (如 workflows/<runId>/agent-*.jsonl)
-            let subdirs = match fs::read_dir(&subagents_dir) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            for subdir_entry in subdirs.flatten() {
-                let subdir_path = subdir_entry.path();
-                if !subdir_path.is_dir() {
-                    continue;
-                }
-
-                if let Ok(nested_entries) = fs::read_dir(&subdir_path) {
-                    for nested_entry in nested_entries.flatten() {
-                        let nested_path = nested_entry.path();
-                        let file_name = nested_path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("");
-                        if file_name.starts_with("agent-")
-                            && nested_path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-                        {
-                            files.push(nested_path);
-                        }
-                    }
-                }
-            }
+            collect_subagent_files_recursive(&subagents_dir, &mut files);
         }
     }
 
     files
+}
+
+/// 递归扫描 subagents 目录下任意层级的 agent-*.jsonl。
+///
+/// Claude Code/工作流可能把子 Agent 日志放在 subagents/workflows/<runId>/ 等更深层目录，
+/// 因此这里不限制递归深度，只在文件名层面过滤实际需要导入的 transcript。
+fn collect_subagent_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+
+        if file_type.is_dir() {
+            collect_subagent_files_recursive(&path, files);
+        } else if file_type.is_file() && is_subagent_jsonl_file(&path) {
+            files.push(path);
+        }
+    }
+}
+
+fn is_subagent_jsonl_file(path: &Path) -> bool {
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    file_name.starts_with("agent-") && path.extension().and_then(|e| e.to_str()) == Some("jsonl")
 }
 
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
@@ -668,6 +656,7 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_parse_usage_from_jsonl_line() {
@@ -745,5 +734,44 @@ mod tests {
 
         messages.insert("msg_1".to_string(), final_entry);
         assert_eq!(messages.get("msg_1").unwrap().output_tokens, 1349);
+    }
+
+    #[test]
+    fn test_collect_subagent_files_recurses_nested_workflow_dirs() {
+        let temp = tempfile::tempdir().unwrap();
+        let subagents_dir = temp
+            .path()
+            .join("project-a")
+            .join("session-1")
+            .join("subagents");
+        let nested_dir = subagents_dir.join("workflows").join("run-1");
+
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::write(subagents_dir.join("agent-root.jsonl"), "").unwrap();
+        fs::write(nested_dir.join("agent-nested.jsonl"), "").unwrap();
+        fs::write(nested_dir.join("not-agent.jsonl"), "").unwrap();
+        fs::write(subagents_dir.join("agent-not-json.txt"), "").unwrap();
+
+        let mut files: Vec<PathBuf> = collect_subagent_files(temp.path())
+            .into_iter()
+            .map(|path| path.strip_prefix(temp.path()).unwrap().to_path_buf())
+            .collect();
+        files.sort();
+
+        let mut expected = vec![
+            PathBuf::from("project-a")
+                .join("session-1")
+                .join("subagents")
+                .join("agent-root.jsonl"),
+            PathBuf::from("project-a")
+                .join("session-1")
+                .join("subagents")
+                .join("workflows")
+                .join("run-1")
+                .join("agent-nested.jsonl"),
+        ];
+        expected.sort();
+
+        assert_eq!(files, expected);
     }
 }
