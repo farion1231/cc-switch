@@ -120,6 +120,9 @@ pub struct RequestLogDetail {
 /// SQL fragment: resolve provider_name with fallback for session-based entries.
 /// Session logs use placeholder provider_ids (_session, _codex_session, _gemini_session)
 /// that don't exist in the providers table — this COALESCE gives them readable names.
+///
+/// This helper is shared by raw log and daily rollup queries. Keep it independent from
+/// proxy_request_logs-only columns such as data_source; usage_daily_rollups does not store them.
 fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
         "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
@@ -127,6 +130,16 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
          ELSE {log_alias}.provider_id END)"
+    )
+}
+
+/// UI 展示层不单独拆分 Claude 主会话和子 Agent，会统一显示为 session_log。
+/// 数据库仍保留原始 data_source，便于后续排查或重新拆分。
+fn display_data_source_expr(log_alias: &str) -> String {
+    format!(
+        "CASE COALESCE({log_alias}.data_source, 'proxy') \
+         WHEN 'session_subagent' THEN 'session_log' \
+         ELSE COALESCE({log_alias}.data_source, 'proxy') END"
     )
 }
 
@@ -671,13 +684,14 @@ impl Database {
         params.push(Box::new(offset as i64));
 
         let logs_pname = provider_name_coalesce("l", "p");
+        let logs_data_source = display_data_source_expr("l");
         let sql = format!(
             "SELECT l.request_id, l.provider_id, {logs_pname} as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at, l.data_source
+                    l.status_code, l.error_message, l.created_at, {logs_data_source} as data_source
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -749,13 +763,14 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         let detail_pname = provider_name_coalesce("l", "p");
+        let detail_data_source = display_data_source_expr("l");
         let detail_sql = format!(
             "SELECT l.request_id, l.provider_id, {detail_pname} as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                     is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, l.data_source
+                    status_code, error_message, created_at, {detail_data_source} as data_source
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
