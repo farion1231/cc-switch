@@ -39,10 +39,13 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
 
 /// 将 config.json 中 enabled==true 的项投影写入 ~/.claude.json
 pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), AppError> {
-    if !should_sync_claude_mcp() {
+    // 先收集当前已显式启用的 Claude MCP 服务器。
+    let enabled = collect_enabled_servers(&config.mcp.claude);
+    // 兼容首次同步场景：如果 Claude 尚未初始化，但当前已经存在启用项，也允许首次写入 ~/.claude.json。
+    if should_sync_claude_mcp() == false && enabled.is_empty() == true {
         return Ok(());
     }
-    let enabled = collect_enabled_servers(&config.mcp.claude);
+    // 将启用的服务器写入 Claude MCP 配置文件。
     crate::claude_mcp::set_mcp_servers_map(&enabled)
 }
 
