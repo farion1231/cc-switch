@@ -496,7 +496,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                           .filter(Boolean)
                           .join(", ")}
                       >
-                        WSL×{envs.filter((env) => env.env_type === "wsl").length}
+                        WSL×
+                        {envs.filter((env) => env.env_type === "wsl").length}
                       </span>
                     )}
                     {envs.some((env) => env.env_type === "macos") && (
@@ -570,18 +571,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                   <div className="flex items-center gap-2 mt-1">
                     <Select
                       value={wslShellByTool[toolName]?.wslShell || "auto"}
-                      onValueChange={(v) =>
-                        handleToolShellChange(toolName, v)
-                      }
+                      onValueChange={(v) => handleToolShellChange(toolName, v)}
                       disabled={isLoadingTools || loadingTools[toolName]}
                     >
                       <SelectTrigger className="h-6 w-[70px] text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="auto">
-                          {t("common.auto")}
-                        </SelectItem>
+                        <SelectItem value="auto">{t("common.auto")}</SelectItem>
                         {WSL_SHELL_OPTIONS.map((shell) => (
                           <SelectItem key={shell} value={shell}>
                             {shell}
@@ -600,9 +597,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="auto">
-                          {t("common.auto")}
-                        </SelectItem>
+                        <SelectItem value="auto">{t("common.auto")}</SelectItem>
                         {WSL_SHELL_FLAG_OPTIONS.map((flag) => (
                           <SelectItem key={flag} value={flag}>
                             {flag}
