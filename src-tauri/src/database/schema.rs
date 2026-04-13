@@ -71,6 +71,12 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_qwen",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
 
         // 4. Prompts 表
         conn.execute("CREATE TABLE IF NOT EXISTS prompts (
@@ -102,6 +108,9 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::add_column_if_missing(conn, "skills", "enabled_qwen", "BOOLEAN NOT NULL DEFAULT 0")?;
+        Self::add_column_if_missing(conn, "skills", "content_hash", "TEXT")?;
+        Self::add_column_if_missing(conn, "skills", "updated_at", "INTEGER NOT NULL DEFAULT 0")?;
 
         // 6. Skill Repos 表
         conn.execute(

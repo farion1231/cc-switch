@@ -8,6 +8,25 @@ use crate::error::AppError;
 use std::collections::HashMap;
 use url::Url;
 
+const SUPPORTED_DEEPLINK_APPS: &[&str] =
+    &["claude", "codex", "gemini", "opencode", "qwen", "openclaw"];
+
+fn is_supported_deeplink_app(app: &str) -> bool {
+    SUPPORTED_DEEPLINK_APPS.contains(&app)
+}
+
+fn invalid_app_type_error(app: &str) -> AppError {
+    AppError::InvalidInput(format!(
+        "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', 'qwen', or 'openclaw', got '{app}'"
+    ))
+}
+
+fn invalid_apps_param_error(app: &str) -> AppError {
+    AppError::InvalidInput(format!(
+        "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'opencode', 'qwen', or 'openclaw', got '{app}'"
+    ))
+}
+
 /// Parse a ccswitch:// URL into a DeepLinkImportRequest
 ///
 /// Expected format:
@@ -79,13 +98,8 @@ fn parse_provider_deeplink(
         .clone();
 
     // Validate app type
-    if !matches!(
-        app.as_str(),
-        "claude" | "codex" | "gemini" | "opencode" | "openclaw"
-    ) {
-        return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', or 'openclaw', got '{app}'"
-        )));
+    if !is_supported_deeplink_app(&app) {
+        return Err(invalid_app_type_error(&app));
     }
 
     let name = params
@@ -188,13 +202,8 @@ fn parse_prompt_deeplink(
         .clone();
 
     // Validate app type
-    if !matches!(
-        app.as_str(),
-        "claude" | "codex" | "gemini" | "opencode" | "openclaw"
-    ) {
-        return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', or 'openclaw', got '{app}'"
-        )));
+    if !is_supported_deeplink_app(&app) {
+        return Err(invalid_app_type_error(&app));
     }
 
     let name = params
@@ -260,13 +269,8 @@ fn parse_mcp_deeplink(
     // Validate apps format
     for app in apps.split(',') {
         let trimmed = app.trim();
-        if !matches!(
-            trimmed,
-            "claude" | "codex" | "gemini" | "opencode" | "openclaw"
-        ) {
-            return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'opencode', or 'openclaw', got '{trimmed}'"
-            )));
+        if !is_supported_deeplink_app(trimmed) {
+            return Err(invalid_apps_param_error(trimmed));
         }
     }
 

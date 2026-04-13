@@ -1,14 +1,16 @@
 //! Deep link module tests
 
-use super::mcp::parse_mcp_apps;
+use super::mcp::{import_mcp_from_deeplink, parse_mcp_apps};
 use super::parser::parse_deeplink_url;
 use super::prompt::import_prompt_from_deeplink;
 use super::provider::parse_and_merge_config;
 use super::utils::{infer_homepage_from_endpoint, validate_url};
 use super::DeepLinkImportRequest;
+use crate::app_config::{McpApps, McpServer};
 use crate::AppType;
 use crate::{store::AppState, Database};
 use base64::prelude::*;
+use serde_json::json;
 use std::sync::Arc;
 
 // =============================================================================
@@ -32,6 +34,21 @@ fn test_parse_valid_claude_deeplink() {
     );
     assert_eq!(request.api_key, Some("sk-test-123".to_string()));
     assert_eq!(request.icon, Some("claude".to_string()));
+}
+
+#[test]
+fn test_parse_valid_qwen_provider_deeplink() {
+    let url = "ccswitch://v1/import?resource=provider&app=qwen&name=Qwen%20Provider&homepage=https%3A%2F%2Fexample.com&endpoint=https%3A%2F%2Fdashscope.aliyuncs.com%2Fcompatible-mode%2Fv1&apiKey=sk-qwen";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.resource, "provider");
+    assert_eq!(request.app, Some("qwen".to_string()));
+    assert_eq!(request.name, Some("Qwen Provider".to_string()));
+    assert_eq!(
+        request.endpoint,
+        Some("https://dashscope.aliyuncs.com/compatible-mode/v1".to_string())
+    );
 }
 
 #[test]
@@ -356,6 +373,12 @@ fn test_parse_mcp_apps() {
     assert!(!apps.codex);
     assert!(apps.gemini);
 
+    let apps = parse_mcp_apps("qwen,openclaw").unwrap();
+    assert!(!apps.claude);
+    assert!(!apps.codex);
+    assert!(!apps.gemini);
+    assert!(apps.qwen);
+
     let err = parse_mcp_apps("invalid").unwrap_err();
     assert!(err.to_string().contains("Invalid app"));
 }
@@ -379,6 +402,21 @@ fn test_parse_prompt_deeplink() {
 }
 
 #[test]
+fn test_parse_qwen_prompt_deeplink() {
+    let content = "Qwen Prompt";
+    let content_b64 = BASE64_STANDARD.encode(content);
+    let url = format!(
+        "ccswitch://v1/import?resource=prompt&app=qwen&name=qwen-test&content={}",
+        content_b64
+    );
+
+    let request = parse_deeplink_url(&url).unwrap();
+    assert_eq!(request.resource, "prompt");
+    assert_eq!(request.app.unwrap(), "qwen");
+    assert_eq!(request.name.unwrap(), "qwen-test");
+}
+
+#[test]
 fn test_parse_mcp_deeplink() {
     let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
     let config_b64 = BASE64_STANDARD.encode(config);
@@ -392,6 +430,54 @@ fn test_parse_mcp_deeplink() {
     assert_eq!(request.apps.unwrap(), "claude,codex");
     assert_eq!(request.config.unwrap(), config_b64);
     assert!(request.enabled.unwrap());
+}
+
+#[test]
+fn test_import_mcp_deeplink_merges_qwen_and_opencode_for_existing_server() {
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "existing".to_string(),
+            name: "Existing".to_string(),
+            server: json!({ "command": "echo", "args": ["existing"] }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                qwen: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: vec!["seeded".to_string()],
+        })
+        .expect("seed mcp server");
+
+    let config_b64 = BASE64_STANDARD
+        .encode(r#"{"mcpServers":{"existing":{"command":"echo","args":["incoming"]}}}"#);
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=mcp&apps=qwen,opencode&config={config_b64}"
+    ))
+    .expect("parse deeplink");
+
+    let result = import_mcp_from_deeplink(&state, request).expect("import deeplink");
+    assert_eq!(result.imported_ids, vec!["existing".to_string()]);
+
+    let saved = state.db.get_all_mcp_servers().expect("load servers");
+    let server = saved.get("existing").expect("existing server");
+
+    assert!(server.apps.claude, "existing flags should be preserved");
+    assert!(server.apps.opencode, "deeplink should merge opencode flag");
+    assert!(server.apps.qwen, "deeplink should merge qwen flag");
+    assert_eq!(
+        server.server,
+        json!({ "command": "echo", "args": ["existing"] }),
+        "existing server config should be preserved when only merging apps"
+    );
 }
 
 #[test]

@@ -393,6 +393,73 @@ fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
 }
 
 #[test]
+fn schema_create_tables_repairs_existing_v8_qwen_columns() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::set_user_version(&conn, 8).expect("set user_version");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            server_config TEXT NOT NULL,
+            description TEXT,
+            homepage TEXT,
+            docs TEXT,
+            tags TEXT NOT NULL DEFAULT '[]',
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0
+        );
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            directory TEXT NOT NULL,
+            repo_owner TEXT,
+            repo_name TEXT,
+            repo_branch TEXT DEFAULT 'main',
+            readme_url TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0
+        );
+        "#,
+    )
+    .expect("seed existing v8 schema");
+
+    Database::create_tables_on_conn(&conn)
+        .expect("create tables should repair missing qwen columns");
+
+    for (table, column) in [
+        ("mcp_servers", "enabled_qwen"),
+        ("skills", "enabled_qwen"),
+        ("skills", "content_hash"),
+        ("skills", "updated_at"),
+    ] {
+        assert!(
+            Database::has_column(&conn, table, column).expect("check column"),
+            "{table}.{column} should exist after startup repair"
+        );
+    }
+
+    let enabled_qwen = get_column_info(&conn, "mcp_servers", "enabled_qwen");
+    assert_eq!(enabled_qwen.r#type, "BOOLEAN");
+    assert_eq!(enabled_qwen.notnull, 1);
+    assert_eq!(
+        normalize_default(&enabled_qwen.default).as_deref(),
+        Some("0")
+    );
+
+    let updated_at = get_column_info(&conn, "skills", "updated_at");
+    assert_eq!(updated_at.r#type, "INTEGER");
+    assert_eq!(updated_at.notnull, 1);
+    assert_eq!(normalize_default(&updated_at.default).as_deref(), Some("0"));
+}
+
+#[test]
 fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
     let conn = Connection::open_in_memory().expect("open memory db");
     conn.execute("PRAGMA foreign_keys = ON;", [])
