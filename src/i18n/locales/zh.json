@@ -1092,7 +1092,6 @@
     "dataSource": {
       "proxy": "代理",
       "session_log": "会话日志",
-      "session_subagent": "子Agent",
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
       "gemini_session": "Gemini 会话日志"

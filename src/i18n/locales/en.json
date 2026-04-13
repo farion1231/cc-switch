@@ -1091,7 +1091,6 @@
     "dataSource": {
       "proxy": "Proxy",
       "session_log": "Session Log",
-      "session_subagent": "Sub-Agent",
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
       "gemini_session": "Gemini Session"

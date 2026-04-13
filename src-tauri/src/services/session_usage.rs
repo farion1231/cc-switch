@@ -630,7 +630,11 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
     let conn = lock_conn!(db.conn);
 
     let mut stmt = conn.prepare(
-        "SELECT COALESCE(data_source, 'proxy') as ds, COUNT(*) as cnt,
+        "SELECT CASE COALESCE(data_source, 'proxy')
+                    WHEN 'session_subagent' THEN 'session_log'
+                    ELSE COALESCE(data_source, 'proxy')
+                END as ds,
+                COUNT(*) as cnt,
                 COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as cost
          FROM proxy_request_logs
          GROUP BY ds

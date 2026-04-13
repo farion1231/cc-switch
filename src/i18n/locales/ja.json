@@ -1091,7 +1091,6 @@
     "dataSource": {
       "proxy": "プロキシ",
       "session_log": "セッションログ",
-      "session_subagent": "サブエージェント",
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
       "gemini_session": "Gemini セッション"
