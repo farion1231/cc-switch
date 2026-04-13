@@ -996,7 +996,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "PIPELLM",
-    websiteUrl: "https://www.pipellm.ai",
+    websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",

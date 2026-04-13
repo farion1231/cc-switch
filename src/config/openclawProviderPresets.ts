@@ -1009,7 +1009,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "PIPELLM",
-    websiteUrl: "https://www.pipellm.ai",
+    websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
     settingsConfig: {
       baseUrl: "https://cc-api.pipellm.ai",

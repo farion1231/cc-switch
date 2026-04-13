@@ -391,7 +391,7 @@ model_auto_compact_token_limit = 9000000`,
   },
   {
     name: "PIPELLM",
-    websiteUrl: "https://www.pipellm.ai",
+    websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
     auth: {
       OPENAI_API_KEY: "",
