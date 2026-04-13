@@ -452,8 +452,7 @@ impl StreamCheckService {
                 .header("x-stainless-retry-count", "0")
                 .header("x-stainless-timeout", "600")
                 // Other headers
-                .header("sec-fetch-mode", "cors")
-                .header("connection", "keep-alive");
+                .header("sec-fetch-mode", "cors");
         }
 
         // 供应商自定义 headers 最后追加，允许覆盖内置默认值（例如 user-agent）
