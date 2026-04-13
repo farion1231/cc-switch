@@ -98,11 +98,6 @@ Claude Code / Codex / Gemini official channels at 38% / 2% / 9% of original pric
 </tr>
 
 <tr>
-<td width="180"><a href="https://x-code.cc/register?aff=IbPp"><img src="assets/partners/logos/xcodeapi.png" alt="XCodeAPI" width="150"></a></td>
-<td>Thanks to XCodeAPI for sponsoring this project! XCodeAPI offers a special benefit for CC Switch users: register via <a href="https://x-code.cc/register?aff=IbPp">this link</a> and get an extra 10% credit bonus on your first order! (Contact the site admin to claim)</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://ctok.ai"><img src="assets/partners/logos/ctok.png" alt="CTok" width="150"></a></td>
 <td>Thanks to CTok.ai for sponsoring this project! CTok.ai is dedicated to building a one-stop AI programming tool service platform. We offer professional Claude Code packages and technical community services, with support for Google Gemini and OpenAI Codex. Through carefully designed plans and a professional tech community, we provide developers with reliable service guarantees and continuous technical support, making AI-assisted programming a true productivity tool. Click <a href="https://ctok.ai">here</a> to register!</td>
 </tr>

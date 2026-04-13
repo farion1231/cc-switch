@@ -637,23 +637,6 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "X-Code API",
-    websiteUrl: "https://x-code.cc",
-    apiKeyUrl: "https://x-code.cc",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://x-code.cc",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    endpointCandidates: ["https://x-code.cc"],
-    category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "x-code", // 促销信息 i18n key
-    icon: "xcode",
-    iconColor: "#000000",
-  },
-  {
     name: "CTok.ai",
     websiteUrl: "https://ctok.ai",
     apiKeyUrl: "https://ctok.ai",
