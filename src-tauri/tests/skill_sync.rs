@@ -440,6 +440,8 @@ fn sync_to_claude_flattens_nested_skill_paths_to_leaf_directory() {
                 opencode: false,
             },
             installed_at: 789,
+            content_hash: None,
+            updated_at: 0,
         })
         .expect("save nested skill");
 
@@ -567,6 +569,8 @@ fn real_claude_leaf_skill_conflicting_with_managed_nested_skill_still_appears_as
                 opencode: false,
             },
             installed_at: 1,
+            content_hash: None,
+            updated_at: 0,
         })
         .expect("save managed nested skill");
 
@@ -612,6 +616,8 @@ fn sync_to_claude_rejects_overwriting_real_leaf_skill_with_managed_nested_skill(
                 opencode: false,
             },
             installed_at: 1,
+            content_hash: None,
+            updated_at: 0,
         })
         .expect("save managed nested skill");
 
@@ -668,6 +674,8 @@ fn codex_only_nested_skill_does_not_block_real_claude_leaf_skill() {
                 opencode: false,
             },
             installed_at: 1,
+            content_hash: None,
+            updated_at: 0,
         })
         .expect("save codex-only skill");
 
@@ -729,6 +737,8 @@ fn external_nested_claude_skill_with_conflicting_leaf_still_appears_as_unmanaged
                 opencode: false,
             },
             installed_at: 1,
+            content_hash: None,
+            updated_at: 0,
         })
         .expect("save managed claude skill");
 

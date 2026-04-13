@@ -78,6 +78,11 @@ vi.mock("@/hooks/useSkills", () => ({
   useRemoveSkillRepo: () => ({
     mutateAsync: vi.fn(),
   }),
+  useSearchSkillsSh: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+  }),
 }));
 
 describe("SkillsPage", () => {
