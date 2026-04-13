@@ -110,7 +110,7 @@ pub fn import_provider_from_deeplink(
     let provider_id = provider.id.clone();
 
     // Use ProviderService to add the provider
-    ProviderService::add(state, app_type.clone(), provider)?;
+    ProviderService::add(state, app_type.clone(), provider, true)?;
 
     // Add extra endpoints as custom endpoints (skip first one as it's the primary)
     for ep in all_endpoints.iter().skip(1) {
@@ -229,6 +229,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         user_id: request.usage_user_id.clone(),
         template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)
         auto_query_interval: request.usage_auto_interval,
+        coding_plan_provider: None,
     };
 
     Ok(Some(ProviderMeta {

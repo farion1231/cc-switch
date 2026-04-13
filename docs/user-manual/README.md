@@ -12,9 +12,9 @@
 
 ## Version / 版本 / バージョン
 
-- Documentation version: v3.12.0
-- Last updated: 2026-03-09
-- Compatible with CC Switch v3.12.0+
+- Documentation version: v3.13.0
+- Last updated: 2026-04-08
+- Compatible with CC Switch v3.13.0+
 
 ## Links
 

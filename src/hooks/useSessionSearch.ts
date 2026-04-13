@@ -19,14 +19,18 @@ export function useSessionSearch({
   sessions,
   providerFilter,
 }: UseSessionSearchOptions): UseSessionSearchResult {
+  const filteredByProvider = useMemo(() => {
+    if (providerFilter === "all") return sessions;
+    return sessions.filter((s) => s.providerId === providerFilter);
+  }, [sessions, providerFilter]);
+
   const index = useMemo(() => {
-    // 使用 forward tokenizer 支持中文前缀搜索
     const nextIndex = new FlexSearch.Index({
-      tokenize: "forward",
+      tokenize: "full",
       resolution: 9,
     });
 
-    sessions.forEach((session, idx) => {
+    filteredByProvider.forEach((session, idx) => {
       const metaContent = [
         session.sessionId,
         session.title,
@@ -41,49 +45,28 @@ export function useSessionSearch({
     });
 
     return nextIndex;
-  }, [sessions]);
+  }, [filteredByProvider]);
 
-  // 搜索函数
   const search = useCallback(
     (query: string): SessionMeta[] => {
-      const needle = query.trim().toLowerCase();
+      const needle = query.trim();
 
-      // 先按 provider 过滤
-      let filtered = sessions;
-      if (providerFilter !== "all") {
-        filtered = sessions.filter((s) => s.providerId === providerFilter);
-      }
-
-      // 如果没有搜索词，返回按时间排序的结果
       if (!needle) {
-        return [...filtered].sort((a, b) => {
+        return [...filteredByProvider].sort((a, b) => {
           const aTs = a.lastActiveAt ?? a.createdAt ?? 0;
           const bTs = b.lastActiveAt ?? b.createdAt ?? 0;
           return bTs - aTs;
         });
       }
 
-      // 使用 FlexSearch 搜索
-      const results = index.search(needle, { limit: 100 }) as number[];
+      const results = index.search(needle, {
+        limit: filteredByProvider.length,
+      }) as number[];
 
-      // 转换为 session 并过滤
-      const matchedSessions = results
-        .map((idx) => sessions[idx])
-        .filter(
-          (session) =>
-            session &&
-            (providerFilter === "all" || session.providerId === providerFilter),
-        );
-
-      // 按时间排序
-      return matchedSessions.sort((a, b) => {
-        const aTs = a.lastActiveAt ?? a.createdAt ?? 0;
-        const bTs = b.lastActiveAt ?? b.createdAt ?? 0;
-        return bTs - aTs;
-      });
+      return results.map((idx) => filteredByProvider[idx]);
     },
-    [index, providerFilter, sessions],
+    [index, filteredByProvider],
   );
 
-  return useMemo(() => ({ search }), [search]);
+  return { search };
 }

@@ -20,6 +20,7 @@ pub fn launch_terminal(
         "ghostty" => launch_ghostty(command, cwd),
         "kitty" => launch_kitty(command, cwd),
         "wezterm" => launch_wezterm(command, cwd),
+        "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
         _ => Err(format!("Unsupported terminal target: {target}")),
@@ -153,25 +154,10 @@ fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
 fn launch_wezterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // wezterm start --cwd ... -- command
     // To invoke via `open`, we use `open -na "WezTerm" --args start ...`
-
-    let full_command = build_shell_command(command, None);
-
-    let mut args = vec!["-na", "WezTerm", "--args", "start"];
-
-    if let Some(dir) = cwd {
-        args.push("--cwd");
-        args.push(dir);
-    }
-
-    // Invoke shell to run the command string (to handle pipes, etc)
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    args.push("--");
-    args.push(&shell);
-    args.push("-c");
-    args.push(&full_command);
+    let args = build_wezterm_compatible_args("WezTerm", command, cwd);
 
     let status = Command::new("open")
-        .args(&args)
+        .args(args.iter().map(String::as_str))
         .status()
         .map_err(|e| format!("Failed to launch WezTerm: {e}"))?;
 
@@ -180,6 +166,54 @@ fn launch_wezterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     } else {
         Err("Failed to launch WezTerm.".to_string())
     }
+}
+
+fn launch_kaku(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    // Kaku is a WezTerm-derived terminal and keeps a compatible `start` entrypoint.
+    let args = build_wezterm_compatible_args("Kaku", command, cwd);
+
+    let status = Command::new("open")
+        .args(args.iter().map(String::as_str))
+        .status()
+        .map_err(|e| format!("Failed to launch Kaku: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Kaku.".to_string())
+    }
+}
+
+fn build_wezterm_compatible_args(app_name: &str, command: &str, cwd: Option<&str>) -> Vec<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    build_wezterm_compatible_args_with_shell(app_name, command, cwd, &shell)
+}
+
+fn build_wezterm_compatible_args_with_shell(
+    app_name: &str,
+    command: &str,
+    cwd: Option<&str>,
+    shell: &str,
+) -> Vec<String> {
+    let full_command = build_shell_command(command, None);
+    let mut args = vec![
+        "-na".to_string(),
+        app_name.to_string(),
+        "--args".to_string(),
+        "start".to_string(),
+    ];
+
+    if let Some(dir) = cwd {
+        args.push("--cwd".to_string());
+        args.push(dir.to_string());
+    }
+
+    // Invoke shell to run the command string (to handle pipes, etc)
+    args.push("--".to_string());
+    args.push(shell.to_string());
+    args.push("-c".to_string());
+    args.push(full_command);
+    args
 }
 
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
@@ -303,6 +337,32 @@ mod tests {
         assert_eq!(
             ghostty_raw_input("echo foo\\\\bar\npwd"),
             "raw:echo foo\\\\\\\\bar\\npwd\\n"
+        );
+    }
+
+    #[test]
+    fn wezterm_compatible_terminals_use_start_and_cwd_arguments() {
+        let args = build_wezterm_compatible_args_with_shell(
+            "Kaku",
+            "claude --resume abc-123",
+            Some("/tmp/project dir"),
+            "/bin/zsh",
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "-na".to_string(),
+                "Kaku".to_string(),
+                "--args".to_string(),
+                "start".to_string(),
+                "--cwd".to_string(),
+                "/tmp/project dir".to_string(),
+                "--".to_string(),
+                "/bin/zsh".to_string(),
+                "-c".to_string(),
+                "claude --resume abc-123".to_string(),
+            ]
         );
     }
 }

@@ -1264,12 +1264,22 @@ export function OmoFormFields({
           ) : undefined,
         maxHeightClass: "max-h-[500px]",
         children: (
-          <Textarea
-            value={otherFieldsStr}
-            onChange={(e) => onOtherFieldsStrChange(e.target.value)}
-            placeholder='{ "custom_key": "value" }'
-            className="font-mono text-xs min-h-[60px]"
-          />
+          <>
+            <Textarea
+              value={otherFieldsStr}
+              onChange={(e) => onOtherFieldsStrChange(e.target.value)}
+              placeholder='{ "custom_key": "value" }'
+              className="font-mono text-xs min-h-[60px]"
+            />
+            {isSlim && (
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                {t("omo.slimOtherFieldsHint", {
+                  defaultValue:
+                    "Use this area for top-level OMO Slim config such as council, fallback, multiplexer, disabled_mcps, and todoContinuation.",
+                })}
+              </p>
+            )}
+          </>
         ),
       })}
     </div>

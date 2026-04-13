@@ -468,9 +468,12 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             variant="secondary"
                             size="icon"
                             className="size-7 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
-                            aria-label={t("sessionManager.exitBatchModeTooltip", {
-                              defaultValue: "退出批量管理",
-                            })}
+                            aria-label={t(
+                              "sessionManager.exitBatchModeTooltip",
+                              {
+                                defaultValue: "退出批量管理",
+                              },
+                            )}
                             onClick={exitSelectionMode}
                           >
                             <CheckSquare className="size-3.5" />
@@ -766,6 +769,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               session={session}
                               isSelected={isSelected}
                               selectionMode={selectionMode}
+                              searchQuery={search}
                               isChecked={selectedSessionKeys.has(
                                 getSessionKey(session),
                               )}
@@ -1002,6 +1006,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   message={message}
                                   index={index}
                                   isActive={activeMessageIndex === index}
+                                  searchQuery={search}
                                   setRef={(el) => {
                                     if (el) messageRefs.current.set(index, el);
                                   }}

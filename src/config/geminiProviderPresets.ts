@@ -51,6 +51,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#4285F4",
   },
   {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://router.shengsuanyun.com/api",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://router.shengsuanyun.com/api",
+    model: "gemini-3.1-pro",
+    description: "Shengsuanyun",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
@@ -225,6 +244,58 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "LionCCAPI",
+    websiteUrl: "https://vibecodingapi.ai",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://vibecodingapi.ai",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://vibecodingapi.ai",
+    model: "gemini-3.1-pro",
+    description: "LionCCAPI",
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lionccapi",
+    icon: "lioncc",
+  },
+  {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://e-flowcode.cc",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+      config: {
+        general: {
+          previewFeatures: true,
+          sessionRetention: {
+            enabled: true,
+            maxAge: "30d",
+            warningAcknowledged: true,
+          },
+        },
+        mcpServers: {},
+        security: {
+          auth: {
+            selectedType: "gemini-api-key",
+          },
+        },
+      },
+    },
+    baseURL: "https://e-flowcode.cc",
+    model: "gemini-3.1-pro-preview",
+    description: "E-FlowCode",
+    category: "third_party",
+    endpointCandidates: ["https://e-flowcode.cc"],
+    icon: "eflowcode",
+    iconColor: "#000000",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
@@ -240,6 +311,22 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
+  },
+  {
+    name: "TheRouter",
+    websiteUrl: "https://therouter.ai",
+    apiKeyUrl: "https://dashboard.therouter.ai",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.therouter.ai",
+        GEMINI_MODEL: "gemini-2.5-pro",
+      },
+    },
+    baseURL: "https://api.therouter.ai",
+    model: "gemini-2.5-pro",
+    description: "TheRouter",
+    category: "aggregator",
+    endpointCandidates: ["https://api.therouter.ai"],
   },
   {
     name: "自定义",

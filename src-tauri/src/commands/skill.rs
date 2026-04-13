@@ -7,8 +7,9 @@
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, Skill, SkillBackupEntry, SkillRepo, SkillService,
-    SkillUninstallResult,
+    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
+    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
+    SkillsShSearchResult,
 };
 use crate::store::AppState;
 use std::sync::Arc;
@@ -130,6 +131,54 @@ pub async fn discover_available_skills(
     service
         .0
         .discover_available(repos)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 检查 Skills 更新
+#[tauri::command]
+pub async fn check_skill_updates(
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<SkillUpdateInfo>, String> {
+    service
+        .0
+        .check_updates(&app_state.db)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 更新单个 Skill
+#[tauri::command]
+pub async fn update_skill(
+    id: String,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<InstalledSkill, String> {
+    service
+        .0
+        .update_skill(&app_state.db, &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 迁移 Skill 存储位置
+#[tauri::command]
+pub async fn migrate_skill_storage(
+    target: SkillStorageLocation,
+    app_state: State<'_, AppState>,
+) -> Result<MigrationResult, String> {
+    SkillService::migrate_storage(&app_state.db, target).map_err(|e| e.to_string())
+}
+
+/// 搜索 skills.sh 公共目录
+#[tauri::command]
+pub async fn search_skills_sh(
+    query: String,
+    limit: usize,
+    offset: usize,
+) -> Result<SkillsShSearchResult, String> {
+    SkillService::search_skills_sh(&query, limit, offset)
         .await
         .map_err(|e| e.to_string())
 }

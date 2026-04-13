@@ -9,12 +9,18 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { SessionMessage } from "@/types";
-import { formatTimestamp, getRoleLabel, getRoleTone } from "./utils";
+import {
+  formatTimestamp,
+  getRoleLabel,
+  getRoleTone,
+  highlightText,
+} from "./utils";
 
 interface SessionMessageItemProps {
   message: SessionMessage;
   index: number;
   isActive: boolean;
+  searchQuery?: string;
   setRef: (el: HTMLDivElement | null) => void;
   onCopy: (content: string) => void;
 }
@@ -22,6 +28,7 @@ interface SessionMessageItemProps {
 export function SessionMessageItem({
   message,
   isActive,
+  searchQuery,
   setRef,
   onCopy,
 }: SessionMessageItemProps) {
@@ -68,7 +75,9 @@ export function SessionMessageItem({
         )}
       </div>
       <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed min-w-0">
-        {message.content}
+        {searchQuery
+          ? highlightText(message.content, searchQuery)
+          : message.content}
       </div>
     </div>
   );

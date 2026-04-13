@@ -42,6 +42,12 @@
     "enabled": "已开启",
     "notSet": "未设置"
   },
+  "firstRunNotice": {
+    "title": "欢迎使用 CC Switch",
+    "bodyDefault": "CC Switch 可以帮你在 Claude Code / Codex / Gemini CLI 的多个供应商之间一键切换。如果你之前已经配置过这些工具，CC Switch 会自动把现有设置保存为名为 “default” 的供应商，保证你的配置不会丢失。",
+    "bodyOfficial": "列表里还预置了 “官方（Official）” 供应商，随时点一下即可切回官方默认配置。切换前 CC Switch 会自动把当前配置备份回 default，可以放心来回切。CC Switch 就是这样工作的 😊",
+    "confirm": "我知道了"
+  },
   "apiKeyInput": {
     "placeholder": "请输入API Key",
     "show": "显示API Key",
@@ -50,6 +56,15 @@
   "jsonEditor": {
     "mustBeObject": "配置必须是JSON对象，不能是数组或其他类型",
     "invalidJson": "JSON格式错误"
+  },
+  "commonConfig": {
+    "guideTitle": "什么是通用配置片段？",
+    "guidePurpose": "用来在不同供应商之间共享插件、环境变量等非敏感配置。切换供应商时不会丢失这些设置。",
+    "guideUsage": "用法：① 点击「从编辑内容提取」保存通用部分  ② 新建供应商时勾选「写入通用配置」",
+    "guideReExtract": "如果您新安装了插件或 Hook，请重新提取一次通用配置，以便同步到其他供应商。",
+    "guideReassurance": "放心：您的原始配置已保存在默认供应商中，不会丢失。",
+    "emptyTitle": "还没有通用配置片段",
+    "emptyHint": "点击下方「从编辑内容提取」按钮，从当前配置中提取可复用的部分"
   },
   "claudeConfig": {
     "configLabel": "Claude Code 配置 (JSON) *",
@@ -76,7 +91,11 @@
     "switchToChinese": "切换到中文",
     "switchToEnglish": "切换到英文",
     "enterEditMode": "进入编辑模式",
-    "exitEditMode": "退出编辑模式"
+    "exitEditMode": "退出编辑模式",
+    "windowMinimize": "最小化窗口",
+    "windowMaximize": "最大化窗口",
+    "windowRestore": "还原窗口",
+    "windowClose": "关闭窗口"
   },
   "provider": {
     "tabProvider": "供应商",
@@ -186,7 +205,8 @@
     "openclawDefaultModelSet": "已设为默认模型",
     "openclawDefaultModelSetFailed": "设置默认模型失败",
     "openclawNoModels": "该供应商没有配置模型",
-    "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存"
+    "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
+    "windowControlFailed": "窗口控制失败：{{error}}"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -217,14 +237,27 @@
       "title": "开启自动同步",
       "message": "开启自动同步后，每次数据库变更都会自动上传到 WebDAV 服务器。\n\n这可能会产生较高的网络流量消耗，请确保您的网络环境和 WebDAV 服务支持频繁的数据传输。",
       "confirm": "我已了解，继续开启"
+    },
+    "commonConfig": {
+      "title": "关于通用配置",
+      "message": "「通用配置片段」可以在不同供应商之间共享插件、环境变量等配置，避免切换供应商时丢失这些设置。\n\n使用方法：\n① 编辑供应商时点击「编辑通用配置」→「从编辑内容提取」\n② 新建供应商时勾选「写入通用配置」（默认已勾选）\n\n如果您新安装了插件或 Hook，请重新提取一次通用配置。",
+      "confirm": "我知道了"
     }
   },
   "settings": {
     "title": "设置",
     "general": "通用",
     "tabGeneral": "通用",
+    "tabAuth": "认证",
     "tabAdvanced": "高级",
     "tabProxy": "代理",
+    "authCenter": {
+      "title": "OAuth 认证中心",
+      "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
+      "beta": "Beta",
+      "copilotDescription": "管理 GitHub Copilot 账号",
+      "codexOauthDescription": "管理 ChatGPT 账号"
+    },
     "advanced": {
       "configDir": {
         "title": "配置文件目录",
@@ -466,6 +499,8 @@
     "autoLaunchFailed": "设置开机自启失败",
     "minimizeToTray": "关闭时最小化到托盘",
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
+    "useAppWindowControls": "启用应用级窗口按钮",
+    "useAppWindowControlsDescription": "开启后使用应用自建的最小化、最大化/还原、关闭按钮；关闭后沿用系统窗口模式。",
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",
     "enableClaudePluginIntegrationDescription": "开启后 Vscode Claude Code 插件的供应商将随本软件切换",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
@@ -478,8 +513,20 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "skillStorage": {
+      "title": "Skills 存储位置",
+      "description": "选择 CC Switch 存放 Skills 主副本的目录",
+      "ccSwitch": "CC Switch",
+      "unified": "~/.agents/skills",
+      "ccSwitchHint": "技能存储在 ~/.cc-switch/skills/，由 CC Switch 统一管理并同步到各应用。",
+      "unifiedHint": "技能存储在 ~/.agents/skills/，遵循 Agent Skills 开放标准。兼容的工具（Claude Code、Codex、Gemini CLI 等）可直接发现此目录中的技能。",
+      "confirmTitle": "迁移技能存储",
+      "confirmMessage": "将移动 {{count}} 个技能到新位置，是否继续？",
+      "migrationSuccess": "已成功迁移 {{count}} 个技能",
+      "migrationPartial": "迁移了 {{migrated}} 个技能，{{errors}} 个失败，请查看日志"
+    },
     "skillSync": {
-      "title": "Skill 同步方式",
+      "title": "Skills 同步方式",
       "description": "选择 Skills 的文件同步策略",
       "symlink": "软连接",
       "copy": "文件复制",
@@ -496,7 +543,8 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
-          "wezterm": "WezTerm"
+          "wezterm": "WezTerm",
+          "kaku": "Kaku"
         },
         "windows": {
           "cmd": "命令提示符",
@@ -714,7 +762,7 @@
     "aggregatorApiKeyHint": "💡 只需填写 API Key，请求地址已预设",
     "thirdPartyApiKeyHint": "💡 只需填写 API Key，请求地址已预设",
     "customApiKeyHint": "💡 自定义配置需手动填写所有必要字段",
-    "omoHint": "💡 OMO 配置管理 Agent 模型分配，写入 oh-my-opencode.jsonc",
+    "omoHint": "💡 OMO 配置管理 Agent 模型分配，兼容 oh-my-openagent.jsonc / oh-my-opencode.jsonc",
     "officialHint": "💡 官方供应商使用浏览器登录，无需配置 API Key",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
@@ -733,10 +781,14 @@
       "ucloud": "优云智算为CC Switch 的用户提供了特殊优惠，通过此链接注册，可以获得五元平台体验金！",
       "micu": "Micu 是 CC Switch 的官方合作伙伴",
       "x-code": "XCodeAPI 为CC Switch 的用户提供特别福利，使用此链接注册后首单加赠10%的额度(联系站长领取)",
-      "ctok": "官网加入CTok社群，订阅套餐。"
+      "ctok": "官网加入CTok社群，订阅套餐。",
+      "ddshub": "呆呆兽为CC Switch 的用户提供了特别福利，通过此链接注册后，首单充值可额外赠送 10% 额度（联系群主领取）！",
+      "lionccapi": "LionCCAPI 为 CC Switch 的用户提供了特别福利，注册后添加客服微信HSQBJ088888888，发暗号cc-switch备注即可送10美金额度！",
+      "shengsuanyun": "胜算云为 CC Switch 的用户提供了特别福利，使用此链接注册的新用户可获 10 元模力及首充 10% 赠送！"
     },
     "presets": {
-      "ucloud": "优云智算"
+      "ucloud": "优云智算",
+      "shengsuanyun": "胜算云"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -790,7 +842,18 @@
     "categoryOfficial": "官方",
     "categoryCnOfficial": "开源官方",
     "categoryAggregation": "聚合服务",
-    "categoryThirdParty": "第三方"
+    "categoryThirdParty": "第三方",
+    "fetchModels": "获取模型列表",
+    "fetchingModels": "正在获取...",
+    "fetchModelsSuccess": "获取到 {{count}} 个模型",
+    "fetchModelsFailed": "获取模型列表失败",
+    "fetchModelsEmpty": "未找到可用模型",
+    "fetchModelsNeedApiKey": "请先填写 API Key",
+    "fetchModelsNeedEndpoint": "请先填写 API 端点",
+    "fetchModelsNeedConfig": "请先填写 API 端点和 API Key",
+    "fetchModelsAuthFailed": "API Key 无效或无权限",
+    "fetchModelsNotSupported": "该供应商不支持获取模型列表",
+    "fetchModelsTimeout": "请求超时，请检查网络连接"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",
@@ -821,6 +884,27 @@
     "copyCode": "复制代码",
     "migrationFailed": "旧认证数据迁移失败：{{error}}",
     "loadModelsFailed": "加载 Copilot 模型列表失败"
+  },
+  "codexOauth": {
+    "authStatus": "认证状态",
+    "notAuthenticated": "未认证",
+    "loginWithChatGPT": "使用 ChatGPT 登录",
+    "loginRequired": "请先登录 ChatGPT 账号",
+    "waitingForAuth": "等待授权中...",
+    "enterCode": "请在浏览器中输入以下验证码：",
+    "accountCount": "{{count}} 个账号",
+    "selectAccount": "选择账号",
+    "selectAccountPlaceholder": "选择一个 ChatGPT 账号",
+    "useDefaultAccount": "使用默认账号",
+    "loggedInAccounts": "已登录账号",
+    "defaultAccount": "默认",
+    "selected": "已选中",
+    "removeAccount": "移除账号",
+    "setAsDefault": "设为默认",
+    "addAnotherAccount": "添加其他账号",
+    "logoutAll": "注销所有账号",
+    "retry": "重试",
+    "copyCode": "复制代码"
   },
   "endpointTest": {
     "title": "请求地址管理",
@@ -933,7 +1017,8 @@
     "modelsRequired": "请至少添加一个模型配置",
     "providerKey": "供应商标识",
     "providerKeyPlaceholder": "my-provider",
-    "providerKeyHint": "配置文件中的唯一标识符，创建后无法修改，只能使用小写字母、数字和连字符",
+    "providerKeyHint": "配置文件中的唯一标识符，只能使用小写字母、数字和连字符",
+    "providerKeyLockedHint": "该供应商已添加到应用配置中，供应商标识不可修改",
     "providerKeyRequired": "请填写供应商标识",
     "providerKeyDuplicate": "此标识已被使用，请更换",
     "providerKeyInvalid": "标识格式无效，只能使用小写字母、数字和连字符",
@@ -994,6 +1079,31 @@
     "unknownProvider": "未知供应商",
     "stream": "流",
     "nonStream": "非流",
+    "source": "来源",
+    "requestsLabel": "次请求",
+    "costLabel": "总成本",
+    "appFilter": {
+      "all": "全部",
+      "claude": "Claude Code",
+      "codex": "Codex",
+      "gemini": "Gemini"
+    },
+    "dataSources": "数据来源",
+    "dataSource": {
+      "proxy": "代理",
+      "session_log": "会话日志",
+      "codex_db": "Codex 数据库",
+      "codex_session": "Codex 会话日志",
+      "gemini_session": "Gemini 会话日志"
+    },
+    "sessionSync": {
+      "trigger": "同步会话日志",
+      "import": "导入会话",
+      "resync": "同步",
+      "imported": "从会话日志导入了 {{count}} 条记录",
+      "upToDate": "会话日志已是最新",
+      "failed": "会话同步失败"
+    },
     "totalRecords": "共 {{total}} 条记录",
     "modelPricing": "模型定价",
     "loadPricingError": "加载定价数据失败",
@@ -1078,7 +1188,11 @@
     "templateGeneral": "通用模板",
     "templateNewAPI": "NewAPI",
     "templateCopilot": "GitHub Copilot",
+    "templateTokenPlan": "Token Plan",
+    "templateBalance": "官方",
     "copilotAutoAuth": "自动使用 OAuth 认证，无需手动配置凭证",
+    "tokenPlanHint": "自动使用供应商的 API Key 和 Base URL 查询 Token Plan 额度",
+    "balanceHint": "自动使用供应商的 API Key 查询账户余额",
     "resetDate": "重置日期",
     "premiumRequests": "Premium 请求",
     "credentialsConfig": "凭证配置",
@@ -1392,7 +1506,8 @@
     "backupCreated": "已创建备份：{{path}}",
     "providerKey": "供应商标识",
     "providerKeyPlaceholder": "my-provider",
-    "providerKeyHint": "配置文件中的唯一标识符，创建后无法修改，只能使用小写字母、数字和连字符",
+    "providerKeyHint": "配置文件中的唯一标识符，只能使用小写字母、数字和连字符",
+    "providerKeyLockedHint": "该供应商已添加到应用配置中，供应商标识不可修改",
     "providerKeyRequired": "请填写供应商标识",
     "providerKeyDuplicate": "此标识已被使用，请更换",
     "providerKeyInvalid": "标识格式无效，只能使用小写字母、数字和连字符",
@@ -1556,6 +1671,18 @@
     "installFailed": "安装失败",
     "uninstallSuccess": "技能 {{name}} 已卸载",
     "uninstallFailed": "卸载失败",
+    "update": "更新",
+    "updating": "更新中...",
+    "updateAvailable": "可更新",
+    "updateSuccess": "技能 {{name}} 已更新到最新版本",
+    "updateFailed": "更新失败",
+    "checkUpdates": "检查更新",
+    "checkingUpdates": "检查中...",
+    "noUpdates": "所有技能已是最新版本",
+    "updatesFound": "发现 {{count}} 个技能有可用更新",
+    "updateAll": "全部更新 ({{count}})",
+    "updatingAll": "更新中...",
+    "updateAllSuccess": "已成功更新 {{count}} 个技能",
     "error": {
       "skillNotFound": "技能不存在：{{directory}}",
       "missingRepoInfo": "缺少仓库信息（owner 或 name）",
@@ -1609,6 +1736,19 @@
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或仓库名称...",
+    "searchSource": {
+      "repos": "仓库",
+      "skillssh": "skills.sh"
+    },
+    "skillssh": {
+      "searchPlaceholder": "搜索 skills.sh（至少 2 个字符）...",
+      "installs": "{{count}} 次安装",
+      "loadMore": "加载更多",
+      "loading": "正在搜索 skills.sh...",
+      "noResults": "未找到 \"{{query}}\" 相关技能",
+      "error": "搜索 skills.sh 失败",
+      "poweredBy": "由 skills.sh 提供"
+    },
     "filter": {
       "placeholder": "状态筛选",
       "all": "全部",
@@ -2164,6 +2304,7 @@
     "enabledModelsCount": "可选已配置模型 {{count}} 个",
     "source": "来源:",
     "otherFieldsJson": "其他字段 (JSON)",
+    "slimOtherFieldsHint": "OMO Slim 的 council、fallback、multiplexer、disabled_mcps、todoContinuation 等顶层配置请写在这里。",
     "searchOrType": "搜索或输入自定义值...",
     "noMatches": "无匹配项",
     "jsonMustBeObject": "{{field}} 必须是 JSON 对象",
@@ -2240,7 +2381,8 @@
       "librarian": "图书管理员",
       "explorer": "探索者",
       "designer": "设计师",
-      "fixer": "修复者"
+      "fixer": "修复者",
+      "council": "议会"
     },
     "slimAgentTooltip": {
       "orchestrator": "编写执行代码，编排多代理工作流，召唤专家",
@@ -2248,7 +2390,8 @@
       "librarian": "文档查询、GitHub 代码搜索（只读）",
       "explorer": "正则搜索、AST 模式匹配、文件发现（只读）",
       "designer": "现代响应式设计、CSS/Tailwind 精通",
-      "fixer": "代码实现、重构、测试、验证"
+      "fixer": "代码实现、重构、测试、验证",
+      "council": "多模型共识代理，并行运行多个只读 councillor，再由 master 汇总最终答案。"
     }
   },
   "openclawConfig": {
@@ -2279,5 +2422,24 @@
     },
     "suggestedDefaults": "应用建议默认配置",
     "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
+  },
+  "subscription": {
+    "title": "订阅额度",
+    "fiveHour": "5小时",
+    "sevenDay": "7天",
+    "sevenDayOpus": "7天(Opus)",
+    "sevenDaySonnet": "7天(Sonnet)",
+    "geminiPro": "Pro",
+    "geminiFlash": "Flash",
+    "geminiFlashLite": "Flash Lite",
+    "weeklyLimit": "每周",
+    "copilotPremium": "高级请求",
+    "utilization": "{{value}}%",
+    "resetsIn": "{{time}}后重置",
+    "extraUsage": "超额用量",
+    "expired": "会话已过期",
+    "expiredHint": "请运行 {{tool}} 命令刷新登录",
+    "queryFailed": "查询失败",
+    "refresh": "刷新"
   }
 }
