@@ -81,14 +81,13 @@ pub fn transform_claude_request_for_api_format(
     provider: &Provider,
     api_format: &str,
 ) -> Result<serde_json::Value, ProxyError> {
-    let cache_key = provider
-        .meta
-        .as_ref()
-        .and_then(|m| m.prompt_cache_key.as_deref())
-        .unwrap_or(&provider.id);
-
     match api_format {
         "openai_responses" => {
+            let cache_key = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.prompt_cache_key.as_deref())
+                .unwrap_or(&provider.id);
             // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
             // + include: ["reasoning.encrypted_content"]，由 transform 层统一处理。
             let is_codex_oauth = provider
@@ -102,7 +101,7 @@ pub fn transform_claude_request_for_api_format(
                 is_codex_oauth,
             )
         }
-        "openai_chat" => super::transform::anthropic_to_openai(body, Some(cache_key)),
+        "openai_chat" => super::transform::anthropic_to_openai(body),
         _ => Ok(body),
     }
 }
