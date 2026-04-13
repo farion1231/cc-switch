@@ -120,12 +120,15 @@ pub struct RequestLogDetail {
 /// SQL fragment: resolve provider_name with fallback for session-based entries.
 /// Session logs use placeholder provider_ids (_session, _codex_session, _gemini_session)
 /// that don't exist in the providers table — this COALESCE gives them readable names.
+/// For _session entries, also checks data_source to distinguish sub-agent records.
 fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
-        "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
-         WHEN '_session' THEN 'Claude (Session)' \
-         WHEN '_codex_session' THEN 'Codex (Session)' \
-         WHEN '_gemini_session' THEN 'Gemini (Session)' \
+        "COALESCE({provider_alias}.name, CASE \
+         WHEN {log_alias}.provider_id = '_session' AND {log_alias}.data_source = 'session_subagent' \
+           THEN 'Claude (Sub-Agent)' \
+         WHEN {log_alias}.provider_id = '_session' THEN 'Claude (Session)' \
+         WHEN {log_alias}.provider_id = '_codex_session' THEN 'Codex (Session)' \
+         WHEN {log_alias}.provider_id = '_gemini_session' THEN 'Gemini (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }

@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usageApi } from "@/lib/api/usage";
 import { usageKeys } from "@/lib/query/usage";
-import { Database, FileText, RefreshCw, Loader2 } from "lucide-react";
+import { Bot, Database, FileText, RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ interface DataSourceBarProps {
 const DATA_SOURCE_ICONS: Record<string, React.ReactNode> = {
   proxy: <Database className="h-3.5 w-3.5" />,
   session_log: <FileText className="h-3.5 w-3.5" />,
+  session_subagent: <Bot className="h-3.5 w-3.5" />,
   codex_db: <Database className="h-3.5 w-3.5" />,
   codex_session: <FileText className="h-3.5 w-3.5" />,
   gemini_session: <FileText className="h-3.5 w-3.5" />,

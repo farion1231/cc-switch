@@ -1,11 +1,12 @@
 //! Claude Code 会话日志使用追踪
 //!
 //! 从 ~/.claude/projects/ 下的 JSONL 会话文件中提取 token 使用数据，
-//! 实现无代理模式下的使用统计。
+//! 实现无代理模式下的使用统计。同时解析子 Agent (sub-agent) 的对话记录。
 //!
 //! ## 数据流
 //! ```text
-//! ~/.claude/projects/*/*.jsonl → 增量解析 → 去重 → 费用计算 → proxy_request_logs 表
+//! ~/.claude/projects/*/*.jsonl                → 增量解析 → 去重 → 费用计算 → proxy_request_logs 表
+//! ~/.claude/projects/*/<sessionId>/subagents/ → 增量解析 → 去重 → 费用计算 → proxy_request_logs 表
 //! ```
 
 use crate::config::get_claude_config_dir;
@@ -54,7 +55,7 @@ struct ParsedAssistantUsage {
     session_id: Option<String>,
 }
 
-/// 同步 Claude Code 会话日志到使用统计数据库
+/// 同步 Claude Code 会话日志到使用统计数据库（包括子 Agent 记录）
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
     let projects_dir = get_claude_config_dir().join("projects");
     if !projects_dir.exists() {
@@ -73,13 +74,13 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
         errors: vec![],
     };
 
-    // 收集所有 .jsonl 文件
+    // 收集主会话 .jsonl 文件
     let jsonl_files = collect_jsonl_files(&projects_dir);
 
     for file_path in &jsonl_files {
         result.files_scanned += 1;
 
-        match sync_single_file(db, file_path) {
+        match sync_single_file(db, file_path, "session_log", "session:") {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -92,12 +93,32 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
         }
     }
 
+    // 收集子 Agent 会话文件
+    let subagent_files = collect_subagent_files(&projects_dir);
+
+    for file_path in &subagent_files {
+        result.files_scanned += 1;
+
+        match sync_single_file(db, file_path, "session_subagent", "subagent:") {
+            Ok((imported, skipped)) => {
+                result.imported += imported;
+                result.skipped += skipped;
+            }
+            Err(e) => {
+                let msg = format!("{}: {e}", file_path.display());
+                log::warn!("[SESSION-SYNC] 子Agent文件解析失败: {msg}");
+                result.errors.push(msg);
+            }
+        }
+    }
+
     if result.imported > 0 {
         log::info!(
-            "[SESSION-SYNC] 同步完成: 导入 {} 条, 跳过 {} 条, 扫描 {} 个文件",
+            "[SESSION-SYNC] 同步完成: 导入 {} 条, 跳过 {} 条, 扫描 {} 个文件 (含 {} 个子Agent文件)",
             result.imported,
             result.skipped,
-            result.files_scanned
+            result.files_scanned,
+            subagent_files.len()
         );
     }
 
@@ -132,8 +153,99 @@ fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// 收集所有子 Agent 的会话文件
+///
+/// 扫描路径: ~/.claude/projects/<project>/<sessionId>/subagents/agent-*.jsonl
+fn collect_subagent_files(projects_dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+
+    let entries = match fs::read_dir(projects_dir) {
+        Ok(e) => e,
+        Err(_) => return files,
+    };
+
+    for entry in entries.flatten() {
+        let project_dir = entry.path();
+        if !project_dir.is_dir() {
+            continue;
+        }
+
+        // 遍历项目目录下的每个子目录 (可能是 session 目录)
+        let session_entries = match fs::read_dir(&project_dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for session_entry in session_entries.flatten() {
+            let session_path = session_entry.path();
+            if !session_path.is_dir() {
+                continue;
+            }
+
+            let subagents_dir = session_path.join("subagents");
+            if !subagents_dir.is_dir() {
+                continue;
+            }
+
+            // 扫描 subagents/ 目录下的 agent-*.jsonl 文件
+            if let Ok(agent_entries) = fs::read_dir(&subagents_dir) {
+                for agent_entry in agent_entries.flatten() {
+                    let agent_path = agent_entry.path();
+                    let file_name = agent_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    if file_name.starts_with("agent-")
+                        && agent_path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+                    {
+                        files.push(agent_path);
+                    }
+                }
+            }
+
+            // 同时扫描嵌套子目录 (如 workflows/<runId>/agent-*.jsonl)
+            let subdirs = match fs::read_dir(&subagents_dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            for subdir_entry in subdirs.flatten() {
+                let subdir_path = subdir_entry.path();
+                if !subdir_path.is_dir() {
+                    continue;
+                }
+
+                if let Ok(nested_entries) = fs::read_dir(&subdir_path) {
+                    for nested_entry in nested_entries.flatten() {
+                        let nested_path = nested_entry.path();
+                        let file_name = nested_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("");
+                        if file_name.starts_with("agent-")
+                            && nested_path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+                        {
+                            files.push(nested_path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    files
+}
+
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
-fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+///
+/// `data_source` 用于区分数据来源 ("session_log" 或 "session_subagent")
+/// `request_id_prefix` 用于生成唯一的 request_id 前缀
+fn sync_single_file(
+    db: &Database,
+    file_path: &Path,
+    data_source: &str,
+    request_id_prefix: &str,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
@@ -278,14 +390,14 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             continue;
         }
 
-        let request_id = format!("session:{}", msg.message_id);
+        let request_id = format!("{}{}", request_id_prefix, msg.message_id);
 
         // 跳过 output_tokens 为 0 的无意义条目
         if msg.output_tokens == 0 {
             continue;
         }
 
-        match insert_session_log_entry(db, &request_id, msg) {
+        match insert_session_log_entry(db, &request_id, msg, data_source) {
             Ok(true) => imported += 1,
             Ok(false) => skipped += 1,
             Err(e) => {
@@ -335,10 +447,13 @@ fn update_sync_state(
 }
 
 /// 插入单条会话日志到 proxy_request_logs，返回是否成功插入 (true=新插入, false=已存在)
+///
+/// `data_source` 区分主会话 ("session_log") 和子 Agent ("session_subagent")
 fn insert_session_log_entry(
     db: &Database,
     request_id: &str,
     msg: &ParsedAssistantUsage,
+    data_source: &str,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
@@ -432,11 +547,11 @@ fn insert_session_log_entry(
             200i64,             // status_code: 有 stop_reason 说明请求成功
             Option::<String>::None, // error_message
             msg.session_id,
-            Some("session_log"), // provider_type
+            Some(data_source),  // provider_type: 使用 data_source 值
             1i64,               // is_streaming: Claude Code 通常使用流式
             "1.0",              // cost_multiplier
             created_at,
-            "session_log",      // data_source
+            data_source,        // data_source: 区分主会话和子Agent
         ],
     )
     .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
