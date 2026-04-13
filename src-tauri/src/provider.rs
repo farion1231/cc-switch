@@ -44,6 +44,44 @@ pub struct Provider {
 
 impl Provider {
     /// 从现有ID创建供应商
+    /// 读取 stream_include_usage 设置。
+    /// 如果 provider 自身未设置，则根据 API 格式自动判断默认值：
+    /// - openai_chat 兼容模式默认 true
+    /// - anthropic 原生模式默认 false
+    pub fn stream_include_usage(&self) -> bool {
+        let explicit = self
+            .settings_config
+            .get("stream_include_usage")
+            .and_then(|v| v.as_bool());
+
+        if let Some(value) = explicit {
+            return value;
+        }
+
+        // 自动根据 API 格式推断默认值
+        let api_format = self
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.api_format.as_deref())
+            .or_else(|| {
+                self.settings_config
+                    .get("api_format")
+                    .and_then(|v| v.as_str())
+            });
+
+        match api_format {
+            Some("openai_chat") => true,
+            _ => {
+                // 未显式设置 api_format 时，根据常见字段推断是否为 OpenAI 兼容供应商
+                let has_openai_fields = self.settings_config.get("baseUrl").is_some()
+                    || self.settings_config.get("base_url").is_some()
+                    || self.settings_config.get("apiKey").is_some()
+                    || self.settings_config.get("api_key").is_some();
+                has_openai_fields
+            }
+        }
+    }
+
     pub fn with_id(
         id: String,
         name: String,

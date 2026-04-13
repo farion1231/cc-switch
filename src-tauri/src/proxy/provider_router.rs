@@ -90,6 +90,12 @@ impl ProviderRouter {
             if let Some(current_id) = current_id {
                 if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
                     total_providers = 1;
+                    log::info!(
+                        "[ProviderRouter] [{}] selected provider: {} (stream_include_usage={})",
+                        app_type,
+                        current.name,
+                        current.stream_include_usage()
+                    );
                     result.push(current);
                 }
             }
