@@ -1066,7 +1066,7 @@ mod tests {
 }
 "#;
 
-        with_test_paths(source, |_| {
+        with_test_paths(source, |config_path| {
             let outcome = remove_provider("1-copy").unwrap();
             assert!(outcome.backup_path.is_some());
 
@@ -1080,7 +1080,7 @@ mod tests {
 
             assert!(providers.is_empty());
 
-            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            let written = fs::read_to_string(config_path).unwrap();
             assert!(written.contains("\"providers\": {}"));
         });
     }
