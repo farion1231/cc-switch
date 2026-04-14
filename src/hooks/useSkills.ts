@@ -15,6 +15,16 @@ import {
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 
+export interface BatchOperationFailure {
+  id: string;
+  error: string;
+}
+
+export interface BatchOperationResult {
+  successIds: string[];
+  failed: BatchOperationFailure[];
+}
+
 /**
  * 查询所有已安装的 Skills
  * 使用 staleTime: Infinity 和 placeholderData: keepPreviousData
@@ -185,6 +195,41 @@ export function useToggleSkillApp() {
 }
 
 /**
+ * 批量切换 Skill 在特定应用的启用状态
+ * 遇错继续执行，返回成功/失败汇总
+ */
+export function useBatchToggleSkillApp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      items,
+    }: {
+      items: Array<{ id: string; app: AppId; enabled: boolean }>;
+    }): Promise<BatchOperationResult> => {
+      const successIds: string[] = [];
+      const failed: BatchOperationFailure[] = [];
+
+      for (const item of items) {
+        try {
+          await skillsApi.toggleApp(item.id, item.app, item.enabled);
+          successIds.push(item.id);
+        } catch (error) {
+          failed.push({
+            id: item.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      return { successIds, failed };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    },
+  });
+}
+
+/**
  * 扫描未管理的 Skills
  */
 export function useScanUnmanagedSkills() {
@@ -323,6 +368,42 @@ export function useUpdateSkill() {
           return oldData.filter((u) => u.id !== updatedSkill.id);
         },
       );
+    },
+  });
+}
+
+/**
+ * 批量卸载 Skill
+ * 遇错继续执行，返回成功/失败汇总
+ */
+export function useBatchUninstallSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      items,
+    }: {
+      items: Array<{ id: string }>;
+    }): Promise<BatchOperationResult> => {
+      const successIds: string[] = [];
+      const failed: BatchOperationFailure[] = [];
+
+      for (const item of items) {
+        try {
+          await skillsApi.uninstallUnified(item.id);
+          successIds.push(item.id);
+        } catch (error) {
+          failed.push({
+            id: item.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      return { successIds, failed };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
     },
   });
 }
