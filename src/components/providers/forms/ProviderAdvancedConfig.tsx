@@ -22,7 +22,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import type { ProviderTestConfig, ProviderProxyConfig } from "@/types";
+import type {
+  ProviderTestConfig,
+  ProviderProxyConfig,
+  ModelRoutingConfig,
+} from "@/types";
+import { ModelRoutingConfigPanel } from "./ModelRoutingConfigPanel";
 
 export type PricingModelSourceOption = "inherit" | "request" | "response";
 
@@ -36,9 +41,11 @@ interface ProviderAdvancedConfigProps {
   testConfig: ProviderTestConfig;
   proxyConfig: ProviderProxyConfig;
   pricingConfig: ProviderPricingConfig;
+  modelRoutingConfig: ModelRoutingConfig;
   onTestConfigChange: (config: ProviderTestConfig) => void;
   onProxyConfigChange: (config: ProviderProxyConfig) => void;
   onPricingConfigChange: (config: ProviderPricingConfig) => void;
+  onModelRoutingConfigChange: (config: ModelRoutingConfig) => void;
 }
 
 /** 从 ProviderProxyConfig 构建完整 URL */
@@ -90,9 +97,11 @@ export function ProviderAdvancedConfig({
   testConfig,
   proxyConfig,
   pricingConfig,
+  modelRoutingConfig,
   onTestConfigChange,
   onProxyConfigChange,
   onPricingConfigChange,
+  onModelRoutingConfigChange,
 }: ProviderAdvancedConfigProps) {
   const { t } = useTranslation();
   const [isTestConfigOpen, setIsTestConfigOpen] = useState(testConfig.enabled);
@@ -118,6 +127,11 @@ export function ProviderAdvancedConfig({
   useEffect(() => {
     setIsProxyConfigOpen(proxyConfig.enabled);
   }, [proxyConfig.enabled]);
+
+  // 同步外部 pricingConfig.enabled 变化到展开状态
+  useEffect(() => {
+    setIsPricingConfigOpen(pricingConfig.enabled);
+  }, [pricingConfig.enabled]);
 
   // 同步外部 pricingConfig.enabled 变化到展开状态
   useEffect(() => {
@@ -166,6 +180,11 @@ export function ProviderAdvancedConfig({
 
   return (
     <div className="space-y-4">
+      <ModelRoutingConfigPanel
+        config={modelRoutingConfig}
+        onConfigChange={onModelRoutingConfigChange}
+      />
+
       <div className="rounded-lg border border-border/50 bg-muted/20">
         <button
           type="button"

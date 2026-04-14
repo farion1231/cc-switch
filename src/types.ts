@@ -172,6 +172,42 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // 模型路由配置（支持单个 Provider 根据请求模型动态切换 API 格式和目标端点）
+  modelRoutingConfig?: ModelRoutingConfig;
+}
+
+// 模型路由配置
+export interface ModelRoutingConfig {
+  // 是否启用路由配置
+  enabled: boolean;
+  // 路由规则列表
+  routes: ModelRoute[];
+  // 兜底配置（当没有匹配的路由时使用）
+  fallback?: RouteFallback;
+}
+
+// 单个模型路由规则
+export interface ModelRoute {
+  // 源模型名称（不区分大小写匹配）
+  sourceModel: string;
+  // 路由目标配置
+  target: RouteTarget;
+}
+
+// 路由目标配置
+export interface RouteTarget {
+  // 目标 Base URL
+  baseUrl: string;
+  // 目标 API 格式
+  apiFormat: "anthropic" | "openai_chat" | "openai_responses";
+  // 目标模型名称
+  modelName: string;
+}
+
+// 路由兜底配置
+export interface RouteFallback {
+  // 兜底 API 格式
+  apiFormat: "anthropic" | "openai_chat" | "openai_responses";
 }
 
 // Skill 同步方式
