@@ -180,7 +180,10 @@ fn load_display_names(sessions_dir: &Path) -> HashMap<String, String> {
     map
 }
 
-fn parse_session(path: &Path, display_names: Option<&HashMap<String, String>>) -> Option<SessionMeta> {
+fn parse_session(
+    path: &Path,
+    display_names: Option<&HashMap<String, String>>,
+) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
 
     let mut session_id: Option<String> = None;

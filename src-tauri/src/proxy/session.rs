@@ -337,7 +337,7 @@ fn extract_from_metadata(body: &serde_json::Value) -> Option<SessionIdResult> {
 /// 从 user_id 解析 session_id
 ///
 /// 格式: `user_identifier_session_actual_session_id`
-fn parse_session_from_user_id(user_id: &str) -> Option<String> {
+pub(super) fn parse_session_from_user_id(user_id: &str) -> Option<String> {
     // 查找 "_session_" 分隔符
     if let Some(pos) = user_id.find("_session_") {
         let session_id = &user_id[pos + 9..]; // "_session_" 长度为 9
