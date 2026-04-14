@@ -195,14 +195,7 @@ async fn get_single_tool_version_impl(
         let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
 
         // Windows: 检测本地版本
-        let (windows_version, windows_error) = {
-            let direct_result = try_get_version(tool);
-            if direct_result.0.is_some() {
-                direct_result
-            } else {
-                scan_cli_version(tool)
-            }
-        };
+        let (windows_version, windows_error) = get_local_tool_version(tool);
 
         if windows_version.is_some() || windows_error.is_some() {
             envs.push(ToolEnvVersion {
@@ -237,14 +230,7 @@ async fn get_single_tool_version_impl(
     #[cfg(not(target_os = "windows"))]
     {
         // 非 Windows 平台：检测本地版本
-        let (local_version, local_error) = {
-            let direct_result = try_get_version(tool);
-            if direct_result.0.is_some() {
-                direct_result
-            } else {
-                scan_cli_version(tool)
-            }
-        };
+        let (local_version, local_error) = get_local_tool_version(tool);
 
         let env_type = if cfg!(target_os = "macos") {
             "macos"
@@ -364,6 +350,7 @@ fn extract_version(raw: &str) -> String {
 }
 
 /// 尝试直接执行命令获取版本
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
     use std::process::Command;
 
@@ -407,6 +394,23 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
             }
         }
         Err(e) => (None, Some(e.to_string())),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_local_tool_version(tool: &str) -> (Option<String>, Option<String>) {
+    // On Windows avoid `cmd /C <tool> --version` because App Execution Aliases
+    // and protocol handlers can launch external apps during passive version refresh.
+    scan_cli_version(tool)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_local_tool_version(tool: &str) -> (Option<String>, Option<String>) {
+    let direct_result = try_get_version(tool);
+    if direct_result.0.is_some() {
+        direct_result
+    } else {
+        scan_cli_version(tool)
     }
 }
 
@@ -1427,6 +1431,13 @@ mod tests {
             assert!(!is_valid_wsl_distro_name(""));
             assert!(!is_valid_wsl_distro_name("distro with spaces"));
             assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
+        }
+
+        #[test]
+        fn test_get_local_tool_version_avoids_direct_windows_probe() {
+            let result = get_local_tool_version("codex");
+
+            assert_eq!(result, scan_cli_version("codex"));
         }
     }
 

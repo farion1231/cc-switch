@@ -156,6 +156,42 @@ pub fn resolve_wsl_home_dir_unc(distro: &str) -> Option<PathBuf> {
     Some(unc)
 }
 
+#[cfg(target_os = "windows")]
+fn append_default_subdir(mut home_unc: PathBuf, default_subdir: &[&str]) -> PathBuf {
+    for segment in default_subdir {
+        home_unc.push(segment);
+    }
+    home_unc
+}
+
+#[cfg(target_os = "windows")]
+fn expand_secondary_wsl_dirs_from_homes<F>(
+    current_distro: Option<&str>,
+    distros: &[String],
+    default_subdir: &[&str],
+    mut resolve_home_unc: F,
+) -> Vec<PathBuf>
+where
+    F: FnMut(&str) -> Option<PathBuf>,
+{
+    let mut dirs = Vec::new();
+
+    for distro in distros {
+        let distro = distro.trim();
+        if distro.is_empty()
+            || current_distro.is_some_and(|current| distro.eq_ignore_ascii_case(current))
+        {
+            continue;
+        }
+
+        if let Some(home_unc) = resolve_home_unc(distro) {
+            dirs.push(append_default_subdir(home_unc, default_subdir));
+        }
+    }
+
+    dirs
+}
+
 // ─── Path utilities ─────────────────────────────────────────────────────────
 
 /// Deduplicate a `Vec<PathBuf>`, preserving order.
@@ -192,29 +228,22 @@ pub(crate) fn expand_wsl_dirs(primary_dir: &Path, default_subdir: &[&str]) -> Ve
 
     #[cfg(target_os = "windows")]
     {
-        if let Some((current_distro, suffix)) = parse_wsl_unc_path(primary_dir) {
+        if let Some((current_distro, _suffix)) = parse_wsl_unc_path(primary_dir) {
             if let Some(distros) = crate::settings::get_wsl_distros() {
-                for distro in distros {
-                    let distro = distro.trim();
-                    if distro.is_empty() || distro.eq_ignore_ascii_case(&current_distro) {
-                        continue;
-                    }
-                    let mut dir = PathBuf::from(format!("\\\\wsl.localhost\\{distro}"));
-                    if !suffix.is_empty() {
-                        dir.push(&suffix);
-                    }
-                    dirs.push(dir);
-                }
+                dirs.extend(expand_secondary_wsl_dirs_from_homes(
+                    Some(&current_distro),
+                    &distros,
+                    default_subdir,
+                    resolve_wsl_home_dir_unc,
+                ));
             }
         } else if let Some(distros) = crate::settings::get_wsl_distros() {
-            for distro in distros {
-                if let Some(mut home_unc) = resolve_wsl_home_dir_unc(&distro) {
-                    for segment in default_subdir {
-                        home_unc.push(segment);
-                    }
-                    dirs.push(home_unc);
-                }
-            }
+            dirs.extend(expand_secondary_wsl_dirs_from_homes(
+                None,
+                &distros,
+                default_subdir,
+                resolve_wsl_home_dir_unc,
+            ));
         }
     }
 
@@ -227,6 +256,10 @@ pub(crate) fn expand_wsl_dirs(primary_dir: &Path, default_subdir: &[&str]) -> Ve
 mod tests {
     #[cfg(target_os = "windows")]
     use super::*;
+    #[cfg(target_os = "windows")]
+    use std::collections::HashMap;
+    #[cfg(target_os = "windows")]
+    use std::path::{Path, PathBuf};
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -237,5 +270,47 @@ mod tests {
         assert!(!is_valid_wsl_distro_name(""));
         assert!(!is_valid_wsl_distro_name("distro with spaces"));
         assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_wsl_unc_path_extracts_distro_and_suffix() {
+        let parsed = parse_wsl_unc_path(Path::new(r"\\wsl.localhost\Ubuntu\home\alice\.codex"))
+            .expect("should parse WSL UNC path");
+
+        assert_eq!(parsed.0, "Ubuntu");
+        assert_eq!(parsed.1, r"home\alice\.codex");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_expand_secondary_wsl_dirs_from_homes_uses_each_distro_home() {
+        let distros = vec![
+            "Ubuntu".to_string(),
+            "Debian".to_string(),
+            "Arch".to_string(),
+        ];
+        let homes = HashMap::from([
+            ("Debian".to_string(), PathBuf::from(r"\\wsl.localhost\Debian\home\bob")),
+            (
+                "Arch".to_string(),
+                PathBuf::from(r"\\wsl.localhost\Arch\home\carol"),
+            ),
+        ]);
+
+        let dirs = expand_secondary_wsl_dirs_from_homes(
+            Some("Ubuntu"),
+            &distros,
+            &[".codex"],
+            |distro| homes.get(distro).cloned(),
+        );
+
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from(r"\\wsl.localhost\Debian\home\bob\.codex"),
+                PathBuf::from(r"\\wsl.localhost\Arch\home\carol\.codex"),
+            ]
+        );
     }
 }
