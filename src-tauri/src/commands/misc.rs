@@ -1465,12 +1465,13 @@ mod tests {
     fn opencode_extra_search_paths_deduplicates_repeated_entries() {
         let home = PathBuf::from("/home/tester");
         let same_dir = Some(std::ffi::OsString::from("/same/path"));
+        let same_path = std::path::Path::new("/same/path");
 
         let paths = opencode_extra_search_paths(&home, same_dir.clone(), same_dir, None);
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/same/path"))
+            .filter(|path| path.as_path() == same_path)
             .count();
         assert_eq!(count, 1);
     }
@@ -1478,11 +1479,12 @@ mod tests {
     #[test]
     fn opencode_extra_search_paths_deduplicates_bun_default_dir() {
         let home = PathBuf::from("/home/tester");
+        let bun_default = std::path::Path::new("/home/tester/.bun/bin");
         let paths = opencode_extra_search_paths(&home, None, None, None);
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/home/tester/.bun/bin"))
+            .filter(|path| path.as_path() == bun_default)
             .count();
         assert_eq!(count, 1);
     }

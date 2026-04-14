@@ -291,19 +291,20 @@ mod tests {
             "Arch".to_string(),
         ];
         let homes = HashMap::from([
-            ("Debian".to_string(), PathBuf::from(r"\\wsl.localhost\Debian\home\bob")),
+            (
+                "Debian".to_string(),
+                PathBuf::from(r"\\wsl.localhost\Debian\home\bob"),
+            ),
             (
                 "Arch".to_string(),
                 PathBuf::from(r"\\wsl.localhost\Arch\home\carol"),
             ),
         ]);
 
-        let dirs = expand_secondary_wsl_dirs_from_homes(
-            Some("Ubuntu"),
-            &distros,
-            &[".codex"],
-            |distro| homes.get(distro).cloned(),
-        );
+        let dirs =
+            expand_secondary_wsl_dirs_from_homes(Some("Ubuntu"), &distros, &[".codex"], |distro| {
+                homes.get(distro).cloned()
+            });
 
         assert_eq!(
             dirs,
