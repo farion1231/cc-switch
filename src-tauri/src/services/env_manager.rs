@@ -17,6 +17,51 @@ pub struct BackupInfo {
     pub conflicts: Vec<EnvConflict>,
 }
 
+#[cfg(target_os = "windows")]
+pub fn get_user_env_var(name: &str) -> Result<Option<String>, String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Environment")
+        .map_err(|e| format!("打开用户环境变量注册表失败: {e}"))?;
+
+    match hkcu.get_value::<String, _>(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(format!("读取用户环境变量失败: {err}")),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn get_user_env_var(name: &str) -> Result<Option<String>, String> {
+    Ok(std::env::var(name).ok())
+}
+
+#[cfg(target_os = "windows")]
+pub fn set_user_env_var(name: &str, value: Option<&str>) -> Result<(), String> {
+    let (hkcu, _) = RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey("Environment")
+        .map_err(|e| format!("打开用户环境变量注册表失败: {e}"))?;
+
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(next) => hkcu
+            .set_value(name, &next)
+            .map_err(|e| format!("写入用户环境变量失败: {e}"))?,
+        None => {
+            let _ = hkcu.delete_value(name);
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_user_env_var(name: &str, value: Option<&str>) -> Result<(), String> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(next) => std::env::set_var(name, next),
+        None => std::env::remove_var(name),
+    }
+    Ok(())
+}
+
 /// Delete environment variables with automatic backup
 pub fn delete_env_vars(conflicts: Vec<EnvConflict>) -> Result<BackupInfo, String> {
     // Step 1: Create backup

@@ -16,6 +16,7 @@ import type {
   ProviderProxyConfig,
   ClaudeApiFormat,
   ClaudeApiKeyField,
+  ClaudeActivationMode,
 } from "@/types";
 import {
   providerPresets,
@@ -188,6 +189,15 @@ export function ProviderForm({
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
   });
+  const [claudeProfileDir, setClaudeProfileDir] = useState<string>(() => {
+    if (appId !== "claude") return "";
+    return initialData?.meta?.claudeProfileDir ?? "";
+  });
+  const [claudeActivationMode, setClaudeActivationMode] =
+    useState<ClaudeActivationMode>(() => {
+      if (appId !== "claude") return "legacy";
+      return initialData?.meta?.claudeActivationMode ?? "legacy";
+    });
 
   const [testConfig, setTestConfig] = useState<ProviderTestConfig>(
     () => initialData?.meta?.testConfig ?? { enabled: false },
@@ -229,6 +239,14 @@ export function ProviderForm({
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
+    );
+    setClaudeProfileDir(
+      appId === "claude" ? (initialData?.meta?.claudeProfileDir ?? "") : "",
+    );
+    setClaudeActivationMode(
+      appId === "claude"
+        ? (initialData?.meta?.claudeActivationMode ?? "legacy")
+        : "legacy",
     );
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setProxyConfig(initialData?.meta?.proxyConfig ?? { enabled: false });
@@ -1038,6 +1056,7 @@ export function ProviderForm({
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    const trimmedClaudeProfileDir = claudeProfileDir.trim();
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType =
@@ -1096,6 +1115,16 @@ export function ProviderForm({
       isFullUrl:
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
+          : undefined,
+      claudeProfileDir:
+        appId === "claude" &&
+        claudeActivationMode !== "legacy" &&
+        trimmedClaudeProfileDir
+          ? trimmedClaudeProfileDir
+          : undefined,
+      claudeActivationMode:
+        appId === "claude" && claudeActivationMode !== "legacy"
+          ? claudeActivationMode
           : undefined,
     };
 
@@ -1203,6 +1232,10 @@ export function ProviderForm({
     if (value === "custom") {
       setActivePreset(null);
       form.reset(defaultValues);
+      if (appId === "claude") {
+        setClaudeActivationMode("legacy");
+        setClaudeProfileDir("");
+      }
 
       if (appId === "codex") {
         const template = getCodexCustomTemplate();
@@ -1337,6 +1370,12 @@ export function ProviderForm({
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
+    if (appId === "claude") {
+      setClaudeActivationMode(
+        preset.category === "official" ? "legacy" : "profile-and-config",
+      );
+      setClaudeProfileDir("");
+    }
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -1571,7 +1610,6 @@ export function ProviderForm({
               }
               autoSelect={endpointAutoSelect}
               onAutoSelectChange={setEndpointAutoSelect}
-              shouldShowModelSelector={category !== "official"}
               claudeModel={claudeModel}
               reasoningModel={reasoningModel}
               defaultHaikuModel={defaultHaikuModel}
@@ -1585,6 +1623,10 @@ export function ProviderForm({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              profileDir={claudeProfileDir}
+              onProfileDirChange={setClaudeProfileDir}
+              activationMode={claudeActivationMode}
+              onActivationModeChange={setClaudeActivationMode}
             />
           )}
 

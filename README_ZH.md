@@ -195,7 +195,12 @@ CC Switch 支持五个工具：**Claude Code**、**Codex**、**Gemini CLI**、**
 <details>
 <summary><strong>切换供应商后需要重启终端吗？</strong></summary>
 
-大多数工具需要重启终端或 CLI 工具才能使更改生效。例外的是 **Claude Code**，它目前支持供应商数据的热切换，无需重启。
+大多数工具需要重启终端或 CLI 工具才能使更改生效。
+
+Claude Code 有两种路径：
+
+- 从 CC Switch 内打开的终端会直接带上当前供应商环境。
+- 切换后只影响新启动的终端进程。Windows Terminal 可能复用已有宿主进程，导致环境变量未刷新。API 模式下，推荐直接从 CC Switch 打开终端；如果手动打开，请确保启动的是全新的 PowerShell、cmd 或 Windows Terminal 进程。
 
 </details>
 
@@ -225,7 +230,11 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 <details>
 <summary><strong>如何切换回官方登录？</strong></summary>
 
-可以在预设供应商里面添加一个官方供应商。切换过去之后，执行一遍 Log out / Log in 流程，之后便可以在官方供应商和第三方供应商之间随意切换。CodeX 可以在不同官方供应商之间进行切换，方便多个 Plus 或者 Team 账号之间切换。
+可以在预设供应商里面添加一个官方供应商，并将它的 Claude 切换模式保持为 **Legacy / 系统默认**。这个模式会让 Claude Code 回到默认 profile，并复用已有的官方 OAuth / 订阅登录态。
+
+Claude API 供应商应使用 **Profile + Config**，并指定一个独立的 Claude profile 目录。CC Switch 会把供应商配置写入该目录，并为新启动的终端设置 `CLAUDE_CONFIG_DIR`。
+
+**Profile only** 是高级模式。只有当你已经维护了一套完整、可独立运行的 Claude profile，并且只想让 CC Switch 切换 `CLAUDE_CONFIG_DIR`、不希望写入供应商配置时，才使用这个模式。它不是默认 Claude 订阅登录的推荐模式。
 
 </details>
 

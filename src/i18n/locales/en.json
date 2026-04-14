@@ -852,7 +852,16 @@
     "fetchModelsNeedConfig": "Please fill in API endpoint and API Key first",
     "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
     "fetchModelsNotSupported": "This provider does not support fetching model list",
-    "fetchModelsTimeout": "Request timed out, please check network connection"
+    "fetchModelsTimeout": "Request timed out, please check network connection",
+    "claudeActivationMode": "Claude switch mode",
+    "claudeActivationModeLegacy": "Legacy / system default",
+    "claudeActivationModeProfileOnly": "Profile only (advanced)",
+    "claudeActivationModeProfileAndConfig": "Profile + Config",
+    "claudeActivationModeHint": "Official/Auth: use Legacy. API providers: use Profile + Config.",
+    "claudeProfileDir": "Claude profile directory",
+    "claudeProfileDirPlaceholder": "C:\\Users\\<user>\\.claude-profiles\\api",
+    "claudeProfileDirHint": "Claude-only. Legacy keeps the default profile location. Profile only is for existing standalone profiles and does not write provider settings.",
+    "claudeProfileDirRestartHint": "Switching only affects newly started terminal processes. Windows Terminal may reuse an existing host process, which can keep stale environment variables. For API mode, opening a terminal from CC Switch is the recommended path. If you open a terminal manually, make sure it is a freshly started PowerShell, cmd, or Windows Terminal process."
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",

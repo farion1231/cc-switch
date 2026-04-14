@@ -2,6 +2,7 @@
 
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
+use crate::provider::ClaudeActivationMode;
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -747,14 +748,31 @@ pub async fn open_provider_terminal(
 
     let provider = providers
         .get(&providerId)
-        .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
+        .ok_or_else(|| format!("provider {providerId} not found"))?;
+    let claude_profile_dir = if matches!(app_type, AppType::Claude) {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| match meta.claude_activation_mode {
+                Some(ClaudeActivationMode::ProfileOnly)
+                | Some(ClaudeActivationMode::ProfileAndConfig) => {
+                    meta.claude_profile_dir.as_ref().cloned()
+                }
+                _ => None,
+            })
+    } else {
+        None
+    };
 
-    // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
-    // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+    launch_terminal_with_env(
+        env_vars,
+        &providerId,
+        launch_cwd.as_deref(),
+        claude_profile_dir.as_deref(),
+    )
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
@@ -853,6 +871,7 @@ fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
     cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let config_file = temp_dir.join(format!(
@@ -878,7 +897,7 @@ fn launch_terminal_with_env(
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
+        launch_windows_terminal(&temp_dir, &config_file, cwd, claude_profile_dir)?;
         return Ok(());
     }
 
@@ -1183,6 +1202,7 @@ fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
     cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
@@ -1191,8 +1211,23 @@ fn launch_windows_terminal(
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
-    let content = format!(
-        "@echo off
+    let content = if let Some(profile_dir) = claude_profile_dir {
+        let escaped_profile_dir = escape_windows_batch_value(profile_dir);
+        format!(
+            "@echo off
+{cwd_command}
+set \"CLAUDE_CONFIG_DIR={escaped_profile_dir}\"
+echo Using Claude profile dir:
+echo %CLAUDE_CONFIG_DIR%
+claude
+del \"%~f0\" >nul 2>&1
+",
+            cwd_command = cwd_command,
+            escaped_profile_dir = escaped_profile_dir,
+        )
+    } else {
+        format!(
+            "@echo off
 {cwd_command}
 echo Using provider-specific claude config:
 echo {}
@@ -1200,11 +1235,12 @@ claude --settings \"{}\"
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
 ",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
-        cwd_command = cwd_command,
-    );
+            config_path_for_batch,
+            config_path_for_batch,
+            config_path_for_batch,
+            cwd_command = cwd_command,
+        )
+    };
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 

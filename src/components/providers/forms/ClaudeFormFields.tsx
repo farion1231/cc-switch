@@ -43,6 +43,7 @@ import type {
   ProviderCategory,
   ClaudeApiFormat,
   ClaudeApiKeyField,
+  ClaudeActivationMode,
 } from "@/types";
 import type { TemplateValueConfig } from "@/config/claudeProviderPresets";
 
@@ -94,7 +95,6 @@ interface ClaudeFormFieldsProps {
   onAutoSelectChange: (checked: boolean) => void;
 
   // Model Selector
-  shouldShowModelSelector: boolean;
   claudeModel: string;
   reasoningModel: string;
   defaultHaikuModel: string;
@@ -124,6 +124,10 @@ interface ClaudeFormFieldsProps {
   // Full URL mode
   isFullUrl: boolean;
   onFullUrlChange: (value: boolean) => void;
+  profileDir: string;
+  onProfileDirChange: (value: string) => void;
+  activationMode: ClaudeActivationMode;
+  onActivationModeChange: (value: ClaudeActivationMode) => void;
 }
 
 export function ClaudeFormFields({
@@ -156,7 +160,6 @@ export function ClaudeFormFields({
   onCustomEndpointsChange,
   autoSelect,
   onAutoSelectChange,
-  shouldShowModelSelector,
   claudeModel,
   reasoningModel,
   defaultHaikuModel,
@@ -170,6 +173,10 @@ export function ClaudeFormFields({
   onApiKeyFieldChange,
   isFullUrl,
   onFullUrlChange,
+  profileDir,
+  onProfileDirChange,
+  activationMode,
+  onActivationModeChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasAnyAdvancedValue = !!(
@@ -462,8 +469,7 @@ export function ClaudeFormFields({
       )}
 
       {/* 高级选项（API 格式 + 认证字段 + 模型映射） */}
-      {shouldShowModelSelector && (
-        <Collapsible open={advancedExpanded} onOpenChange={setAdvancedExpanded}>
+      <Collapsible open={advancedExpanded} onOpenChange={setAdvancedExpanded}>
           <CollapsibleTrigger asChild>
             <Button
               type="button"
@@ -556,6 +562,72 @@ export function ClaudeFormFields({
             </div>
 
             {/* 模型映射 */}
+            <div className="space-y-2 border-t pt-4">
+              <FormLabel htmlFor="claudeActivationMode">
+                {t("providerForm.claudeActivationMode", {
+                  defaultValue: "Claude switch mode",
+                })}
+              </FormLabel>
+              <Select
+                value={activationMode}
+                onValueChange={(value) =>
+                  onActivationModeChange(value as ClaudeActivationMode)
+                }
+              >
+                <SelectTrigger id="claudeActivationMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="legacy">
+                    {t("providerForm.claudeActivationModeLegacy")}
+                  </SelectItem>
+                  <SelectItem value="profile-only">
+                    {t("providerForm.claudeActivationModeProfileOnly")}
+                  </SelectItem>
+                  <SelectItem value="profile-and-config">
+                    {t("providerForm.claudeActivationModeProfileAndConfig")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.claudeActivationModeHint", {
+                  defaultValue:
+                    "Official/Auth recommended: Legacy. API provider recommended: Profile + Config.",
+                })}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <FormLabel htmlFor="claudeProfileDir">
+                {t("providerForm.claudeProfileDir", {
+                  defaultValue: "Claude profile directory",
+                })}
+              </FormLabel>
+              <Input
+                id="claudeProfileDir"
+                type="text"
+                value={profileDir}
+                onChange={(e) => onProfileDirChange(e.target.value)}
+                disabled={activationMode === "legacy"}
+                placeholder={t("providerForm.claudeProfileDirPlaceholder", {
+                  defaultValue: "C:\\Users\\<user>\\.claude-profiles\\official",
+                })}
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.claudeProfileDirHint", {
+                  defaultValue:
+                    "Claude-only. Legacy keeps the default profile location.",
+                })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.claudeProfileDirRestartHint", {
+                  defaultValue:
+                    "Switching only affects newly started terminals. Close and reopen PowerShell, cmd, or Windows Terminal after switching.",
+                })}
+              </p>
+            </div>
+
             <div className="space-y-1 pt-2 border-t">
               <div className="flex items-center justify-between">
                 <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
@@ -655,8 +727,7 @@ export function ClaudeFormFields({
               </div>
             </div>
           </CollapsibleContent>
-        </Collapsible>
-      )}
+      </Collapsible>
     </>
   );
 }

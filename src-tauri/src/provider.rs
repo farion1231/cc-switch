@@ -299,6 +299,10 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    #[serde(rename = "claudeProfileDir", skip_serializing_if = "Option::is_none")]
+    pub claude_profile_dir: Option<String>,
+    #[serde(rename = "claudeActivationMode", skip_serializing_if = "Option::is_none")]
+    pub claude_activation_mode: Option<ClaudeActivationMode>,
 }
 
 impl ProviderMeta {
@@ -1020,4 +1024,13 @@ mod tests {
         assert!(toml.contains("base_url = \"https://example.com/openai\""));
         assert!(!toml.contains("https://example.com/openai/v1"));
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClaudeActivationMode {
+    #[default]
+    Legacy,
+    ProfileOnly,
+    ProfileAndConfig,
 }
