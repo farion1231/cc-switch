@@ -1,5 +1,5 @@
-import { memo } from "react";
-import { Copy } from "lucide-react";
+import { memo, useState } from "react";
+import { ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,9 @@ import {
   highlightText,
 } from "./utils";
 
+const COLLAPSE_THRESHOLD = 3000;
+const COLLAPSED_LENGTH = 1500;
+
 interface SessionMessageItemProps {
   message: SessionMessage;
   isActive: boolean;
@@ -31,6 +34,13 @@ export const SessionMessageItem = memo(function SessionMessageItem({
   onCopy,
 }: SessionMessageItemProps) {
   const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+
+  const isLong = message.content.length > COLLAPSE_THRESHOLD;
+  const displayContent =
+    isLong && !expanded
+      ? message.content.slice(0, COLLAPSED_LENGTH) + "…"
+      : message.content;
 
   return (
     <div
@@ -73,9 +83,35 @@ export const SessionMessageItem = memo(function SessionMessageItem({
       </div>
       <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed min-w-0">
         {searchQuery
-          ? highlightText(message.content, searchQuery)
-          : message.content}
+          ? highlightText(displayContent, searchQuery)
+          : displayContent}
       </div>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-1 mt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="size-3" />
+              {t("sessionManager.collapseContent", {
+                defaultValue: "收起",
+              })}
+            </>
+          ) : (
+            <>
+              <ChevronDown className="size-3" />
+              {t("sessionManager.expandContent", {
+                defaultValue: "展开完整内容",
+              })}
+              <span className="text-muted-foreground/60">
+                ({Math.round(message.content.length / 1000)}k)
+              </span>
+            </>
+          )}
+        </button>
+      )}
     </div>
   );
 });

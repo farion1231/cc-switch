@@ -725,7 +725,9 @@
     "copyCommand": "Copy Command",
     "copyMessage": "Copy Message",
     "messageCopied": "Message copied",
-    "conversationHistory": "Conversation History"
+    "conversationHistory": "Conversation History",
+    "expandContent": "Expand full content",
+    "collapseContent": "Collapse"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
