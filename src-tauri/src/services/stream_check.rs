@@ -3,7 +3,6 @@
 //! 使用流式 API 进行快速健康检查，只需接收首个 chunk 即判定成功。
 
 use futures::StreamExt;
-use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -1192,15 +1191,7 @@ impl StreamCheckService {
             .settings_config
             .get("config")
             .and_then(|value| value.as_str())?;
-        if config_text.trim().is_empty() {
-            return None;
-        }
-
-        let re = Regex::new(r#"^model\s*=\s*["']([^"']+)["']"#).ok()?;
-        re.captures(config_text)
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().trim().to_string())
-            .filter(|value| !value.is_empty())
+        crate::codex_config::extract_codex_model(config_text)
     }
 
     /// 获取操作系统名称（映射为 Claude CLI 使用的格式）
@@ -1605,6 +1596,24 @@ mod tests {
                 "https://api.openai.com/responses",
                 "https://api.openai.com/v1/responses",
             ]
+        );
+    }
+
+    #[test]
+    fn test_extract_codex_model_when_model_provider_is_first_line() {
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\nreview_model = \"gpt-5.4\"\n"
+            }),
+            None,
+        );
+
+        assert_eq!(
+            StreamCheckService::extract_codex_model(&provider).as_deref(),
+            Some("gpt-5.4")
         );
     }
 }

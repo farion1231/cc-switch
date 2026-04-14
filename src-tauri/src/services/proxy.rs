@@ -1588,6 +1588,13 @@ impl ProxyService {
                 .await;
         }
 
+        if matches!(app_type_enum, AppType::Codex) {
+            if let Err(err) = crate::services::codex_state::sync_threads_to_current_provider(&provider)
+            {
+                log::warn!("Codex thread model_provider sync failed after hot switch: {err}");
+            }
+        }
+
         Ok(HotSwitchOutcome {
             logical_target_changed,
         })
