@@ -1,11 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  FlaskConical,
-  Coins,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, FlaskConical, Coins } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";

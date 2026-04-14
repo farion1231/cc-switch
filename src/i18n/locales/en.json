@@ -2129,7 +2129,17 @@
     "operational": "{{providerName}} is operational ({{responseTimeMs}}ms)",
     "degraded": "{{providerName}} is slow ({{responseTimeMs}}ms)",
     "failed": "{{providerName}} check failed: {{message}}",
-    "error": "{{providerName}} check error: {{error}}"
+    "rejected": "{{providerName}} check rejected: {{message}}",
+    "error": "{{providerName}} check error: {{error}}",
+    "httpHint": {
+      "400": "Provider rejected request format. Health check probe may differ from actual usage.",
+      "401": "API key may be invalid, or provider uses OAuth auth. Check failure doesn't mean it's unusable.",
+      "402": "Account quota or billing issue.",
+      "403": "Provider blocked this request. Some verify client identity; may work fine in actual use.",
+      "404": "Endpoint not found. Check base URL and API path.",
+      "429": "Too many requests. Try again later.",
+      "5xx": "Provider internal error. Likely temporary."
+    }
   },
   "proxyConfig": {
     "proxyEnabled": "Routing Master Switch",

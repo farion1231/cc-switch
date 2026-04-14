@@ -2130,7 +2130,17 @@
     "operational": "{{providerName}} 运行正常 ({{responseTimeMs}}ms)",
     "degraded": "{{providerName}} 响应较慢 ({{responseTimeMs}}ms)",
     "failed": "{{providerName}} 检查失败: {{message}}",
-    "error": "{{providerName}} 检查出错: {{error}}"
+    "rejected": "{{providerName}} 检查被拒: {{message}}",
+    "error": "{{providerName}} 检查出错: {{error}}",
+    "httpHint": {
+      "400": "供应商拒绝了请求格式。健康检查的探测格式可能与实际使用不同。",
+      "401": "API Key 可能无效，或供应商使用 OAuth 等认证方式。检查失败不代表实际不可用。",
+      "402": "账户配额或计费问题。",
+      "403": "供应商拒绝了此请求。部分供应商会校验客户端身份，检查失败但实际使用可能正常。",
+      "404": "接口地址不存在，请检查 Base URL 和 API 路径。",
+      "429": "请求频率过高，请稍后重试。",
+      "5xx": "供应商内部错误，通常是临时问题。"
+    }
   },
   "proxyConfig": {
     "proxyEnabled": "路由总开关",
