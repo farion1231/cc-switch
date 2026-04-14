@@ -338,18 +338,10 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
-        // OpenAI-compatible endpoints expect standard Bearer auth instead of
-        // Anthropic's x-api-key + anthropic-version header combination.
-        if !uses_anthropic_protocol(provider) {
-            return self
-                .extract_key(provider)
-                .map(|key| AuthInfo::new(key, AuthStrategy::Bearer));
-        }
-
         let provider_type = self.provider_type(provider);
 
-        // GitHub Copilot 使用特殊的认证策略
-        // 实际的 token 会在代理请求时动态获取
+        // Dynamic auth providers must keep their placeholder strategy even when
+        // requests are forwarded via OpenAI-compatible endpoints.
         if provider_type == ProviderType::GitHubCopilot {
             // 返回一个占位符，实际 token 由 CopilotAuthManager 动态提供
             return Some(AuthInfo::new(
@@ -365,6 +357,14 @@ impl ProviderAdapter for ClaudeAdapter {
                 "codex_oauth_placeholder".to_string(),
                 AuthStrategy::CodexOAuth,
             ));
+        }
+
+        // OpenAI-compatible endpoints expect standard Bearer auth instead of
+        // Anthropic's x-api-key + anthropic-version header combination.
+        if !uses_anthropic_protocol(provider) {
+            return self
+                .extract_key(provider)
+                .map(|key| AuthInfo::new(key, AuthStrategy::Bearer));
         }
 
         let strategy = match provider_type {
@@ -906,6 +906,27 @@ mod tests {
 
         let auth = adapter.extract_auth(&copilot).unwrap();
         assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
+    }
+
+    #[test]
+    fn test_codex_oauth_auth_keeps_dynamic_strategy_for_openai_responses() {
+        let adapter = ClaudeAdapter::new();
+
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("codex_oauth".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "codex_oauth_placeholder");
+        assert_eq!(auth.strategy, AuthStrategy::CodexOAuth);
     }
 
     #[test]

@@ -296,14 +296,20 @@ fn upsert_openclaw_provider_at(
         })
     };
 
-    if full_config.get("models").is_none() {
+    if !full_config
+        .get("models")
+        .is_some_and(|value| value.is_object())
+    {
         full_config["models"] = json!({
             "mode": "merge",
             "providers": {}
         });
     }
 
-    if full_config["models"].get("providers").is_none() {
+    if !full_config["models"]
+        .get("providers")
+        .is_some_and(|value| value.is_object())
+    {
         full_config["models"]["providers"] = json!({});
     }
 
@@ -2040,6 +2046,7 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
@@ -2162,5 +2169,37 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    #[test]
+    fn upsert_openclaw_provider_recovers_when_models_is_not_an_object() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cc-switch-openclaw-live-{unique}.json"));
+
+        std::fs::write(&path, r#"{ "models": "broken" }"#)
+            .expect("should write malformed openclaw config");
+
+        upsert_openclaw_provider_at(
+            &path,
+            "test-provider",
+            json!({
+                "api": {
+                    "baseUrl": "https://example.com"
+                }
+            }),
+        )
+        .expect("upsert should recover from malformed models value");
+
+        let written = read_json_file::<Value>(&path).expect("should read repaired config");
+        assert_eq!(written["models"]["mode"], json!("merge"));
+        assert_eq!(
+            written["models"]["providers"]["test-provider"]["api"]["baseUrl"],
+            json!("https://example.com")
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }
