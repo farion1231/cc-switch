@@ -41,9 +41,10 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
 pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), AppError> {
     // 先收集当前已显式启用的 Claude MCP 服务器。
     let enabled = collect_enabled_servers(&config.mcp.claude);
-    // 兼容首次同步场景：如果 Claude 尚未初始化，但当前已经存在启用项，也允许首次写入 ~/.claude.json。
-    if should_sync_claude_mcp() == false && enabled.is_empty() == true {
-        return Ok(());
+    // 兼容首次同步场景：仅当 Claude 尚未初始化且当前没有任何启用项时，才跳过写入。
+    match (should_sync_claude_mcp(), enabled.is_empty()) {
+        (false, true) => return Ok(()),
+        _ => {}
     }
     // 将启用的服务器写入 Claude MCP 配置文件。
     crate::claude_mcp::set_mcp_servers_map(&enabled)
@@ -120,17 +121,13 @@ pub fn sync_single_server_to_claude(
     id: &str,
     server_spec: &Value,
 ) -> Result<(), AppError> {
-    if !should_sync_claude_mcp() {
-        return Ok(());
-    }
-    // 读取现有的 MCP 配置
+    // 读取现有的 MCP 配置；若配置文件尚不存在，则由底层读取逻辑返回空集合。
     let current = crate::claude_mcp::read_mcp_servers_map()?;
-
-    // 创建新的 HashMap，包含现有的所有服务器 + 当前要同步的服务器
+    // 创建新的 HashMap，包含现有的所有服务器与当前要同步的服务器。
     let mut updated = current;
+    // 将当前服务器合并进待写回的配置。
     updated.insert(id.to_string(), server_spec.clone());
-
-    // 写回
+    // 将新的服务器集合写回 Claude MCP 配置文件。
     crate::claude_mcp::set_mcp_servers_map(&updated)
 }
 
