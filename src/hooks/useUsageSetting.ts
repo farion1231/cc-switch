@@ -30,17 +30,22 @@ export function useUsageSetting() {
   }, [timeRange]);
 
   // 刷新间隔
-  const [refreshIntervalMs, setRefreshIntervalMsState] = useState<number>(() => {
-    if (typeof window === "undefined") return DEFAULT_REFRESH_INTERVAL;
+  const [refreshIntervalMs, setRefreshIntervalMsState] = useState<number>(
+    () => {
+      if (typeof window === "undefined") return DEFAULT_REFRESH_INTERVAL;
 
-    const stored = window.localStorage.getItem(REFRESH_INTERVAL_KEY);
-    const parsed = stored ? parseInt(stored, 10) : null;
-    return isValidRefreshInterval(parsed) ? parsed : DEFAULT_REFRESH_INTERVAL;
-  });
+      const stored = window.localStorage.getItem(REFRESH_INTERVAL_KEY);
+      const parsed = stored ? parseInt(stored, 10) : null;
+      return isValidRefreshInterval(parsed) ? parsed : DEFAULT_REFRESH_INTERVAL;
+    },
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(REFRESH_INTERVAL_KEY, String(refreshIntervalMs));
+    window.localStorage.setItem(
+      REFRESH_INTERVAL_KEY,
+      String(refreshIntervalMs),
+    );
   }, [refreshIntervalMs]);
 
   return {

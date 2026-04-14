@@ -41,7 +41,8 @@ import { useUsageSetting } from "@/hooks/useUsageSetting";
 export function UsageDashboard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { timeRange, setTimeRange, refreshIntervalMs, setRefreshIntervalMs } = useUsageSetting();
+  const { timeRange, setTimeRange, refreshIntervalMs, setRefreshIntervalMs } =
+    useUsageSetting();
   const [appType, setAppType] = useState<AppTypeFilter>("all");
 
   const refreshIntervalOptionsMs = [0, 5000, 10000, 30000, 60000] as const;
@@ -56,7 +57,14 @@ export function UsageDashboard() {
     queryClient.invalidateQueries({ queryKey: usageKeys.all });
   };
 
-  const hours = timeRange === "5h" ? 5 : timeRange === "1d" ? 24 : timeRange === "7d" ? 168 : 720;
+  const hours =
+    timeRange === "5h"
+      ? 5
+      : timeRange === "1d"
+        ? 24
+        : timeRange === "7d"
+          ? 168
+          : 720;
 
   // Summary data for the app filter bar
   const { data: summaryData } = useUsageSummary(hours, appType, {
