@@ -200,7 +200,7 @@
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
     "proxyReasonFullUrl": "has full URL connection mode enabled",
     "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the proxy service to be enabled",
-    "copilotProxyHint": "GitHub Copilot as a Claude provider always requires the local proxy; the proxy automatically selects Chat Completions or Responses based on the current model.",
+    "copilotProxyHint": "GitHub Copilot as a Claude provider always requires local routing; routing automatically selects Chat Completions or Responses based on the current model.",
     "openLinkFailed": "Failed to open link",
     "openclawModelsRegistered": "Models have been registered to /model list",
     "openclawDefaultModelSet": "Set as default model",
@@ -208,8 +208,8 @@
     "openclawNoModels": "No models configured",
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
     "windowControlFailed": "Window control failed: {{error}}",
-    "officialBlockedByProxy": "Cannot switch to official provider while proxy takeover is active. Using proxy with official APIs may cause account bans.",
-    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using proxy takeover."
+    "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using proxy with official APIs may cause account bans.",
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -217,8 +217,8 @@
     "removeProvider": "Remove Provider",
     "removeProviderMessage": "Are you sure you want to remove provider \"{{name}}\" from the configuration?\n\nAfter removal, this provider will no longer be active, but the configuration data will be retained in CC Switch. You can re-add it at any time.",
     "proxy": {
-      "title": "Enable Local Proxy",
-      "message": "Local proxy is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
+      "title": "Enable Local Routing",
+      "message": "Local routing is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
       "confirm": "I understand, enable"
     },
     "failover": {
@@ -267,10 +267,10 @@
         "description": "Manage storage paths for Claude, Codex and Gemini configurations"
       },
       "proxy": {
-        "title": "Local Proxy",
-        "description": "Control proxy service toggle, view status and port info",
-        "enableFeature": "Show Proxy Toggle on Main Page",
-        "enableFeatureDescription": "When enabled, the proxy and failover toggles will appear at the top of the main page",
+        "title": "Local Routing",
+        "description": "Control routing service toggle, view status and port info",
+        "enableFeature": "Show Routing Toggle on Main Page",
+        "enableFeatureDescription": "When enabled, the routing and failover toggles will appear at the top of the main page",
         "enableFailoverToggle": "Show Failover Toggle on Main Page",
         "enableFailoverToggleDescription": "When enabled, the failover toggle will appear independently at the top of the main page",
         "running": "Running",
@@ -1950,7 +1950,7 @@
     },
     "settings": {
       "title": "Proxy Service Settings",
-      "description": "Configure local proxy server listening address, port and runtime parameters. Changes take effect immediately after saving.",
+      "description": "Configure local routing server listening address, port and runtime parameters. Changes take effect immediately after saving.",
       "alert": {
         "autoApply": "Changes will be automatically synced to the running proxy service without manual restart."
       },
@@ -2031,14 +2031,14 @@
     },
     "switchFailed": "Switch failed: {{error}}",
     "takeover": {
-      "hint": "Select apps to take over — once enabled, requests from that app will be routed through the local proxy",
-      "enabled": "{{app}} takeover enabled",
-      "disabled": "{{app}} takeover disabled",
-      "failed": "Failed to toggle takeover",
+      "hint": "Select apps to route — once enabled, requests from that app will go through local routing",
+      "enabled": "{{app}} routing enabled",
+      "disabled": "{{app}} routing disabled",
+      "failed": "Failed to toggle routing",
       "tooltip": {
-        "active": "{{appLabel}} is intercepting - {{address}}:{{port}}\nSwitch provider for hot switching",
-        "broken": "{{appLabel}} is intercepting, but proxy service is not running",
-        "inactive": "Intercept {{appLabel}}'s live config to route requests through local proxy"
+        "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitch provider for hot switching",
+        "broken": "{{appLabel}} is routing, but routing service is not running",
+        "inactive": "Route {{appLabel}}'s requests through local routing"
       }
     },
     "failover": {
@@ -2109,7 +2109,7 @@
       "started": "Proxy service started - {{address}}:{{port}}",
       "startFailed": "Failed to start proxy service: {{detail}}"
     },
-    "stoppedWithRestore": "Proxy service stopped, all takeover configs restored",
+    "stoppedWithRestore": "Routing service stopped, all routing configs restored",
     "stopWithRestoreFailed": "Stop failed: {{detail}}"
   },
   "streamCheck": {
@@ -2131,7 +2131,7 @@
   },
   "proxyConfig": {
     "proxyEnabled": "Proxy Enabled",
-    "appTakeover": "Proxy Enabled",
+    "appTakeover": "Routing Enabled",
     "perAppConfig": "Per-App Config",
     "circuitBreaker": "Circuit Breaker",
     "circuitBreakerSettings": "Circuit Breaker Settings",

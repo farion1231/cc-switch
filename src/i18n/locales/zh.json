@@ -200,7 +200,7 @@
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
     "proxyReasonFullUrl": "开启了完整 URL 连接模式",
     "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启代理服务才能正常使用",
-    "copilotProxyHint": "GitHub Copilot 作为 Claude 供应商时始终需要本地代理；代理会根据当前模型自动选择 Chat Completions 或 Responses。",
+    "copilotProxyHint": "GitHub Copilot 作为 Claude 供应商时始终需要本地路由；路由会根据当前模型自动选择 Chat Completions 或 Responses。",
     "openLinkFailed": "链接打开失败",
     "openclawModelsRegistered": "模型已注册到 /model 列表",
     "openclawDefaultModelSet": "已设为默认模型",
@@ -208,8 +208,8 @@
     "openclawNoModels": "该供应商没有配置模型",
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "windowControlFailed": "窗口控制失败：{{error}}",
-    "officialBlockedByProxy": "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁",
-    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用代理接管"
+    "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁",
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -217,8 +217,8 @@
     "removeProvider": "移除供应商",
     "removeProviderMessage": "确定要从配置中移除供应商 \"{{name}}\" 吗？\n\n移除后该供应商将不再生效，但配置数据会保留在 CC Switch 中，您可以随时重新添加。",
     "proxy": {
-      "title": "启用本地代理服务",
-      "message": "本地代理是一项高级功能，启用前请确保您已了解其工作原理。\n\n建议先查阅相关文档或咨询您的供应商，以获取正确的配置方式。",
+      "title": "启用本地路由服务",
+      "message": "本地路由是一项高级功能，启用前请确保您已了解其工作原理。\n\n建议先查阅相关文档或咨询您的供应商，以获取正确的配置方式。",
       "confirm": "我已了解，继续启用"
     },
     "failover": {
@@ -267,10 +267,10 @@
         "description": "管理 Claude、Codex 和 Gemini 的配置存储路径"
       },
       "proxy": {
-        "title": "本地代理",
-        "description": "控制代理服务开关、查看状态与端口信息",
-        "enableFeature": "在主页面显示本地代理开关",
-        "enableFeatureDescription": "开启后，主页面顶部将显示代理和故障转移开关",
+        "title": "本地路由",
+        "description": "控制路由服务开关、查看状态与端口信息",
+        "enableFeature": "在主页面显示本地路由开关",
+        "enableFeatureDescription": "开启后，主页面顶部将显示路由和故障转移开关",
         "enableFailoverToggle": "在主页面显示故障转移开关",
         "enableFailoverToggleDescription": "开启后，主页面顶部将独立显示故障转移开关",
         "running": "运行中",
@@ -1951,7 +1951,7 @@
     },
     "settings": {
       "title": "代理服务设置",
-      "description": "配置本地代理服务器的监听地址、端口和运行参数，保存后立即生效。",
+      "description": "配置本地路由服务器的监听地址、端口和运行参数，保存后立即生效。",
       "alert": {
         "autoApply": "保存后将自动同步到正在运行的代理服务，无需手动重启。"
       },
@@ -2032,14 +2032,14 @@
     },
     "switchFailed": "切换失败: {{error}}",
     "takeover": {
-      "hint": "选择要接管的应用，启用后该应用的请求将通过本地代理转发",
-      "enabled": "{{app}} 接管已启用",
-      "disabled": "{{app}} 接管已关闭",
-      "failed": "切换接管状态失败",
+      "hint": "选择要路由的应用，启用后该应用的请求将通过本地路由转发",
+      "enabled": "{{app}} 路由已启用",
+      "disabled": "{{app}} 路由已关闭",
+      "failed": "切换路由状态失败",
       "tooltip": {
-        "active": "{{appLabel}} 已接管 - {{address}}:{{port}}\n切换该应用供应商为热切换",
-        "broken": "{{appLabel}} 已接管，但代理服务未运行",
-        "inactive": "接管 {{appLabel}} 的 Live 配置，让该应用请求走本地代理"
+        "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切换该应用供应商为热切换",
+        "broken": "{{appLabel}} 路由中，但路由服务未运行",
+        "inactive": "路由 {{appLabel}} 的请求，让该应用请求走本地路由"
       }
     },
     "failover": {
@@ -2110,7 +2110,7 @@
       "started": "代理服务已启动 - {{address}}:{{port}}",
       "startFailed": "启动代理服务失败: {{detail}}"
     },
-    "stoppedWithRestore": "代理服务已关闭，已恢复所有接管配置",
+    "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
     "stopWithRestoreFailed": "停止失败: {{detail}}"
   },
   "streamCheck": {
@@ -2132,7 +2132,7 @@
   },
   "proxyConfig": {
     "proxyEnabled": "代理总开关",
-    "appTakeover": "代理启用",
+    "appTakeover": "路由启用",
     "perAppConfig": "应用配置",
     "circuitBreaker": "熔断器配置",
     "circuitBreakerSettings": "熔断器设置",
