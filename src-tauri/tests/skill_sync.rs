@@ -284,6 +284,23 @@ fn import_from_apps_accepts_nested_claude_skill_paths() {
             .exists(),
         "nested Claude skill should be copied into SSOT with its relative path"
     );
+    assert!(
+        home.join(".claude")
+            .join("skills")
+            .join("brainstorming")
+            .join("SKILL.md")
+            .exists(),
+        "imported nested Claude skill should be synced to the live leaf directory immediately"
+    );
+    assert!(
+        !home
+            .join(".claude")
+            .join("skills")
+            .join("superpowers")
+            .join("brainstorming")
+            .exists(),
+        "legacy nested Claude directory should be cleaned up during import reconciliation"
+    );
 }
 
 #[test]

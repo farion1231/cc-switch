@@ -1636,6 +1636,14 @@ impl SkillService {
             imported.push(skill);
         }
 
+        // 导入完成后立即同步受影响的应用目录，确保像 Claude 这类需要目录映射的
+        // app 在导入返回时就已经处于可用状态，而不是等后续其他操作再触发 reconcile。
+        for app in AppType::all() {
+            if imported.iter().any(|skill| skill.apps.is_enabled_for(&app)) {
+                Self::sync_to_app(db, &app)?;
+            }
+        }
+
         log::info!("成功导入 {} 个 Skills", imported.len());
 
         Ok(imported)
