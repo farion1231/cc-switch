@@ -5,6 +5,7 @@ import { ThemeProvider, useTheme } from "@/components/theme-provider";
 import {
   DEFAULT_CUSTOM_THEME,
   deriveDarkPalette,
+  getHueFromSliderPosition,
   hexToHslString,
 } from "@/lib/theme/customTheme";
 
@@ -139,6 +140,12 @@ describe("ThemeProvider", () => {
     document.documentElement.className = "";
     document.documentElement.dataset.themePreset = "";
     document.documentElement.style.removeProperty("--background");
+  });
+
+  it("clamps the hue slider below 360 degrees at the right edge", () => {
+    expect(getHueFromSliderPosition(100, 100)).toBeLessThan(360);
+    expect(getHueFromSliderPosition(100, 100)).toBeCloseTo(359.999, 3);
+    expect(getHueFromSliderPosition(0, 100)).toBe(0);
   });
 
   it("reapplies custom theme variables when system theme changes", async () => {

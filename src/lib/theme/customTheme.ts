@@ -269,6 +269,15 @@ export function hexToHsv(hex: string) {
   return rgbToHsv(r, g, b);
 }
 
+export function getHueFromSliderPosition(offset: number, width: number) {
+  if (width <= 0) {
+    return 0;
+  }
+
+  const ratio = Math.max(0, Math.min(1, offset / width));
+  return Math.min(359.999, ratio * 360);
+}
+
 export function hsvToHex(h: number, s: number, v: number) {
   const hue = ((h % 360) + 360) % 360;
   const chroma = v * s;

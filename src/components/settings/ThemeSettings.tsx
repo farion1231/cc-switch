@@ -32,6 +32,7 @@ import {
 import {
   type CustomThemePalette,
   getReadableTextColor,
+  getHueFromSliderPosition,
   hexToHsv,
   hexToRgb,
   hsvToHex,
@@ -871,7 +872,7 @@ function ColorPopover({
     const rect = hueRef.current?.getBoundingClientRect();
     if (!rect) return;
     const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
-    const hue = rect.width === 0 ? 0 : (x / rect.width) * 360;
+    const hue = getHueFromSliderPosition(x, rect.width);
     onChange(hsvToHex(hue, hsv.s, hsv.v));
   };
 
