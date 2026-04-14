@@ -37,10 +37,15 @@ export const SessionMessageItem = memo(function SessionMessageItem({
   const [expanded, setExpanded] = useState(false);
 
   const isLong = message.content.length > COLLAPSE_THRESHOLD;
-  const displayContent =
-    isLong && !expanded
-      ? message.content.slice(0, COLLAPSED_LENGTH) + "…"
-      : message.content;
+  const hasSearchMatch =
+    isLong &&
+    !expanded &&
+    !!searchQuery &&
+    message.content.toLowerCase().includes(searchQuery.toLowerCase());
+  const collapsed = isLong && !expanded && !hasSearchMatch;
+  const displayContent = collapsed
+    ? message.content.slice(0, COLLAPSED_LENGTH) + "…"
+    : message.content;
 
   return (
     <div
@@ -86,9 +91,10 @@ export const SessionMessageItem = memo(function SessionMessageItem({
           ? highlightText(displayContent, searchQuery)
           : displayContent}
       </div>
-      {isLong && (
+      {isLong && !hasSearchMatch && (
         <button
           type="button"
+          aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
           className="flex items-center gap-1 mt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
