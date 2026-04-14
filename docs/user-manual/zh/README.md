@@ -24,7 +24,9 @@
 ├── 3. 扩展功能
 │   ├── 3.1 MCP 服务器管理
 │   ├── 3.2 Prompts 提示词管理
-│   └── 3.3 Skills 技能管理
+│   ├── 3.3 Skills 技能管理
+│   ├── 3.4 会话管理器
+│   └── 3.5 工作区文件与每日记忆
 │
 ├── 4. 代理与高可用
 │   ├── 4.1 代理服务
@@ -69,6 +71,8 @@
 | [3.1-mcp.md](./3-extensions/3.1-mcp.md) | MCP 协议、添加服务器、应用绑定 |
 | [3.2-prompts.md](./3-extensions/3.2-prompts.md) | 创建预设、激活切换、智能回填 |
 | [3.3-skills.md](./3-extensions/3.3-skills.md) | 发现技能、安装卸载、仓库管理 |
+| [3.4-sessions.md](./3-extensions/3.4-sessions.md) | 会话浏览、搜索过滤、恢复与删除 |
+| [3.5-workspace.md](./3-extensions/3.5-workspace.md) | OpenClaw 工作区文件、每日记忆 |
 
 ### 4. 代理与高可用
 
@@ -99,9 +103,19 @@
 
 ## 版本信息
 
-- 文档版本：v3.12.0
-- 最后更新：2026-03-09
-- 适用于 CC Switch v3.12.0+
+- 文档版本：v3.13.0
+- 最后更新：2026-04-08
+- 适用于 CC Switch v3.13.0+
+
+### v3.13.0 亮点
+
+- **轻量模式**：退出到托盘时销毁主窗口，空闲占用接近零 — 详见 [1.5 个性化配置](./1-getting-started/1.5-settings.md)
+- **配额与余额展示**：官方订阅类（Claude/Codex/Gemini/Copilot/Codex OAuth）自动展示剩余额度；Token Plan 和第三方余额通过内置模板一键启用 — 详见 [2.5 用量查询](./2-providers/2.5-usage-query.md)
+- **Codex OAuth 反向代理**：用 ChatGPT 账号在 Claude Code 中复用 Codex 服务 — 详见 [2.1 添加供应商](./2-providers/2.1-add.md)
+- **托盘按应用分级菜单**：五应用独立子菜单，防止菜单溢出 — 详见 [2.2 切换供应商](./2-providers/2.2-switch.md)
+- **Skills 发现与批量更新**：SHA-256 更新检测、批量更新、skills.sh 公共注册表搜索 — 详见 [3.3 Skills 技能管理](./3-extensions/3.3-skills.md)
+- **完整 URL 端点模式**：高级选项支持将 base_url 视作完整上游端点 — 详见 [2.1 添加供应商](./2-providers/2.1-add.md)
+- **OpenCode / OpenClaw 流式检测全覆盖**：Stream Check 面板扩展到全部五个应用 — 详见 [4.5 模型检查](./4-proxy/4.5-model-test.md)
 
 ## 贡献
 

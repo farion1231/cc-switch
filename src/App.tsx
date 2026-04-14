@@ -9,6 +9,10 @@ import {
   Plus,
   Settings,
   ArrowLeft,
+  Minus,
+  Maximize2,
+  Minimize2,
+  X,
   Book,
   Wrench,
   RefreshCw,
@@ -22,6 +26,7 @@ import {
   Shield,
   Cpu,
 } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
@@ -40,7 +45,12 @@ import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
-import { isWindows, isLinux } from "@/lib/platform";
+import {
+  isWindows,
+  isLinux,
+  DRAG_REGION_ATTR,
+  DRAG_REGION_STYLE,
+} from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
@@ -57,6 +67,7 @@ import PromptPanel from "@/components/prompts/PromptPanel";
 import { SkillsPage } from "@/components/skills/SkillsPage";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
+import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
@@ -93,9 +104,8 @@ interface WebDavSyncStatusUpdatedPayload {
   error?: string;
 }
 
-const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
+const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
-const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
 
 const STORAGE_KEY = "cc-switch-last-app";
 const VALID_APPS: AppId[] = [
@@ -147,12 +157,17 @@ function App() {
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  const useAppWindowControls =
+    isLinux() && (settingsData?.useAppWindowControls ?? false);
+  const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
+  const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
   const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
     claude: true,
     codex: true,
@@ -385,6 +400,51 @@ function App() {
       unsubscribe?.();
     };
   }, [queryClient, t]);
+
+  useEffect(() => {
+    let active = true;
+    let unlistenResize: (() => void) | undefined;
+
+    const setupWindowStateSync = async () => {
+      try {
+        const currentWindow = getCurrentWindow();
+        const syncWindowMaximizedState = async () => {
+          const maximized = await currentWindow.isMaximized();
+          if (active) {
+            setIsWindowMaximized(maximized);
+          }
+        };
+
+        await syncWindowMaximizedState();
+        unlistenResize = await currentWindow.onResized(() => {
+          void syncWindowMaximizedState();
+        });
+      } catch (error) {
+        console.error("[App] Failed to sync window maximized state", error);
+      }
+    };
+
+    void setupWindowStateSync();
+    return () => {
+      active = false;
+      unlistenResize?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    // settingsData 未加载时跳过，避免用 fallback false 覆盖 Rust 侧已设好的装饰状态
+    if (!settingsData) return;
+
+    const syncWindowDecorations = async () => {
+      try {
+        await getCurrentWindow().setDecorations(!useAppWindowControls);
+      } catch (error) {
+        console.error("[App] Failed to update window decorations", error);
+      }
+    };
+
+    void syncWindowDecorations();
+  }, [useAppWindowControls, settingsData]);
 
   useEffect(() => {
     const checkEnvOnStartup = async () => {
@@ -728,6 +788,44 @@ function App() {
     }
   };
 
+  const notifyWindowControlError = (error: unknown) => {
+    toast.error(
+      t("notifications.windowControlFailed", {
+        defaultValue: "窗口控制失败：{{error}}",
+        error: extractErrorMessage(error),
+      }),
+    );
+  };
+
+  const handleWindowMinimize = async () => {
+    try {
+      await getCurrentWindow().minimize();
+    } catch (error) {
+      console.error("[App] Failed to minimize window", error);
+      notifyWindowControlError(error);
+    }
+  };
+
+  const handleWindowToggleMaximize = async () => {
+    try {
+      const currentWindow = getCurrentWindow();
+      await currentWindow.toggleMaximize();
+      setIsWindowMaximized(await currentWindow.isMaximized());
+    } catch (error) {
+      console.error("[App] Failed to toggle maximize", error);
+      notifyWindowControlError(error);
+    }
+  };
+
+  const handleWindowClose = async () => {
+    try {
+      await getCurrentWindow().close();
+    } catch (error) {
+      console.error("[App] Failed to close window", error);
+      notifyWindowControlError(error);
+    }
+  };
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -874,13 +972,58 @@ function App() {
   return (
     <div
       className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30"
-      style={{ overflowX: "hidden", paddingTop: CONTENT_TOP_OFFSET }}
+      style={{ overflowX: "hidden", paddingTop: contentTopOffset }}
     >
-      <div
-        className="fixed top-0 left-0 right-0 z-[60]"
-        data-tauri-drag-region
-        style={{ WebkitAppRegion: "drag", height: DRAG_BAR_HEIGHT } as any}
-      />
+      {(dragBarHeight > 0 || useAppWindowControls) && (
+        <div
+          className="fixed top-0 left-0 right-0 z-[70] flex items-center justify-end px-2"
+          data-tauri-drag-region
+          style={{ WebkitAppRegion: "drag", height: dragBarHeight } as any}
+        >
+          {useAppWindowControls && (
+            <div
+              className="flex items-center gap-1"
+              style={{ WebkitAppRegion: "no-drag" } as any}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void handleWindowMinimize()}
+                title={t("header.windowMinimize")}
+                className="h-7 w-7"
+              >
+                <Minus className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void handleWindowToggleMaximize()}
+                title={
+                  isWindowMaximized
+                    ? t("header.windowRestore")
+                    : t("header.windowMaximize")
+                }
+                className="h-7 w-7"
+              >
+                {isWindowMaximized ? (
+                  <Minimize2 className="w-4 h-4" />
+                ) : (
+                  <Maximize2 className="w-4 h-4" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void handleWindowClose()}
+                title={t("header.windowClose")}
+                className="h-7 w-7 hover:bg-red-500/15 hover:text-red-500"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
       {showEnvBanner && envConflicts.length > 0 && (
         <EnvWarningBanner
           conflicts={envConflicts}
@@ -908,19 +1051,19 @@ function App() {
 
       <header
         className="fixed z-50 w-full transition-all duration-300 bg-background/80 backdrop-blur-md"
-        data-tauri-drag-region
+        {...DRAG_REGION_ATTR}
         style={
           {
-            WebkitAppRegion: "drag",
-            top: DRAG_BAR_HEIGHT,
+            ...DRAG_REGION_STYLE,
+            top: dragBarHeight,
             height: HEADER_HEIGHT,
           } as any
         }
       >
         <div
           className="flex h-full items-center justify-between gap-2 px-6"
-          data-tauri-drag-region
-          style={{ WebkitAppRegion: "drag" } as any}
+          {...DRAG_REGION_ATTR}
+          style={{ ...DRAG_REGION_STYLE } as any}
         >
           <div
             className="flex items-center gap-1"
@@ -1035,7 +1178,7 @@ function App() {
               )}
             <div
               ref={toolbarRef}
-              className="flex flex-1 min-w-0 overflow-x-hidden items-center"
+              className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2"
             >
               <div
                 className="flex shrink-0 items-center gap-1.5 ml-auto"
@@ -1347,6 +1490,7 @@ function App() {
       />
 
       <DeepLinkImportDialog />
+      <FirstRunNoticeDialog />
     </div>
   );
 }

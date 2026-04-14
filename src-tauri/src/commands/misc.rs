@@ -34,6 +34,22 @@ pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> 
     Ok(true)
 }
 
+#[tauri::command]
+pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
+    // Use spawn_blocking to avoid blocking the async runtime
+    // Clipboard access can block on some platforms and may have thread/loop constraints
+    tokio::task::spawn_blocking(move || {
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| format!("访问系统剪贴板失败: {e}"))?;
+        clipboard
+            .set_text(text)
+            .map_err(|e| format!("写入系统剪贴板失败: {e}"))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
+}
+
 /// 检查更新
 #[tauri::command]
 pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
@@ -932,6 +948,7 @@ exec bash --norc --noprofile
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
         "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
+        "kaku" => launch_macos_open_app("Kaku", &script_file, true),
         _ => launch_macos_terminal_app(&script_file), // "terminal" or default
     };
 

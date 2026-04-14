@@ -28,7 +28,7 @@ interface ProviderActionsProps {
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
-  onConfigureUsage: () => void;
+  onConfigureUsage?: () => void;
   onDelete: () => void;
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
@@ -246,29 +246,34 @@ export function ProviderActions({
           <Copy className="h-4 w-4" />
         </Button>
 
-        {onTest && (
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={onTest}
-            disabled={isTesting}
-            title={t("modelTest.testProvider", "测试模型")}
-            className={iconButtonClass}
-          >
-            {isTesting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <TestTube2 className="h-4 w-4" />
-            )}
-          </Button>
-        )}
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={onTest || undefined}
+          disabled={isTesting}
+          title={t("modelTest.testProvider", "测试模型")}
+          className={cn(
+            iconButtonClass,
+            !onTest && "opacity-40 cursor-not-allowed text-muted-foreground",
+          )}
+        >
+          {isTesting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <TestTube2 className="h-4 w-4" />
+          )}
+        </Button>
 
         <Button
           size="icon"
           variant="ghost"
-          onClick={onConfigureUsage}
+          onClick={onConfigureUsage || undefined}
           title={t("provider.configureUsage")}
-          className={iconButtonClass}
+          className={cn(
+            iconButtonClass,
+            !onConfigureUsage &&
+              "opacity-40 cursor-not-allowed text-muted-foreground",
+          )}
         >
           <BarChart3 className="h-4 w-4" />
         </Button>

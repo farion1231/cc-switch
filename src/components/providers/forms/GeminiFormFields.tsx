@@ -1,9 +1,16 @@
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-import { Info } from "lucide-react";
+import { Download, Info, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField } from "./shared";
+import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import type { ProviderCategory } from "@/types";
 
 interface EndpointCandidate {
@@ -66,6 +73,36 @@ export function GeminiFormFields({
 }: GeminiFormFieldsProps) {
   const { t } = useTranslation();
 
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+
+  const handleFetchModels = useCallback(() => {
+    if (!baseUrl || !apiKey) {
+      showFetchModelsError(null, t, {
+        hasApiKey: !!apiKey,
+        hasBaseUrl: !!baseUrl,
+      });
+      return;
+    }
+    setIsFetchingModels(true);
+    fetchModelsForConfig(baseUrl, apiKey)
+      .then((models) => {
+        setFetchedModels(models);
+        if (models.length === 0) {
+          toast.info(t("providerForm.fetchModelsEmpty"));
+        } else {
+          toast.success(
+            t("providerForm.fetchModelsSuccess", { count: models.length }),
+          );
+        }
+      })
+      .catch((err) => {
+        console.warn("[ModelFetch] Failed:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => setIsFetchingModels(false));
+  }, [baseUrl, apiKey, t]);
+
   // 检测是否为 Google 官方（使用 OAuth）
   const isGoogleOfficial =
     partnerPromotionKey?.toLowerCase() === "google-official";
@@ -123,15 +160,34 @@ export function GeminiFormFields({
 
       {/* Model 输入框 */}
       {shouldShowModelField && (
-        <div>
-          <FormLabel htmlFor="gemini-model">
-            {t("provider.form.gemini.model", { defaultValue: "模型" })}
-          </FormLabel>
-          <Input
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <FormLabel htmlFor="gemini-model">
+              {t("provider.form.gemini.model", { defaultValue: "模型" })}
+            </FormLabel>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleFetchModels}
+              disabled={isFetchingModels}
+              className="h-7 gap-1"
+            >
+              {isFetchingModels ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              {t("providerForm.fetchModels")}
+            </Button>
+          </div>
+          <ModelInputWithFetch
             id="gemini-model"
             value={model}
-            onChange={(e) => onModelChange(e.target.value)}
+            onChange={onModelChange}
             placeholder="gemini-3-pro-preview"
+            fetchedModels={fetchedModels}
+            isLoading={isFetchingModels}
           />
         </div>
       )}

@@ -8,16 +8,18 @@ import { fmtUsd, parseFiniteNumber } from "./format";
 
 interface UsageSummaryCardsProps {
   hours: number;
+  appType?: string;
   refreshIntervalMs: number;
 }
 
 export function UsageSummaryCards({
   hours,
+  appType,
   refreshIntervalMs,
 }: UsageSummaryCardsProps) {
   const { t } = useTranslation();
 
-  const { data: summary, isLoading } = useUsageSummary(hours, {
+  const { data: summary, isLoading } = useUsageSummary(hours, appType, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 

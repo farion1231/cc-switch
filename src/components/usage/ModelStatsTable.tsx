@@ -11,12 +11,16 @@ import { useModelStats } from "@/lib/query/usage";
 import { fmtUsd } from "./format";
 
 interface ModelStatsTableProps {
+  appType?: string;
   refreshIntervalMs: number;
 }
 
-export function ModelStatsTable({ refreshIntervalMs }: ModelStatsTableProps) {
+export function ModelStatsTable({
+  appType,
+  refreshIntervalMs,
+}: ModelStatsTableProps) {
   const { t } = useTranslation();
-  const { data: stats, isLoading } = useModelStats({
+  const { data: stats, isLoading } = useModelStats(appType, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 

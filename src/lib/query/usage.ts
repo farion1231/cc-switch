@@ -34,10 +34,14 @@ type RequestLogsKey = {
 // Query keys
 export const usageKeys = {
   all: ["usage"] as const,
-  summary: (hours: number) => [...usageKeys.all, "summary", hours] as const,
-  trends: (hours: number) => [...usageKeys.all, "trends", hours] as const,
-  providerStats: () => [...usageKeys.all, "provider-stats"] as const,
-  modelStats: () => [...usageKeys.all, "model-stats"] as const,
+  summary: (hours: number, appType?: string) =>
+    [...usageKeys.all, "summary", hours, appType ?? "all"] as const,
+  trends: (hours: number, appType?: string) =>
+    [...usageKeys.all, "trends", hours, appType ?? "all"] as const,
+  providerStats: (appType?: string) =>
+    [...usageKeys.all, "provider-stats", appType ?? "all"] as const,
+  modelStats: (appType?: string) =>
+    [...usageKeys.all, "model-stats", appType ?? "all"] as const,
   logs: (key: RequestLogsKey, page: number, pageSize: number) =>
     [
       ...usageKeys.all,
@@ -67,44 +71,59 @@ const getWindow = (hours: number) => {
 };
 
 // Hooks
-export function useUsageSummary(hours: number, options?: UsageQueryOptions) {
+export function useUsageSummary(
+  hours: number,
+  appType?: string,
+  options?: UsageQueryOptions,
+) {
+  const effectiveAppType = appType === "all" ? undefined : appType;
   return useQuery({
-    queryKey: usageKeys.summary(hours),
+    queryKey: usageKeys.summary(hours, appType),
     queryFn: () => {
       const { startDate, endDate } = getWindow(hours);
-      return usageApi.getUsageSummary(startDate, endDate);
+      return usageApi.getUsageSummary(startDate, endDate, effectiveAppType);
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
-    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false, // 后台不刷新
-  });
-}
-
-export function useUsageTrends(hours: number, options?: UsageQueryOptions) {
-  return useQuery({
-    queryKey: usageKeys.trends(hours),
-    queryFn: () => {
-      const { startDate, endDate } = getWindow(hours);
-      return usageApi.getUsageTrends(startDate, endDate);
-    },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }
 
-export function useProviderStats(options?: UsageQueryOptions) {
+export function useUsageTrends(
+  hours: number,
+  appType?: string,
+  options?: UsageQueryOptions,
+) {
+  const effectiveAppType = appType === "all" ? undefined : appType;
   return useQuery({
-    queryKey: usageKeys.providerStats(),
-    queryFn: usageApi.getProviderStats,
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
+    queryKey: usageKeys.trends(hours, appType),
+    queryFn: () => {
+      const { startDate, endDate } = getWindow(hours);
+      return usageApi.getUsageTrends(startDate, endDate, effectiveAppType);
+    },
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }
 
-export function useModelStats(options?: UsageQueryOptions) {
+export function useProviderStats(
+  appType?: string,
+  options?: UsageQueryOptions,
+) {
+  const effectiveAppType = appType === "all" ? undefined : appType;
   return useQuery({
-    queryKey: usageKeys.modelStats(),
-    queryFn: usageApi.getModelStats,
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
+    queryKey: usageKeys.providerStats(appType),
+    queryFn: () => usageApi.getProviderStats(effectiveAppType),
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useModelStats(appType?: string, options?: UsageQueryOptions) {
+  const effectiveAppType = appType === "all" ? undefined : appType;
+  return useQuery({
+    queryKey: usageKeys.modelStats(appType),
+    queryFn: () => usageApi.getModelStats(effectiveAppType),
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }

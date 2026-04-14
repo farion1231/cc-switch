@@ -20,15 +20,17 @@ import {
 
 interface UsageTrendChartProps {
   hours: number;
+  appType?: string;
   refreshIntervalMs: number;
 }
 
 export function UsageTrendChart({
   hours,
+  appType,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
-  const { data: trends, isLoading } = useUsageTrends(hours, {
+  const { data: trends, isLoading } = useUsageTrends(hours, appType, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 

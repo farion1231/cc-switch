@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Save, Download, Loader2 } from "lucide-react";
+import { Save, Download, Loader2, Package } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
@@ -96,12 +96,40 @@ export const GeminiCommonConfigModal: React.FC<
       }
     >
       <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">
+        <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/30 p-3 space-y-1.5">
+          <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+            {t("commonConfig.guideTitle")}
+          </p>
+          <p className="text-xs text-blue-700/80 dark:text-blue-400/80">
+            {t("commonConfig.guidePurpose")}
+          </p>
+          <p className="text-xs text-blue-700/80 dark:text-blue-400/80">
+            {t("commonConfig.guideUsage")}
+          </p>
+          <p className="text-xs text-blue-700/80 dark:text-blue-400/80">
+            {t("commonConfig.guideReExtract")}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {t("commonConfig.guideReassurance")}
+          </p>
+        </div>
+        <p className="text-xs text-amber-600 dark:text-amber-400">
           {t("geminiConfig.commonConfigHint", {
             defaultValue:
               "该片段会写入 Gemini 的 .env（不允许包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
           })}
         </p>
+        {(!draftValue ||
+          draftValue.trim() === "" ||
+          draftValue.trim() === "{}") && (
+          <div className="flex flex-col items-center justify-center py-6 text-center text-muted-foreground">
+            <Package className="h-8 w-8 mb-2 opacity-40" />
+            <p className="text-sm font-medium">
+              {t("commonConfig.emptyTitle")}
+            </p>
+            <p className="text-xs mt-1">{t("commonConfig.emptyHint")}</p>
+          </div>
+        )}
 
         <JsonEditor
           value={draftValue}

@@ -194,7 +194,8 @@ describe("useProviderActions", () => {
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
   });
 
-  it("blocks switching providers that require proxy when proxy is not running", async () => {
+  it("warns but still switches providers that require proxy when proxy is not running", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
       category: "custom",
@@ -211,12 +212,12 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
     expect(toastWarningMock).toHaveBeenCalledTimes(1);
-    expect(settingsApiGetMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
-  it("blocks switching Codex full URL providers when proxy is not running", async () => {
+  it("warns but still switches Codex full URL providers when proxy is not running", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
       category: "custom",
@@ -233,9 +234,8 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
     expect(toastWarningMock).toHaveBeenCalledTimes(1);
-    expect(settingsApiGetMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {
