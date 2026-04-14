@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -18,27 +19,23 @@ import {
 
 interface SessionMessageItemProps {
   message: SessionMessage;
-  index: number;
   isActive: boolean;
   searchQuery?: string;
-  setRef: (el: HTMLDivElement | null) => void;
   onCopy: (content: string) => void;
 }
 
-export function SessionMessageItem({
+export const SessionMessageItem = memo(function SessionMessageItem({
   message,
   isActive,
   searchQuery,
-  setRef,
   onCopy,
 }: SessionMessageItemProps) {
   const { t } = useTranslation();
 
   return (
     <div
-      ref={setRef}
       className={cn(
-        "rounded-lg border px-3 py-2.5 relative group transition-all min-w-0",
+        "rounded-lg border px-3 py-2.5 relative group transition-shadow min-w-0",
         message.role.toLowerCase() === "user"
           ? "bg-primary/5 border-primary/20 ml-8"
           : message.role.toLowerCase() === "assistant"
@@ -81,4 +78,4 @@ export function SessionMessageItem({
       </div>
     </div>
   );
-}
+});
