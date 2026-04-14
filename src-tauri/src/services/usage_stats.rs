@@ -278,8 +278,8 @@ impl Database {
             ((duration as f64) / bucket_seconds as f64).ceil() as i64
         };
 
-        // 固定 24 小时窗口为 24 个小时桶，避免浮点误差
-        if bucket_seconds == 60 * 60 {
+        // 小时桶最多 24 个，避免浮点误差
+        if bucket_seconds == 60 * 60 && bucket_count > 24 {
             bucket_count = 24;
         }
 
@@ -337,13 +337,66 @@ impl Database {
                 stmt.query_map(params![start_ts, end_ts, bucket_seconds], row_mapper)?
             };
             for row in rows {
-                let (mut bucket_idx, stat) = row?;
+                let (bucket_idx, stat) = row?;
                 if bucket_idx < 0 {
                     continue;
                 }
+
+                // ===== 修正右边界数据累加逻辑 =====
+                // bucket_idx的计算区间是[bucket_start, bucket_end), 但我们拆分的最后一个bucket区间实际是[bucket_start, bucket_end]
+                // 如果刚好有一个请求的时间是 end_ts, 这个请求的bucket_idx计算是bucket_count, 需要并入最后一个bucket
                 if bucket_idx >= bucket_count {
-                    bucket_idx = bucket_count - 1;
+                    log::info!(
+                        "⚠️  Boundary data: Bucket {} >= bucket_count={}, assigning to bucket {}",
+                        bucket_idx,
+                        bucket_count,
+                        bucket_count - 1
+                    );
+
+                    let target_bucket = bucket_count - 1;
+
+                    // 检查目标桶是否已有数据，如果有则累加
+                    if let Some(existing) = map.get(&target_bucket) {
+                        log::info!(
+                            "→ Accumulating: existing {} req + new {} req = {} req",
+                            existing.request_count,
+                            stat.request_count,
+                            existing.request_count + stat.request_count
+                        );
+
+                        let merged_stat = DailyStats {
+                            date: String::new(),
+                            request_count: existing.request_count + stat.request_count,
+                            total_cost: format!(
+                                "{:.6}",
+                                existing.total_cost.parse::<f64>().unwrap_or(0.0)
+                                    + stat.total_cost.parse::<f64>().unwrap_or(0.0)
+                            ),
+                            total_tokens: existing.total_tokens + stat.total_tokens,
+                            total_input_tokens: existing.total_input_tokens
+                                + stat.total_input_tokens,
+                            total_output_tokens: existing.total_output_tokens
+                                + stat.total_output_tokens,
+                            total_cache_creation_tokens: existing.total_cache_creation_tokens
+                                + stat.total_cache_creation_tokens,
+                            total_cache_read_tokens: existing.total_cache_read_tokens
+                                + stat.total_cache_read_tokens,
+                        };
+
+                        map.insert(target_bucket, merged_stat);
+                        continue;
+                    }
+
+                    // 如果目标桶还没有数据，直接插入
+                    log::info!(
+                        "→ Bucket {} has no existing data, inserting boundary data",
+                        target_bucket
+                    );
+                    map.insert(target_bucket, stat);
+                    continue;
                 }
+                // ===== 累加逻辑结束 =====
+
                 map.insert(bucket_idx, stat);
             }
         }

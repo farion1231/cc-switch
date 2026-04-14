@@ -34,10 +34,10 @@ type RequestLogsKey = {
 // Query keys
 export const usageKeys = {
   all: ["usage"] as const,
-  summary: (days: number, appType?: string) =>
-    [...usageKeys.all, "summary", days, appType ?? "all"] as const,
-  trends: (days: number, appType?: string) =>
-    [...usageKeys.all, "trends", days, appType ?? "all"] as const,
+  summary: (hours: number, appType?: string) =>
+    [...usageKeys.all, "summary", hours, appType ?? "all"] as const,
+  trends: (hours: number, appType?: string) =>
+    [...usageKeys.all, "trends", hours, appType ?? "all"] as const,
   providerStats: (appType?: string) =>
     [...usageKeys.all, "provider-stats", appType ?? "all"] as const,
   modelStats: (appType?: string) =>
@@ -64,23 +64,23 @@ export const usageKeys = {
     [...usageKeys.all, "limits", providerId, appType] as const,
 };
 
-const getWindow = (days: number) => {
+const getWindow = (hours: number) => {
   const endDate = Math.floor(Date.now() / 1000);
-  const startDate = endDate - days * 24 * 60 * 60;
+  const startDate = endDate - hours * 60 * 60;
   return { startDate, endDate };
 };
 
 // Hooks
 export function useUsageSummary(
-  days: number,
+  hours: number,
   appType?: string,
   options?: UsageQueryOptions,
 ) {
   const effectiveAppType = appType === "all" ? undefined : appType;
   return useQuery({
-    queryKey: usageKeys.summary(days, appType),
+    queryKey: usageKeys.summary(hours, appType),
     queryFn: () => {
-      const { startDate, endDate } = getWindow(days);
+      const { startDate, endDate } = getWindow(hours);
       return usageApi.getUsageSummary(startDate, endDate, effectiveAppType);
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -89,15 +89,15 @@ export function useUsageSummary(
 }
 
 export function useUsageTrends(
-  days: number,
+  hours: number,
   appType?: string,
   options?: UsageQueryOptions,
 ) {
   const effectiveAppType = appType === "all" ? undefined : appType;
   return useQuery({
-    queryKey: usageKeys.trends(days, appType),
+    queryKey: usageKeys.trends(hours, appType),
     queryFn: () => {
-      const { startDate, endDate } = getWindow(days);
+      const { startDate, endDate } = getWindow(hours);
       return usageApi.getUsageTrends(startDate, endDate, effectiveAppType);
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,

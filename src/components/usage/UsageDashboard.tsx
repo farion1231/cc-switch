@@ -36,12 +36,14 @@ const APP_FILTER_OPTIONS: AppTypeFilter[] = [
   "gemini",
 ];
 
+import { useUsageSetting } from "@/hooks/useUsageSetting";
+
 export function UsageDashboard() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [timeRange, setTimeRange] = useState<TimeRange>("1d");
+  const { timeRange, setTimeRange, refreshIntervalMs, setRefreshIntervalMs } =
+    useUsageSetting();
   const [appType, setAppType] = useState<AppTypeFilter>("all");
-  const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
 
   const refreshIntervalOptionsMs = [0, 5000, 10000, 30000, 60000] as const;
   const changeRefreshInterval = () => {
@@ -55,10 +57,17 @@ export function UsageDashboard() {
     queryClient.invalidateQueries({ queryKey: usageKeys.all });
   };
 
-  const days = timeRange === "1d" ? 1 : timeRange === "7d" ? 7 : 30;
+  const hours =
+    timeRange === "5h"
+      ? 5
+      : timeRange === "1d"
+        ? 24
+        : timeRange === "7d"
+          ? 168
+          : 720;
 
   // Summary data for the app filter bar
-  const { data: summaryData } = useUsageSummary(days, appType, {
+  const { data: summaryData } = useUsageSummary(hours, appType, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 
@@ -93,6 +102,12 @@ export function UsageDashboard() {
               {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
             </Button>
             <TabsList className="flex w-full sm:w-auto bg-card/60 border border-border/50 backdrop-blur-sm shadow-sm h-10 p-1">
+              <TabsTrigger
+                value="5h"
+                className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
+              >
+                {t("usage.last5hours")}
+              </TabsTrigger>
               <TabsTrigger
                 value="1d"
                 className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
@@ -149,13 +164,13 @@ export function UsageDashboard() {
       </div>
 
       <UsageSummaryCards
-        days={days}
+        hours={hours}
         appType={appType}
         refreshIntervalMs={refreshIntervalMs}
       />
 
       <UsageTrendChart
-        days={days}
+        hours={hours}
         appType={appType}
         refreshIntervalMs={refreshIntervalMs}
       />
