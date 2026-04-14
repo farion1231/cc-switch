@@ -98,6 +98,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <td width="180"><a href="https://www.openclaudecode.cn/register?aff=aOYQ"><img src="assets/partners/logos/mikubanner.svg" alt="Micu" width="150"></a></td>
 <td>Micu API のご支援に感謝します！Micu API は、最高のコストパフォーマンスと高い安定性を追求するグローバル大規模言語モデル中継サービスプロバイダーです。法人企業がバックアップしており、サービス停止のリスクを排除、迅速な正規請求書発行に対応！「試行コストゼロ」をモットーに、最低 1 元からチャージ可能で手数料無料、いつでも返金可能！CC Switch ユーザー向けの限定特典：<a href="https://www.openclaudecode.cn/register?aff=aOYQ">こちらのリンク</a>から登録し、チャージ時にプロモコード「ccswitch」を入力すると <strong>10% 割引</strong> が適用されます！</td>
 </tr>
+<tr>
+<td width="180"><a href="https://lemondata.cc/r/FFX1ZDUP"><img src="assets/partners/logos/lemondata.png" alt="LemonData" width="150"></a></td>
+<td>LemonData のご支援に感謝します！LemonData は高性能 AI API アグリゲーションプラットフォームで、GPT、Claude、Gemini、DeepSeek など 300 以上のモデルに 1 つの API キーでアクセス可能。全モデルが公式価格の 30〜70% オフで自動フェイルオーバー、スマートルーティング、無制限同時接続に対応。新規ユーザーは登録だけで即座に $1 の無料クレジットを獲得 — <a href="https://lemondata.cc/r/FFX1ZDUP">こちらのリンク</a>から登録してボーナスを獲得し、すぐに開発を始めましょう！</td>
+</tr>
+
 
 <tr>
 <td width="180"><a href="https://ctok.ai"><img src="assets/partners/logos/ctok.png" alt="CTok" width="150"></a></td>

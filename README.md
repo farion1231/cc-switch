@@ -98,6 +98,11 @@ Claude Code / Codex / Gemini official channels at 38% / 2% / 9% of original pric
 </tr>
 
 <tr>
+<td width="180"><a href="https://lemondata.cc/r/FFX1ZDUP"><img src="assets/partners/logos/lemondata.png" alt="LemonData" width="150"></a></td>
+<td>Thanks to LemonData for sponsoring this project! LemonData is a high-performance AI API aggregation platform — one API key for 300+ models including GPT, Claude, Gemini, DeepSeek, and more. All models priced 30–70% below official rates with auto-failover, smart routing, and unlimited concurrency. New users get $1 free credit instantly upon registration — sign up via <a href="https://lemondata.cc/r/FFX1ZDUP">this link</a>to claim your bonus and start building right away</strong>!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://ctok.ai"><img src="assets/partners/logos/ctok.png" alt="CTok" width="150"></a></td>
 <td>Thanks to CTok.ai for sponsoring this project! CTok.ai is dedicated to building a one-stop AI programming tool service platform. We offer professional Claude Code packages and technical community services, with support for Google Gemini and OpenAI Codex. Through carefully designed plans and a professional tech community, we provide developers with reliable service guarantees and continuous technical support, making AI-assisted programming a true productivity tool. Click <a href="https://ctok.ai">here</a> to register!</td>
 </tr>
