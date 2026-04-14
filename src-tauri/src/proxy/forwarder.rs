@@ -1347,12 +1347,8 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 解析上游代理 URL（供应商单独代理 > 全局代理 > 无）
-        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
-        let upstream_proxy_url: Option<String> = proxy_config
-            .filter(|c| c.enabled)
-            .and_then(super::http_client::build_proxy_url_from_config)
-            .or_else(super::http_client::get_current_proxy_url);
+        // 获取全局代理 URL
+        let upstream_proxy_url: Option<String> = super::http_client::get_current_proxy_url();
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
@@ -1368,7 +1364,7 @@ impl RequestForwarder {
         let response = if is_socks_proxy {
             // SOCKS5 代理：只能走 reqwest（不支持 header case 保留）
             log::debug!("[Forwarder] Using reqwest for SOCKS5 proxy");
-            let client = super::http_client::get_for_provider(proxy_config);
+            let client = super::http_client::get();
             let mut request = client.post(&url);
             if !self.non_streaming_timeout.is_zero() {
                 request = request.timeout(self.non_streaming_timeout);
