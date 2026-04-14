@@ -831,7 +831,7 @@ impl RequestForwarder {
             let session_id = metadata
                 .and_then(|m| m.get("user_id"))
                 .and_then(|v| v.as_str())
-                .and_then(|uid| super::session::parse_session_from_user_id(uid))
+                .and_then(super::session::parse_session_from_user_id)
                 .or_else(|| {
                     metadata
                         .and_then(|m| m.get("session_id"))
