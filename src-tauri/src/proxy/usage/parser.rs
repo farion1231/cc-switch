@@ -164,7 +164,7 @@ impl TokenUsage {
             }
         }
 
-        if usage.input_tokens > 0 || usage.output_tokens > 0 {
+        if usage.input_tokens > 0 || usage.output_tokens > 0 || message_id.is_some() {
             usage.model = model;
             usage.message_id = message_id;
             Some(usage)
