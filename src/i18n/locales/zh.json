@@ -622,7 +622,7 @@
     "saving": "正在保存...",
     "globalProxy": {
       "label": "全局代理",
-      "hint": "代理所有请求（API、Skills 下载等）。留空表示直连。",
+      "hint": "代理所有请求（API、Skills 下载等）。开启本地路由时，应用的请求也会经过此代理。留空表示直连。",
       "username": "用户名（可选）",
       "password": "密码（可选）",
       "test": "测试连接",

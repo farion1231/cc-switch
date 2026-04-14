@@ -622,7 +622,7 @@
     "saving": "Saving...",
     "globalProxy": {
       "label": "Global Proxy",
-      "hint": "Proxy all requests (API, Skills download, etc.). Leave empty for direct connection.",
+      "hint": "Proxy all requests (API, Skills download, etc.). When local routing is enabled, app traffic is also routed through this proxy. Leave empty for direct connection.",
       "username": "Username (optional)",
       "password": "Password (optional)",
       "test": "Test Connection",
