@@ -194,12 +194,12 @@
     "deleteFailed": "Failed to delete provider: {{error}}",
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
-    "proxyRequiredForSwitch": "This provider {{reason}}, requires the proxy service to work properly. Start the proxy first.",
+    "proxyRequiredForSwitch": "This provider {{reason}}, requires the routing service to work properly. Start routing first.",
     "proxyReasonCopilot": "uses GitHub Copilot as a Claude provider",
     "proxyReasonOpenAIChat": "uses OpenAI Chat API format",
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
     "proxyReasonFullUrl": "has full URL connection mode enabled",
-    "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the proxy service to be enabled",
+    "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the routing service to be enabled",
     "copilotProxyHint": "GitHub Copilot as a Claude provider always requires local routing; routing automatically selects Chat Completions or Responses based on the current model.",
     "openLinkFailed": "Failed to open link",
     "openclawModelsRegistered": "Models have been registered to /model list",
@@ -208,7 +208,7 @@
     "openclawNoModels": "No models configured",
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
     "windowControlFailed": "Window control failed: {{error}}",
-    "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using proxy with official APIs may cause account bans.",
+    "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
     "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
   },
   "confirm": {
@@ -253,7 +253,7 @@
     "tabGeneral": "General",
     "tabAuth": "Auth",
     "tabAdvanced": "Advanced",
-    "tabProxy": "Proxy",
+    "tabProxy": "Routing",
     "authCenter": {
       "title": "OAuth Authentication Center",
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
@@ -820,10 +820,10 @@
     "fullUrlLabel": "Full URL",
     "fullUrlEnabled": "Full URL Mode",
     "fullUrlDisabled": "Mark as Full URL",
-    "fullUrlHint": "💡 Enter the full request URL. This mode requires the proxy to be enabled, and the proxy will use the URL as-is without appending a path",
+    "fullUrlHint": "💡 Enter the full request URL. This mode requires routing to be enabled, and routing will use the URL as-is without appending a path",
     "apiFormatAnthropic": "Anthropic Messages (Native)",
-    "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires proxy)",
-    "apiFormatOpenAIResponses": "OpenAI Responses API (Requires proxy)",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires routing)",
+    "apiFormatOpenAIResponses": "OpenAI Responses API (Requires routing)",
     "authField": "Auth Field",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN (Default)",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
@@ -1086,7 +1086,7 @@
     },
     "dataSources": "Data Sources",
     "dataSource": {
-      "proxy": "Proxy",
+      "proxy": "Routing",
       "session_log": "Session Log",
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
@@ -1938,9 +1938,9 @@
       "addressCopied": "Address copied",
       "currentProvider": "Current Provider:",
       "waitingFirstRequest": "Current Provider: Waiting for first request...",
-      "stoppedTitle": "Proxy Service Stopped",
+      "stoppedTitle": "Routing Service Stopped",
       "stoppedDescription": "Use the toggle above to start the service",
-      "openSettings": "Configure Proxy Service",
+      "openSettings": "Configure Routing Service",
       "stats": {
         "activeConnections": "Active Connections",
         "totalRequests": "Total Requests",
@@ -1949,14 +1949,14 @@
       }
     },
     "settings": {
-      "title": "Proxy Service Settings",
+      "title": "Routing Service Settings",
       "description": "Configure local routing server listening address, port and runtime parameters. Changes take effect immediately after saving.",
       "alert": {
-        "autoApply": "Changes will be automatically synced to the running proxy service without manual restart."
+        "autoApply": "Changes will be automatically synced to the running routing service without manual restart."
       },
       "basic": {
         "title": "Basic Settings",
-        "description": "Configure proxy service listening address and port."
+        "description": "Configure routing service listening address and port."
       },
       "advanced": {
         "title": "Advanced Parameters",
@@ -1970,12 +1970,12 @@
         "listenAddress": {
           "label": "Listen Address",
           "placeholder": "127.0.0.1",
-          "description": "IP address the proxy server listens on (recommended: 127.0.0.1)"
+          "description": "IP address the routing server listens on (recommended: 127.0.0.1)"
         },
         "listenPort": {
           "label": "Listen Port",
           "placeholder": "15721",
-          "description": "Port number the proxy server listens on (1024 ~ 65535)"
+          "description": "Port number the routing server listens on (1024 ~ 65535)"
         },
         "maxRetries": {
           "label": "Max Retries",
@@ -1989,7 +1989,7 @@
         },
         "enableLogging": {
           "label": "Enable Logging",
-          "description": "Log all proxy requests for troubleshooting"
+          "description": "Log all routing requests for troubleshooting"
         },
         "streamingFirstByteTimeout": {
           "label": "Streaming First Byte Timeout (sec)",
@@ -2020,14 +2020,14 @@
         "save": "Save Configuration"
       },
       "toast": {
-        "saved": "Proxy configuration saved",
+        "saved": "Routing configuration saved",
         "saveFailed": "Save failed: {{error}}"
       },
       "invalidPort": "Invalid port, please enter a number between 1024-65535",
       "invalidAddress": "Invalid address, please enter a valid IP address (e.g. 127.0.0.1) or localhost",
-      "configSaved": "Proxy configuration saved",
+      "configSaved": "Routing configuration saved",
       "configSaveFailed": "Failed to save configuration",
-      "restartRequired": "Restart proxy service for address or port changes to take effect"
+      "restartRequired": "Restart routing service for address or port changes to take effect"
     },
     "switchFailed": "Switch failed: {{error}}",
     "takeover": {
@@ -2042,7 +2042,7 @@
       }
     },
     "failover": {
-      "proxyRequired": "Proxy service must be started to configure failover",
+      "proxyRequired": "Routing service must be started to configure failover",
       "autoSwitch": "Auto Failover",
       "autoSwitchDescription": "When enabled, switches to queue P1 immediately and automatically tries the next provider in the queue on failures"
     },
@@ -2106,8 +2106,8 @@
       "failed": "Failed to toggle logging"
     },
     "server": {
-      "started": "Proxy service started - {{address}}:{{port}}",
-      "startFailed": "Failed to start proxy service: {{detail}}"
+      "started": "Routing service started - {{address}}:{{port}}",
+      "startFailed": "Failed to start routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped, all routing configs restored",
     "stopWithRestoreFailed": "Stop failed: {{detail}}"
@@ -2130,7 +2130,7 @@
     "error": "{{providerName}} check error: {{error}}"
   },
   "proxyConfig": {
-    "proxyEnabled": "Proxy Enabled",
+    "proxyEnabled": "Routing Master Switch",
     "appTakeover": "Routing Enabled",
     "perAppConfig": "Per-App Config",
     "circuitBreaker": "Circuit Breaker",

@@ -194,12 +194,12 @@
     "deleteFailed": "删除供应商失败：{{error}}",
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
-    "proxyRequiredForSwitch": "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
+    "proxyRequiredForSwitch": "此供应商{{reason}}，需要路由服务才能正常使用，请先启动路由",
     "proxyReasonCopilot": "使用 GitHub Copilot 作为 Claude 供应商",
     "proxyReasonOpenAIChat": "使用 OpenAI Chat 接口格式",
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
     "proxyReasonFullUrl": "开启了完整 URL 连接模式",
-    "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启代理服务才能正常使用",
+    "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启路由服务才能正常使用",
     "copilotProxyHint": "GitHub Copilot 作为 Claude 供应商时始终需要本地路由；路由会根据当前模型自动选择 Chat Completions 或 Responses。",
     "openLinkFailed": "链接打开失败",
     "openclawModelsRegistered": "模型已注册到 /model 列表",
@@ -208,7 +208,7 @@
     "openclawNoModels": "该供应商没有配置模型",
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "windowControlFailed": "窗口控制失败：{{error}}",
-    "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁",
+    "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
     "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
   },
   "confirm": {
@@ -253,7 +253,7 @@
     "tabGeneral": "通用",
     "tabAuth": "认证",
     "tabAdvanced": "高级",
-    "tabProxy": "代理",
+    "tabProxy": "路由",
     "authCenter": {
       "title": "OAuth 认证中心",
       "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
@@ -821,10 +821,10 @@
     "fullUrlLabel": "完整 URL",
     "fullUrlEnabled": "完整 URL 模式",
     "fullUrlDisabled": "标记为完整 URL",
-    "fullUrlHint": "💡 请填写完整请求 URL，并且必须开启代理后使用；代理将直接使用此 URL，不拼接路径",
+    "fullUrlHint": "💡 请填写完整请求 URL，并且必须开启路由后使用；路由将直接使用此 URL，不拼接路径",
     "apiFormatAnthropic": "Anthropic Messages (原生)",
-    "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启代理)",
-    "apiFormatOpenAIResponses": "OpenAI Responses API (需开启代理)",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启路由)",
+    "apiFormatOpenAIResponses": "OpenAI Responses API (需开启路由)",
     "authField": "认证字段",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（默认）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
@@ -1087,7 +1087,7 @@
     },
     "dataSources": "数据来源",
     "dataSource": {
-      "proxy": "代理",
+      "proxy": "路由",
       "session_log": "会话日志",
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
@@ -1939,9 +1939,9 @@
       "addressCopied": "地址已复制",
       "currentProvider": "当前 Provider：",
       "waitingFirstRequest": "当前 Provider：等待首次请求…",
-      "stoppedTitle": "代理服务已停止",
+      "stoppedTitle": "路由服务已停止",
       "stoppedDescription": "使用上方开关即可启动服务",
-      "openSettings": "配置代理服务",
+      "openSettings": "配置路由服务",
       "stats": {
         "activeConnections": "活跃连接",
         "totalRequests": "总请求数",
@@ -1950,14 +1950,14 @@
       }
     },
     "settings": {
-      "title": "代理服务设置",
+      "title": "路由服务设置",
       "description": "配置本地路由服务器的监听地址、端口和运行参数，保存后立即生效。",
       "alert": {
-        "autoApply": "保存后将自动同步到正在运行的代理服务，无需手动重启。"
+        "autoApply": "保存后将自动同步到正在运行的路由服务，无需手动重启。"
       },
       "basic": {
         "title": "基础设置",
-        "description": "配置代理服务监听的地址与端口。"
+        "description": "配置路由服务监听的地址与端口。"
       },
       "advanced": {
         "title": "高级参数",
@@ -1971,12 +1971,12 @@
         "listenAddress": {
           "label": "监听地址",
           "placeholder": "127.0.0.1",
-          "description": "代理服务器监听的 IP 地址（推荐 127.0.0.1）"
+          "description": "路由服务器监听的 IP 地址（推荐 127.0.0.1）"
         },
         "listenPort": {
           "label": "监听端口",
           "placeholder": "15721",
-          "description": "代理服务器监听的端口号（1024 ~ 65535）"
+          "description": "路由服务器监听的端口号（1024 ~ 65535）"
         },
         "maxRetries": {
           "label": "最大重试次数",
@@ -1990,7 +1990,7 @@
         },
         "enableLogging": {
           "label": "启用日志记录",
-          "description": "记录所有代理请求，便于排查问题"
+          "description": "记录所有路由请求，便于排查问题"
         },
         "streamingFirstByteTimeout": {
           "label": "流式首字超时（秒）",
@@ -2021,14 +2021,14 @@
         "save": "保存配置"
       },
       "toast": {
-        "saved": "代理配置已保存",
+        "saved": "路由配置已保存",
         "saveFailed": "保存失败: {{error}}"
       },
       "invalidPort": "端口无效，请输入 1024-65535 之间的数字",
       "invalidAddress": "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
-      "configSaved": "代理配置已保存",
+      "configSaved": "路由配置已保存",
       "configSaveFailed": "保存配置失败",
-      "restartRequired": "修改地址或端口后需要重启代理服务才能生效"
+      "restartRequired": "修改地址或端口后需要重启路由服务才能生效"
     },
     "switchFailed": "切换失败: {{error}}",
     "takeover": {
@@ -2043,7 +2043,7 @@
       }
     },
     "failover": {
-      "proxyRequired": "需要先启动代理服务才能配置故障转移",
+      "proxyRequired": "需要先启动路由服务才能配置故障转移",
       "autoSwitch": "自动故障转移",
       "autoSwitchDescription": "开启后将立即切换到队列 P1，并在请求失败时自动切换到队列中的下一个供应商"
     },
@@ -2107,8 +2107,8 @@
       "failed": "切换日志状态失败"
     },
     "server": {
-      "started": "代理服务已启动 - {{address}}:{{port}}",
-      "startFailed": "启动代理服务失败: {{detail}}"
+      "started": "路由服务已启动 - {{address}}:{{port}}",
+      "startFailed": "启动路由服务失败: {{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
     "stopWithRestoreFailed": "停止失败: {{detail}}"
@@ -2131,7 +2131,7 @@
     "error": "{{providerName}} 检查出错: {{error}}"
   },
   "proxyConfig": {
-    "proxyEnabled": "代理总开关",
+    "proxyEnabled": "路由总开关",
     "appTakeover": "路由启用",
     "perAppConfig": "应用配置",
     "circuitBreaker": "熔断器配置",

@@ -194,12 +194,12 @@
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
-    "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、プロキシサービスが必要です。先にプロキシを起動してください",
+    "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、ルーティングサービスが必要です。先にルーティングを起動してください",
     "proxyReasonCopilot": "GitHub Copilot を Claude プロバイダーとして使用しており",
     "proxyReasonOpenAIChat": "OpenAI Chat API フォーマットを使用しており",
     "proxyReasonOpenAIResponses": "OpenAI Responses API フォーマットを使用しており",
     "proxyReasonFullUrl": "完全 URL 接続モードが有効になっており",
-    "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、プロキシサービスの有効化が必要です",
+    "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、ルーティングサービスの有効化が必要です",
     "copilotProxyHint": "GitHub Copilot を Claude プロバイダーとして使用する場合、ローカルルーティングが常に必要です。ルーティングは現在のモデルに応じて Chat Completions または Responses を自動的に選択します。",
     "openLinkFailed": "リンクを開けませんでした",
     "openclawModelsRegistered": "モデルが /model リストに登録されました",
@@ -208,7 +208,7 @@
     "openclawNoModels": "モデルが設定されていません",
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
-    "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。プロキシ経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
+    "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
     "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
   },
   "confirm": {
@@ -253,7 +253,7 @@
     "tabGeneral": "一般",
     "tabAuth": "認証",
     "tabAdvanced": "詳細",
-    "tabProxy": "プロキシ",
+    "tabProxy": "ルーティング",
     "authCenter": {
       "title": "OAuth 認証センター",
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
@@ -629,7 +629,7 @@
       "scan": "ローカルプロキシをスキャン",
       "clear": "クリア",
       "scanFailed": "スキャンに失敗しました: {{error}}",
-      "saved": "プロキシ設定を保存しました",
+      "saved": "ルーティング設定を保存しました",
       "saveFailed": "保存に失敗しました: {{error}}",
       "testSuccess": "接続成功！遅延 {{latency}}ms",
       "testFailed": "接続に失敗しました: {{error}}",
@@ -820,10 +820,10 @@
     "fullUrlLabel": "フル URL",
     "fullUrlEnabled": "フル URL モード",
     "fullUrlDisabled": "フル URL として設定",
-    "fullUrlHint": "💡 完全なリクエスト URL を入力してください。このモードはプロキシを有効にして使用する必要があり、プロキシはこの URL をそのまま使用し、パスを追加しません",
+    "fullUrlHint": "💡 完全なリクエスト URL を入力してください。このモードはルーティングを有効にして使用する必要があり、ルーティングはこの URL をそのまま使用し、パスを追加しません",
     "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
-    "apiFormatOpenAIChat": "OpenAI Chat Completions（プロキシが必要）",
-    "apiFormatOpenAIResponses": "OpenAI Responses API（プロキシが必要）",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions（ルーティングが必要）",
+    "apiFormatOpenAIResponses": "OpenAI Responses API（ルーティングが必要）",
     "authField": "認証フィールド",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（デフォルト）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
@@ -1086,7 +1086,7 @@
     },
     "dataSources": "データソース",
     "dataSource": {
-      "proxy": "プロキシ",
+      "proxy": "ルーティング",
       "session_log": "セッションログ",
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
@@ -1938,9 +1938,9 @@
       "addressCopied": "アドレスをコピーしました",
       "currentProvider": "現在のプロバイダー:",
       "waitingFirstRequest": "現在のプロバイダー: 最初のリクエスト待ち...",
-      "stoppedTitle": "プロキシサービス停止中",
+      "stoppedTitle": "ルーティングサービス停止中",
       "stoppedDescription": "上のトグルでサービスを開始できます",
-      "openSettings": "プロキシサービスを設定",
+      "openSettings": "ルーティングサービスを設定",
       "stats": {
         "activeConnections": "アクティブ接続",
         "totalRequests": "総リクエスト数",
@@ -1949,14 +1949,14 @@
       }
     },
     "settings": {
-      "title": "プロキシサービス設定",
+      "title": "ルーティングサービス設定",
       "description": "ローカルルーティングサーバーのリッスンアドレス、ポート、実行パラメータを設定します。保存後すぐに反映されます。",
       "alert": {
-        "autoApply": "変更は実行中のプロキシサービスに自動的に同期され、手動での再起動は不要です。"
+        "autoApply": "変更は実行中のルーティングサービスに自動的に同期され、手動での再起動は不要です。"
       },
       "basic": {
         "title": "基本設定",
-        "description": "プロキシサービスのリッスンアドレスとポートを設定します。"
+        "description": "ルーティングサービスのリッスンアドレスとポートを設定します。"
       },
       "advanced": {
         "title": "詳細パラメータ",
@@ -1970,12 +1970,12 @@
         "listenAddress": {
           "label": "リッスンアドレス",
           "placeholder": "127.0.0.1",
-          "description": "プロキシサーバーがリッスンするIPアドレス（推奨: 127.0.0.1）"
+          "description": "ルーティングサーバーがリッスンするIPアドレス（推奨: 127.0.0.1）"
         },
         "listenPort": {
           "label": "リッスンポート",
           "placeholder": "15721",
-          "description": "プロキシサーバーがリッスンするポート番号（1024 ~ 65535）"
+          "description": "ルーティングサーバーがリッスンするポート番号（1024 ~ 65535）"
         },
         "maxRetries": {
           "label": "最大リトライ回数",
@@ -1989,7 +1989,7 @@
         },
         "enableLogging": {
           "label": "ログ記録を有効化",
-          "description": "トラブルシューティングのためにすべてのプロキシリクエストを記録"
+          "description": "トラブルシューティングのためにすべてのルーティングリクエストを記録"
         },
         "streamingFirstByteTimeout": {
           "label": "ストリーミング初回バイトタイムアウト（秒）",
@@ -2020,14 +2020,14 @@
         "save": "設定を保存"
       },
       "toast": {
-        "saved": "プロキシ設定を保存しました",
+        "saved": "ルーティング設定を保存しました",
         "saveFailed": "保存に失敗しました: {{error}}"
       },
       "invalidPort": "無効なポートです。1024〜65535 の数値を入力してください",
       "invalidAddress": "無効なアドレスです。有効な IP アドレス（例: 127.0.0.1）または localhost を入力してください",
-      "configSaved": "プロキシ設定を保存しました",
+      "configSaved": "ルーティング設定を保存しました",
       "configSaveFailed": "設定の保存に失敗しました",
-      "restartRequired": "アドレスまたはポートの変更を反映するにはプロキシサービスの再起動が必要です"
+      "restartRequired": "アドレスまたはポートの変更を反映するにはルーティングサービスの再起動が必要です"
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "takeover": {
@@ -2042,7 +2042,7 @@
       }
     },
     "failover": {
-      "proxyRequired": "フェイルオーバーを設定するには、プロキシサービスを先に起動する必要があります",
+      "proxyRequired": "フェイルオーバーを設定するには、ルーティングサービスを先に起動する必要があります",
       "autoSwitch": "自動フェイルオーバー",
       "autoSwitchDescription": "有効にするとキューの P1 に即時切り替え、リクエスト失敗時はキュー内の次のプロバイダーを自動で試行します"
     },
@@ -2106,8 +2106,8 @@
       "failed": "ログ状態の切り替えに失敗しました"
     },
     "server": {
-      "started": "プロキシサービスが開始されました - {{address}}:{{port}}",
-      "startFailed": "プロキシサービスの開始に失敗しました: {{detail}}"
+      "started": "ルーティングサービスが開始されました - {{address}}:{{port}}",
+      "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}"
     },
     "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
     "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
@@ -2130,7 +2130,7 @@
     "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
   },
   "proxyConfig": {
-    "proxyEnabled": "プロキシ有効",
+    "proxyEnabled": "ルーティング総スイッチ",
     "appTakeover": "ルーティング有効",
     "perAppConfig": "アプリ別設定",
     "circuitBreaker": "サーキットブレーカー",
