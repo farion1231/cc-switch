@@ -105,6 +105,46 @@ fn scan_unmanaged_detects_nested_claude_skills() {
 }
 
 #[test]
+fn scan_unmanaged_normalizes_managed_directory_casing() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_skill_dir = home.join(".cc-switch").join("skills").join("MySkill");
+    write_skill(&ssot_skill_dir, "MySkill");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:MySkill".to_string(),
+            name: "MySkill".to_string(),
+            description: Some("Managed mixed-case skill".to_string()),
+            directory: "MySkill".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            installed_at: 1,
+            content_hash: None,
+            updated_at: 0,
+        })
+        .expect("save mixed-case skill");
+
+    let unmanaged = SkillService::scan_unmanaged(&state.db).expect("scan unmanaged skills");
+    assert!(
+        unmanaged.iter().all(|skill| skill.directory != "MySkill"),
+        "managed mixed-case directory should not be reported as unmanaged"
+    );
+}
+
+#[test]
 fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -154,6 +194,52 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
     assert!(
         !opencode_skills_dir.join("orphan-skill").exists(),
         "orphaned symlink into SSOT should be cleaned up"
+    );
+}
+
+#[test]
+fn sync_to_app_removes_disabled_copied_skill_directories() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_dir = home.join(".cc-switch").join("skills");
+    let disabled_skill = ssot_dir.join("disabled-copy-skill");
+    write_skill(&disabled_skill, "Disabled Copy");
+
+    let opencode_skills_dir = home.join(".config").join("opencode").join("skills");
+    let copied_skill_dir = opencode_skills_dir.join("disabled-copy-skill");
+    write_skill(&copied_skill_dir, "Disabled Copy");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:disabled-copy-skill".to_string(),
+            name: "Disabled Copy".to_string(),
+            description: None,
+            directory: "disabled-copy-skill".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                opencode: false,
+            },
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+        })
+        .expect("save disabled copied skill");
+
+    SkillService::sync_to_app(&state.db, &AppType::OpenCode).expect("reconcile skills");
+
+    assert!(
+        !copied_skill_dir.exists(),
+        "disabled copied skill directory should be removed from the live app dir"
     );
 }
 

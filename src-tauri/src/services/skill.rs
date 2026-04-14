@@ -1494,7 +1494,8 @@ impl SkillService {
                     continue;
                 }
                 let dir_name = entry.file_name().to_string_lossy().to_string();
-                if dir_name.starts_with('.') || managed_dirs.contains(&dir_name) {
+                let normalized_dir_name = Self::normalize_skill_key(&dir_name);
+                if dir_name.starts_with('.') || managed_dirs.contains(&normalized_dir_name) {
                     continue;
                 }
 
@@ -1824,21 +1825,27 @@ impl SkillService {
                 Some((Self::normalize_skill_path(&relative), skill))
             })
             .collect();
-        let managed_app_paths: HashSet<String> = skills
-            .values()
-            .filter_map(|skill| {
-                if !skill.apps.is_enabled_for(app) {
-                    return None;
-                }
-                Self::app_relative_skill_path(app, &skill.directory)
-                    .map(|relative| Self::normalize_skill_path(&relative))
-            })
-            .collect();
-        let managed_original_paths: HashSet<String> = skills
-            .values()
-            .filter(|skill| skill.apps.is_enabled_for(app))
-            .map(|skill| Self::normalize_skill_key(&skill.directory))
-            .collect();
+        let managed_sync_sources =
+            skills
+                .values()
+                .fold(HashMap::<String, Vec<String>>::new(), |mut acc, skill| {
+                    if let Some(relative) = Self::app_relative_skill_path(app, &skill.directory) {
+                        acc.entry(Self::normalize_skill_path(&relative))
+                            .or_default()
+                            .push(skill.directory.clone());
+                    }
+                    if matches!(app, AppType::Claude) {
+                        let normalized_original = Self::normalize_skill_key(&skill.directory);
+                        let sources = acc.entry(normalized_original).or_default();
+                        if !sources
+                            .iter()
+                            .any(|directory| directory == &skill.directory)
+                        {
+                            sources.push(skill.directory.clone());
+                        }
+                    }
+                    acc
+                });
 
         if app_dir.exists() {
             for (relative_path, path) in Self::list_existing_app_skill_entries(app, &app_dir)? {
@@ -1848,10 +1855,17 @@ impl SkillService {
                     continue;
                 }
 
-                let should_remove = managed_app_paths.contains(&normalized_relative)
-                    || (matches!(app, AppType::Claude)
-                        && managed_original_paths.contains(&normalized_relative))
-                    || Self::is_symlink_to_ssot(&path, &ssot_dir);
+                let is_managed_synced_entry = managed_sync_sources
+                    .get(&normalized_relative)
+                    .map(|directories| {
+                        directories.iter().any(|directory| {
+                            Self::is_synced_entry_for_source(&path, &ssot_dir.join(directory))
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false);
+                let should_remove =
+                    is_managed_synced_entry || Self::is_symlink_to_ssot(&path, &ssot_dir);
 
                 if should_remove {
                     Self::remove_path(&path)?;
