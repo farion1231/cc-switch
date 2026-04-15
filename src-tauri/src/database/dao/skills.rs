@@ -107,9 +107,9 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
+              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes,
               installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13, ?14, ?15)",
             params![
                 skill.id,
                 skill.name,
