@@ -51,14 +51,14 @@ pub fn decode_wsl_output(bytes: &[u8]) -> String {
 
 /// Returns `true` when `name` is a valid WSL distro identifier.
 ///
-/// Allowed characters: ASCII alphanumeric, `-`, `_`, `.`; max length 64.
+/// Allowed characters: ASCII alphanumeric, space, `-`, `_`, `.`; max length 64.
 #[cfg(target_os = "windows")]
 pub fn is_valid_wsl_distro_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
         && name
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+            .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_' || c == '.')
 }
 
 // ─── Distro enumeration ─────────────────────────────────────────────────────
@@ -269,8 +269,8 @@ mod tests {
         assert!(is_valid_wsl_distro_name("Ubuntu"));
         assert!(is_valid_wsl_distro_name("Ubuntu-22.04"));
         assert!(is_valid_wsl_distro_name("my_distro"));
+        assert!(is_valid_wsl_distro_name("Ubuntu Dev"));
         assert!(!is_valid_wsl_distro_name(""));
-        assert!(!is_valid_wsl_distro_name("distro with spaces"));
         assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
     }
 
