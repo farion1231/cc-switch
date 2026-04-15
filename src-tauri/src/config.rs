@@ -83,6 +83,34 @@ fn resolve_claude_settings_path_in_dir(dir: &Path) -> PathBuf {
     settings
 }
 
+#[cfg(windows)]
+fn expand_secondary_claude_dirs_from_homes<F>(
+    current_distro: Option<&str>,
+    distros: &[String],
+    mut resolve_home_unc: F,
+) -> Vec<PathBuf>
+where
+    F: FnMut(&str) -> Option<PathBuf>,
+{
+    let mut dirs = Vec::new();
+
+    for distro in distros {
+        let distro = distro.trim();
+        if distro.is_empty()
+            || current_distro.is_some_and(|current| distro.eq_ignore_ascii_case(current))
+        {
+            continue;
+        }
+
+        if let Some(mut home_unc) = resolve_home_unc(distro) {
+            home_unc.push(".claude");
+            dirs.push(home_unc);
+        }
+    }
+
+    dirs
+}
+
 /// 获取 Claude Code 主配置文件路径
 pub fn get_claude_settings_path() -> PathBuf {
     resolve_claude_settings_path_in_dir(&get_claude_config_dir())
@@ -105,21 +133,14 @@ pub fn get_claude_settings_paths() -> Vec<PathBuf> {
         use crate::utils::wsl::{parse_wsl_unc_path, resolve_wsl_home_dir_unc};
 
         // 当主目录是 \\wsl.localhost\<distro>\... 这类 UNC 路径时，
-        // 自动按系统中所有 WSL 发行版推导同后缀的多发行版目录。
-        if let Some((current_distro, suffix)) = parse_wsl_unc_path(&primary_dir) {
+        // 也要按每个 distro 的真实 home 推导 ~/.claude，不能复用当前 distro 的 suffix。
+        if let Some((current_distro, _suffix)) = parse_wsl_unc_path(&primary_dir) {
             if let Some(distros) = crate::settings::get_wsl_distros() {
-                for distro in distros {
-                    let distro = distro.trim();
-                    if distro.is_empty() || distro.eq_ignore_ascii_case(&current_distro) {
-                        continue;
-                    }
-
-                    let mut dir = PathBuf::from(format!("\\\\wsl.localhost\\{distro}"));
-                    if !suffix.is_empty() {
-                        dir.push(&suffix);
-                    }
-                    dirs.push(dir);
-                }
+                dirs.extend(expand_secondary_claude_dirs_from_homes(
+                    Some(&current_distro),
+                    &distros,
+                    resolve_wsl_home_dir_unc,
+                ));
             }
         }
 
@@ -127,12 +148,11 @@ pub fn get_claude_settings_paths() -> Vec<PathBuf> {
         // 自动额外加入每个 WSL distro 的 ~/.claude。
         if parse_wsl_unc_path(&primary_dir).is_none() {
             if let Some(distros) = crate::settings::get_wsl_distros() {
-                for distro in distros {
-                    if let Some(mut home_unc) = resolve_wsl_home_dir_unc(&distro) {
-                        home_unc.push(".claude");
-                        dirs.push(home_unc);
-                    }
-                }
+                dirs.extend(expand_secondary_claude_dirs_from_homes(
+                    None,
+                    &distros,
+                    resolve_wsl_home_dir_unc,
+                ));
             }
         }
     }
@@ -300,6 +320,8 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use std::collections::HashMap;
 
     #[test]
     fn derive_mcp_path_from_override_preserves_folder_name() {
@@ -329,6 +351,38 @@ mod tests {
     fn derive_mcp_path_from_root_like_dir_returns_none() {
         let override_dir = PathBuf::from("/");
         assert!(derive_mcp_path_from_override(&override_dir).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn expand_secondary_claude_dirs_from_homes_uses_each_distro_home() {
+        let distros = vec![
+            "Ubuntu".to_string(),
+            "Debian".to_string(),
+            "Arch".to_string(),
+        ];
+        let homes = HashMap::from([
+            (
+                "Debian".to_string(),
+                PathBuf::from(r"\\wsl.localhost\Debian\home\bob"),
+            ),
+            (
+                "Arch".to_string(),
+                PathBuf::from(r"\\wsl.localhost\Arch\home\carol"),
+            ),
+        ]);
+
+        let dirs = expand_secondary_claude_dirs_from_homes(Some("Ubuntu"), &distros, |distro| {
+            homes.get(distro).cloned()
+        });
+
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from(r"\\wsl.localhost\Debian\home\bob\.claude"),
+                PathBuf::from(r"\\wsl.localhost\Arch\home\carol\.claude"),
+            ]
+        );
     }
 }
 
