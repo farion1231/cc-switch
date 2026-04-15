@@ -134,7 +134,7 @@ pub fn resolve_wsl_home_dir_unc(distro: &str) -> Option<PathBuf> {
     use std::process::Command;
 
     let distro = distro.trim();
-    if distro.is_empty() {
+    if !is_valid_wsl_distro_name(distro) {
         return None;
     }
 
