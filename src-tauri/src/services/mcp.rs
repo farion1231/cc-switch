@@ -40,6 +40,9 @@ impl McpService {
         if prev_apps.opencode && !server.apps.opencode {
             Self::remove_server_from_app(state, &server.id, &AppType::OpenCode)?;
         }
+        if prev_apps.hermes && !server.apps.hermes {
+            Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
+        }
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
@@ -129,8 +132,11 @@ impl McpService {
                 log::debug!("OpenClaw MCP support is still in development, skipping sync");
             }
             AppType::Hermes => {
-                // TODO: Hermes MCP sync not yet implemented
-                log::debug!("Hermes MCP sync not yet implemented, skipping sync");
+                mcp::sync_single_server_to_hermes(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
             }
         }
         Ok(())
@@ -162,8 +168,7 @@ impl McpService {
                 log::debug!("OpenClaw MCP support is still in development, skipping remove");
             }
             AppType::Hermes => {
-                // TODO: Hermes MCP sync not yet implemented
-                log::debug!("Hermes MCP sync not yet implemented, skipping remove");
+                mcp::remove_server_from_hermes(id)?;
             }
         }
         Ok(())
@@ -174,7 +179,7 @@ impl McpService {
         let servers = Self::get_all_servers(state)?;
 
         for app in AppType::all() {
-            if matches!(app, AppType::OpenClaw | AppType::Hermes) {
+            if matches!(app, AppType::OpenClaw) {
                 continue;
             }
 
@@ -371,6 +376,44 @@ impl McpService {
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
                         let mut merged = existing_server.clone();
                         merged.apps.opencode = true;
+                        merged
+                    } else {
+                        // 真正的新服务器
+                        new_count += 1;
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+
+                    // 同步到对应应用 live 配置
+                    Self::sync_server_to_apps(state, &to_save)?;
+                }
+            }
+        }
+
+        Ok(new_count)
+    }
+
+    /// 从 Hermes 导入 MCP
+    pub fn import_from_hermes(state: &AppState) -> Result<usize, AppError> {
+        // 创建临时 MultiAppConfig 用于导入
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+
+        // 调用导入逻辑（从 mcp/hermes.rs）
+        let count = crate::mcp::import_from_hermes(&mut temp_config)?;
+
+        let mut new_count = 0;
+
+        // 如果有导入的服务器，保存到数据库
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    // 已存在：仅启用 Hermes，不覆盖其他字段（与导入模块语义保持一致）
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.hermes = true;
                         merged
                     } else {
                         // 真正的新服务器

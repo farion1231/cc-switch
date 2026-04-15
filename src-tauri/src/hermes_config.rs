@@ -715,7 +715,6 @@ fn scan_hermes_health_internal(content: &str) -> Vec<HermesHealthWarning> {
 // ============================================================================
 
 /// Get the `mcp_servers` section as a YAML Mapping.
-#[allow(dead_code)]
 pub fn get_mcp_servers_yaml() -> Result<serde_yaml::Mapping, AppError> {
     let config = read_hermes_config()?;
     Ok(config
@@ -725,11 +724,23 @@ pub fn get_mcp_servers_yaml() -> Result<serde_yaml::Mapping, AppError> {
         .unwrap_or_default())
 }
 
-/// Set the `mcp_servers` section.
-#[allow(dead_code)]
-pub fn set_mcp_servers_yaml(servers: &serde_yaml::Mapping) -> Result<(), AppError> {
-    let value = serde_yaml::Value::Mapping(servers.clone());
-    write_yaml_section_to_config("mcp_servers", &value)?;
+/// Atomically read-modify-write the `mcp_servers` section under the write lock.
+///
+/// Prevents TOCTOU races when multiple sync operations run concurrently.
+pub fn update_mcp_servers_yaml<F>(updater: F) -> Result<(), AppError>
+where
+    F: FnOnce(&mut serde_yaml::Mapping) -> Result<(), AppError>,
+{
+    let _guard = hermes_write_lock().lock()?;
+    let config = read_hermes_config()?;
+    let mut servers = config
+        .get("mcp_servers")
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    updater(&mut servers)?;
+    let value = serde_yaml::Value::Mapping(servers);
+    write_yaml_section_to_config_locked("mcp_servers", &value)?;
     Ok(())
 }
 
@@ -748,7 +759,7 @@ pub(crate) fn yaml_to_json(yaml: &serde_yaml::Value) -> Result<serde_json::Value
 }
 
 /// Convert a `serde_json::Value` to a `serde_yaml::Value`.
-fn json_to_yaml(json: &serde_json::Value) -> Result<serde_yaml::Value, AppError> {
+pub(crate) fn json_to_yaml(json: &serde_json::Value) -> Result<serde_yaml::Value, AppError> {
     let json_str = serde_json::to_string(json)
         .map_err(|e| AppError::Config(format!("Failed to serialize JSON value: {e}")))?;
     serde_yaml::from_str(&json_str)
