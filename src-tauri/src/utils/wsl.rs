@@ -103,8 +103,10 @@ pub fn get_all_wsl_distros() -> Vec<String> {
 #[cfg(target_os = "windows")]
 pub fn parse_wsl_unc_path(path: &Path) -> Option<(String, String)> {
     let s = path.to_string_lossy();
+    let s_lower = s.to_ascii_lowercase();
     for prefix in ["\\\\wsl$\\", "\\\\wsl.localhost\\"] {
-        if let Some(rest) = s.strip_prefix(prefix) {
+        if s_lower.starts_with(prefix) {
+            let rest = &s[prefix.len()..];
             let mut parts = rest.split('\\');
             let distro = parts.next()?.trim().to_string();
             if distro.is_empty() {
@@ -277,6 +279,16 @@ mod tests {
     fn test_parse_wsl_unc_path_extracts_distro_and_suffix() {
         let parsed = parse_wsl_unc_path(Path::new(r"\\wsl.localhost\Ubuntu\home\alice\.codex"))
             .expect("should parse WSL UNC path");
+
+        assert_eq!(parsed.0, "Ubuntu");
+        assert_eq!(parsed.1, r"home\alice\.codex");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_wsl_unc_path_accepts_case_insensitive_prefix() {
+        let parsed = parse_wsl_unc_path(Path::new(r"\\WSL.LOCALHOST\Ubuntu\home\alice\.codex"))
+            .expect("should parse WSL UNC path regardless of prefix case");
 
         assert_eq!(parsed.0, "Ubuntu");
         assert_eq!(parsed.1, r"home\alice\.codex");
