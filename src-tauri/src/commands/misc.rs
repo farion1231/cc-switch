@@ -773,7 +773,7 @@ pub async fn open_provider_terminal(
         launch_cwd.as_deref(),
         claude_profile_dir.as_deref(),
     )
-        .map_err(|e| format!("启动终端失败: {e}"))?;
+    .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
 }
@@ -863,6 +863,21 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     };
 
     Ok(Some(resolved))
+}
+
+fn claude_config_is_empty(config_file: &std::path::Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(config_file) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    value
+        .get("env")
+        .and_then(serde_json::Value::as_object)
+        .map(|env| env.is_empty())
+        .unwrap_or(false)
 }
 
 /// 创建临时配置文件并启动 claude 终端
@@ -1225,6 +1240,15 @@ del \"%~f0\" >nul 2>&1
             cwd_command = cwd_command,
             escaped_profile_dir = escaped_profile_dir,
         )
+    } else if claude_config_is_empty(config_file) {
+        format!(
+            "@echo off
+{cwd_command}
+claude
+del \"%~f0\" >nul 2>&1
+",
+            cwd_command = cwd_command,
+        )
     } else {
         format!(
             "@echo off
@@ -1371,6 +1395,28 @@ mod tests {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
         assert_eq!(extract_version("no version here"), "no version here");
+    }
+
+    #[test]
+    fn empty_claude_env_config_is_detected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("claude-empty.json");
+        std::fs::write(&config_path, "{\n  \"env\": {}\n}").expect("write empty config");
+
+        assert!(claude_config_is_empty(&config_path));
+    }
+
+    #[test]
+    fn non_empty_claude_env_config_is_not_detected_as_empty() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("claude-config.json");
+        std::fs::write(
+            &config_path,
+            "{\n  \"env\": {\n    \"ANTHROPIC_BASE_URL\": \"https://example.com\"\n  }\n}",
+        )
+        .expect("write non-empty config");
+
+        assert!(!claude_config_is_empty(&config_path));
     }
 
     #[cfg(target_os = "windows")]

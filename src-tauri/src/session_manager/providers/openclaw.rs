@@ -282,6 +282,7 @@ fn prune_sessions_index(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use tempfile::tempdir;
 
     #[test]
@@ -301,20 +302,20 @@ mod tests {
         .expect("write session");
         std::fs::write(
             sessions_dir.join("sessions.json"),
-            format!(
-                r#"{{
-                  "agent:main:main": {{
+            serde_json::to_string_pretty(&json!({
+                "agent:main:main": {
                     "sessionId": "session-123",
-                    "sessionFile": "{}"
-                  }},
-                  "agent:main:other": {{
+                    "sessionFile": session_path.to_string_lossy().to_string()
+                },
+                "agent:main:other": {
                     "sessionId": "session-456",
-                    "sessionFile": "{}/session-456.jsonl"
-                  }}
-                }}"#,
-                session_path.display(),
-                sessions_dir.display()
-            ),
+                    "sessionFile": sessions_dir
+                        .join("session-456.jsonl")
+                        .to_string_lossy()
+                        .to_string()
+                }
+            }))
+            .expect("serialize index"),
         )
         .expect("write index");
 

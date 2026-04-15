@@ -141,13 +141,18 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let old_home = std::env::var_os("HOME");
+        let old_app_config_override = crate::app_store::get_app_config_dir_override();
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
+        crate::app_store::set_app_config_dir_override_for_tests(None);
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
         let result = test(&state, temp.path());
 
+        crate::app_store::set_app_config_dir_override_for_tests(old_app_config_override);
         match old_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
@@ -278,6 +283,133 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    fn codex_provider(id: &str, name: &str, config: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: name.to_string(),
+            settings_config: json!({
+                "auth": {},
+                "config": config,
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn seed_codex_threads(home: &Path, provider: &str) {
+        let codex_dir = home.join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let conn = rusqlite::Connection::open(codex_dir.join("state_5.sqlite"))
+            .expect("open codex state db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads table");
+        conn.execute(
+            "INSERT INTO threads (id, model_provider) VALUES ('thread-1', ?1), ('thread-2', ?1)",
+            [provider],
+        )
+        .expect("seed threads");
+    }
+
+    fn codex_thread_providers(home: &Path) -> Vec<(String, i64)> {
+        let conn = rusqlite::Connection::open(home.join(".codex").join("state_5.sqlite"))
+            .expect("open codex state db");
+        let mut stmt = conn
+            .prepare(
+                "SELECT model_provider, COUNT(*) FROM threads GROUP BY model_provider ORDER BY model_provider",
+            )
+            .expect("prepare provider query");
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query providers")
+            .map(|row| row.expect("provider row"))
+            .collect()
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_to_official_syncs_desktop_threads_to_openai_provider() {
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+            seed_codex_threads(home, "OpenAI");
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official codex provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("openai".to_string(), 2)],
+                "OAuth login should make Codex Desktop history visible under the openai provider key"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_to_api_syncs_desktop_threads_to_config_model_provider() {
+        with_test_home(|state, home| {
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-official"))
+                .expect("set local current provider");
+            seed_codex_threads(home, "openai");
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to api codex provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("OpenAI".to_string(), 2)],
+                "API login should make Codex Desktop history visible under the configured provider key"
+            );
+        });
     }
 
     fn omo_config_path(home: &Path, category: &str) -> PathBuf {
@@ -1284,9 +1416,7 @@ impl ProviderService {
         Ok(())
     }
 
-    fn capture_claude_rollback_state(
-        state: &AppState,
-    ) -> Result<ClaudeRollbackState, AppError> {
+    fn capture_claude_rollback_state(state: &AppState) -> Result<ClaudeRollbackState, AppError> {
         let settings = crate::settings::get_settings();
         let previous_live_settings = read_live_settings(AppType::Claude).ok();
 
@@ -1335,7 +1465,9 @@ impl ProviderService {
         )?;
 
         match rollback.previous_db_current.as_deref() {
-            Some(id) => state.db.set_current_provider(AppType::Claude.as_str(), id)?,
+            Some(id) => state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), id)?,
             None => state.db.clear_current_provider(AppType::Claude.as_str())?,
         }
 
@@ -1344,6 +1476,88 @@ impl ProviderService {
         }
 
         Ok(())
+    }
+
+    fn codex_desktop_provider_key(provider: &Provider) -> Result<String, AppError> {
+        let config = provider
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+
+        if config.is_empty() {
+            return Ok("openai".to_string());
+        }
+
+        Ok(crate::codex_config::extract_codex_model_provider(config)
+            .unwrap_or_else(|| "openai".to_string()))
+    }
+
+    fn codex_threads_have_model_provider(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+        let table_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'threads'",
+            [],
+            |row| row.get(0),
+        )?;
+        if table_count == 0 {
+            return Ok(false);
+        }
+
+        let mut stmt = conn.prepare("PRAGMA table_info(threads)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let column_name: String = row.get(1)?;
+            if column_name == "model_provider" {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn sync_codex_desktop_threads(provider: &Provider) -> Result<usize, AppError> {
+        let target_provider = Self::codex_desktop_provider_key(provider)?;
+        let db_path = crate::codex_config::get_codex_config_dir().join("state_5.sqlite");
+        if !db_path.exists() {
+            return Ok(0);
+        }
+
+        let conn = rusqlite::Connection::open_with_flags(
+            &db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )
+        .map_err(|err| {
+            AppError::Message(format!(
+                "Failed to open Codex desktop state database {}: {err}",
+                db_path.display()
+            ))
+        })?;
+
+        if !Self::codex_threads_have_model_provider(&conn)? {
+            return Ok(0);
+        }
+
+        let updated = conn.execute(
+            "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider <> ?1",
+            rusqlite::params![target_provider],
+        )?;
+
+        Ok(updated)
+    }
+
+    fn sync_codex_desktop_threads_after_switch(provider: &Provider, result: &mut SwitchResult) {
+        match Self::sync_codex_desktop_threads(provider) {
+            Ok(updated) => {
+                log::info!("Codex desktop thread model_provider sync updated {updated} rows");
+            }
+            Err(err) => {
+                log::warn!("Codex desktop thread model_provider sync failed: {err}");
+                result
+                    .warnings
+                    .push("codex_thread_provider_sync_failed".to_string());
+            }
+        }
     }
 
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
@@ -1840,7 +2054,11 @@ impl ProviderService {
 
             // Note: No Live config write, no MCP sync
             // The proxy server will route requests to the new provider via is_current
-            return Ok(SwitchResult::default());
+            let mut result = SwitchResult::default();
+            if matches!(app_type, AppType::Codex) {
+                Self::sync_codex_desktop_threads_after_switch(_provider, &mut result);
+            }
+            return Ok(result);
         }
 
         // Normal mode: full switch with Live config write
@@ -1878,8 +2096,8 @@ impl ProviderService {
         }
 
         let mut result = SwitchResult::default();
-        let claude_switch_plan = matches!(app_type, AppType::Claude)
-            .then(|| Self::claude_switch_plan(provider));
+        let claude_switch_plan =
+            matches!(app_type, AppType::Claude).then(|| Self::claude_switch_plan(provider));
         let claude_rollback = if matches!(app_type, AppType::Claude) {
             Some(Self::capture_claude_rollback_state(state)?)
         } else {
@@ -1947,7 +2165,9 @@ impl ProviderService {
             }
 
             let should_write_live = !matches!(
-                claude_switch_plan.as_ref().map(|plan| &plan.activation_mode),
+                claude_switch_plan
+                    .as_ref()
+                    .map(|plan| &plan.activation_mode),
                 Some(ClaudeActivationMode::ProfileOnly)
             );
 
@@ -2009,17 +2229,7 @@ impl ProviderService {
         }
 
         if matches!(app_type, AppType::Codex) {
-            match crate::services::codex_state::sync_threads_to_current_provider(provider) {
-                Ok(updated) => {
-                    log::info!("Codex thread model_provider sync updated {updated} rows");
-                }
-                Err(err) => {
-                    log::warn!("Codex thread model_provider sync failed: {err}");
-                    result
-                        .warnings
-                        .push("codex_thread_provider_sync_failed".to_string());
-                }
-            }
+            Self::sync_codex_desktop_threads_after_switch(provider, &mut result);
         }
 
         Ok(result)

@@ -301,7 +301,10 @@ pub struct ProviderMeta {
     pub github_account_id: Option<String>,
     #[serde(rename = "claudeProfileDir", skip_serializing_if = "Option::is_none")]
     pub claude_profile_dir: Option<String>,
-    #[serde(rename = "claudeActivationMode", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "claudeActivationMode",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub claude_activation_mode: Option<ClaudeActivationMode>,
 }
 

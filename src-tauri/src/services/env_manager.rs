@@ -1,6 +1,8 @@
 use super::env_checker::EnvConflict;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "windows")]
+use std::ffi::c_void;
 use std::fs;
 use std::path::PathBuf;
 
@@ -37,6 +39,18 @@ pub fn get_user_env_var(name: &str) -> Result<Option<String>, String> {
 
 #[cfg(target_os = "windows")]
 pub fn set_user_env_var(name: &str, value: Option<&str>) -> Result<(), String> {
+    set_user_env_var_with_notifier(name, value, notify_windows_environment_changed)
+}
+
+#[cfg(target_os = "windows")]
+fn set_user_env_var_with_notifier<F>(
+    name: &str,
+    value: Option<&str>,
+    notify: F,
+) -> Result<(), String>
+where
+    F: Fn() -> Result<(), String>,
+{
     let (hkcu, _) = RegKey::predef(HKEY_CURRENT_USER)
         .create_subkey("Environment")
         .map_err(|e| format!("打开用户环境变量注册表失败: {e}"))?;
@@ -48,6 +62,49 @@ pub fn set_user_env_var(name: &str, value: Option<&str>) -> Result<(), String> {
         None => {
             let _ = hkcu.delete_value(name);
         }
+    }
+
+    notify()?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn notify_windows_environment_changed() -> Result<(), String> {
+    const HWND_BROADCAST: *mut c_void = 0xffffusize as *mut c_void;
+    const WM_SETTINGCHANGE: u32 = 0x001A;
+    const SMTO_ABORTIFHUNG: u32 = 0x0002;
+
+    unsafe extern "system" {
+        fn SendMessageTimeoutW(
+            h_wnd: *mut c_void,
+            msg: u32,
+            w_param: usize,
+            l_param: *const u16,
+            flags: u32,
+            timeout: u32,
+            result: *mut usize,
+        ) -> isize;
+    }
+
+    let environment: Vec<u16> = "Environment\0".encode_utf16().collect();
+    let status = unsafe {
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            0,
+            environment.as_ptr(),
+            SMTO_ABORTIFHUNG,
+            5000,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if status == 0 {
+        return Err(format!(
+            "通知 Windows 刷新环境变量失败: {}",
+            std::io::Error::last_os_error()
+        ));
     }
 
     Ok(())
@@ -281,5 +338,43 @@ mod tests {
     fn test_backup_dir_creation() {
         let backup_dir = get_backup_dir();
         assert!(backup_dir.is_ok());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn set_user_env_var_notifies_windows_after_registry_update() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        let name = "CC_SWITCH_TEST_NOTIFY_ENV";
+        let notify_calls = Arc::new(AtomicUsize::new(0));
+        let notify_calls_for_set = Arc::clone(&notify_calls);
+
+        set_user_env_var_with_notifier(name, Some("value"), move || {
+            notify_calls_for_set.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .expect("set env var");
+
+        assert_eq!(
+            notify_calls.load(Ordering::SeqCst),
+            1,
+            "set path should notify Windows environment change"
+        );
+
+        let notify_calls_for_delete = Arc::clone(&notify_calls);
+        set_user_env_var_with_notifier(name, None, move || {
+            notify_calls_for_delete.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .expect("delete env var");
+
+        assert_eq!(
+            notify_calls.load(Ordering::SeqCst),
+            2,
+            "delete path should notify Windows environment change"
+        );
     }
 }
