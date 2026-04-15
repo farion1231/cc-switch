@@ -334,23 +334,6 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
-    name: "X-Code API",
-    websiteUrl: "https://x-code.cc",
-    apiKeyUrl: "https://x-code.cc",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "x-code",
-      "https://x-code.cc/v1",
-      "gpt-5.4",
-    ),
-    endpointCandidates: ["https://x-code.cc/v1"],
-    category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "x-code", // 促销信息 i18n key
-    icon: "xcode",
-    iconColor: "#000000",
-  },
-  {
     name: "CTok.ai",
     websiteUrl: "https://ctok.ai",
     apiKeyUrl: "https://ctok.ai",
@@ -408,7 +391,7 @@ model_auto_compact_token_limit = 9000000`,
   },
   {
     name: "PIPELLM",
-    websiteUrl: "https://www.pipellm.ai",
+    websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
     auth: {
       OPENAI_API_KEY: "",

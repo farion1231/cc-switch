@@ -7,7 +7,6 @@ import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
 import type { AppTypeFilter, TimeRange } from "@/types/usage";
-import { useUsageSummary } from "@/lib/query/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
@@ -27,7 +26,6 @@ import {
 } from "@/components/ui/accordion";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { cn } from "@/lib/utils";
-import { fmtUsd, parseFiniteNumber } from "./format";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = [
   "all",
@@ -56,11 +54,6 @@ export function UsageDashboard() {
   };
 
   const days = timeRange === "1d" ? 1 : timeRange === "7d" ? 7 : 30;
-
-  // Summary data for the app filter bar
-  const { data: summaryData } = useUsageSummary(days, appType, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
 
   return (
     <motion.div
@@ -135,17 +128,6 @@ export function UsageDashboard() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          <span>
-            {(summaryData?.totalRequests ?? 0).toLocaleString()}{" "}
-            {t("usage.requestsLabel")}
-          </span>
-          <span className="text-border">|</span>
-          <span>
-            {fmtUsd(parseFiniteNumber(summaryData?.totalCost) ?? 0, 4)}{" "}
-            {t("usage.costLabel")}
-          </span>
-        </div>
       </div>
 
       <UsageSummaryCards
@@ -188,6 +170,7 @@ export function UsageDashboard() {
               <RequestLogTable
                 appType={appType}
                 refreshIntervalMs={refreshIntervalMs}
+                timeRange={timeRange}
               />
             </TabsContent>
 

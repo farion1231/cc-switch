@@ -109,22 +109,6 @@ export interface ProviderTestConfig {
   maxRetries?: number;
 }
 
-// 供应商单独的代理配置
-export interface ProviderProxyConfig {
-  // 是否启用单独配置（false 时使用全局/系统代理）
-  enabled: boolean;
-  // 代理类型：http, https, socks5
-  proxyType?: "http" | "https" | "socks5";
-  // 代理主机
-  proxyHost?: string;
-  // 代理端口
-  proxyPort?: number;
-  // 代理用户名（可选）
-  proxyUsername?: string;
-  // 代理密码（可选）
-  proxyPassword?: string;
-}
-
 export type AuthBindingSource = "provider_config" | "managed_account";
 
 export interface AuthBinding {
@@ -149,8 +133,6 @@ export interface ProviderMeta {
   partnerPromotionKey?: string;
   // 供应商单独的模型测试配置
   testConfig?: ProviderTestConfig;
-  // 供应商单独的代理配置
-  proxyConfig?: ProviderProxyConfig;
   // 供应商成本倍率
   costMultiplier?: string;
   // 供应商计费模式来源

@@ -7,6 +7,7 @@ import {
   Minus,
   Play,
   Plus,
+  ShieldAlert,
   Terminal,
   TestTube2,
   Trash2,
@@ -36,6 +37,7 @@ interface ProviderActionsProps {
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
+  isOfficialBlockedByProxy?: boolean;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -60,6 +62,7 @@ export function ProviderActions({
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
+  isOfficialBlockedByProxy = false,
   // OpenClaw: default model
   isDefaultModel = false,
   onSetAsDefault,
@@ -163,6 +166,16 @@ export function ProviderActions({
           "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
         icon: <Plus className="h-4 w-4" />,
         text: t("failover.addQueue", { defaultValue: "加入" }),
+      };
+    }
+
+    if (isOfficialBlockedByProxy) {
+      return {
+        disabled: true,
+        variant: "secondary" as const,
+        className: "opacity-40 cursor-not-allowed",
+        icon: <ShieldAlert className="h-4 w-4" />,
+        text: t("provider.blockedByProxy", { defaultValue: "已拦截" }),
       };
     }
 

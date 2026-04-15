@@ -116,15 +116,25 @@ pub async fn stream_check_all_providers(
             claude_api_format_override,
         )
         .await
-        .unwrap_or_else(|e| StreamCheckResult {
-            status: HealthStatus::Failed,
-            success: false,
-            message: e.to_string(),
-            response_time_ms: None,
-            http_status: None,
-            model_used: String::new(),
-            tested_at: chrono::Utc::now().timestamp(),
-            retry_count: 0,
+        .unwrap_or_else(|e| {
+            let (http_status, message) = match &e {
+                crate::error::AppError::HttpStatus { status, .. } => (
+                    Some(*status),
+                    StreamCheckService::classify_http_status(*status).to_string(),
+                ),
+                _ => (None, e.to_string()),
+            };
+            StreamCheckResult {
+                status: HealthStatus::Failed,
+                success: false,
+                message,
+                response_time_ms: None,
+                http_status,
+                model_used: String::new(),
+                tested_at: chrono::Utc::now().timestamp(),
+                retry_count: 0,
+                error_category: None,
+            }
         });
 
         let _ = state
