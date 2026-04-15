@@ -252,8 +252,12 @@ async fn get_single_tool_version_impl(
         }
     }
 
-    // 确定主要环境类型（优先 Windows，其次第一个有版本的环境）
-    let (env_type, wsl_distro) = if let Some(first) = envs.first() {
+    let version_source_env = envs.iter().find(|env| env.version.is_some());
+
+    // 确定主要环境类型，优先跟随实际提供 version 的环境。
+    let (env_type, wsl_distro) = if let Some(source) = version_source_env {
+        (source.env_type.clone(), source.wsl_distro.clone())
+    } else if let Some(first) = envs.first() {
         (first.env_type.clone(), first.wsl_distro.clone())
     } else {
         let default_env_type = if cfg!(target_os = "windows") {
@@ -269,7 +273,7 @@ async fn get_single_tool_version_impl(
     };
 
     // 获取版本号和错误信息（优先使用第一个有效的）
-    let version = envs.iter().find_map(|e| e.version.clone());
+    let version = version_source_env.and_then(|env| env.version.clone());
     let error = if version.is_none() {
         envs.iter().find_map(|e| e.error.clone())
     } else {
@@ -414,17 +418,6 @@ fn get_local_tool_version(tool: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-/// 校验 WSL 发行版名称是否合法
-/// WSL 发行版名称只允许字母、数字、连字符和下划线
-#[cfg(target_os = "windows")]
-fn is_valid_wsl_distro_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-}
-
 /// Validate that the given shell name is one of the allowed shells.
 #[cfg(target_os = "windows")]
 fn is_valid_shell(shell: &str) -> bool {
@@ -466,7 +459,7 @@ fn try_get_version_wsl(
     );
 
     // 校验 distro 名称，防止命令注入
-    if !is_valid_wsl_distro_name(distro) {
+    if !crate::utils::wsl::is_valid_wsl_distro_name(distro) {
         return (None, Some(format!("[WSL:{distro}] invalid distro name")));
     }
 
@@ -1425,12 +1418,14 @@ mod tests {
 
         #[test]
         fn test_is_valid_wsl_distro_name() {
-            assert!(is_valid_wsl_distro_name("Ubuntu"));
-            assert!(is_valid_wsl_distro_name("Ubuntu-22.04"));
-            assert!(is_valid_wsl_distro_name("my_distro"));
-            assert!(!is_valid_wsl_distro_name(""));
-            assert!(!is_valid_wsl_distro_name("distro with spaces"));
-            assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
+            assert!(crate::utils::wsl::is_valid_wsl_distro_name("Ubuntu"));
+            assert!(crate::utils::wsl::is_valid_wsl_distro_name("Ubuntu-22.04"));
+            assert!(crate::utils::wsl::is_valid_wsl_distro_name("my_distro"));
+            assert!(crate::utils::wsl::is_valid_wsl_distro_name("Ubuntu Dev"));
+            assert!(!crate::utils::wsl::is_valid_wsl_distro_name(""));
+            assert!(!crate::utils::wsl::is_valid_wsl_distro_name(
+                &"a".repeat(65)
+            ));
         }
 
         #[test]
@@ -1439,6 +1434,52 @@ mod tests {
 
             assert_eq!(result, scan_cli_version("codex"));
         }
+
+        #[test]
+        fn test_try_get_version_wsl_accepts_distro_names_with_spaces() {
+            let (version, error) = try_get_version_wsl("codex", "Ubuntu Dev", None, None);
+
+            assert!(
+                !matches!(error.as_deref(), Some(message) if message.contains("invalid distro name"))
+            );
+            assert!(version.is_some() || error.is_some());
+        }
+    }
+
+    #[test]
+    fn tool_version_top_level_env_matches_version_source() {
+        let envs = vec![
+            ToolEnvVersion {
+                env_type: "windows".to_string(),
+                wsl_distro: None,
+                version: None,
+                error: Some("not installed".to_string()),
+                wsl_shell: None,
+                wsl_shell_flag: None,
+            },
+            ToolEnvVersion {
+                env_type: "wsl".to_string(),
+                wsl_distro: Some("Ubuntu Dev".to_string()),
+                version: Some("1.2.3".to_string()),
+                error: None,
+                wsl_shell: Some("bash".to_string()),
+                wsl_shell_flag: Some("-lic".to_string()),
+            },
+        ];
+
+        let version_source_env = envs.iter().find(|env| env.version.is_some());
+        let (env_type, wsl_distro) = if let Some(source) = version_source_env {
+            (source.env_type.clone(), source.wsl_distro.clone())
+        } else if let Some(first) = envs.first() {
+            (first.env_type.clone(), first.wsl_distro.clone())
+        } else {
+            ("unknown".to_string(), None)
+        };
+        let version = version_source_env.and_then(|env| env.version.clone());
+
+        assert_eq!(version, Some("1.2.3".to_string()));
+        assert_eq!(env_type, "wsl");
+        assert_eq!(wsl_distro, Some("Ubuntu Dev".to_string()));
     }
 
     #[test]
