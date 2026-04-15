@@ -85,7 +85,15 @@ struct ToolBlockState {
     name: String,
     started: bool,
     pending_args: String,
+    /// 连续空白字符计数 — 用于检测 Copilot 无限换行 bug
+    /// 当 function call 参数中出现连续 20+ 空白字符时，强制终止流
+    consecutive_whitespace: usize,
+    /// 是否已因无限空白 bug 被中止
+    aborted: bool,
 }
+
+/// 无限空白 bug 的连续空白字符阈值
+const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
 
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
@@ -297,8 +305,15 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                                 name: String::new(),
                                                                 started: false,
                                                                 pending_args: String::new(),
+                                                                consecutive_whitespace: 0,
+                                                                aborted: false,
                                                             }
                                                         });
+
+                                                    // 如果此 tool call 已被中止（无限空白 bug），跳过后续处理
+                                                    if state.aborted {
+                                                        continue;
+                                                    }
 
                                                     if let Some(id) = &tool_call.id {
                                                         state.id = id.clone();
@@ -328,7 +343,22 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                         .as_ref()
                                                         .and_then(|f| f.arguments.clone());
                                                     let immediate_delta = if let Some(args) = args_delta {
-                                                        if state.started {
+                                                        // 无限空白 bug 检测：跟踪连续空白字符
+                                                        for ch in args.chars() {
+                                                            if ch.is_whitespace() {
+                                                                state.consecutive_whitespace += 1;
+                                                            } else {
+                                                                state.consecutive_whitespace = 0;
+                                                            }
+                                                        }
+                                                        if state.consecutive_whitespace >= INFINITE_WHITESPACE_THRESHOLD {
+                                                            log::warn!(
+                                                                "[Copilot] 检测到无限空白 bug (tool: {}), 中止此 tool call 流",
+                                                                state.name
+                                                            );
+                                                            state.aborted = true;
+                                                            None
+                                                        } else if state.started {
                                                             Some(args)
                                                         } else {
                                                             state.pending_args.push_str(&args);

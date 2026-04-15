@@ -996,7 +996,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "PIPELLM",
-    websiteUrl: "https://www.pipellm.ai",
+    websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
@@ -1282,36 +1282,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "micu",
     icon: "micu",
-    iconColor: "#000000",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "X-Code API",
-    websiteUrl: "https://x-code.cc",
-    apiKeyUrl: "https://x-code.cc",
-    settingsConfig: {
-      npm: "@ai-sdk/anthropic",
-      name: "X-Code API",
-      options: {
-        baseURL: "https://x-code.cc/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "claude-opus-4-6": { name: "Claude Opus 4.6" },
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "x-code",
-    icon: "xcode",
     iconColor: "#000000",
     templateValues: {
       apiKey: {

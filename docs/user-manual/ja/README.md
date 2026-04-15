@@ -79,7 +79,7 @@ CC Switch ユーザーマニュアル
 | ファイル | 内容 |
 |------|------|
 | [4.1-service.md](./4-proxy/4.1-service.md) | プロキシの起動、設定項目、実行状態 |
-| [4.2-takeover.md](./4-proxy/4.2-takeover.md) | アプリケーション接管、設定変更、ステータス表示 |
+| [4.2-routing.md](./4-proxy/4.2-routing.md) | アプリケーションルーティング、設定変更、ステータス表示 |
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | フェイルオーバーキュー、サーキットブレーカー、ヘルスステータス |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | 使用量統計、トレンドグラフ、料金設定 |
 | [4.5-model-test.md](./4-proxy/4.5-model-test.md) | モデルテスト、ヘルスチェック、レイテンシテスト |

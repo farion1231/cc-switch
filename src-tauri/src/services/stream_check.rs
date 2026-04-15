@@ -218,9 +218,8 @@ impl StreamCheckService {
             .or_else(|| adapter.extract_auth(provider))
             .ok_or_else(|| AppError::Message("API Key not found".to_string()))?;
 
-        // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
-        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
-        let client = crate::proxy::http_client::get_for_provider(proxy_config);
+        // 获取 HTTP 客户端
+        let client = crate::proxy::http_client::get();
         let request_timeout = std::time::Duration::from_secs(config.timeout_secs);
 
         let model_to_test = Self::resolve_test_model(app_type, provider, config);
@@ -272,34 +271,11 @@ impl StreamCheckService {
         };
 
         let response_time = start.elapsed().as_millis() as u64;
-        let tested_at = chrono::Utc::now().timestamp();
-
-        match result {
-            Ok((status_code, model)) => {
-                let health_status =
-                    Self::determine_status(response_time, config.degraded_threshold_ms);
-                Ok(StreamCheckResult {
-                    status: health_status,
-                    success: true,
-                    message: "Check succeeded".to_string(),
-                    response_time_ms: Some(response_time),
-                    http_status: Some(status_code),
-                    model_used: model,
-                    tested_at,
-                    retry_count: 0,
-                })
-            }
-            Err(e) => Ok(StreamCheckResult {
-                status: HealthStatus::Failed,
-                success: false,
-                message: e.to_string(),
-                response_time_ms: Some(response_time),
-                http_status: None,
-                model_used: String::new(),
-                tested_at,
-                retry_count: 0,
-            }),
-        }
+        Ok(Self::build_stream_check_result(
+            result,
+            response_time,
+            config.degraded_threshold_ms,
+        ))
     }
 
     /// Claude 流式检查
@@ -372,7 +348,7 @@ impl StreamCheckService {
             anthropic_to_responses(anthropic_body, Some(&provider.id), is_codex_oauth)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_openai_chat {
-            anthropic_to_openai(anthropic_body, Some(&provider.id))
+            anthropic_to_openai(anthropic_body)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else {
             anthropic_body
@@ -476,7 +452,7 @@ impl StreamCheckService {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::Message(format!("HTTP {status}: {error_text}")));
+            return Err(Self::http_status_error(status, error_text));
         }
 
         // 流式读取：只需首个 chunk
@@ -556,7 +532,7 @@ impl StreamCheckService {
                 if i == 0 && status == 404 && urls.len() > 1 {
                     continue;
                 }
-                return Err(AppError::Message(format!("HTTP {status}: {error_text}")));
+                return Err(Self::http_status_error(status, error_text));
             }
 
             let mut stream = response.bytes_stream();
@@ -631,7 +607,7 @@ impl StreamCheckService {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::Message(format!("HTTP {status}: {error_text}")));
+            return Err(Self::http_status_error(status, error_text));
         }
 
         let mut stream = response.bytes_stream();
@@ -659,9 +635,8 @@ impl StreamCheckService {
         config: &StreamCheckConfig,
         start: Instant,
     ) -> Result<StreamCheckResult, AppError> {
-        // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
-        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
-        let client = crate::proxy::http_client::get_for_provider(proxy_config);
+        // 获取 HTTP 客户端
+        let client = crate::proxy::http_client::get();
         let request_timeout = std::time::Duration::from_secs(config.timeout_secs);
 
         let model_to_test = Self::resolve_test_model(app_type, provider, config);
@@ -719,16 +694,25 @@ impl StreamCheckService {
                 tested_at,
                 retry_count: 0,
             },
-            Err(e) => StreamCheckResult {
-                status: HealthStatus::Failed,
-                success: false,
-                message: e.to_string(),
-                response_time_ms: Some(response_time),
-                http_status: None,
-                model_used: String::new(),
-                tested_at,
-                retry_count: 0,
-            },
+            Err(e) => {
+                let (http_status, message) = match &e {
+                    AppError::HttpStatus { status, .. } => (
+                        Some(*status),
+                        Self::classify_http_status(*status).to_string(),
+                    ),
+                    _ => (None, e.to_string()),
+                };
+                StreamCheckResult {
+                    status: HealthStatus::Failed,
+                    success: false,
+                    message,
+                    response_time_ms: Some(response_time),
+                    http_status,
+                    model_used: String::new(),
+                    tested_at,
+                    retry_count: 0,
+                }
+            }
         }
     }
 
@@ -1123,6 +1107,39 @@ impl StreamCheckService {
             AppError::Message(format!("Connection failed: {e}"))
         } else {
             AppError::Message(e.to_string())
+        }
+    }
+
+    /// 构造 HTTP 状态码错误，截断过长的响应体
+    fn http_status_error(status: u16, body: String) -> AppError {
+        let body = if body.len() > 200 {
+            // 安全截断：找到 200 字节内最近的 char 边界
+            let mut end = 200;
+            while end > 0 && !body.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…", &body[..end])
+        } else {
+            body
+        };
+        AppError::HttpStatus { status, body }
+    }
+
+    /// 将 HTTP 状态码映射为简短的分类标签
+    pub(crate) fn classify_http_status(status: u16) -> &'static str {
+        match status {
+            400 => "Bad request (400)",
+            401 => "Auth rejected (401)",
+            402 => "Payment required (402)",
+            403 => "Access denied (403)",
+            404 => "Not found (404)",
+            429 => "Rate limited (429)",
+            500 => "Internal server error (500)",
+            502 => "Bad gateway (502)",
+            503 => "Service unavailable (503)",
+            504 => "Gateway timeout (504)",
+            s if (500..600).contains(&s) => "Server error",
+            _ => "HTTP error",
         }
     }
 

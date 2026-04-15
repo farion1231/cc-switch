@@ -528,7 +528,7 @@ async fn log_usage_internal(
         model
     };
 
-    let request_id = uuid::Uuid::new_v4().to_string();
+    let request_id = usage.dedup_request_id();
 
     log::debug!(
         "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}",
@@ -784,6 +784,7 @@ mod tests {
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
             model: None,
+            message_id: None,
         };
 
         log_usage_internal(
@@ -843,6 +844,7 @@ mod tests {
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
             model: None,
+            message_id: None,
         };
 
         log_usage_internal(
