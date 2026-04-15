@@ -1059,6 +1059,9 @@ pub fn run() {
             commands::testUsageScript,
             // subscription quota
             commands::get_subscription_quota,
+            commands::get_credential_scan_status,
+            commands::launch_gemini_oauth_login,
+            commands::install_gemini_cli,
             commands::get_codex_oauth_quota,
             commands::get_coding_plan_quota,
             commands::get_balance,

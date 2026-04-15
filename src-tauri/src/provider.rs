@@ -591,7 +591,7 @@ requires_openai_auth = true"#
         let models = self.models.gemini.as_ref();
         let model = models
             .and_then(|m| m.model.clone())
-            .unwrap_or_else(|| "gemini-2.5-pro".to_string());
+            .unwrap_or_else(|| "gemini-3.1-pro-preview".to_string());
 
         let settings_config = serde_json::json!({
             "env": {
@@ -937,7 +937,7 @@ mod tests {
                 .settings_config
                 .pointer("/env/GEMINI_MODEL")
                 .and_then(|item| item.as_str()),
-            Some("gemini-2.5-pro")
+            Some("gemini-3.1-pro-preview")
         );
     }
 

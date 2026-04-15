@@ -163,9 +163,33 @@
     "form": {
       "gemini": {
         "model": "モデル",
-        "oauthTitle": "OAuth 認証モード",
-        "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
+      },
+      "claude": {
+        "geminiOAuth": {
+          "title": "Gemini OAuth 認証",
+          "description": "Claude はこの端末に保存されている Gemini OAuth 認証情報を使って Gemini Official を利用します。API Key は不要です。",
+          "scanHint": "cc-switch はこの端末上のローカル Gemini OAuth 認証情報をスキャンし、トークンの手動貼り付けは不要です。",
+          "launchCli": "ターミナルを開いて Gemini にログイン",
+          "openWebsite": "Gemini ウェブサイトを開く",
+          "refresh": "状態を更新",
+          "loginLaunched": "Gemini CLI を起動しました。ターミナルでログインを完了してください。",
+          "launchFailed": "Gemini CLI の起動に失敗しました",
+          "notInstalled": "Gemini CLI がインストールされていません。下のインストールボタンをクリックしてください。",
+          "installHint": "インストールしますか？",
+          "installSuccess": "Gemini CLI のインストールが完了しました！",
+          "installFailed": "インストールに失敗しました",
+          "status": {
+            "validTitle": "ローカル Gemini OAuth を検出しました",
+            "validDescription": "Claude はこの端末に保存済みの Gemini OAuth 認証情報をそのまま利用します。",
+            "expiredTitle": "ローカル Gemini OAuth の期限が切れています",
+            "expiredDescription": "Gemini に再ログインしてから、ローカル認証情報のスキャン状態を更新してください。",
+            "notFoundTitle": "ローカル Gemini OAuth が見つかりません",
+            "notFoundDescription": "先に Gemini にログインすると、cc-switch がローカル OAuth 認証情報を再利用できます。",
+            "parseErrorTitle": "ローカル Gemini OAuth を解析できませんでした",
+            "parseErrorDescription": "cc-switch はこの端末上で Gemini OAuth データを見つけましたが、解析できませんでした。"
+          }
+        }
       }
     }
   },
@@ -787,7 +811,8 @@
       "shengsuanyun": "胜算云はCC Switchユーザーに特別特典を提供しています。このリンクから登録すると、10元分の無料クレジットと初回チャージ10%ボーナスがもらえます！"
     },
     "presets": {
-      "ucloud": "Compshare"
+      "ucloud": "Compshare",
+      "geminiOfficial": "Gemini Official"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -822,11 +847,13 @@
     "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
     "apiFormatOpenAIChat": "OpenAI Chat Completions（プロキシが必要）",
     "apiFormatOpenAIResponses": "OpenAI Responses API（プロキシが必要）",
+    "apiFormatGemini": "Gemini generateContent（プロキシが必要）",
     "authField": "認証フィールド",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（デフォルト）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
     "authFieldHint": "設定に書き込む認証環境変数名を選択",
     "apiHintResponses": "💡 OpenAI Responses API 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
+    "apiHintGemini": "💡 Gemini API エンドポイントを入力してください。例: https://generativelanguage.googleapis.com/v1beta。末尾にスラッシュを付けないでください",
     "anthropicDefaultHaikuModel": "既定 Haiku モデル",
     "anthropicDefaultSonnetModel": "既定 Sonnet モデル",
     "anthropicDefaultOpusModel": "既定 Opus モデル",

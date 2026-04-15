@@ -15,8 +15,9 @@ use super::{
     handler_context::RequestContext,
     providers::{
         get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
+        streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
-        transform_responses,
+        transform_gemini, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
@@ -155,10 +156,12 @@ async fn handle_claude_transform(
         let stream = response.bytes_stream();
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
-        > = if api_format == "openai_responses" {
-            Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
-        } else {
-            Box::new(Box::pin(create_anthropic_sse_stream(stream)))
+        > = match api_format {
+            "openai_responses" => {
+                Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
+            }
+            "gemini" => Box::new(Box::pin(create_anthropic_sse_stream_from_gemini(stream))),
+            _ => Box::new(Box::pin(create_anthropic_sse_stream(stream))),
         };
 
         // 创建使用量收集器
@@ -243,29 +246,31 @@ async fn handle_claude_transform(
     })?;
 
     // 根据 api_format 选择非流式转换器
-    let anthropic_response = if api_format == "openai_responses" {
-        transform_responses::responses_to_anthropic(upstream_response)
-    } else {
-        transform::openai_to_anthropic(upstream_response)
+    let anthropic_response = match api_format {
+        "openai_responses" => transform_responses::responses_to_anthropic(upstream_response),
+        "gemini" => transform_gemini::gemini_to_anthropic(upstream_response),
+        _ => transform::openai_to_anthropic(upstream_response),
     }
     .map_err(|e| {
         log::error!("[Claude] 转换响应失败: {e}");
         e
     })?;
 
+    let usage_model = anthropic_response
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or(ctx.request_model.as_str())
+        .to_string();
+
     // 记录使用量
     if let Some(usage) = TokenUsage::from_claude_response(&anthropic_response) {
-        let model = anthropic_response
-            .get("model")
-            .and_then(|m| m.as_str())
-            .unwrap_or("unknown");
         let latency_ms = ctx.latency_ms();
 
         let request_model = ctx.request_model.clone();
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
-            let model = model.to_string();
+            let model = usage_model.clone();
             async move {
                 log_usage(
                     &state,

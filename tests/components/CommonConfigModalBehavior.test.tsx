@@ -91,7 +91,7 @@ describe("Common config modals", () => {
         onConfigChange={() => {}}
         useCommonConfig={false}
         onCommonConfigToggle={() => {}}
-        commonConfigSnippet={`{"GEMINI_MODEL":"gemini-2.5-pro"}`}
+        commonConfigSnippet={`{"GEMINI_MODEL":"gemini-3.1-pro-preview"}`}
         onCommonConfigSnippetChange={() => false}
         onCommonConfigErrorClear={() => {}}
         commonConfigError="Invalid JSON"

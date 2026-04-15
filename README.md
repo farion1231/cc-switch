@@ -390,8 +390,11 @@ pnpm test:unit
 # Run tests in watch mode (recommended for development)
 pnpm test:unit:watch
 
-# Build application
+# Build application locally (no updater artifacts; no signing key required)
 pnpm build
+
+# Build release artifacts (enables updater artifacts; intended for CI/release builds)
+pnpm build:release
 
 # Build debug version
 pnpm tauri build --debug

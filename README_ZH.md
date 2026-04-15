@@ -392,8 +392,11 @@ pnpm test:unit
 # 监听模式运行测试（推荐开发时使用）
 pnpm test:unit:watch
 
-# 构建应用
+# 本地构建应用（不生成 updater artifacts，不需要签名私钥）
 pnpm build
+
+# 发布构建（启用 updater artifacts，适用于 CI / 正式发布）
+pnpm build:release
 
 # 构建调试版本
 pnpm tauri build --debug

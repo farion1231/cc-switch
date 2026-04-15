@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,6 +7,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { toast } from "sonner";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -24,7 +25,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ChevronDown, ChevronRight, Download, Loader2 } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+  TriangleAlert,
+} from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
@@ -39,12 +50,326 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import { useCredentialScanStatus } from "@/lib/query/subscription";
 import type {
   ProviderCategory,
   ClaudeApiFormat,
   ClaudeApiKeyField,
 } from "@/types";
+import type { CredentialStatus } from "@/types/subscription";
 import type { TemplateValueConfig } from "@/config/claudeProviderPresets";
+import { cn } from "@/lib/utils";
+import type { LucideIcon } from "lucide-react";
+import type { TFunction } from "i18next";
+
+function getGeminiStatusCopy(
+  status: CredentialStatus | undefined,
+  t: TFunction,
+): {
+  icon: LucideIcon;
+  containerClassName: string;
+  iconClassName: string;
+  title: string;
+  description: string;
+} {
+  switch (status) {
+    case "valid":
+      return {
+        icon: CheckCircle2,
+        containerClassName:
+          "border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/40",
+        iconClassName: "text-green-600 dark:text-green-400",
+        title: t("provider.form.claude.geminiOAuth.status.validTitle", {
+          defaultValue: "Detected local Gemini OAuth",
+        }),
+        description: t(
+          "provider.form.claude.geminiOAuth.status.validDescription",
+          {
+            defaultValue:
+              "Claude will use the Gemini OAuth credentials already stored on this device.",
+          },
+        ),
+      };
+    case "expired":
+      return {
+        icon: TriangleAlert,
+        containerClassName:
+          "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30",
+        iconClassName: "text-amber-600 dark:text-amber-400",
+        title: t("provider.form.claude.geminiOAuth.status.expiredTitle", {
+          defaultValue: "Local Gemini OAuth expired",
+        }),
+        description: t(
+          "provider.form.claude.geminiOAuth.status.expiredDescription",
+          {
+            defaultValue:
+              "Please sign in to Gemini again, then refresh the local credential scan.",
+          },
+        ),
+      };
+    case "parse_error":
+      return {
+        icon: AlertCircle,
+        containerClassName:
+          "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/30",
+        iconClassName: "text-red-600 dark:text-red-400",
+        title: t("provider.form.claude.geminiOAuth.status.parseErrorTitle", {
+          defaultValue: "Failed to parse local Gemini OAuth",
+        }),
+        description: t(
+          "provider.form.claude.geminiOAuth.status.parseErrorDescription",
+          {
+            defaultValue:
+              "cc-switch found Gemini OAuth data on this device, but could not parse it.",
+          },
+        ),
+      };
+    case "not_found":
+    default:
+      return {
+        icon: AlertCircle,
+        containerClassName:
+          "border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/40",
+        iconClassName: "text-slate-600 dark:text-slate-400",
+        title: t("provider.form.claude.geminiOAuth.status.notFoundTitle", {
+          defaultValue: "No local Gemini OAuth found",
+        }),
+        description: t(
+          "provider.form.claude.geminiOAuth.status.notFoundDescription",
+          {
+            defaultValue:
+              "Sign in to Gemini first, then cc-switch can reuse the local OAuth credentials.",
+          },
+        ),
+      };
+  }
+}
+
+function GeminiOauthStatusCard({ websiteUrl }: { websiteUrl: string }) {
+  const { t } = useTranslation();
+  const isTauriRuntimeAvailable =
+    typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  const { data, isFetching, isLoading, refetch } = useCredentialScanStatus(
+    "gemini",
+    isTauriRuntimeAvailable,
+  );
+
+  const statusCopy = useMemo(
+    () =>
+      isTauriRuntimeAvailable
+        ? getGeminiStatusCopy(data?.credentialStatus, t)
+        : getGeminiStatusCopy(undefined, t),
+    [data?.credentialStatus, isTauriRuntimeAvailable, t],
+  );
+  const StatusIcon = statusCopy.icon;
+  const detail = isTauriRuntimeAvailable
+    ? data?.credentialMessage?.trim()
+    : t("provider.form.claude.geminiOAuth.browserPreviewHint", {
+        defaultValue:
+          "Browser preview mode cannot access the local Tauri runtime. Open the desktop app to scan local Gemini OAuth credentials.",
+      });
+
+  const [isInstalling, setIsInstalling] = useState(false);
+
+  const handleLaunchLogin = async () => {
+    if (!isTauriRuntimeAvailable) {
+      toast.error(
+        t("provider.form.claude.geminiOAuth.tauriRequired", {
+          defaultValue:
+            "This action is only available in the desktop app. Please open cc-switch in Tauri and try again.",
+        }),
+      );
+      return;
+    }
+
+    try {
+      const { subscriptionApi } = await import("@/lib/api/subscription");
+      await subscriptionApi.launchGeminiOauthLogin();
+      toast.success(
+        t("provider.form.claude.geminiOAuth.loginLaunched", {
+          defaultValue: "已启动 Gemini CLI，请在终端中完成登录",
+        }),
+      );
+      // 延迟刷新状态，给用户时间完成登录
+      setTimeout(() => refetch(), 3000);
+    } catch (error) {
+      const errorMsg = extractErrorMessage(error);
+      // 如果是未安装错误，显示安装提示
+      if (errorMsg.includes("未安装") || errorMsg.includes("未检测到")) {
+        toast.info(
+          t("provider.form.claude.geminiOAuth.notInstalled", {
+            defaultValue: "Gemini CLI 未安装，请点击下方安装按钮",
+          }),
+        );
+      } else {
+        toast.error(
+          errorMsg ||
+            t("provider.form.claude.geminiOAuth.launchFailed", {
+              defaultValue: "启动 Gemini CLI 失败",
+            }),
+        );
+      }
+    }
+  };
+
+  const handleInstall = async (useBun: boolean) => {
+    if (!isTauriRuntimeAvailable) {
+      toast.error(
+        t("provider.form.claude.geminiOAuth.tauriRequired", {
+          defaultValue:
+            "This action is only available in the desktop app. Please open cc-switch in Tauri and try again.",
+        }),
+      );
+      return;
+    }
+
+    setIsInstalling(true);
+    try {
+      const { subscriptionApi } = await import("@/lib/api/subscription");
+      await subscriptionApi.installGeminiCli(useBun);
+      toast.success(
+        t("provider.form.claude.geminiOAuth.installSuccess", {
+          defaultValue: "Gemini CLI 安装成功！",
+        }),
+      );
+      // 安装成功后刷新状态
+      setTimeout(() => refetch(), 1000);
+    } catch (error) {
+      toast.error(
+        extractErrorMessage(error) ||
+          t("provider.form.claude.geminiOAuth.installFailed", {
+            defaultValue: "安装失败",
+          }),
+      );
+    } finally {
+      setIsInstalling(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950/40">
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+            {t("provider.form.claude.geminiOAuth.title", {
+              defaultValue: "Gemini OAuth authentication",
+            })}
+          </p>
+          <p className="text-sm text-blue-700 dark:text-blue-300">
+            {t("provider.form.claude.geminiOAuth.description", {
+              defaultValue:
+                "Claude will use Gemini Official through the Gemini OAuth credentials already stored on this device. No API key is required.",
+            })}
+          </p>
+          <p className="text-xs text-blue-700/80 dark:text-blue-300/80">
+            {t("provider.form.claude.geminiOAuth.scanHint", {
+              defaultValue:
+                "cc-switch scans local Gemini OAuth credentials on this device and does not ask you to paste tokens manually.",
+            })}
+          </p>
+        </div>
+
+        <div
+          className={cn(
+            "rounded-md border px-3 py-3",
+            statusCopy.containerClassName,
+          )}
+        >
+          <div className="flex items-start gap-3">
+            <StatusIcon className={cn("mt-0.5 h-4 w-4 shrink-0", statusCopy.iconClassName)} />
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium">{statusCopy.title}</p>
+              <p className="text-xs text-muted-foreground">
+                {detail || statusCopy.description}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleLaunchLogin}
+              disabled={
+                !isTauriRuntimeAvailable || isFetching || isLoading || isInstalling
+              }
+            >
+              <Download className="h-3.5 w-3.5" />
+              {t("provider.form.claude.geminiOAuth.launchCli", {
+                defaultValue: "Open terminal to sign in to Gemini",
+              })}
+            </Button>
+            {websiteUrl && (
+              <Button asChild type="button" size="sm" variant="outline">
+                <a href={websiteUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  {t("provider.form.claude.geminiOAuth.openWebsite", {
+                    defaultValue: "Open Gemini website",
+                  })}
+                </a>
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={
+                !isTauriRuntimeAvailable || isFetching || isLoading || isInstalling
+              }
+            >
+              <RefreshCw
+                className={cn(
+                  "h-3.5 w-3.5",
+                  (isFetching || isLoading) && "animate-spin",
+                )}
+              />
+              {t("provider.form.claude.geminiOAuth.refresh", {
+                defaultValue: "Refresh status",
+              })}
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-2 border-t border-blue-200 dark:border-blue-800">
+            <span className="text-xs text-blue-700 dark:text-blue-300 self-center">
+              {t("provider.form.claude.geminiOAuth.installHint", {
+                defaultValue: "未安装？",
+              })}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => handleInstall(false)}
+              disabled={!isTauriRuntimeAvailable || isInstalling}
+            >
+              {isInstalling ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              npm
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => handleInstall(true)}
+              disabled={!isTauriRuntimeAvailable || isInstalling}
+            >
+              {isInstalling ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              bun
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface EndpointCandidate {
   url: string;
@@ -76,6 +401,9 @@ interface ClaudeFormFieldsProps {
   isCodexOauthAuthenticated?: boolean;
   selectedCodexAccountId?: string | null;
   onCodexAccountSelect?: (accountId: string | null) => void;
+
+  // Gemini OAuth (Claude -> Gemini Official)
+  isGeminiOauthPreset?: boolean;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -144,6 +472,7 @@ export function ClaudeFormFields({
   isCodexOauthPreset,
   selectedCodexAccountId,
   onCodexAccountSelect,
+  isGeminiOauthPreset,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -375,6 +704,9 @@ export function ClaudeFormFields({
         />
       )}
 
+      {/* Gemini OAuth 认证（Claude -> Gemini Official） */}
+      {isGeminiOauthPreset && <GeminiOauthStatusCard websiteUrl={websiteUrl} />}
+
       {/* API Key 输入框（非 OAuth 预设时显示） */}
       {shouldShowApiKey && !usesOAuth && (
         <ApiKeySection
@@ -436,7 +768,12 @@ export function ClaudeFormFields({
               ? t("providerForm.apiHintResponses")
               : apiFormat === "openai_chat"
                 ? t("providerForm.apiHintOAI")
-                : t("providerForm.apiHint")
+                : apiFormat === "gemini"
+                  ? t("providerForm.apiHintGemini", {
+                      defaultValue:
+                        "Gemini API 端点（如 https://generativelanguage.googleapis.com/v1beta）",
+                    })
+                  : t("providerForm.apiHint")
           }
           onManageClick={() => onEndpointModalToggle(true)}
           showFullUrlToggle={true}
@@ -509,6 +846,11 @@ export function ClaudeFormFields({
                     <SelectItem value="openai_responses">
                       {t("providerForm.apiFormatOpenAIResponses", {
                         defaultValue: "OpenAI Responses API (需转换)",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="gemini">
+                      {t("providerForm.apiFormatGemini", {
+                        defaultValue: "Gemini generateContent (需转换)",
                       })}
                     </SelectItem>
                   </SelectContent>

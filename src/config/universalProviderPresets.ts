@@ -50,7 +50,7 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
     reasoningEffort: "high",
   },
   gemini: {
-    model: "gemini-2.5-pro",
+    model: "gemini-3.1-pro-preview",
   },
 };
 

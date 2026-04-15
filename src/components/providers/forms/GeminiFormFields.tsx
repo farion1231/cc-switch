@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
-import { Download, Info, Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import EndpointSpeedTest from "./EndpointSpeedTest";
@@ -103,36 +103,10 @@ export function GeminiFormFields({
       .finally(() => setIsFetchingModels(false));
   }, [baseUrl, apiKey, t]);
 
-  // 检测是否为 Google 官方（使用 OAuth）
-  const isGoogleOfficial =
-    partnerPromotionKey?.toLowerCase() === "google-official";
-
   return (
     <>
-      {/* Google OAuth 提示 */}
-      {isGoogleOfficial && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
-          <div className="flex gap-3">
-            <Info className="h-5 w-5 flex-shrink-0 text-blue-600 dark:text-blue-400" />
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                {t("provider.form.gemini.oauthTitle", {
-                  defaultValue: "OAuth 认证模式",
-                })}
-              </p>
-              <p className="text-sm text-blue-700 dark:text-blue-300">
-                {t("provider.form.gemini.oauthHint", {
-                  defaultValue:
-                    "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
-                })}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* API Key 输入框 */}
-      {shouldShowApiKey && !isGoogleOfficial && (
+      {shouldShowApiKey && (
         <ApiKeySection
           value={apiKey}
           onChange={onApiKeyChange}
@@ -185,7 +159,7 @@ export function GeminiFormFields({
             id="gemini-model"
             value={model}
             onChange={onModelChange}
-            placeholder="gemini-3-pro-preview"
+            placeholder="gemini-3.1-pro-preview"
             fetchedModels={fetchedModels}
             isLoading={isFetchingModels}
           />

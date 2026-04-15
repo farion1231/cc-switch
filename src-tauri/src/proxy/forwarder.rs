@@ -20,12 +20,17 @@ use super::{
 use crate::commands::{CodexOAuthState, CopilotAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::services::subscription::{
+    load_gemini_code_assist_project, read_gemini_credentials, refresh_gemini_token,
+    CredentialStatus,
+};
 use crate::{app_config::AppType, provider::Provider};
 use http::Extensions;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 pub struct ForwardResult {
     pub response: ProxyResponse,
@@ -769,12 +774,34 @@ impl RequestForwarder {
 
         // 确定有效端点
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
-        let is_copilot = provider
+        let provider_type = provider
             .meta
             .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("github_copilot")
-            || base_url.contains("githubcopilot.com");
+            .and_then(|m| m.provider_type.as_deref());
+        let is_copilot =
+            provider_type == Some("github_copilot") || base_url.contains("githubcopilot.com");
+        let is_gemini_oauth = provider_type == Some("gemini_oauth");
+        let mut gemini_code_assist_project: Option<String> = None;
+        let request_model = mapped_body.get("model").cloned();
+        let request_session_id = body
+            .pointer("/metadata/session_id")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| {
+                body.pointer("/metadata/user_id")
+                    .and_then(|v| v.as_str())
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+            })
+            .or_else(|| {
+                headers
+                    .get("x-session-id")
+                    .and_then(|v| v.to_str().ok())
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
 
         // --- Copilot 优化器：请求体优化 + 分类（在格式转换之前执行） ---
         // 注意：确定性 ID 也在此处计算，因为 mapped_body 在格式转换时会被 move
@@ -878,7 +905,13 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot)
+                rewrite_claude_transform_endpoint(
+                    endpoint,
+                    api_format,
+                    is_copilot,
+                    &mapped_body,
+                    provider_type,
+                )?
             } else {
                 (
                     endpoint.to_string(),
@@ -888,14 +921,11 @@ impl RequestForwarder {
                 )
             };
 
-        let url = if is_full_url {
-            append_query_to_full_url(&base_url, passthrough_query.as_deref())
-        } else {
-            adapter.build_url(&base_url, &effective_endpoint)
-        };
+        // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
+        let mut codex_oauth_account_id: Option<String> = None;
 
         // 转换请求体（如果需要）
-        let request_body = if needs_transform {
+        let transformed_body = if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
                     .as_deref()
@@ -911,15 +941,6 @@ impl RequestForwarder {
         } else {
             mapped_body
         };
-
-        // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
-        // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
-        let force_identity_encoding = needs_transform
-            || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
-
-        // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
-        let mut codex_oauth_account_id: Option<String> = None;
 
         // 获取认证头（提前准备，用于内联替换）
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
@@ -1026,10 +1047,91 @@ impl RequestForwarder {
                 }
             }
 
+            if auth.strategy == AuthStrategy::GoogleOAuth
+                && resolved_claude_api_format.as_deref() == Some("gemini")
+            {
+                let (access_token, refresh_token, status, message) = read_gemini_credentials();
+                let token = match status {
+                    CredentialStatus::Valid => access_token,
+                    CredentialStatus::Expired => {
+                        if let Some(refresh_token) = refresh_token.as_deref() {
+                            refresh_gemini_token(refresh_token).await
+                        } else {
+                            None
+                        }
+                    }
+                    CredentialStatus::NotFound | CredentialStatus::ParseError => None,
+                };
+
+                let token = token.ok_or_else(|| {
+                    let reason = message
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| "未找到可用的 Gemini OAuth 凭据".to_string());
+                    ProxyError::AuthError(format!(
+                        "Gemini OAuth 认证失败: {reason}。请先切换到 Google Official 并通过 Gemini CLI 完成登录。"
+                    ))
+                })?;
+
+                if is_gemini_oauth {
+                    gemini_code_assist_project = load_gemini_code_assist_project(&token)
+                        .await
+                        .map_err(|reason| {
+                            ProxyError::AuthError(format!(
+                                "Gemini OAuth 初始化失败: {reason}。请先在 Gemini CLI 中完成一次可用请求。"
+                            ))
+                        })?;
+
+                    if gemini_code_assist_project.is_none() {
+                        return Err(ProxyError::AuthError(
+                            "Gemini OAuth 初始化失败: loadCodeAssist 未返回项目 ID。请先在 Gemini CLI 中完成一次可用请求。"
+                                .to_string(),
+                        ));
+                    }
+                }
+
+                auth = AuthInfo::with_access_token(
+                    "gemini_oauth_refresh_placeholder".to_string(),
+                    token,
+                );
+            }
+
             adapter.get_auth_headers(&auth)
         } else {
             Vec::new()
         };
+
+        let mut request_body = transformed_body;
+
+        if adapter.name() == "Claude"
+            && resolved_claude_api_format.as_deref() == Some("gemini")
+            && is_gemini_oauth
+        {
+            let mut wrapped_body = json!({
+                "model": request_model
+                    .clone()
+                    .unwrap_or_else(|| json!("gemini-3.1-pro-preview")),
+                "user_prompt_id": format!("cc-switch-{request_session_id}"),
+                "request": request_body,
+            });
+
+            if let Some(project) = gemini_code_assist_project.clone() {
+                wrapped_body["project"] = Value::String(project);
+            }
+
+            request_body = wrapped_body;
+        }
+
+        let url = if is_full_url {
+            append_query_to_full_url(&base_url, passthrough_query.as_deref())
+        } else {
+            adapter.build_url(&base_url, &effective_endpoint)
+        };
+
+        // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
+        // 默认使用空白名单，过滤所有 _ 前缀字段
+        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+        let force_identity_encoding = needs_transform
+            || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
         // 注入 Codex OAuth 的 ChatGPT-Account-Id header（如果有 account_id）
         if let Some(ref account_id) = codex_oauth_account_id {
@@ -1594,7 +1696,9 @@ fn rewrite_claude_transform_endpoint(
     endpoint: &str,
     api_format: &str,
     is_copilot: bool,
-) -> (String, Option<String>) {
+    body: &Value,
+    provider_type: Option<&str>,
+) -> Result<(String, Option<String>), ProxyError> {
     let (path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = if is_claude_messages_path(path) {
         strip_beta_query(query)
@@ -1603,25 +1707,53 @@ fn rewrite_claude_transform_endpoint(
     };
 
     if !is_claude_messages_path(path) {
-        return (endpoint.to_string(), passthrough_query);
+        return Ok((endpoint.to_string(), passthrough_query));
     }
 
-    let target_path = if is_copilot && api_format == "openai_responses" {
-        "/v1/responses"
+    let target_path = if api_format == "gemini" {
+        let raw_model = body
+            .get("model")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ProxyError::ConfigError("Claude Gemini 模式缺少 model 字段".to_string())
+            })?;
+        let model = raw_model.strip_prefix("models/").unwrap_or(raw_model);
+        let is_stream = body
+            .get("stream")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let is_gemini_oauth = provider_type == Some("gemini_oauth");
+        if is_gemini_oauth {
+            if is_stream {
+                "/v1internal:streamGenerateContent?alt=sse".to_string()
+            } else {
+                "/v1internal:generateContent".to_string()
+            }
+        } else if is_stream {
+            format!("/v1beta/models/{model}:streamGenerateContent?alt=sse")
+        } else {
+            format!("/v1beta/models/{model}:generateContent")
+        }
+    } else if is_copilot && api_format == "openai_responses" {
+        "/v1/responses".to_string()
     } else if is_copilot {
-        "/chat/completions"
+        "/chat/completions".to_string()
     } else if api_format == "openai_responses" {
-        "/v1/responses"
+        "/v1/responses".to_string()
     } else {
-        "/v1/chat/completions"
+        "/v1/chat/completions".to_string()
     };
 
     let rewritten = match passthrough_query.as_deref() {
-        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
-        _ => target_path.to_string(),
+        Some(query) if !query.is_empty() && !target_path.contains('?') => {
+            format!("{target_path}?{query}")
+        }
+        Some(query) if !query.is_empty() => format!("{target_path}&{query}"),
+        _ => target_path,
     };
 
-    (rewritten, passthrough_query)
+    Ok((rewritten, passthrough_query))
 }
 
 fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
@@ -1677,9 +1809,63 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
+    use crate::provider::ProviderMeta;
+    use crate::proxy::failover_switch::FailoverSwitchManager;
+    use crate::proxy::provider_router::ProviderRouter;
+    use crate::proxy::types::ProxyStatus;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn make_test_forwarder() -> RequestForwarder {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let db = Arc::new(Database::memory().expect("create in-memory db"));
+        RequestForwarder::new(
+            Arc::new(ProviderRouter::new(db.clone())),
+            600,
+            Arc::new(RwLock::new(ProxyStatus::default())),
+            Arc::new(RwLock::new(HashMap::new())),
+            Arc::new(FailoverSwitchManager::new(db)),
+            None,
+            String::new(),
+            60,
+            120,
+            crate::proxy::types::RectifierConfig::default(),
+            crate::proxy::types::OptimizerConfig::default(),
+            crate::proxy::types::CopilotOptimizerConfig::default(),
+        )
+    }
+
+    fn make_gemini_oauth_claude_provider() -> Provider {
+        Provider {
+            id: "gemini-oauth-test".to_string(),
+            name: "Gemini Official".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",
+                    "ANTHROPIC_MODEL": "gemini-3-flash-preview"
+                }
+            }),
+            website_url: None,
+            category: Some("third_party".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(ProviderMeta {
+                api_format: Some("gemini".to_string()),
+                provider_type: Some("gemini_oauth".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
 
     #[test]
     fn single_provider_retryable_log_uses_single_provider_code() {
@@ -1752,7 +1938,10 @@ mod tests {
             "/v1/messages?beta=true&foo=bar",
             "openai_chat",
             false,
-        );
+            &json!({"model":"claude-sonnet-4"}),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
@@ -1764,7 +1953,10 @@ mod tests {
             "/claude/v1/messages?beta=true&x-id=1",
             "openai_responses",
             false,
-        );
+            &json!({"model":"claude-sonnet-4"}),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(endpoint, "/v1/responses?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
@@ -1772,8 +1964,14 @@ mod tests {
 
     #[test]
     fn rewrite_claude_transform_endpoint_uses_copilot_path() {
-        let (endpoint, passthrough_query) =
-            rewrite_claude_transform_endpoint("/v1/messages?beta=true&x-id=1", "anthropic", true);
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&x-id=1",
+            "anthropic",
+            true,
+            &json!({"model":"claude-sonnet-4"}),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(endpoint, "/chat/completions?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
@@ -1785,7 +1983,10 @@ mod tests {
             "/v1/messages?beta=true&x-id=1",
             "openai_responses",
             true,
-        );
+            &json!({"model":"claude-sonnet-4"}),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(endpoint, "/v1/responses?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
@@ -1796,6 +1997,91 @@ mod tests {
         let url = append_query_to_full_url("https://relay.example/api?foo=bar", Some("x-id=1"));
 
         assert_eq!(url, "https://relay.example/api?foo=bar&x-id=1");
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_gemini_generate_content_path() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&x-id=1",
+            "gemini",
+            false,
+            &json!({"model":"gemini-3.1-pro-preview","stream":false}),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            endpoint,
+            "/v1beta/models/gemini-3.1-pro-preview:generateContent?x-id=1"
+        );
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_gemini_oauth_generate_content_path() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&x-id=1",
+            "gemini",
+            false,
+            &json!({"model":"gemini-3.1-pro-preview","stream":false}),
+            Some("gemini_oauth"),
+        )
+        .unwrap();
+
+        assert_eq!(endpoint, "/v1internal:generateContent?x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_gemini_stream_path() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/claude/v1/messages?beta=true&x-id=1",
+            "gemini",
+            false,
+            &json!({"model":"models/gemini-3.1-pro-preview","stream":true}),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            endpoint,
+            "/v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse&x-id=1"
+        );
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_gemini_oauth_stream_path() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/claude/v1/messages?beta=true&x-id=1",
+            "gemini",
+            false,
+            &json!({"model":"models/gemini-3.1-pro-preview","stream":true}),
+            Some("gemini_oauth"),
+        )
+        .unwrap();
+
+        assert_eq!(endpoint, "/v1internal:streamGenerateContent?alt=sse&x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_requires_model_for_gemini() {
+        let err = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true",
+            "gemini",
+            false,
+            &json!({"stream":true}),
+            None,
+        )
+        .unwrap_err();
+
+        match err {
+            ProxyError::ConfigError(message) => {
+                assert!(message.contains("缺少 model 字段"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 
     #[test]
@@ -1814,8 +2100,8 @@ mod tests {
         let headers = HeaderMap::new();
 
         assert!(should_force_identity_encoding(
-            "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
-            &json!({ "model": "gemini-2.5-pro" }),
+            "/v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse",
+            &json!({ "model": "gemini-3.1-pro-preview" }),
             &headers
         ));
     }
@@ -1944,5 +2230,62 @@ mod tests {
             let will_replace = is_copilot && !is_full_url;
             assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "real network test using local Gemini OAuth credentials"]
+    async fn real_gemini_oauth_claude_request_returns_code_assist_response() {
+        std::env::set_var(
+            "CC_SWITCH_TEST_HOME",
+            "C:/Users/23479/.claude/tmp/gemini-oauth-test-home",
+        );
+
+        let forwarder = make_test_forwarder();
+        let provider = make_gemini_oauth_claude_provider();
+        let headers = HeaderMap::new();
+        let body = json!({
+            "model": "gemini-3-flash-preview",
+            "max_tokens": 64,
+            "messages": [
+                { "role": "user", "content": [{ "type": "text", "text": "Reply with exactly PONG." }] }
+            ],
+            "stream": false,
+            "metadata": {
+                "session_id": "cc-switch-gemini-oauth-test"
+            }
+        });
+
+        let adapter = crate::proxy::providers::get_adapter(&AppType::Claude);
+        let (response, resolved_format) = forwarder
+            .forward(
+                &provider,
+                "/v1/messages",
+                &body,
+                &headers,
+                &Extensions::new(),
+                adapter.as_ref(),
+            )
+            .await
+            .expect("Gemini OAuth Claude request should succeed");
+
+        assert_eq!(resolved_format.as_deref(), Some("gemini"));
+
+        let response_body = response.bytes().await.expect("read response body");
+        let json: Value = serde_json::from_slice(&response_body).expect("parse response json");
+        let wrapped = json.get("response").expect("wrapped Code Assist response");
+        let text = wrapped
+            .get("candidates")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|candidate| candidate.get("content"))
+            .and_then(|content| content.get("parts"))
+            .and_then(|parts| parts.as_array())
+            .and_then(|parts| parts.first())
+            .and_then(|part| part.get("text"))
+            .and_then(|text| text.as_str())
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+
+        assert!(text.contains("PONG"), "unexpected response: {json}");
     }
 }

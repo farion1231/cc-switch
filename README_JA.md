@@ -391,8 +391,11 @@ pnpm test:unit
 # ウォッチモード（開発に推奨）
 pnpm test:unit:watch
 
-# アプリをビルド
+# ローカルビルド（updater artifacts を生成しない。署名秘密鍵不要）
 pnpm build
+
+# リリースビルド（updater artifacts を有効化。CI / 正式リリース向け）
+pnpm build:release
 
 # デバッグビルド
 pnpm tauri build --debug

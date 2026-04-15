@@ -812,6 +812,9 @@ export function ProviderForm({
     const isCodexOauthProvider =
       templatePreset?.providerType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
+    const isGeminiOauthProvider =
+      templatePreset?.providerType === "gemini_oauth" ||
+      initialData?.meta?.providerType === "gemini_oauth";
     // GitHub Copilot 必须先登录才能添加
     if (isCopilotProvider && !isCopilotAuthenticated) {
       toast.error(
@@ -833,7 +836,7 @@ export function ProviderForm({
 
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
-        if (!isCodexOauthProvider && !baseUrl.trim()) {
+        if (!baseUrl.trim()) {
           toast.error(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
@@ -841,7 +844,12 @@ export function ProviderForm({
           );
           return;
         }
-        if (!isCopilotProvider && !isCodexOauthProvider && !apiKey.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isCodexOauthProvider &&
+          !isGeminiOauthProvider &&
+          !apiKey.trim()
+        ) {
           toast.error(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1084,17 +1092,20 @@ export function ProviderForm({
           ? pricingConfig.pricingModelSource
           : undefined,
       apiFormat:
-        appId === "claude" && category !== "official"
+        appId === "claude" &&
+        (category !== "official" || isGeminiOauthProvider)
           ? localApiFormat
           : undefined,
       apiKeyField:
         appId === "claude" &&
-        category !== "official" &&
+        (category !== "official" || isGeminiOauthProvider) &&
         localApiKeyField !== "ANTHROPIC_AUTH_TOKEN"
           ? localApiKeyField
           : undefined,
       isFullUrl:
-        supportsFullUrl && category !== "official" && localIsFullUrl
+        supportsFullUrl &&
+        (category !== "official" || isGeminiOauthProvider) &&
+        localIsFullUrl
           ? true
           : undefined,
     };
@@ -1543,13 +1554,19 @@ export function ProviderForm({
                 templatePreset?.providerType === "codex_oauth" ||
                 initialData?.meta?.providerType === "codex_oauth"
               }
+              isGeminiOauthPreset={
+                templatePreset?.providerType === "gemini_oauth" ||
+                initialData?.meta?.providerType === "gemini_oauth"
+              }
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
                 templatePreset?.providerType === "github_copilot" ||
                 initialData?.meta?.providerType === "github_copilot" ||
                 baseUrl.includes("githubcopilot.com") ||
                 templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
+                initialData?.meta?.providerType === "codex_oauth" ||
+                templatePreset?.providerType === "gemini_oauth" ||
+                initialData?.meta?.providerType === "gemini_oauth"
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}

@@ -58,11 +58,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://router.shengsuanyun.com/api",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://router.shengsuanyun.com/api",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "Shengsuanyun",
     category: "aggregator",
     isPartner: true,
@@ -76,11 +76,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://www.packyapi.com",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://www.packyapi.com",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "PackyCode",
     category: "third_party",
     isPartner: true,
@@ -98,11 +98,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.cubence.com",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://api.cubence.com",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "Cubence",
     category: "third_party",
     isPartner: true,
@@ -123,11 +123,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.com",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://api.aigocode.com",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "AIGoCode",
     category: "third_party",
     isPartner: true,
@@ -143,11 +143,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aicodemirror.com/api/gemini",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://api.aicodemirror.com/api/gemini",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "AICodeMirror",
     category: "third_party",
     isPartner: true,
@@ -166,11 +166,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.aicoding.sh",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://api.aicoding.sh",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "AICoding",
     category: "third_party",
     isPartner: true,
@@ -186,11 +186,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://crazyrouter.com",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://crazyrouter.com",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "CrazyRouter",
     category: "third_party",
     isPartner: true,
@@ -206,11 +206,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://node-hk.sssaicode.com/api",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://node-hk.sssaicode.com/api",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "SSSAiCode",
     category: "third_party",
     isPartner: true,
@@ -230,11 +230,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.ctok.ai/v1beta",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://api.ctok.ai/v1beta",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "CTok",
     category: "third_party",
     isPartner: true,
@@ -249,11 +249,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://vibecodingapi.ai",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://vibecodingapi.ai",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "LionCCAPI",
     category: "third_party",
     isPartner: true,
@@ -302,11 +302,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://openrouter.ai/api",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://openrouter.ai/api",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "OpenRouter",
     category: "aggregator",
     icon: "openrouter",
@@ -319,11 +319,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.therouter.ai",
-        GEMINI_MODEL: "gemini-2.5-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
     baseURL: "https://api.therouter.ai",
-    model: "gemini-2.5-pro",
+    model: "gemini-3.1-pro-preview",
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],
@@ -334,10 +334,10 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
-    model: "gemini-3.1-pro",
+    model: "gemini-3.1-pro-preview",
     description: "自定义 Gemini API 端点",
     category: "custom",
   },

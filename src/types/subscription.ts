@@ -28,3 +28,10 @@ export interface SubscriptionQuota {
   error: string | null;
   queriedAt: number | null;
 }
+
+export interface CredentialScanStatus {
+  tool: string;
+  credentialStatus: CredentialStatus;
+  credentialMessage: string | null;
+  queriedAt: number;
+}

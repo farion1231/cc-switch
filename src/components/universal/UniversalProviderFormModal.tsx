@@ -172,7 +172,7 @@ requires_openai_auth = true`;
   // 计算 Gemini 配置 JSON 预览
   const geminiConfigJson = useMemo(() => {
     if (!geminiEnabled) return null;
-    const model = models.gemini?.model || "gemini-2.5-pro";
+    const model = models.gemini?.model || "gemini-3.1-pro-preview";
     return {
       env: {
         GOOGLE_GEMINI_BASE_URL: baseUrl,
@@ -624,7 +624,7 @@ requires_openai_auth = true`;
                   onChange={(e) =>
                     updateModel("gemini", "model", e.target.value)
                   }
-                  placeholder="gemini-2.5-pro"
+                  placeholder="gemini-3.1-pro-preview"
                 />
               </div>
             </div>

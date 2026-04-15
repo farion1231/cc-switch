@@ -163,9 +163,33 @@
     "form": {
       "gemini": {
         "model": "模型",
-        "oauthTitle": "OAuth 认证模式",
-        "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
+      },
+      "claude": {
+        "geminiOAuth": {
+          "title": "Gemini OAuth 认证",
+          "description": "Claude 将通过此设备上已保存的 Gemini OAuth 凭据使用 Gemini Official，无需填写 API Key。",
+          "scanHint": "cc-switch 会扫描此设备上的本地 Gemini OAuth 凭据，不需要你手动粘贴 token。",
+          "launchCli": "打开终端登录 Gemini",
+          "openWebsite": "打开 Gemini 网站",
+          "refresh": "刷新状态",
+          "loginLaunched": "已启动 Gemini CLI，请在终端中完成登录",
+          "launchFailed": "启动 Gemini CLI 失败",
+          "notInstalled": "Gemini CLI 未安装，请点击下方安装按钮",
+          "installHint": "未安装？",
+          "installSuccess": "Gemini CLI 安装成功！",
+          "installFailed": "安装失败",
+          "status": {
+            "validTitle": "已检测到本地 Gemini OAuth",
+            "validDescription": "Claude 将直接复用此设备上已保存的 Gemini OAuth 凭据。",
+            "expiredTitle": "本地 Gemini OAuth 已过期",
+            "expiredDescription": "请重新登录 Gemini，然后刷新本地凭据扫描状态。",
+            "notFoundTitle": "未找到本地 Gemini OAuth",
+            "notFoundDescription": "请先完成 Gemini 登录，之后 cc-switch 才能复用本地 OAuth 凭据。",
+            "parseErrorTitle": "本地 Gemini OAuth 解析失败",
+            "parseErrorDescription": "cc-switch 在此设备上发现了 Gemini OAuth 数据，但暂时无法解析。"
+          }
+        }
       }
     }
   },
@@ -788,7 +812,8 @@
     },
     "presets": {
       "ucloud": "优云智算",
-      "shengsuanyun": "胜算云"
+      "shengsuanyun": "胜算云",
+      "geminiOfficial": "Gemini Official"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -823,11 +848,13 @@
     "apiFormatAnthropic": "Anthropic Messages (原生)",
     "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启代理)",
     "apiFormatOpenAIResponses": "OpenAI Responses API (需开启代理)",
+    "apiFormatGemini": "Gemini generateContent (需开启代理)",
     "authField": "认证字段",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（默认）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
     "authFieldHint": "选择写入配置的认证环境变量名",
     "apiHintResponses": "💡 填写兼容 OpenAI Responses API 的服务端点地址，不要以斜杠结尾",
+    "apiHintGemini": "💡 填写 Gemini API 端点地址，例如 https://generativelanguage.googleapis.com/v1beta，不要以斜杠结尾",
     "anthropicDefaultHaikuModel": "Haiku 默认模型",
     "anthropicDefaultSonnetModel": "Sonnet 默认模型",
     "anthropicDefaultOpusModel": "Opus 默认模型",

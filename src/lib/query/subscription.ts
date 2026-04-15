@@ -5,7 +5,20 @@ import type { ProviderMeta } from "@/types";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
 
+const SCAN_REFETCH_INTERVAL = 60 * 1000;
 const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+export function useCredentialScanStatus(tool: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["credential-scan", tool],
+    queryFn: () => subscriptionApi.getCredentialScanStatus(tool),
+    enabled,
+    refetchInterval: enabled ? SCAN_REFETCH_INTERVAL : false,
+    refetchOnWindowFocus: enabled,
+    staleTime: 30 * 1000,
+    retry: 1,
+  });
+}
 
 export function useSubscriptionQuota(
   appId: AppId,

@@ -20,8 +20,10 @@ pub mod copilot_auth;
 mod gemini;
 pub mod models;
 pub mod streaming;
+pub mod streaming_gemini;
 pub mod streaming_responses;
 pub mod transform;
+pub mod transform_gemini;
 pub mod transform_responses;
 
 use crate::app_config::AppType;
@@ -101,7 +103,7 @@ impl ProviderType {
     pub fn from_app_type_and_config(app_type: &AppType, provider: &Provider) -> Self {
         match app_type {
             AppType::Claude => {
-                // 检测是否为 GitHub Copilot
+                // 检测 provider_type 显式声明
                 if let Some(meta) = provider.meta.as_ref() {
                     if meta.provider_type.as_deref() == Some("github_copilot") {
                         return ProviderType::GitHubCopilot;
@@ -109,7 +111,23 @@ impl ProviderType {
                     if meta.provider_type.as_deref() == Some("codex_oauth") {
                         return ProviderType::CodexOAuth;
                     }
+                    if meta.provider_type.as_deref() == Some("gemini_oauth")
+                        || meta.api_format.as_deref() == Some("gemini")
+                    {
+                        return ProviderType::GeminiCli;
+                    }
                 }
+
+                if provider
+                    .settings_config
+                    .get("api_format")
+                    .and_then(|v| v.as_str())
+                    == Some("gemini")
+                {
+                    return ProviderType::GeminiCli;
+                }
+
+                // 检测是否为 GitHub Copilot
 
                 // 检测 base_url 是否为 GitHub Copilot
                 let adapter = ClaudeAdapter::new();
@@ -474,6 +492,48 @@ mod tests {
         }));
 
         let provider_type = ProviderType::from_app_type_and_config(&AppType::Gemini, &provider);
+        assert_eq!(provider_type, ProviderType::GeminiCli);
+    }
+
+    #[test]
+    fn test_from_app_type_claude_gemini_oauth() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test Provider".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com/v1beta"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(crate::provider::ProviderMeta {
+                provider_type: Some("gemini_oauth".to_string()),
+                api_format: Some("gemini".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let provider_type = ProviderType::from_app_type_and_config(&AppType::Claude, &provider);
+        assert_eq!(provider_type, ProviderType::GeminiCli);
+    }
+
+    #[test]
+    fn test_from_app_type_claude_legacy_gemini_api_format() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com/v1beta"
+            },
+            "api_format": "gemini"
+        }));
+
+        let provider_type = ProviderType::from_app_type_and_config(&AppType::Claude, &provider);
         assert_eq!(provider_type, ProviderType::GeminiCli);
     }
 

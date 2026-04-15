@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm tauri dev",
     "build": "pnpm tauri build",
+    "build:release": "pnpm tauri build --config src-tauri/tauri.release.conf.json",
     "tauri": "tauri",
     "dev:renderer": "vite",
     "build:renderer": "vite build",

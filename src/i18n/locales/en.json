@@ -163,9 +163,33 @@
     "form": {
       "gemini": {
         "model": "Model",
-        "oauthTitle": "OAuth Authentication Mode",
-        "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
+      },
+      "claude": {
+        "geminiOAuth": {
+          "title": "Gemini OAuth authentication",
+          "description": "Claude will use Gemini Official through the Gemini OAuth credentials already stored on this device. No API key is required.",
+          "scanHint": "cc-switch scans local Gemini OAuth credentials on this device and does not ask you to paste tokens manually.",
+          "launchCli": "Open terminal to sign in to Gemini",
+          "openWebsite": "Open Gemini website",
+          "refresh": "Refresh status",
+          "loginLaunched": "Gemini CLI launched. Please complete sign-in in the terminal.",
+          "launchFailed": "Failed to launch Gemini CLI",
+          "notInstalled": "Gemini CLI is not installed. Please click the install button below.",
+          "installHint": "Not installed?",
+          "installSuccess": "Gemini CLI installed successfully!",
+          "installFailed": "Installation failed",
+          "status": {
+            "validTitle": "Detected local Gemini OAuth",
+            "validDescription": "Claude will use the Gemini OAuth credentials already stored on this device.",
+            "expiredTitle": "Local Gemini OAuth expired",
+            "expiredDescription": "Please sign in to Gemini again, then refresh the local credential scan.",
+            "notFoundTitle": "No local Gemini OAuth found",
+            "notFoundDescription": "Sign in to Gemini first, then cc-switch can reuse the local OAuth credentials.",
+            "parseErrorTitle": "Failed to parse local Gemini OAuth",
+            "parseErrorDescription": "cc-switch found Gemini OAuth data on this device, but could not parse it."
+          }
+        }
       }
     }
   },
@@ -787,7 +811,8 @@
       "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!"
     },
     "presets": {
-      "ucloud": "Compshare"
+      "ucloud": "Compshare",
+      "geminiOfficial": "Gemini Official"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
@@ -822,11 +847,13 @@
     "apiFormatAnthropic": "Anthropic Messages (Native)",
     "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires proxy)",
     "apiFormatOpenAIResponses": "OpenAI Responses API (Requires proxy)",
+    "apiFormatGemini": "Gemini generateContent (Requires proxy)",
     "authField": "Auth Field",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN (Default)",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
     "authFieldHint": "Select the authentication env variable name for the config",
     "apiHintResponses": "💡 Fill in OpenAI Responses API compatible service endpoint, avoid trailing slash",
+    "apiHintGemini": "💡 Fill in the Gemini API endpoint, for example https://generativelanguage.googleapis.com/v1beta, and avoid a trailing slash",
     "anthropicDefaultHaikuModel": "Default Haiku Model",
     "anthropicDefaultSonnetModel": "Default Sonnet Model",
     "anthropicDefaultOpusModel": "Default Opus Model",

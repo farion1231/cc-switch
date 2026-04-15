@@ -49,12 +49,14 @@ export interface ProviderPreset {
   // - "anthropic" (默认): Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
-  apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
+  // - "gemini": Google Gemini generateContent 格式，需要格式转换
+  apiFormat?: "anthropic" | "openai_chat" | "openai_responses" | "gemini";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth";
+  // - "gemini_oauth": Google Gemini Official（复用 Gemini CLI OAuth 凭据）
+  providerType?: "github_copilot" | "codex_oauth" | "gemini_oauth";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -815,6 +817,26 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "openai",
     iconColor: "#000000",
+  },
+  {
+    name: "Gemini Official",
+    nameKey: "providerForm.presets.geminiOfficial",
+    websiteUrl: "https://ai.google.dev",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
+        ANTHROPIC_MODEL: "gemini-3.1-pro-preview",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gemini-3-flash-preview",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gemini-3.1-pro-preview",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    category: "third_party",
+    apiFormat: "gemini",
+    providerType: "gemini_oauth",
+    requiresOAuth: true,
+    icon: "gemini",
+    iconColor: "#4285F4",
   },
   {
     name: "Nvidia",

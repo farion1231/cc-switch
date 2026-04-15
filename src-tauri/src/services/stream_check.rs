@@ -6,7 +6,7 @@ use futures::StreamExt;
 use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::time::Instant;
 
 use crate::app_config::AppType;
@@ -15,7 +15,13 @@ use crate::provider::Provider;
 use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
-use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
+use crate::proxy::providers::{
+    get_adapter, transform_claude_request_for_api_format, AuthInfo, AuthStrategy,
+};
+use crate::services::subscription::{
+    load_gemini_code_assist_project, read_gemini_credentials, refresh_gemini_token,
+    CredentialStatus,
+};
 
 /// 健康状态枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -56,7 +62,7 @@ impl Default for StreamCheckConfig {
             degraded_threshold_ms: 6000,
             claude_model: "claude-haiku-4-5-20251001".to_string(),
             codex_model: "gpt-5.1-codex@low".to_string(),
-            gemini_model: "gemini-3-pro-preview".to_string(),
+            gemini_model: "gemini-3.1-pro-preview".to_string(),
             test_prompt: default_test_prompt(),
         }
     }
@@ -348,8 +354,8 @@ impl StreamCheckService {
             .unwrap_or(false);
         let is_openai_chat = effective_api_format == "openai_chat";
         let is_openai_responses = effective_api_format == "openai_responses";
-        let url =
-            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
+        let is_gemini = effective_api_format == "gemini";
+        let is_gemini_oauth = is_gemini && Self::is_gemini_oauth_provider(provider);
 
         let max_tokens = if is_openai_responses { 16 } else { 1 };
 
@@ -368,14 +374,31 @@ impl StreamCheckService {
             .and_then(|m| m.provider_type.as_deref())
             == Some("codex_oauth");
 
-        let body = if is_openai_responses {
+        let mut request_auth = auth.clone();
+        let mut body = if is_openai_responses {
             anthropic_to_responses(anthropic_body, Some(&provider.id), is_codex_oauth)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_openai_chat {
             anthropic_to_openai(anthropic_body)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else if is_gemini {
+            transform_claude_request_for_api_format(anthropic_body, provider, "gemini")
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else {
             anthropic_body
+        };
+
+        if is_gemini_oauth {
+            let (resolved_auth, wrapped_body) =
+                Self::prepare_gemini_oauth_stream_check(model, body).await?;
+            request_auth = resolved_auth;
+            body = wrapped_body;
+        }
+
+        let url = if is_gemini {
+            Self::resolve_claude_gemini_stream_url(base, model, is_full_url, is_gemini_oauth)
+        } else {
+            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url)
         };
 
         let mut request_builder = client.post(&url);
@@ -384,7 +407,7 @@ impl StreamCheckService {
             // 生成请求追踪 ID
             let request_id = uuid::Uuid::new_v4().to_string();
             request_builder = request_builder
-                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("authorization", format!("Bearer {}", request_auth.api_key))
                 .header("content-type", "application/json")
                 .header("accept", "text/event-stream")
                 .header("accept-encoding", "identity")
@@ -409,21 +432,47 @@ impl StreamCheckService {
         } else if is_openai_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder
-                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("authorization", format!("Bearer {}", request_auth.api_key))
                 .header("content-type", "application/json")
                 .header("accept", "text/event-stream")
                 .header("accept-encoding", "identity");
+        } else if is_gemini {
+            request_builder = request_builder
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity");
+
+            match request_auth.strategy {
+                AuthStrategy::Google => {
+                    request_builder =
+                        request_builder.header("x-goog-api-key", &request_auth.api_key);
+                }
+                AuthStrategy::GoogleOAuth => {
+                    let token = request_auth
+                        .access_token
+                        .as_deref()
+                        .unwrap_or(&request_auth.api_key);
+                    request_builder = request_builder
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("x-goog-api-client", "GeminiCLI/1.0");
+                }
+                _ => {
+                    return Err(AppError::Message(
+                        "Claude Gemini 检查仅支持 Google API Key 或 Gemini OAuth 认证".to_string(),
+                    ));
+                }
+            }
         } else {
             // Anthropic native: full Claude CLI headers
             let os_name = Self::get_os_name();
             let arch_name = Self::get_arch_name();
 
             request_builder =
-                request_builder.header("authorization", format!("Bearer {}", auth.api_key));
+                request_builder.header("authorization", format!("Bearer {}", request_auth.api_key));
 
             // Only Anthropic official strategy adds x-api-key
-            if auth.strategy == AuthStrategy::Anthropic {
-                request_builder = request_builder.header("x-api-key", &auth.api_key);
+            if request_auth.strategy == AuthStrategy::Anthropic {
+                request_builder = request_builder.header("x-api-key", &request_auth.api_key);
             }
 
             request_builder = request_builder
@@ -1223,6 +1272,89 @@ impl StreamCheckService {
         }
     }
 
+    fn is_gemini_oauth_provider(provider: &Provider) -> bool {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("gemini_oauth")
+    }
+
+    fn resolve_claude_gemini_stream_url(
+        base_url: &str,
+        model: &str,
+        is_full_url: bool,
+        is_gemini_oauth: bool,
+    ) -> String {
+        if is_full_url {
+            return base_url.to_string();
+        }
+
+        let base = base_url.trim_end_matches('/');
+        let model = model.strip_prefix("models/").unwrap_or(model);
+
+        if is_gemini_oauth {
+            format!("{base}/v1internal:streamGenerateContent?alt=sse")
+        } else if base.contains("/v1beta") || base.contains("/v1/") {
+            format!("{base}/models/{model}:streamGenerateContent?alt=sse")
+        } else {
+            format!("{base}/v1beta/models/{model}:streamGenerateContent?alt=sse")
+        }
+    }
+
+    async fn prepare_gemini_oauth_stream_check(
+        model: &str,
+        body: Value,
+    ) -> Result<(AuthInfo, Value), AppError> {
+        let (access_token, refresh_token, status, message) = read_gemini_credentials();
+        let token = match status {
+            CredentialStatus::Valid => access_token,
+            CredentialStatus::Expired => {
+                if let Some(refresh_token) = refresh_token.as_deref() {
+                    refresh_gemini_token(refresh_token).await
+                } else {
+                    None
+                }
+            }
+            CredentialStatus::NotFound | CredentialStatus::ParseError => None,
+        };
+
+        let token = token.ok_or_else(|| {
+            let reason = message
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "未找到可用的 Gemini OAuth 凭据".to_string());
+            AppError::Message(format!(
+                "Gemini OAuth 认证失败: {reason}。请先切换到 Gemini Official 并通过 Gemini CLI 完成登录。"
+            ))
+        })?;
+
+        let project = load_gemini_code_assist_project(&token)
+            .await
+            .map_err(|reason| {
+                AppError::Message(format!(
+                    "Gemini OAuth 初始化失败: {reason}。请先在 Gemini CLI 中完成一次可用请求。"
+                ))
+            })?
+            .ok_or_else(|| {
+                AppError::Message(
+                    "Gemini OAuth 初始化失败: loadCodeAssist 未返回项目 ID。请先在 Gemini CLI 中完成一次可用请求。"
+                        .to_string(),
+                )
+            })?;
+
+        let wrapped_body = json!({
+            "model": model,
+            "user_prompt_id": format!("cc-switch-stream-check-{}", uuid::Uuid::new_v4()),
+            "request": body,
+            "project": project,
+        });
+
+        Ok((
+            AuthInfo::with_access_token("gemini_oauth_refresh_placeholder".to_string(), token),
+            wrapped_body,
+        ))
+    }
+
     fn resolve_claude_stream_url(
         base_url: &str,
         auth_strategy: AuthStrategy,
@@ -1575,6 +1707,77 @@ mod tests {
         );
 
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn test_resolve_claude_gemini_stream_url_for_api_key_mode() {
+        let url = StreamCheckService::resolve_claude_gemini_stream_url(
+            "https://generativelanguage.googleapis.com/v1beta",
+            "gemini-3.1-pro-preview",
+            false,
+            false,
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn test_resolve_claude_gemini_stream_url_for_oauth_mode() {
+        let url = StreamCheckService::resolve_claude_gemini_stream_url(
+            "https://cloudcode-pa.googleapis.com",
+            "gemini-3.1-pro-preview",
+            false,
+            true,
+        );
+
+        assert_eq!(
+            url,
+            "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn test_resolve_claude_gemini_stream_url_for_full_url_mode() {
+        let url = StreamCheckService::resolve_claude_gemini_stream_url(
+            "https://relay.example/custom-stream",
+            "gemini-3.1-pro-preview",
+            true,
+            false,
+        );
+
+        assert_eq!(url, "https://relay.example/custom-stream");
+    }
+
+    #[test]
+    fn test_is_gemini_oauth_provider() {
+        let provider = Provider {
+            id: "gemini-official".to_string(),
+            name: "Gemini Official".to_string(),
+            settings_config: json!({}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(crate::provider::ProviderMeta {
+                provider_type: Some("gemini_oauth".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        assert!(StreamCheckService::is_gemini_oauth_provider(&provider));
+    }
+
+    #[test]
+    fn test_is_gemini_oauth_provider_false_without_meta_type() {
+        let provider = make_provider(json!({}));
+        assert!(!StreamCheckService::is_gemini_oauth_provider(&provider));
     }
 
     #[test]

@@ -206,7 +206,7 @@ jobs:
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
             echo "=== macOS build/notarization attempt ${attempt}/${max_attempts} ==="
-            if pnpm tauri build --target universal-apple-darwin; then
+            if pnpm tauri build --config src-tauri/tauri.release.conf.json --target universal-apple-darwin; then
               echo "✅ macOS build/notarization succeeded"
               exit 0
             fi
@@ -223,11 +223,11 @@ jobs:
 
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
-        run: pnpm tauri build
+        run: pnpm tauri build --config src-tauri/tauri.release.conf.json
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles appimage,deb,rpm
+        run: pnpm tauri build --config src-tauri/tauri.release.conf.json --bundles appimage,deb,rpm
 
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'

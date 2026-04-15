@@ -25,7 +25,7 @@ export function ModelTestConfigPanel() {
     degradedThresholdMs: "6000",
     claudeModel: "claude-haiku-4-5-20251001",
     codexModel: "gpt-5.4@low",
-    geminiModel: "gemini-3-pro-preview",
+    geminiModel: "gemini-3.1-pro-preview",
     testPrompt: "Who are you?",
   });
 
@@ -136,7 +136,7 @@ export function ModelTestConfigPanel() {
               onChange={(e) =>
                 setConfig({ ...config, geminiModel: e.target.value })
               }
-              placeholder="gemini-1.5-flash"
+              placeholder="gemini-3-flash-preview"
             />
           </div>
         </div>

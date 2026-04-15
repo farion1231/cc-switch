@@ -59,6 +59,15 @@ pub struct SubscriptionQuota {
     pub queried_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialScanStatus {
+    pub tool: String,
+    pub credential_status: CredentialStatus,
+    pub credential_message: Option<String>,
+    pub queried_at: i64,
+}
+
 impl SubscriptionQuota {
     pub(crate) fn not_found(tool: &str) -> Self {
         Self {
@@ -728,7 +737,7 @@ struct GeminiOAuthCredsFile {
 }
 
 /// (access_token, refresh_token, status, message)
-type GeminiCredentials = (
+pub type GeminiCredentials = (
     Option<String>,
     Option<String>,
     CredentialStatus,
@@ -742,7 +751,7 @@ type GeminiCredentials = (
 /// 2. 凭据文件 ~/.gemini/oauth_creds.json（遗留格式）
 ///
 /// 仅 OAuth 认证模式（`oauth-personal`）有效；API key 模式无法查询官方用量。
-fn read_gemini_credentials() -> GeminiCredentials {
+pub fn read_gemini_credentials() -> GeminiCredentials {
     #[cfg(target_os = "macos")]
     {
         if let Some(result) = read_gemini_credentials_from_keychain() {
@@ -844,7 +853,7 @@ fn parse_gemini_keychain_json(content: &str) -> GeminiCredentials {
 }
 
 /// 从文件读取 Gemini 凭据
-fn read_gemini_credentials_from_file() -> GeminiCredentials {
+pub fn read_gemini_credentials_from_file() -> GeminiCredentials {
     let cred_path = crate::gemini_config::get_gemini_dir().join("oauth_creds.json");
     if !cred_path.exists() {
         return (None, None, CredentialStatus::NotFound, None);
@@ -871,7 +880,7 @@ fn read_gemini_credentials_from_file() -> GeminiCredentials {
 /// ```json
 /// { "access_token": "...", "refresh_token": "...", "expiry_date": 1234 }
 /// ```
-fn parse_gemini_file_json(content: &str) -> GeminiCredentials {
+pub fn parse_gemini_file_json(content: &str) -> GeminiCredentials {
     let creds: GeminiOAuthCredsFile = match serde_json::from_str(content) {
         Ok(c) => c,
         Err(e) => {
@@ -927,7 +936,7 @@ const GEMINI_OAUTH_CLIENT_SECRET: &str = "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";
 ///
 /// Google OAuth access_token 仅有 ~1h 有效期，需要定期用 refresh_token 刷新。
 /// refresh_token 本身不过期（除非用户撤销授权）。
-async fn refresh_gemini_token(refresh_token: &str) -> Option<String> {
+pub async fn refresh_gemini_token(refresh_token: &str) -> Option<String> {
     let client = crate::proxy::http_client::get();
 
     let resp = client
@@ -988,6 +997,44 @@ fn extract_project_id(value: &serde_json::Value) -> Option<String> {
             .map(String::from),
         _ => None,
     }
+}
+
+/// 调用 Code Assist 初始化接口，提取请求所需的 project ID。
+pub async fn load_gemini_code_assist_project(access_token: &str) -> Result<Option<String>, String> {
+    let client = crate::proxy::http_client::get();
+
+    let load_resp = client
+        .post("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "metadata": {
+                "ideType": "GEMINI_CLI",
+                "pluginType": "GEMINI"
+            }
+        }))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("loadCodeAssist network error: {e}"))?;
+
+    let load_status = load_resp.status();
+    if !load_status.is_success() {
+        let body = load_resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "loadCodeAssist failed (HTTP {load_status}): {body}"
+        ));
+    }
+
+    let load_body: GeminiLoadCodeAssistResponse = load_resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse loadCodeAssist response: {e}"))?;
+
+    Ok(load_body
+        .cloudaicompanion_project
+        .as_ref()
+        .and_then(extract_project_id))
 }
 
 /// 将 Gemini 模型 ID 分类为 Pro / Flash / Flash Lite
@@ -1185,6 +1232,33 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
 // ── 入口函数 ──────────────────────────────────────────────
 
 /// 查询指定 CLI 工具的官方订阅额度
+pub fn get_credential_scan_status(tool: &str) -> Result<CredentialScanStatus, String> {
+    let (credential_status, credential_message) = match tool {
+        "claude" => {
+            let (_, status, message) = read_claude_credentials();
+            (status, message)
+        }
+        "gemini" => {
+            let (_, _, status, message) = read_gemini_credentials();
+            (status, message)
+        }
+        "codex" => {
+            let (_, _, status, message) = read_codex_credentials();
+            (status, message)
+        }
+        _ => {
+            return Err(format!("Unsupported tool for credential scan: {tool}"));
+        }
+    };
+
+    Ok(CredentialScanStatus {
+        tool: tool.to_string(),
+        credential_status,
+        credential_message,
+        queried_at: now_millis(),
+    })
+}
+
 pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, String> {
     match tool {
         "claude" => {
