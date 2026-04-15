@@ -192,7 +192,8 @@ fn write_gemini_env_at(env_path: &Path, env_map: &HashMap<String, String>) -> Re
         std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
     let content = crate::gemini_config::serialize_env_file(env_map);
-    crate::config::write_text_file(env_path, &content)
+    crate::config::write_text_file(env_path, &content)?;
+    crate::gemini_config::harden_gemini_env_perms(env_path)
 }
 
 fn set_gemini_selected_type_at(

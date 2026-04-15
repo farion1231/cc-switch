@@ -3,7 +3,7 @@ use crate::error::AppError;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 获取 Gemini 配置目录路径（支持设置覆盖）
 pub fn get_gemini_dir() -> PathBuf {
@@ -187,6 +187,36 @@ pub fn write_gemini_env_atomic(map: &HashMap<String, String>) -> Result<(), AppE
         fs::set_permissions(&path, perms).map_err(|e| AppError::io(&path, e))?;
     }
 
+    Ok(())
+}
+
+/// Apply owner-only permissions to a Gemini .env file and its parent directory.
+///
+/// Sets the directory to 0700 and the file to 0600 so that credentials are not
+/// readable by other local users.  No-op on non-Unix platforms.
+pub fn harden_gemini_env_perms(path: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if let Some(parent) = path.parent() {
+            let mut perms = fs::metadata(parent)
+                .map_err(|e| AppError::io(parent, e))?
+                .permissions();
+            perms.set_mode(0o700);
+            fs::set_permissions(parent, perms).map_err(|e| AppError::io(parent, e))?;
+        }
+
+        let mut perms = fs::metadata(path)
+            .map_err(|e| AppError::io(path, e))?
+            .permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(path, perms).map_err(|e| AppError::io(path, e))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
     Ok(())
 }
 

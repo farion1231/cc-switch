@@ -2010,7 +2010,9 @@ impl ProxyService {
                     })?;
                 }
                 write_text_file(env_path, &content)
-                    .map_err(|e| format!("写入 Gemini env 失败 ({}): {e}", env_path.display()))
+                    .map_err(|e| format!("写入 Gemini env 失败 ({}): {e}", env_path.display()))?;
+                crate::gemini_config::harden_gemini_env_perms(env_path)
+                    .map_err(|e| format!("设置 Gemini env 权限失败 ({}): {e}", env_path.display()))
             };
 
             if let Err(err) = write_one() {
