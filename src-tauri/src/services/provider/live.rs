@@ -1398,7 +1398,8 @@ fn write_gemini_live_partial(provider: &Provider) -> Result<(), AppError> {
 
         match auth_type {
             GeminiAuthType::GoogleOfficial => {
-                env_map.clear();
+                // OAuth mode does not require GEMINI_API_KEY, but other env vars
+                // such as GEMINI_MODEL should remain in the live .env file.
                 write_gemini_env_at(env_path, &env_map)?;
             }
             GeminiAuthType::Packycode | GeminiAuthType::Generic => {
@@ -1850,7 +1851,7 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
     let env_map = json_to_env(&provider.settings_config)?;
 
     for_each_gemini_live_path(|_, env_path, settings_path| {
-        let mut local_env_map = env_map.clone();
+        let local_env_map = env_map.clone();
 
         let mut config_to_write: Option<Value> = None;
 
@@ -1879,27 +1880,14 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
             }
         }
 
-    // If no config specified or config is null, preserve existing file
-    if config_to_write.is_none() && settings_path.exists() {
-        config_to_write = Some(read_json_file(&settings_path)?);
-    }
-
-    match auth_type {
-        GeminiAuthType::GoogleOfficial => {
-            // Google Official uses OAuth, no API key validation needed.
-            // Write user's env vars as-is (e.g. GEMINI_MODEL, custom vars).
-            write_gemini_env_atomic(&env_map)?;
+        // If no config specified or config is null, preserve existing file
+        if config_to_write.is_none() && settings_path.exists() {
+            config_to_write = Some(read_json_file(settings_path)?);
         }
-        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
-            // API Key mode -- require GEMINI_API_KEY
-            validate_gemini_settings_strict(&provider.settings_config)?;
-            write_gemini_env_atomic(&env_map)?;
-        }
-    }
 
         match auth_type {
             GeminiAuthType::GoogleOfficial => {
-                local_env_map.clear();
+                // OAuth mode still preserves non-secret env vars like GEMINI_MODEL.
                 write_gemini_env_at(env_path, &local_env_map)?;
             }
             GeminiAuthType::Packycode | GeminiAuthType::Generic => {

@@ -180,10 +180,11 @@ mod tests {
 
         {
             let conn = crate::database::lock_conn!(db.conn);
-            let date_str = chrono::DateTime::from_timestamp(old_ts, 0)
-                .unwrap()
-                .format("%Y-%m-%d")
-                .to_string();
+            let date_str: String = conn.query_row(
+                "SELECT date(?1, 'unixepoch', 'localtime')",
+                [old_ts],
+                |row| row.get(0),
+            )?;
             conn.execute(
                 "INSERT INTO usage_daily_rollups
                     (date, app_type, provider_id, model, request_count, success_count,
