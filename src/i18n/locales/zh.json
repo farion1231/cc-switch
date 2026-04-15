@@ -2132,6 +2132,8 @@
     "failed": "{{providerName}} 检查失败: {{message}}",
     "rejected": "{{providerName}} 检查被拒: {{message}}",
     "error": "{{providerName}} 检查出错: {{error}}",
+    "modelNotFound": "{{providerName}} 测试模型 {{model}} 不存在或已下架",
+    "modelNotFoundHint": "该模型可能已被供应商弃用。请在\"模型测试配置\"中更新默认测试模型。",
     "httpHint": {
       "400": "供应商拒绝了请求格式。健康检查的探测格式可能与实际使用不同。",
       "401": "API Key 可能无效，或供应商使用 OAuth 等认证方式。检查失败不代表实际不可用。",
