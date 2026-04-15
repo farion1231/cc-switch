@@ -73,7 +73,7 @@ impl<'a> UsageLogger<'a> {
             });
 
         conn.execute(
-            "INSERT INTO proxy_request_logs (
+            "INSERT OR REPLACE INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
@@ -358,6 +358,7 @@ mod tests {
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
             model: None,
+            message_id: None,
         };
 
         logger.log_with_calculation(

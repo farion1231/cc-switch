@@ -23,7 +23,11 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
  * Hook for managing provider actions (add, update, delete, switch)
  * Extracts business logic from App.tsx
  */
-export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
+export function useProviderActions(
+  activeApp: AppId,
+  isProxyRunning?: boolean,
+  isProxyTakeover?: boolean,
+) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
@@ -183,6 +187,17 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
               "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
           }),
         );
+      }
+
+      // Block official providers when proxy takeover is active
+      if (isProxyTakeover && provider.category === "official") {
+        toast.error(
+          t("notifications.officialBlockedByProxy", {
+            defaultValue:
+              "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁",
+          }),
+          { duration: 6000 },
+        );
         return;
       }
 
@@ -201,26 +216,8 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
           );
         }
 
-        // 根据供应商类型显示不同的成功提示
-        if (
-          activeApp === "claude" &&
-          provider.category !== "official" &&
-          (isCopilotProvider ||
-            provider.meta?.apiFormat === "openai_chat" ||
-            provider.meta?.apiFormat === "openai_responses")
-        ) {
-          // OpenAI format provider: show proxy hint
-          toast.info(
-            isCopilotProvider
-              ? t("notifications.copilotProxyHint")
-              : t("notifications.openAIFormatHint"),
-            {
-              duration: 5000,
-              closeButton: true,
-            },
-          );
-        } else {
-          // 普通供应商：显示切换成功
+        // 若已弹过 proxyRequired 警告则不再弹 success
+        if (!proxyRequiredReason) {
           // OpenCode/OpenClaw: show "added to config" message instead of "switched"
           const isMultiProviderApp =
             activeApp === "opencode" || activeApp === "openclaw";
@@ -239,7 +236,14 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyRunning, t],
+    [
+      switchProviderMutation,
+      syncClaudePlugin,
+      activeApp,
+      isProxyRunning,
+      isProxyTakeover,
+      t,
+    ],
   );
 
   // 删除供应商

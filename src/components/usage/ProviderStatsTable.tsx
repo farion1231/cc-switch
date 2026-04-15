@@ -11,14 +11,16 @@ import { useProviderStats } from "@/lib/query/usage";
 import { fmtUsd } from "./format";
 
 interface ProviderStatsTableProps {
+  appType?: string;
   refreshIntervalMs: number;
 }
 
 export function ProviderStatsTable({
+  appType,
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t } = useTranslation();
-  const { data: stats, isLoading } = useProviderStats({
+  const { data: stats, isLoading } = useProviderStats(appType, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 

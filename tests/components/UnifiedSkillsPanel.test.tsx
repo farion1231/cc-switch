@@ -64,6 +64,15 @@ vi.mock("@/hooks/useSkills", () => ({
   useInstallSkillsFromZip: () => ({
     mutateAsync: installFromZipMock,
   }),
+  useCheckSkillUpdates: () => ({
+    data: [],
+    refetch: vi.fn(),
+    isFetching: false,
+  }),
+  useUpdateSkill: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 describe("UnifiedSkillsPanel", () => {

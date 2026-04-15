@@ -3,7 +3,6 @@
 //! 提供支持全局代理配置的 HTTP 客户端。
 //! 所有需要发送 HTTP 请求的模块都应使用此模块提供的客户端。
 
-use crate::provider::ProviderProxyConfig;
 use once_cell::sync::OnceCell;
 use reqwest::Client;
 use std::env;
@@ -332,103 +331,6 @@ pub fn mask_url(url: &str) -> String {
             url.to_string()
         }
     }
-}
-
-/// 根据供应商单独代理配置构建代理 URL
-///
-/// 将 ProviderProxyConfig 转换为代理 URL 字符串
-pub fn build_proxy_url_from_config(config: &ProviderProxyConfig) -> Option<String> {
-    let proxy_type = config.proxy_type.as_deref().unwrap_or("http");
-    let host = config.proxy_host.as_deref()?;
-    let port = config.proxy_port?;
-
-    // 构建带认证的代理 URL
-    if let (Some(username), Some(password)) = (&config.proxy_username, &config.proxy_password) {
-        if !username.is_empty() && !password.is_empty() {
-            return Some(format!(
-                "{proxy_type}://{username}:{password}@{host}:{port}"
-            ));
-        }
-    }
-
-    Some(format!("{proxy_type}://{host}:{port}"))
-}
-
-/// 根据供应商单独代理配置构建 HTTP 客户端
-///
-/// 如果供应商配置了单独代理（enabled = true），则使用该代理构建客户端；
-/// 否则返回 None，调用方应使用全局客户端。
-///
-/// # Arguments
-/// * `proxy_config` - 供应商的代理配置
-///
-/// # Returns
-/// 如果配置有效则返回 Some(Client)，否则返回 None
-pub fn build_client_for_provider(proxy_config: Option<&ProviderProxyConfig>) -> Option<Client> {
-    let config = proxy_config.filter(|c| c.enabled)?;
-
-    let proxy_url = build_proxy_url_from_config(config)?;
-
-    log::debug!(
-        "[ProviderProxy] Building client with proxy: {}",
-        mask_url(&proxy_url)
-    );
-
-    // 构建带代理的客户端
-    let proxy = match reqwest::Proxy::all(&proxy_url) {
-        Ok(p) => p,
-        Err(e) => {
-            log::error!(
-                "[ProviderProxy] Failed to create proxy from '{}': {}",
-                mask_url(&proxy_url),
-                e
-            );
-            return None;
-        }
-    };
-
-    match Client::builder()
-        .timeout(Duration::from_secs(600))
-        .connect_timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(10)
-        .tcp_keepalive(Duration::from_secs(60))
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        .proxy(proxy)
-        .build()
-    {
-        Ok(client) => {
-            log::info!(
-                "[ProviderProxy] Client built with proxy: {}",
-                mask_url(&proxy_url)
-            );
-            Some(client)
-        }
-        Err(e) => {
-            log::error!("[ProviderProxy] Failed to build client: {e}");
-            None
-        }
-    }
-}
-
-/// 获取供应商专用的 HTTP 客户端
-///
-/// 优先使用供应商单独代理配置，如果未启用则返回全局客户端。
-///
-/// # Arguments
-/// * `proxy_config` - 供应商的代理配置
-///
-/// # Returns
-/// 返回适合该供应商的 HTTP 客户端
-pub fn get_for_provider(proxy_config: Option<&ProviderProxyConfig>) -> Client {
-    // 优先使用供应商单独代理
-    if let Some(client) = build_client_for_provider(proxy_config) {
-        return client;
-    }
-
-    // 回退到全局客户端
-    get()
 }
 
 #[cfg(test)]

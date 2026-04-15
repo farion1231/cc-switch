@@ -7,6 +7,7 @@ import {
   Minus,
   Play,
   Plus,
+  ShieldAlert,
   Terminal,
   TestTube2,
   Trash2,
@@ -28,7 +29,7 @@ interface ProviderActionsProps {
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
-  onConfigureUsage: () => void;
+  onConfigureUsage?: () => void;
   onDelete: () => void;
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
@@ -36,6 +37,7 @@ interface ProviderActionsProps {
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
+  isOfficialBlockedByProxy?: boolean;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -60,6 +62,7 @@ export function ProviderActions({
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
+  isOfficialBlockedByProxy = false,
   // OpenClaw: default model
   isDefaultModel = false,
   onSetAsDefault,
@@ -166,6 +169,16 @@ export function ProviderActions({
       };
     }
 
+    if (isOfficialBlockedByProxy) {
+      return {
+        disabled: true,
+        variant: "secondary" as const,
+        className: "opacity-40 cursor-not-allowed",
+        icon: <ShieldAlert className="h-4 w-4" />,
+        text: t("provider.blockedByProxy", { defaultValue: "已拦截" }),
+      };
+    }
+
     if (isCurrent) {
       return {
         disabled: true,
@@ -246,29 +259,34 @@ export function ProviderActions({
           <Copy className="h-4 w-4" />
         </Button>
 
-        {onTest && (
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={onTest}
-            disabled={isTesting}
-            title={t("modelTest.testProvider", "测试模型")}
-            className={iconButtonClass}
-          >
-            {isTesting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <TestTube2 className="h-4 w-4" />
-            )}
-          </Button>
-        )}
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={onTest || undefined}
+          disabled={isTesting}
+          title={t("modelTest.testProvider", "测试模型")}
+          className={cn(
+            iconButtonClass,
+            !onTest && "opacity-40 cursor-not-allowed text-muted-foreground",
+          )}
+        >
+          {isTesting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <TestTube2 className="h-4 w-4" />
+          )}
+        </Button>
 
         <Button
           size="icon"
           variant="ghost"
-          onClick={onConfigureUsage}
+          onClick={onConfigureUsage || undefined}
           title={t("provider.configureUsage")}
-          className={iconButtonClass}
+          className={cn(
+            iconButtonClass,
+            !onConfigureUsage &&
+              "opacity-40 cursor-not-allowed text-muted-foreground",
+          )}
         >
           <BarChart3 className="h-4 w-4" />
         </Button>

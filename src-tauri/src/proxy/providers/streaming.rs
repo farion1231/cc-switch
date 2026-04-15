@@ -85,7 +85,15 @@ struct ToolBlockState {
     name: String,
     started: bool,
     pending_args: String,
+    /// 连续空白字符计数 — 用于检测 Copilot 无限换行 bug
+    /// 当 function call 参数中出现连续 20+ 空白字符时，强制终止流
+    consecutive_whitespace: usize,
+    /// 是否已因无限空白 bug 被中止
+    aborted: bool,
 }
+
+/// 无限空白 bug 的连续空白字符阈值
+const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
 
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
@@ -93,6 +101,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
+        let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut message_id = None;
         let mut current_model = None;
         let mut next_content_index: u32 = 0;
@@ -107,8 +116,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    buffer.push_str(&text);
+                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                     while let Some(pos) = buffer.find("\n\n") {
                         let line = buffer[..pos].to_string();
@@ -297,8 +305,15 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                                 name: String::new(),
                                                                 started: false,
                                                                 pending_args: String::new(),
+                                                                consecutive_whitespace: 0,
+                                                                aborted: false,
                                                             }
                                                         });
+
+                                                    // 如果此 tool call 已被中止（无限空白 bug），跳过后续处理
+                                                    if state.aborted {
+                                                        continue;
+                                                    }
 
                                                     if let Some(id) = &tool_call.id {
                                                         state.id = id.clone();
@@ -328,7 +343,22 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                         .as_ref()
                                                         .and_then(|f| f.arguments.clone());
                                                     let immediate_delta = if let Some(args) = args_delta {
-                                                        if state.started {
+                                                        // 无限空白 bug 检测：跟踪连续空白字符
+                                                        for ch in args.chars() {
+                                                            if ch.is_whitespace() {
+                                                                state.consecutive_whitespace += 1;
+                                                            } else {
+                                                                state.consecutive_whitespace = 0;
+                                                            }
+                                                        }
+                                                        if state.consecutive_whitespace >= INFINITE_WHITESPACE_THRESHOLD {
+                                                            log::warn!(
+                                                                "[Copilot] 检测到无限空白 bug (tool: {}), 中止此 tool call 流",
+                                                                state.name
+                                                            );
+                                                            state.aborted = true;
+                                                            None
+                                                        } else if state.started {
                                                             Some(args)
                                                         } else {
                                                             state.pending_args.push_str(&args);
@@ -749,5 +779,46 @@ mod tests {
             .collect();
         assert!(deltas.contains(&"{\"a\":"));
         assert!(deltas.contains(&"1}"));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_chinese_split_across_chunks_no_replacement_chars() {
+        // "你好" split across two TCP chunks inside a streaming text delta.
+        // Before the fix, from_utf8_lossy would produce U+FFFD for each half.
+        let full = concat!(
+            "data: {\"id\":\"chatcmpl_3\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_3\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let bytes = full.as_bytes();
+
+        // Find "你" in the byte stream and split inside it
+        let ni_start = bytes.windows(3).position(|w| w == "你".as_bytes()).unwrap();
+        let split_point = ni_start + 1; // split after first byte of "你"
+
+        let chunk1 = Bytes::from(bytes[..split_point].to_vec());
+        let chunk2 = Bytes::from(bytes[split_point..].to_vec());
+
+        let upstream = stream::iter(vec![
+            Ok::<_, std::io::Error>(chunk1),
+            Ok::<_, std::io::Error>(chunk2),
+        ]);
+        let converted = create_anthropic_sse_stream(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        // Must contain the original Chinese characters, not replacement chars
+        assert!(
+            merged.contains("你好"),
+            "expected '你好' in output, got replacement chars (U+FFFD)"
+        );
+        assert!(
+            !merged.contains('\u{FFFD}'),
+            "output must not contain U+FFFD replacement characters"
+        );
     }
 }

@@ -20,9 +20,15 @@ interface SkillCardProps {
   skill: SkillCardSkill;
   onInstall: (directory: string) => Promise<void>;
   onUninstall: (directory: string) => Promise<void>;
+  installs?: number;
 }
 
-export function SkillCard({ skill, onInstall, onUninstall }: SkillCardProps) {
+export function SkillCard({
+  skill,
+  onInstall,
+  onUninstall,
+  installs,
+}: SkillCardProps) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
 
@@ -81,6 +87,15 @@ export function SkillCard({ skill, onInstall, onUninstall }: SkillCardProps) {
                   {skill.repoOwner}/{skill.repoName}
                 </Badge>
               )}
+              {typeof installs === "number" && (
+                <Badge
+                  variant="secondary"
+                  className="shrink-0 text-[10px] px-1.5 py-0 h-4"
+                >
+                  <Download className="h-2.5 w-2.5 mr-0.5" />
+                  {installs.toLocaleString()}
+                </Badge>
+              )}
             </div>
           </div>
           {skill.installed && (
@@ -93,11 +108,15 @@ export function SkillCard({ skill, onInstall, onUninstall }: SkillCardProps) {
           )}
         </div>
       </CardHeader>
-      <CardContent className="flex-1 pt-0">
-        <p className="text-sm text-muted-foreground/90 line-clamp-4 leading-relaxed">
-          {skill.description || t("skills.noDescription")}
-        </p>
-      </CardContent>
+      {skill.description ? (
+        <CardContent className="flex-1 pt-0">
+          <p className="text-sm text-muted-foreground/90 line-clamp-4 leading-relaxed">
+            {skill.description}
+          </p>
+        </CardContent>
+      ) : (
+        <div className="flex-1" />
+      )}
       <CardFooter className="flex gap-2 pt-3 border-t border-border/50 relative z-10">
         {skill.readmeUrl && (
           <Button

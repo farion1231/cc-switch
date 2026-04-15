@@ -33,6 +33,18 @@ impl Database {
         }
     }
 
+    /// 以布尔语义读取 flag：`"true"` 或 `"1"` → true，其它全部 false。
+    ///
+    /// 用于一次性启动 flag（`official_providers_seeded` / `first_run_notice_shown` 等）。
+    /// 与 `is_legacy_common_config_migrated` 等只认 `"true"` 的历史辅助函数**不同**——
+    /// 这里同时接受 `"1"` 是为了兼容 `init_default_official_providers` 既有写法。
+    pub fn get_bool_flag(&self, key: &str) -> Result<bool, AppError> {
+        Ok(matches!(
+            self.get_setting(key)?.as_deref(),
+            Some("true") | Some("1")
+        ))
+    }
+
     /// 设置值
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -268,6 +280,31 @@ impl Database {
         let json = serde_json::to_string(config)
             .map_err(|e| AppError::Database(format!("序列化优化器配置失败: {e}")))?;
         self.set_setting("optimizer_config", &json)
+    }
+
+    // --- Copilot 优化器配置 ---
+
+    /// 获取 Copilot 优化器配置
+    ///
+    /// 返回配置，如果不存在则返回默认值（默认开启）
+    pub fn get_copilot_optimizer_config(
+        &self,
+    ) -> Result<crate::proxy::types::CopilotOptimizerConfig, AppError> {
+        match self.get_setting("copilot_optimizer_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析 Copilot 优化器配置失败: {e}"))),
+            None => Ok(crate::proxy::types::CopilotOptimizerConfig::default()),
+        }
+    }
+
+    /// 更新 Copilot 优化器配置
+    pub fn set_copilot_optimizer_config(
+        &self,
+        config: &crate::proxy::types::CopilotOptimizerConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化 Copilot 优化器配置失败: {e}")))?;
+        self.set_setting("copilot_optimizer_config", &json)
     }
 
     // --- 日志配置 ---

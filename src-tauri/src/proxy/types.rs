@@ -269,6 +269,59 @@ impl Default for OptimizerConfig {
     }
 }
 
+/// Copilot 优化器配置
+///
+/// 存储在 settings 表中，key = "copilot_optimizer_config"
+/// 解决 Copilot 代理消耗量异常问题（Issue #1813）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotOptimizerConfig {
+    /// 总开关（默认开启 — 对 Copilot 用户至关重要）
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// x-initiator 请求分类（默认开启，P0 优先级）
+    #[serde(default = "default_true")]
+    pub request_classification: bool,
+    /// Tool result 消息合并（默认开启，P1 优先级）
+    #[serde(default = "default_true")]
+    pub tool_result_merging: bool,
+    /// Compact 请求识别（默认开启，P2 优先级）
+    #[serde(default = "default_true")]
+    pub compact_detection: bool,
+    /// 确定性 Request ID（默认开启，P3 优先级）
+    #[serde(default = "default_true")]
+    pub deterministic_request_id: bool,
+    /// Subagent 检测（默认开启）— 识别 Claude Code 子代理请求，
+    /// 设置 x-initiator=agent + x-interaction-type=conversation-subagent，避免子代理计费
+    #[serde(default = "default_true")]
+    pub subagent_detection: bool,
+    /// Warmup 小模型降级（默认开启 — 与参考实现对齐，避免探针请求消耗 premium quota）
+    #[serde(default = "default_true")]
+    pub warmup_downgrade: bool,
+    /// Warmup 降级使用的模型（默认 "gpt-4o-mini"）
+    #[serde(default = "default_warmup_model")]
+    pub warmup_model: String,
+}
+
+fn default_warmup_model() -> String {
+    "gpt-5-mini".to_string()
+}
+
+impl Default for CopilotOptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            request_classification: true,
+            tool_result_merging: true,
+            compact_detection: true,
+            deterministic_request_id: true,
+            subagent_detection: true,
+            warmup_downgrade: true,
+            warmup_model: "gpt-4o-mini".to_string(),
+        }
+    }
+}
+
 /// 日志配置
 ///
 /// 存储在 settings 表的 log_config 字段中（JSON 格式）

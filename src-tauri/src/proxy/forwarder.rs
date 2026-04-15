@@ -14,10 +14,11 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::CopilotAuthState;
+use crate::commands::{CodexOAuthState, CopilotAuthState};
+use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::{app_config::AppType, provider::Provider};
 use http::Extensions;
@@ -52,6 +53,8 @@ pub struct RequestForwarder {
     rectifier_config: RectifierConfig,
     /// 优化器配置
     optimizer_config: OptimizerConfig,
+    /// Copilot 优化器配置
+    copilot_optimizer_config: CopilotOptimizerConfig,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
 }
@@ -70,6 +73,7 @@ impl RequestForwarder {
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
+        copilot_optimizer_config: CopilotOptimizerConfig,
     ) -> Self {
         Self {
             router,
@@ -80,6 +84,7 @@ impl RequestForwarder {
             current_provider_id_at_start,
             rectifier_config,
             optimizer_config,
+            copilot_optimizer_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
     }
@@ -760,7 +765,7 @@ impl RequestForwarder {
             super::model_mapper::apply_model_mapping(body.clone(), provider);
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
-        let mapped_body = normalize_thinking_type(mapped_body);
+        let mut mapped_body = normalize_thinking_type(mapped_body);
 
         // 确定有效端点
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
@@ -770,6 +775,102 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
+
+        // --- Copilot 优化器：分类 + 请求体优化（在格式转换之前执行） ---
+        // 注意：确定性 ID 也在此处计算，因为 mapped_body 在格式转换时会被 move
+        //
+        // 执行顺序（与 copilot-api 对齐）：
+        //   1. 先在原始 body 上分类（保留 tool_result 语义，避免误判为 user）
+        //   2. 再清洗孤立 tool_result（防止上游 API 报错）
+        //   3. 再合并 tool_result + text（减少 premium 计费）
+        let copilot_optimization = if is_copilot && self.copilot_optimizer_config.enabled {
+            // 1. 在原始 body 上分类 — 必须在清洗/合并之前执行
+            //    孤立 tool_result 仍保持 tool_result 类型，分类能正确识别为 agent
+            let has_anthropic_beta = headers.contains_key("anthropic-beta");
+            let classification = super::copilot_optimizer::classify_request(
+                &mapped_body,
+                has_anthropic_beta,
+                self.copilot_optimizer_config.compact_detection,
+                self.copilot_optimizer_config.subagent_detection,
+            );
+
+            log::debug!(
+                "[Copilot] 优化器分类: initiator={}, is_warmup={}, is_compact={}, is_subagent={}",
+                classification.initiator,
+                classification.is_warmup,
+                classification.is_compact,
+                classification.is_subagent
+            );
+
+            // 2. 孤立 tool_result 清理 — 分类完成后再清洗
+            //    防止上游 API 因不匹配的 tool_result 报错导致重试/重复计费
+            mapped_body = super::copilot_optimizer::sanitize_orphan_tool_results(mapped_body);
+
+            // 3. Tool result 合并 — 将 [tool_result, text] 变为 [tool_result(含text)]
+            if self.copilot_optimizer_config.tool_result_merging {
+                mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
+            }
+
+            // 4. Warmup 小模型降级
+            if self.copilot_optimizer_config.warmup_downgrade && classification.is_warmup {
+                log::info!(
+                    "[Copilot] Warmup 请求降级到模型: {}",
+                    self.copilot_optimizer_config.warmup_model
+                );
+                mapped_body["model"] =
+                    serde_json::json!(&self.copilot_optimizer_config.warmup_model);
+            }
+
+            // 预计算确定性 Request ID（在 body 被 move 之前）
+            // Session 提取优先级（与 session.rs extract_from_metadata 对齐）：
+            //   1. metadata.user_id 中的 _session_ 后缀
+            //   2. metadata.session_id（直接字段）
+            //   3. raw metadata.user_id（整串 fallback）
+            //   4. x-session-id header
+            let metadata = body.get("metadata");
+            let session_id = metadata
+                .and_then(|m| m.get("user_id"))
+                .and_then(|v| v.as_str())
+                .and_then(super::session::parse_session_from_user_id)
+                .or_else(|| {
+                    metadata
+                        .and_then(|m| m.get("session_id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    metadata
+                        .and_then(|m| m.get("user_id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    headers
+                        .get("x-session-id")
+                        .and_then(|v| v.to_str().ok())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_default();
+            let det_request_id = if self.copilot_optimizer_config.deterministic_request_id {
+                Some(super::copilot_optimizer::deterministic_request_id(
+                    &mapped_body,
+                    &session_id,
+                ))
+            } else {
+                None
+            };
+
+            // 从 session ID 派生稳定的 interaction ID（同一主对话共享）
+            let interaction_id =
+                super::copilot_optimizer::deterministic_interaction_id(&session_id);
+
+            Some((classification, det_request_id, interaction_id))
+        } else {
+            None
+        };
 
         // GitHub Copilot 动态 endpoint 路由
         // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
@@ -857,8 +958,11 @@ impl RequestForwarder {
         let force_identity_encoding = needs_transform
             || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
+        // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
+        let mut codex_oauth_account_id: Option<String> = None;
+
         // 获取认证头（提前准备，用于内联替换）
-        let auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
+        let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
                 if let Some(app_handle) = &self.app_handle {
@@ -909,10 +1013,108 @@ impl RequestForwarder {
                     ));
                 }
             }
+
+            // Codex OAuth 特殊处理：从 CodexOAuthManager 获取真实 access_token
+            if auth.strategy == AuthStrategy::CodexOAuth {
+                if let Some(app_handle) = &self.app_handle {
+                    let codex_state = app_handle.state::<CodexOAuthState>();
+                    let codex_auth: tokio::sync::RwLockReadGuard<'_, CodexOAuthManager> =
+                        codex_state.0.read().await;
+
+                    // 从 provider.meta 获取关联的 ChatGPT 账号 ID
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.managed_account_id_for("codex_oauth"));
+
+                    let token_result = match &account_id {
+                        Some(id) => {
+                            log::debug!("[CodexOAuth] 使用指定账号 {id} 获取 token");
+                            codex_auth.get_valid_token_for_account(id).await
+                        }
+                        None => {
+                            log::debug!("[CodexOAuth] 使用默认账号获取 token");
+                            codex_auth.get_valid_token().await
+                        }
+                    };
+
+                    match token_result {
+                        Ok(token) => {
+                            auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
+                            // 解析使用的 account_id（用于注入 ChatGPT-Account-Id header）
+                            codex_oauth_account_id = match account_id {
+                                Some(id) => Some(id),
+                                None => codex_auth.default_account_id().await,
+                            };
+                            log::debug!(
+                                "[CodexOAuth] 成功获取 access_token (account={})",
+                                codex_oauth_account_id.as_deref().unwrap_or("default")
+                            );
+                        }
+                        Err(e) => {
+                            log::error!("[CodexOAuth] 获取 access_token 失败: {e}");
+                            return Err(ProxyError::AuthError(format!(
+                                "Codex OAuth 认证失败: {e}"
+                            )));
+                        }
+                    }
+                } else {
+                    log::error!("[CodexOAuth] AppHandle 不可用");
+                    return Err(ProxyError::AuthError(
+                        "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
+
             adapter.get_auth_headers(&auth)
         } else {
             Vec::new()
         };
+
+        // 注入 Codex OAuth 的 ChatGPT-Account-Id header（如果有 account_id）
+        if let Some(ref account_id) = codex_oauth_account_id {
+            if let Ok(hv) = http::HeaderValue::from_str(account_id) {
+                auth_headers.push((http::HeaderName::from_static("chatgpt-account-id"), hv));
+            }
+        }
+
+        // --- Copilot 优化器：动态 header 注入 ---
+        if let Some((ref classification, ref det_request_id, ref interaction_id)) =
+            copilot_optimization
+        {
+            for (name, value) in auth_headers.iter_mut() {
+                match name.as_str() {
+                    "x-initiator" if self.copilot_optimizer_config.request_classification => {
+                        *value = http::HeaderValue::from_static(classification.initiator);
+                    }
+                    "x-interaction-type" if classification.is_subagent => {
+                        // 子代理请求：conversation-subagent 不计 premium interaction
+                        *value = http::HeaderValue::from_static("conversation-subagent");
+                    }
+                    "x-request-id" | "x-agent-task-id" => {
+                        if let Some(ref det_id) = det_request_id {
+                            if let Ok(hv) = http::HeaderValue::from_str(det_id) {
+                                *value = hv;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // x-interaction-id：仅在有 session 时注入（不在 get_auth_headers 中）
+            if let Some(ref iid) = interaction_id {
+                if let Ok(hv) = http::HeaderValue::from_str(iid) {
+                    auth_headers.push((http::HeaderName::from_static("x-interaction-id"), hv));
+                }
+            }
+
+            if classification.is_subagent {
+                log::info!(
+                    "[Copilot] 子代理请求: x-initiator=agent, x-interaction-type=conversation-subagent"
+                );
+            }
+        }
 
         // Copilot 指纹头名（由 get_auth_headers 注入，需在原始头中去重）
         let copilot_fingerprint_headers: &[&str] = if is_copilot {
@@ -926,6 +1128,7 @@ impl RequestForwarder {
                 // 新增 headers
                 "x-initiator",
                 "x-interaction-type",
+                "x-interaction-id",
                 "x-vscode-user-agent-library-version",
                 "x-request-id",
                 "x-agent-task-id",
@@ -1155,12 +1358,8 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 解析上游代理 URL（供应商单独代理 > 全局代理 > 无）
-        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
-        let upstream_proxy_url: Option<String> = proxy_config
-            .filter(|c| c.enabled)
-            .and_then(super::http_client::build_proxy_url_from_config)
-            .or_else(super::http_client::get_current_proxy_url);
+        // 获取全局代理 URL
+        let upstream_proxy_url: Option<String> = super::http_client::get_current_proxy_url();
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
@@ -1176,7 +1375,7 @@ impl RequestForwarder {
         let response = if is_socks_proxy {
             // SOCKS5 代理：只能走 reqwest（不支持 header case 保留）
             log::debug!("[Forwarder] Using reqwest for SOCKS5 proxy");
-            let client = super::http_client::get_for_provider(proxy_config);
+            let client = super::http_client::get();
             let mut request = client.post(&url);
             if !self.non_streaming_timeout.is_zero() {
                 request = request.timeout(self.non_streaming_timeout);
