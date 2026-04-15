@@ -1099,7 +1099,7 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
     // One-time auth type detection to avoid repeated detection
     let auth_type = detect_gemini_auth_type(provider);
 
-    let mut env_map = json_to_env(&provider.settings_config)?;
+    let env_map = json_to_env(&provider.settings_config)?;
 
     // Prepare config to write to ~/.gemini/settings.json
     // Behavior:
