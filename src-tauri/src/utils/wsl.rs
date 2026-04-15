@@ -87,6 +87,10 @@ pub fn get_all_wsl_distros() -> Vec<String> {
         Err(_) => return Vec::new(),
     };
 
+    if !output.status.success() {
+        return Vec::new();
+    }
+
     let text = decode_wsl_output(&output.stdout);
     text.lines()
         .map(|line| {

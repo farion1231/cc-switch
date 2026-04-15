@@ -333,12 +333,15 @@ fn remove_openclaw_provider_at(path: &Path, provider_id: &str) -> Result<(), App
         return Ok(());
     };
 
-    if let Some(providers) = config
+    let removed = config
         .get_mut("models")
         .and_then(|m| m.get_mut("providers"))
         .and_then(|v| v.as_object_mut())
-    {
-        providers.remove(provider_id);
+        .map(|providers| providers.remove(provider_id).is_some())
+        .unwrap_or(false);
+
+    if !removed {
+        return Ok(());
     }
 
     write_json_file(path, &config)
