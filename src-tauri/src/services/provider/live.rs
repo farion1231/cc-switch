@@ -279,7 +279,7 @@ fn upsert_openclaw_provider_at(
     provider_config: Value,
 ) -> Result<(), AppError> {
     let mut full_config = if path.exists() {
-        read_json_file::<Value>(path).unwrap_or_else(|_| {
+        read_openclaw_json5_value(path).unwrap_or_else(|_| {
             json!({
                 "models": {
                     "mode": "merge",
@@ -295,6 +295,10 @@ fn upsert_openclaw_provider_at(
             }
         })
     };
+
+    if !full_config.is_object() {
+        full_config = json!({});
+    }
 
     if !full_config
         .get("models")
@@ -325,7 +329,7 @@ fn upsert_openclaw_provider_at(
 
 fn remove_openclaw_provider_at(path: &Path, provider_id: &str) -> Result<(), AppError> {
     let mut config = if path.exists() {
-        read_json_file::<Value>(path).unwrap_or_else(|_| {
+        read_openclaw_json5_value(path).unwrap_or_else(|_| {
             json!({
                 "models": {
                     "mode": "merge",
@@ -346,6 +350,12 @@ fn remove_openclaw_provider_at(path: &Path, provider_id: &str) -> Result<(), App
     }
 
     write_json_file(path, &config)
+}
+
+fn read_openclaw_json5_value(path: &Path) -> Result<Value, AppError> {
+    let content = std::fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+    json5::from_str(&content)
+        .map_err(|e| AppError::Config(format!("Failed to parse OpenClaw config as JSON5: {e}")))
 }
 
 fn json_is_subset(target: &Value, source: &Value) -> bool {
@@ -2208,6 +2218,84 @@ mod tests {
         .expect("upsert should recover from malformed models value");
 
         let written = read_json_file::<Value>(&path).expect("should read repaired config");
+        assert_eq!(written["models"]["mode"], json!("merge"));
+        assert_eq!(
+            written["models"]["providers"]["test-provider"]["api"]["baseUrl"],
+            json!("https://example.com")
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn upsert_openclaw_provider_preserves_valid_json5_sections() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cc-switch-openclaw-json5-{unique}.json"));
+
+        std::fs::write(
+            &path,
+            r#"{
+  // valid JSON5 config with unrelated sections
+  tools: {
+    profile: 'coding',
+  },
+  channels: ['stable',],
+  models: {
+    mode: 'merge',
+    providers: {},
+  },
+}"#,
+        )
+        .expect("should write JSON5 openclaw config");
+
+        upsert_openclaw_provider_at(
+            &path,
+            "test-provider",
+            json!({
+                "api": {
+                    "baseUrl": "https://example.com"
+                }
+            }),
+        )
+        .expect("upsert should preserve valid JSON5 content");
+
+        let written = read_openclaw_json5_value(&path).expect("should read updated JSON5 config");
+        assert_eq!(written["tools"]["profile"], json!("coding"));
+        assert_eq!(written["channels"], json!(["stable"]));
+        assert_eq!(
+            written["models"]["providers"]["test-provider"]["api"]["baseUrl"],
+            json!("https://example.com")
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn upsert_openclaw_provider_recovers_when_root_is_not_an_object() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cc-switch-openclaw-root-{unique}.json"));
+
+        std::fs::write(&path, "[]").expect("should write non-object JSON5 root");
+
+        upsert_openclaw_provider_at(
+            &path,
+            "test-provider",
+            json!({
+                "api": {
+                    "baseUrl": "https://example.com"
+                }
+            }),
+        )
+        .expect("upsert should recover from non-object root");
+
+        let written = read_openclaw_json5_value(&path).expect("should read repaired config");
+        assert!(written.is_object());
         assert_eq!(written["models"]["mode"], json!("merge"));
         assert_eq!(
             written["models"]["providers"]["test-provider"]["api"]["baseUrl"],
