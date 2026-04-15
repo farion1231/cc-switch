@@ -167,6 +167,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         codex: false,
         gemini: false,
         opencode: false,
+        hermes: false,
     };
 
     for app in apps_str.split(',') {
@@ -178,6 +179,10 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "openclaw" => {
                 // OpenClaw doesn't support MCP, ignore silently
                 log::debug!("OpenClaw doesn't support MCP, ignoring in apps parameter");
+            }
+            "hermes" => {
+                // TODO: Hermes MCP sync not yet implemented, ignore silently for now
+                log::debug!("Hermes MCP sync not yet implemented, ignoring in apps parameter");
             }
             other => {
                 return Err(AppError::InvalidInput(format!(

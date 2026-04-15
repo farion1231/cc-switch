@@ -1282,6 +1282,12 @@ impl ProviderService {
                 match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
+                    AppType::Hermes => {
+                        // TODO: hermes_config module not yet implemented
+                        log::debug!(
+                            "Hermes provider '{id}' removal from live config not yet implemented"
+                        );
+                    }
                     _ => {}
                 }
             }
@@ -1343,6 +1349,10 @@ impl ProviderService {
             }
             AppType::OpenClaw => {
                 remove_openclaw_provider_from_live(id)?;
+            }
+            AppType::Hermes => {
+                // TODO: hermes_config module not yet implemented
+                log::debug!("Hermes provider '{id}' removal from live config not yet implemented");
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -1532,6 +1542,10 @@ impl ProviderService {
                 let rollback_result = match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
+                    AppType::Hermes => {
+                        // TODO: hermes_config module not yet implemented
+                        Ok(())
+                    }
                     _ => Ok(()),
                 };
 
@@ -1708,6 +1722,7 @@ impl ProviderService {
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
+            AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
     }
 
@@ -1722,6 +1737,7 @@ impl ProviderService {
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
+            AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
     }
 
@@ -2087,6 +2103,16 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Hermes => {
+                // Hermes: accept any JSON object for now
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.hermes.settings.not_object",
+                        "Hermes 配置必须是 JSON 对象",
+                        "Hermes configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -2258,8 +2284,8 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw => {
-                // OpenClaw uses apiKey and baseUrl directly on the object
+            AppType::OpenClaw | AppType::Hermes => {
+                // OpenClaw/Hermes use apiKey and baseUrl directly on the object
                 let api_key = provider
                     .settings_config
                     .get("apiKey")

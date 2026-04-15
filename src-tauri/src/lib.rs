@@ -11,6 +11,7 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+mod hermes_config;
 mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
@@ -639,6 +640,7 @@ pub fn run() {
                     crate::app_config::AppType::Gemini,
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
+                    crate::app_config::AppType::Hermes,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,

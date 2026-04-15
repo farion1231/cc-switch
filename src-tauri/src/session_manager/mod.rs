@@ -100,6 +100,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "opencode" => opencode::load_messages(path),
         "openclaw" => openclaw::load_messages(path),
         "gemini" => gemini::load_messages(path),
+        "hermes" => Err("Hermes session loading not yet implemented".to_string()),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -150,6 +151,7 @@ fn delete_session_with_root(
         "opencode" => opencode::delete_session(&validated_root, &validated_source, session_id),
         "openclaw" => openclaw::delete_session(&validated_root, &validated_source, session_id),
         "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
+        "hermes" => Err("Hermes session deletion not yet implemented".to_string()),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -161,6 +163,7 @@ fn provider_root(provider_id: &str) -> Result<PathBuf, String> {
         "opencode" => opencode::get_opencode_data_dir(),
         "openclaw" => crate::openclaw_config::get_openclaw_dir().join("agents"),
         "gemini" => crate::gemini_config::get_gemini_dir().join("tmp"),
+        "hermes" => crate::hermes_config::get_hermes_dir().join("sessions"),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

@@ -46,6 +46,7 @@ impl Database {
                             codex: enabled_codex,
                             gemini: enabled_gemini,
                             opencode: enabled_opencode,
+                            hermes: false,
                         },
                         description,
                         homepage,

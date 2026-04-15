@@ -128,6 +128,10 @@ impl McpService {
                 // Skip for now
                 log::debug!("OpenClaw MCP support is still in development, skipping sync");
             }
+            AppType::Hermes => {
+                // TODO: Hermes MCP sync not yet implemented
+                log::debug!("Hermes MCP sync not yet implemented, skipping sync");
+            }
         }
         Ok(())
     }
@@ -157,6 +161,10 @@ impl McpService {
                 // OpenClaw MCP support is still in development
                 log::debug!("OpenClaw MCP support is still in development, skipping remove");
             }
+            AppType::Hermes => {
+                // TODO: Hermes MCP sync not yet implemented
+                log::debug!("Hermes MCP sync not yet implemented, skipping remove");
+            }
         }
         Ok(())
     }
@@ -166,7 +174,7 @@ impl McpService {
         let servers = Self::get_all_servers(state)?;
 
         for app in AppType::all() {
-            if matches!(app, AppType::OpenClaw) {
+            if matches!(app, AppType::OpenClaw | AppType::Hermes) {
                 continue;
             }
 
