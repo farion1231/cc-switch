@@ -50,22 +50,24 @@ export function useHermesModelConfig(enabled: boolean) {
 /**
  * Query agent configuration.
  */
-export function useHermesAgentConfig() {
+export function useHermesAgentConfig(enabled = true) {
   return useQuery({
     queryKey: hermesKeys.agentConfig,
     queryFn: () => hermesApi.getAgentConfig(),
     staleTime: 30_000,
+    enabled,
   });
 }
 
 /**
  * Query env configuration.
  */
-export function useHermesEnv() {
+export function useHermesEnv(enabled = true) {
   return useQuery({
     queryKey: hermesKeys.env,
     queryFn: () => hermesApi.getEnv(),
     staleTime: 30_000,
+    enabled,
   });
 }
 

@@ -591,6 +591,7 @@ export interface HermesAgentConfig {
   max_turns?: number;
   reasoning_effort?: string;
   tool_use_enforcement?: string | boolean | string[];
+  approvals_mode?: string;
   [key: string]: unknown;
 }
 

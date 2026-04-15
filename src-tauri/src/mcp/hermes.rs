@@ -83,8 +83,7 @@ fn convert_to_hermes_format(spec: &Value) -> Result<Value, AppError> {
                 result.insert("url".into(), url.clone());
             }
             if let Some(headers) = obj.get("headers") {
-                if headers.is_object()
-                    && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
+                if headers.is_object() && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
                 {
                     result.insert("headers".into(), headers.clone());
                 }
@@ -142,9 +141,7 @@ fn convert_from_hermes_format(id: &str, spec: &Value) -> Result<Value, AppError>
             result.insert("url".into(), url.clone());
         }
         if let Some(headers) = obj.get("headers") {
-            if headers.is_object()
-                && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
-            {
+            if headers.is_object() && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true) {
                 result.insert("headers".into(), headers.clone());
             }
         }

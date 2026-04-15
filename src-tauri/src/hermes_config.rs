@@ -171,9 +171,7 @@ fn is_top_level_key_line(line: &str) -> bool {
     }
     if let Some(colon_pos) = line.find(':') {
         let after_colon = &line[colon_pos + 1..];
-        after_colon.is_empty()
-            || after_colon.starts_with(' ')
-            || after_colon.starts_with('\t')
+        after_colon.is_empty() || after_colon.starts_with(' ') || after_colon.starts_with('\t')
     } else {
         false
     }
@@ -221,10 +219,7 @@ fn find_yaml_section_range(raw: &str, section_key: &str) -> Option<(usize, usize
 /// ```
 fn serialize_yaml_section(key: &str, value: &serde_yaml::Value) -> Result<String, AppError> {
     let mut section = serde_yaml::Mapping::new();
-    section.insert(
-        serde_yaml::Value::String(key.to_string()),
-        value.clone(),
-    );
+    section.insert(serde_yaml::Value::String(key.to_string()), value.clone());
     let yaml_str = serde_yaml::to_string(&serde_yaml::Value::Mapping(section))
         .map_err(|e| AppError::Config(format!("Failed to serialize YAML section '{key}': {e}")))?;
     Ok(yaml_str)
@@ -367,7 +362,10 @@ fn write_yaml_section_to_config_locked(
 
     let warnings = scan_hermes_health_internal(&new_raw);
 
-    log::debug!("Hermes config section '{section_key}' written to {:?}", config_path);
+    log::debug!(
+        "Hermes config section '{section_key}' written to {:?}",
+        config_path
+    );
     Ok(HermesWriteOutcome {
         backup_path: backup_path.map(|p| p.display().to_string()),
         warnings,
@@ -438,11 +436,10 @@ pub fn set_provider(
         );
     }
 
-    if let Some(existing) = providers.iter_mut().find(|p| {
-        p.get("name")
-            .and_then(|n| n.as_str())
-            == Some(name)
-    }) {
+    if let Some(existing) = providers
+        .iter_mut()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(name))
+    {
         *existing = yaml_val;
     } else {
         providers.push(yaml_val);
@@ -467,11 +464,7 @@ pub fn remove_provider(name: &str) -> Result<HermesWriteOutcome, AppError> {
         .unwrap_or_default();
 
     let original_len = providers.len();
-    providers.retain(|p| {
-        p.get("name")
-            .and_then(|n| n.as_str())
-            != Some(name)
-    });
+    providers.retain(|p| p.get("name").and_then(|n| n.as_str()) != Some(name));
 
     if providers.len() == original_len {
         return Ok(HermesWriteOutcome::default());
@@ -690,9 +683,8 @@ fn scan_hermes_health_internal(content: &str) -> Vec<HermesHealthWarning> {
                 if !providers.is_sequence() {
                     warnings.push(HermesHealthWarning {
                         code: "custom_providers_not_list".to_string(),
-                        message:
-                            "custom_providers should be a YAML list (sequence), not a mapping"
-                                .to_string(),
+                        message: "custom_providers should be a YAML list (sequence), not a mapping"
+                            .to_string(),
                         path: Some("custom_providers".to_string()),
                     });
                 }

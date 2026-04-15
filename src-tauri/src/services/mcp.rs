@@ -132,11 +132,7 @@ impl McpService {
                 log::debug!("OpenClaw MCP support is still in development, skipping sync");
             }
             AppType::Hermes => {
-                mcp::sync_single_server_to_hermes(
-                    &Default::default(),
-                    &server.id,
-                    &server.server,
-                )?;
+                mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
         }
         Ok(())

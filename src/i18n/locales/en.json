@@ -1630,6 +1630,64 @@
     "primaryModel": "Primary Model",
     "fallbackModel": "Fallback Model"
   },
+  "hermes": {
+    "form": {
+      "baseUrl": "API Endpoint",
+      "baseUrlHint": "The API endpoint URL for this provider.",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Used as the provider name in config.yaml.",
+      "providerKeyLockedHint": "This provider is in Hermes config; key is locked.",
+      "providerKeyRequired": "Provider key is required",
+      "providerKeyInvalid": "Provider key can only contain lowercase letters, numbers, and hyphens",
+      "providerKeyDuplicate": "This provider key already exists"
+    },
+    "model": {
+      "title": "Model Config",
+      "description": "Configure the default model settings in config.yaml's model section.",
+      "default": "Default Model",
+      "defaultHint": "The default model to use, e.g. anthropic/claude-opus-4-6",
+      "provider": "Provider",
+      "providerHint": "Provider name for model routing (e.g. openrouter, anthropic)",
+      "baseUrl": "Base URL",
+      "baseUrlHint": "Override the API endpoint URL for this model",
+      "contextLength": "Context Length",
+      "maxTokens": "Max Tokens",
+      "saveSuccess": "Model config saved",
+      "saveFailed": "Failed to save model config"
+    },
+    "agent": {
+      "title": "Agent Config",
+      "description": "Configure the agent behavior settings in config.yaml's agent section.",
+      "maxTurns": "Max Turns",
+      "maxTurnsHint": "Maximum number of agent turns per session",
+      "reasoningEffort": "Reasoning Effort",
+      "reasoningEffortHint": "Controls the depth of reasoning: none, minimal, low, medium, high, xhigh",
+      "toolUseEnforcement": "Tool Use Enforcement",
+      "toolUseHint": "Values: \"auto\", true, false, or a JSON array of tool names",
+      "approvalsMode": "Approvals Mode",
+      "approvalsModeHint": "Controls tool call approval: manual (always ask), smart (auto-approve safe), off (never ask)",
+      "notSet": "Not set",
+      "saveSuccess": "Agent config saved",
+      "saveFailed": "Failed to save agent config"
+    },
+    "env": {
+      "title": "Env Config",
+      "description": "Edit the environment variables in Hermes .env file.",
+      "editorHint": "Edit the Hermes .env file as a JSON key-value map. Keys become environment variable names.",
+      "saveSuccess": "Env config saved",
+      "saveFailed": "Failed to save env config",
+      "empty": "Hermes env cannot be empty. Use {} for an empty object.",
+      "invalidJson": "Hermes env must be valid JSON.",
+      "objectRequired": "Hermes env must be a JSON object."
+    },
+    "health": {
+      "title": "Hermes config warnings detected",
+      "parseFailed": "config.yaml could not be parsed as valid YAML. Fix the file before editing it here.",
+      "configNotFound": "Hermes config.yaml not found. Create it at ~/.hermes/config.yaml or configure the path in settings.",
+      "envParseFailed": "The .env file could not be parsed."
+    }
+  },
   "env": {
     "warning": {
       "title": "Environment Variable Conflicts Detected",

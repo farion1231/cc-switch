@@ -25,6 +25,8 @@ import {
   KeyRound,
   Shield,
   Cpu,
+  Brain,
+  Bot,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -39,7 +41,7 @@ import {
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
-import { hermesKeys } from "@/hooks/useHermes";
+import { hermesKeys, useHermesHealth } from "@/hooks/useHermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
@@ -83,6 +85,10 @@ import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
+import HermesModelPanel from "@/components/hermes/ModelPanel";
+import HermesAgentPanel from "@/components/hermes/AgentPanel";
+import HermesEnvPanel from "@/components/hermes/EnvPanel";
+import HermesHealthBanner from "@/components/hermes/HermesHealthBanner";
 
 type View =
   | "providers"
@@ -97,7 +103,10 @@ type View =
   | "workspace"
   | "openclawEnv"
   | "openclawTools"
-  | "openclawAgents";
+  | "openclawAgents"
+  | "hermesModel"
+  | "hermesAgent"
+  | "hermesEnv";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -141,6 +150,9 @@ const VALID_VIEWS: View[] = [
   "openclawEnv",
   "openclawTools",
   "openclawAgents",
+  "hermesModel",
+  "hermesAgent",
+  "hermesEnv",
 ];
 
 const getInitialView = (): View => {
@@ -203,7 +215,8 @@ function App() {
       activeApp !== "codex" &&
       activeApp !== "opencode" &&
       activeApp !== "openclaw" &&
-      activeApp !== "gemini"
+      activeApp !== "gemini" &&
+      activeApp !== "hermes"
     ) {
       setCurrentView("providers");
     }
@@ -259,13 +272,21 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
+  const isHermesView =
+    activeApp === "hermes" &&
+    (currentView === "providers" ||
+      currentView === "hermesModel" ||
+      currentView === "hermesAgent" ||
+      currentView === "hermesEnv");
+  const { data: hermesHealthWarnings = [] } = useHermesHealth(isHermesView);
   const hasSkillsSupport = true;
   const hasSessionSupport =
     activeApp === "claude" ||
     activeApp === "codex" ||
     activeApp === "opencode" ||
     activeApp === "openclaw" ||
-    activeApp === "gemini";
+    activeApp === "gemini" ||
+    activeApp === "hermes";
 
   const {
     addProvider,
@@ -940,6 +961,12 @@ function App() {
           return <ToolsPanel />;
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
+        case "hermesModel":
+          return <HermesModelPanel />;
+        case "hermesAgent":
+          return <HermesAgentPanel />;
+        case "hermesEnv":
+          return <HermesEnvPanel />;
         default:
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -971,7 +998,9 @@ function App() {
                         setConfirmAction({ provider, action: "delete" })
                       }
                       onRemoveFromConfig={
-                        activeApp === "opencode" || activeApp === "openclaw"
+                        activeApp === "opencode" ||
+                        activeApp === "openclaw" ||
+                        activeApp === "hermes"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1153,6 +1182,9 @@ function App() {
                   {currentView === "openclawTools" && t("openclaw.tools.title")}
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
+                  {currentView === "hermesModel" && t("hermes.model.title")}
+                  {currentView === "hermesAgent" && t("hermes.agent.title")}
+                  {currentView === "hermesEnv" && t("hermes.env.title")}
                 </h1>
               </div>
             ) : (
@@ -1213,7 +1245,8 @@ function App() {
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
               activeApp !== "opencode" &&
-              activeApp !== "openclaw" && (
+              activeApp !== "openclaw" &&
+              activeApp !== "hermes" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1348,7 +1381,11 @@ function App() {
                       <AnimatePresence mode="wait">
                         <motion.div
                           key={
-                            activeApp === "openclaw" ? "openclaw" : "default"
+                            activeApp === "openclaw"
+                              ? "openclaw"
+                              : activeApp === "hermes"
+                                ? "hermes"
+                                : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
@@ -1356,7 +1393,55 @@ function App() {
                           exit={{ opacity: 0 }}
                           transition={{ duration: 0.15 }}
                         >
-                          {activeApp === "openclaw" ? (
+                          {activeApp === "hermes" ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("hermesModel")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                title={t("hermes.model.title")}
+                              >
+                                <Brain className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("hermesAgent")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                title={t("hermes.agent.title")}
+                              >
+                                <Bot className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("hermesEnv")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                title={t("hermes.env.title")}
+                              >
+                                <KeyRound className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("prompts")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                title={t("prompts.manage")}
+                              >
+                                <Book className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("mcp")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                title={t("mcp.title")}
+                              >
+                                <McpIcon size={16} />
+                              </Button>
+                            </>
+                          ) : activeApp === "openclaw" ? (
                             <>
                               <Button
                                 variant="ghost"
@@ -1478,6 +1563,9 @@ function App() {
       <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
         {isOpenClawView && openclawHealthWarnings.length > 0 && (
           <OpenClawHealthBanner warnings={openclawHealthWarnings} />
+        )}
+        {isHermesView && hermesHealthWarnings.length > 0 && (
+          <HermesHealthBanner warnings={hermesHealthWarnings} />
         )}
         {renderContent()}
       </main>

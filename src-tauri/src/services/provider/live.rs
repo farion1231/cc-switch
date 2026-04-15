@@ -1393,9 +1393,7 @@ pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppErro
 
     // Check if Hermes config directory exists
     if !hermes_config::get_hermes_dir().exists() {
-        log::debug!(
-            "Hermes config directory doesn't exist, skipping removal of '{provider_id}'"
-        );
+        log::debug!("Hermes config directory doesn't exist, skipping removal of '{provider_id}'");
         return Ok(());
     }
 
