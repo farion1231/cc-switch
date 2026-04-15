@@ -541,6 +541,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No new OpenClaw providers to import"),
                 Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
             }
+            match crate::services::provider::import_hermes_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} Hermes provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new Hermes providers to import"),
+                Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1236,6 +1243,17 @@ pub fn run() {
             commands::set_openclaw_env,
             commands::get_openclaw_tools,
             commands::set_openclaw_tools,
+            // Hermes specific
+            commands::import_hermes_providers_from_live,
+            commands::get_hermes_live_provider_ids,
+            commands::get_hermes_live_provider,
+            commands::scan_hermes_config_health,
+            commands::get_hermes_model_config,
+            commands::set_hermes_model_config,
+            commands::get_hermes_agent_config,
+            commands::set_hermes_agent_config,
+            commands::get_hermes_env,
+            commands::set_hermes_env,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
