@@ -5,6 +5,9 @@ use std::path::Path;
 use chrono::{DateTime, FixedOffset};
 use serde_json::Value;
 
+/// Maximum number of characters for session titles (shared across providers).
+pub const TITLE_MAX_CHARS: usize = 80;
+
 /// Read the first `head_n` lines and last `tail_n` lines from a file.
 /// For small files (< 16 KB), reads all lines once to avoid unnecessary seeking.
 pub fn read_head_tail_lines(

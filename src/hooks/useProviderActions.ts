@@ -23,7 +23,11 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
  * Hook for managing provider actions (add, update, delete, switch)
  * Extracts business logic from App.tsx
  */
-export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
+export function useProviderActions(
+  activeApp: AppId,
+  isProxyRunning?: boolean,
+  isProxyTakeover?: boolean,
+) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
@@ -185,6 +189,18 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         );
       }
 
+      // Block official providers when proxy takeover is active
+      if (isProxyTakeover && provider.category === "official") {
+        toast.error(
+          t("notifications.officialBlockedByProxy", {
+            defaultValue:
+              "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁",
+          }),
+          { duration: 6000 },
+        );
+        return;
+      }
+
       try {
         const result = await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
@@ -220,7 +236,14 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyRunning, t],
+    [
+      switchProviderMutation,
+      syncClaudePlugin,
+      activeApp,
+      isProxyRunning,
+      isProxyTakeover,
+      t,
+    ],
   );
 
   // 删除供应商

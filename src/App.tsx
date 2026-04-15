@@ -270,7 +270,11 @@ function App() {
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
-  } = useProviderActions(activeApp, isProxyRunning);
+  } = useProviderActions(
+    activeApp,
+    isProxyRunning,
+    isProxyRunning && isCurrentAppTakeoverActive,
+  );
 
   const disableOmoMutation = useDisableCurrentOmo();
   const handleDisableOmo = () => {
@@ -400,6 +404,32 @@ function App() {
       unsubscribe?.();
     };
   }, [queryClient, t]);
+
+  // Listen for proxy-official-warning: warn when takeover is enabled with an official provider
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    const setup = async () => {
+      unsubscribe = await listen("proxy-official-warning", (event) => {
+        const { providerName } = event.payload as {
+          appType: string;
+          providerName: string;
+        };
+        toast.warning(
+          t("notifications.proxyOfficialWarning", {
+            name: providerName,
+            defaultValue: `当前供应商 ${providerName} 是官方供应商，建议切换到第三方供应商后再使用代理接管`,
+          }),
+          { duration: 8000 },
+        );
+      });
+    };
+
+    void setup();
+    return () => {
+      unsubscribe?.();
+    };
+  }, [t]);
 
   useEffect(() => {
     let active = true;

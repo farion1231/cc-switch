@@ -1869,9 +1869,23 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
             }
         }
 
-        if config_to_write.is_none() && settings_path.exists() {
-            config_to_write = Some(read_json_file(settings_path)?);
+    // If no config specified or config is null, preserve existing file
+    if config_to_write.is_none() && settings_path.exists() {
+        config_to_write = Some(read_json_file(&settings_path)?);
+    }
+
+    match auth_type {
+        GeminiAuthType::GoogleOfficial => {
+            // Google Official uses OAuth, no API key validation needed.
+            // Write user's env vars as-is (e.g. GEMINI_MODEL, custom vars).
+            write_gemini_env_atomic(&env_map)?;
         }
+        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
+            // API Key mode -- require GEMINI_API_KEY
+            validate_gemini_settings_strict(&provider.settings_config)?;
+            write_gemini_env_atomic(&env_map)?;
+        }
+    }
 
         match auth_type {
             GeminiAuthType::GoogleOfficial => {

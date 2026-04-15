@@ -108,6 +108,7 @@
     "currentlyUsing": "現在使用中",
     "enable": "有効化",
     "inUse": "使用中",
+    "blockedByProxy": "ブロック",
     "editProvider": "プロバイダーを編集",
     "editProviderHint": "保存すると現在のプロバイダーにすぐ反映されます。",
     "deleteProvider": "プロバイダーを削除",
@@ -193,20 +194,22 @@
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
-    "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、プロキシサービスが必要です。先にプロキシを起動してください",
+    "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、ルーティングサービスが必要です。先にルーティングを起動してください",
     "proxyReasonCopilot": "GitHub Copilot を Claude プロバイダーとして使用しており",
     "proxyReasonOpenAIChat": "OpenAI Chat API フォーマットを使用しており",
     "proxyReasonOpenAIResponses": "OpenAI Responses API フォーマットを使用しており",
     "proxyReasonFullUrl": "完全 URL 接続モードが有効になっており",
-    "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、プロキシサービスの有効化が必要です",
-    "copilotProxyHint": "GitHub Copilot を Claude プロバイダーとして使用する場合、ローカルプロキシが常に必要です。プロキシは現在のモデルに応じて Chat Completions または Responses を自動的に選択します。",
+    "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、ルーティングサービスの有効化が必要です",
+    "copilotProxyHint": "GitHub Copilot を Claude プロバイダーとして使用する場合、ローカルルーティングが常に必要です。ルーティングは現在のモデルに応じて Chat Completions または Responses を自動的に選択します。",
     "openLinkFailed": "リンクを開けませんでした",
     "openclawModelsRegistered": "モデルが /model リストに登録されました",
     "openclawDefaultModelSet": "デフォルトモデルに設定しました",
     "openclawDefaultModelSetFailed": "デフォルトモデルの設定に失敗しました",
     "openclawNoModels": "モデルが設定されていません",
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
-    "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}"
+    "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
+    "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -214,8 +217,8 @@
     "removeProvider": "プロバイダーを解除",
     "removeProviderMessage": "プロバイダー「{{name}}」を設定から解除してもよろしいですか？\n\n解除後、このプロバイダーは無効になりますが、設定データは CC Switch に保持されます。いつでも再追加できます。",
     "proxy": {
-      "title": "ローカルプロキシの有効化",
-      "message": "ローカルプロキシは上級機能です。有効にする前に、その仕組みを理解していることをご確認ください。\n\n適切な設定方法については、関連ドキュメントまたはプロバイダーにご相談ください。",
+      "title": "ローカルルーティングの有効化",
+      "message": "ローカルルーティングは上級機能です。有効にする前に、その仕組みを理解していることをご確認ください。\n\n適切な設定方法については、関連ドキュメントまたはプロバイダーにご相談ください。",
       "confirm": "理解しました、有効にする"
     },
     "failover": {
@@ -250,7 +253,7 @@
     "tabGeneral": "一般",
     "tabAuth": "認証",
     "tabAdvanced": "詳細",
-    "tabProxy": "プロキシ",
+    "tabProxy": "ルーティング",
     "authCenter": {
       "title": "OAuth 認証センター",
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
@@ -264,10 +267,10 @@
         "description": "Claude、Codex、Gemini の設定保存パスを管理"
       },
       "proxy": {
-        "title": "ローカルプロキシ",
-        "description": "プロキシサービスの切り替え、ステータスとポート情報を表示",
-        "enableFeature": "メインページにプロキシ切り替えを表示",
-        "enableFeatureDescription": "有効にすると、メインページ上部にプロキシとフェイルオーバーの切り替えが表示されます",
+        "title": "ローカルルーティング",
+        "description": "ルーティングサービスの切り替え、ステータスとポート情報を表示",
+        "enableFeature": "メインページにルーティング切り替えを表示",
+        "enableFeatureDescription": "有効にすると、メインページ上部にルーティングとフェイルオーバーの切り替えが表示されます",
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
@@ -619,14 +622,14 @@
     "saving": "保存中...",
     "globalProxy": {
       "label": "グローバルプロキシ",
-      "hint": "すべてのリクエスト（API、Skills ダウンロードなど）をプロキシ経由で送信します。空欄で直接接続。",
+      "hint": "すべてのリクエスト（API、Skills ダウンロードなど）をプロキシ経由で送信します。ローカルルーティング有効時、アプリのリクエストもこのプロキシを経由します。空欄で直接接続。",
       "username": "ユーザー名（任意）",
       "password": "パスワード（任意）",
       "test": "接続テスト",
       "scan": "ローカルプロキシをスキャン",
       "clear": "クリア",
       "scanFailed": "スキャンに失敗しました: {{error}}",
-      "saved": "プロキシ設定を保存しました",
+      "saved": "ルーティング設定を保存しました",
       "saveFailed": "保存に失敗しました: {{error}}",
       "testSuccess": "接続成功！遅延 {{latency}}ms",
       "testFailed": "接続に失敗しました: {{error}}",
@@ -722,7 +725,9 @@
     "copyCommand": "コマンドをコピー",
     "copyMessage": "メッセージをコピー",
     "messageCopied": "メッセージがコピーされました",
-    "conversationHistory": "会話履歴"
+    "conversationHistory": "会話履歴",
+    "expandContent": "全文を表示",
+    "collapseContent": "折りたたむ"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",
@@ -780,7 +785,6 @@
       "siliconflow": "SiliconFlow は CC Switch の公式パートナーです",
       "ucloud": "Compshare は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、5元のプラットフォーム体験クレジットがもらえます！",
       "micu": "Micu は CC Switch の公式パートナーです",
-      "x-code": "XCodeAPI は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、初回注文で 10% の追加クレジットがもらえます（管理者に連絡して受け取り）",
       "ctok": "公式サイトで CTok コミュニティに参加し、プランを購読してください。",
       "ddshub": "DDSHub は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、初回チャージで 10% の追加クレジットがもらえます（グループ管理者に連絡して受け取り）！",
       "lionccapi": "LionCCAPIはCC Switchユーザーに特別特典を提供しています。登録後、WeChat HSQBJ088888888を追加し、「cc-switch」と伝えると$10分のクレジットがもらえます！",
@@ -818,10 +822,10 @@
     "fullUrlLabel": "フル URL",
     "fullUrlEnabled": "フル URL モード",
     "fullUrlDisabled": "フル URL として設定",
-    "fullUrlHint": "💡 完全なリクエスト URL を入力してください。このモードはプロキシを有効にして使用する必要があり、プロキシはこの URL をそのまま使用し、パスを追加しません",
+    "fullUrlHint": "💡 完全なリクエスト URL を入力してください。このモードはルーティングを有効にして使用する必要があり、ルーティングはこの URL をそのまま使用し、パスを追加しません",
     "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
-    "apiFormatOpenAIChat": "OpenAI Chat Completions（プロキシが必要）",
-    "apiFormatOpenAIResponses": "OpenAI Responses API（プロキシが必要）",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions（ルーティングが必要）",
+    "apiFormatOpenAIResponses": "OpenAI Responses API（ルーティングが必要）",
     "authField": "認証フィールド",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（デフォルト）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
@@ -941,11 +945,6 @@
     "testPrompt": "テストプロンプト",
     "degradedThreshold": "低下閾値（ミリ秒）",
     "maxRetries": "最大リトライ回数",
-    "proxyConfig": "プロキシ設定",
-    "useCustomProxy": "個別プロキシを使用",
-    "proxyConfigDesc": "このプロバイダーに個別のネットワークプロキシを設定します。無効の場合はシステムプロキシまたはグローバル設定を使用します。",
-    "proxyUsername": "ユーザー名（任意）",
-    "proxyPassword": "パスワード（任意）",
     "pricingConfig": "課金設定",
     "useCustomPricing": "個別設定を使用",
     "pricingConfigDesc": "このプロバイダーに個別の課金パラメータを設定します。無効の場合はグローバル設定を使用します。",
@@ -1089,7 +1088,7 @@
     },
     "dataSources": "データソース",
     "dataSource": {
-      "proxy": "プロキシ",
+      "proxy": "ルーティング",
       "session_log": "セッションログ",
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
@@ -1104,6 +1103,8 @@
       "failed": "セッション同期に失敗しました"
     },
     "totalRecords": "全 {{total}} 件",
+    "goToPage": "移動",
+    "pageInputPlaceholder": "ページ",
     "modelPricing": "モデル料金",
     "loadPricingError": "料金データの読み込みに失敗しました",
     "modelPricingDesc": "各モデルのトークンコストを設定",
@@ -1939,9 +1940,9 @@
       "addressCopied": "アドレスをコピーしました",
       "currentProvider": "現在のプロバイダー:",
       "waitingFirstRequest": "現在のプロバイダー: 最初のリクエスト待ち...",
-      "stoppedTitle": "プロキシサービス停止中",
+      "stoppedTitle": "ルーティングサービス停止中",
       "stoppedDescription": "上のトグルでサービスを開始できます",
-      "openSettings": "プロキシサービスを設定",
+      "openSettings": "ルーティングサービスを設定",
       "stats": {
         "activeConnections": "アクティブ接続",
         "totalRequests": "総リクエスト数",
@@ -1950,14 +1951,14 @@
       }
     },
     "settings": {
-      "title": "プロキシサービス設定",
-      "description": "ローカルプロキシサーバーのリッスンアドレス、ポート、実行パラメータを設定します。保存後すぐに反映されます。",
+      "title": "ルーティングサービス設定",
+      "description": "ローカルルーティングサーバーのリッスンアドレス、ポート、実行パラメータを設定します。保存後すぐに反映されます。",
       "alert": {
-        "autoApply": "変更は実行中のプロキシサービスに自動的に同期され、手動での再起動は不要です。"
+        "autoApply": "変更は実行中のルーティングサービスに自動的に同期され、手動での再起動は不要です。"
       },
       "basic": {
         "title": "基本設定",
-        "description": "プロキシサービスのリッスンアドレスとポートを設定します。"
+        "description": "ルーティングサービスのリッスンアドレスとポートを設定します。"
       },
       "advanced": {
         "title": "詳細パラメータ",
@@ -1971,12 +1972,12 @@
         "listenAddress": {
           "label": "リッスンアドレス",
           "placeholder": "127.0.0.1",
-          "description": "プロキシサーバーがリッスンするIPアドレス（推奨: 127.0.0.1）"
+          "description": "ルーティングサーバーがリッスンするIPアドレス（推奨: 127.0.0.1）"
         },
         "listenPort": {
           "label": "リッスンポート",
           "placeholder": "15721",
-          "description": "プロキシサーバーがリッスンするポート番号（1024 ~ 65535）"
+          "description": "ルーティングサーバーがリッスンするポート番号（1024 ~ 65535）"
         },
         "maxRetries": {
           "label": "最大リトライ回数",
@@ -1990,7 +1991,7 @@
         },
         "enableLogging": {
           "label": "ログ記録を有効化",
-          "description": "トラブルシューティングのためにすべてのプロキシリクエストを記録"
+          "description": "トラブルシューティングのためにすべてのルーティングリクエストを記録"
         },
         "streamingFirstByteTimeout": {
           "label": "ストリーミング初回バイトタイムアウト（秒）",
@@ -2021,29 +2022,29 @@
         "save": "設定を保存"
       },
       "toast": {
-        "saved": "プロキシ設定を保存しました",
+        "saved": "ルーティング設定を保存しました",
         "saveFailed": "保存に失敗しました: {{error}}"
       },
       "invalidPort": "無効なポートです。1024〜65535 の数値を入力してください",
       "invalidAddress": "無効なアドレスです。有効な IP アドレス（例: 127.0.0.1）または localhost を入力してください",
-      "configSaved": "プロキシ設定を保存しました",
+      "configSaved": "ルーティング設定を保存しました",
       "configSaveFailed": "設定の保存に失敗しました",
-      "restartRequired": "アドレスまたはポートの変更を反映するにはプロキシサービスの再起動が必要です"
+      "restartRequired": "アドレスまたはポートの変更を反映するにはルーティングサービスの再起動が必要です"
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "takeover": {
-      "hint": "テイクオーバーするアプリを選択します。有効にすると、そのアプリのリクエストはローカルプロキシ経由で転送されます",
-      "enabled": "{{app}} テイクオーバー有効",
-      "disabled": "{{app}} テイクオーバー無効",
-      "failed": "テイクオーバーの切り替えに失敗しました",
+      "hint": "ルーティングするアプリを選択します。有効にすると、そのアプリのリクエストはローカルルーティング経由で転送されます",
+      "enabled": "{{app}} ルーティング有効",
+      "disabled": "{{app}} ルーティング無効",
+      "failed": "ルーティングの切り替えに失敗しました",
       "tooltip": {
-        "active": "{{appLabel}} がインターセプト中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
-        "broken": "{{appLabel}} がインターセプト中ですが、プロキシサービスが実行されていません",
-        "inactive": "{{appLabel}} のライブ設定をインターセプトしてリクエストをローカルプロキシ経由でルーティング"
+        "active": "{{appLabel}} がルーティング中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
+        "broken": "{{appLabel}} がルーティング中ですが、ルーティングサービスが実行されていません",
+        "inactive": "{{appLabel}} のリクエストをローカルルーティング経由でルーティング"
       }
     },
     "failover": {
-      "proxyRequired": "フェイルオーバーを設定するには、プロキシサービスを先に起動する必要があります",
+      "proxyRequired": "フェイルオーバーを設定するには、ルーティングサービスを先に起動する必要があります",
       "autoSwitch": "自動フェイルオーバー",
       "autoSwitchDescription": "有効にするとキューの P1 に即時切り替え、リクエスト失敗時はキュー内の次のプロバイダーを自動で試行します"
     },
@@ -2107,10 +2108,10 @@
       "failed": "ログ状態の切り替えに失敗しました"
     },
     "server": {
-      "started": "プロキシサービスが開始されました - {{address}}:{{port}}",
-      "startFailed": "プロキシサービスの開始に失敗しました: {{detail}}"
+      "started": "ルーティングサービスが開始されました - {{address}}:{{port}}",
+      "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}"
     },
-    "stoppedWithRestore": "プロキシサービスが停止し、すべてのテイクオーバー設定が復元されました",
+    "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
     "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
   },
   "streamCheck": {
@@ -2128,11 +2129,21 @@
     "operational": "{{providerName}} は正常に動作しています ({{responseTimeMs}}ms)",
     "degraded": "{{providerName}} の応答が遅いです ({{responseTimeMs}}ms)",
     "failed": "{{providerName}} のチェックに失敗しました: {{message}}",
-    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
+    "rejected": "{{providerName}} のチェックが拒否されました: {{message}}",
+    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}",
+    "httpHint": {
+      "400": "リクエスト形式が拒否されました。ヘルスチェックの形式は実際の使用と異なる場合があります。",
+      "401": "APIキーが無効か、OAuthなどの認証方式を使用しています。チェック失敗は実際に使えないことを意味しません。",
+      "402": "アカウントの利用枠または請求の問題です。",
+      "403": "プロバイダーがリクエストを拒否しました。実際の使用では正常に動作する場合があります。",
+      "404": "エンドポイントが見つかりません。Base URLとAPIパスを確認してください。",
+      "429": "リクエストが多すぎます。しばらくしてからお試しください。",
+      "5xx": "プロバイダーの内部エラーです。一時的な問題の可能性が高いです。"
+    }
   },
   "proxyConfig": {
-    "proxyEnabled": "プロキシ有効",
-    "appTakeover": "プロキシ有効",
+    "proxyEnabled": "ルーティング総スイッチ",
+    "appTakeover": "ルーティング有効",
     "perAppConfig": "アプリ別設定",
     "circuitBreaker": "サーキットブレーカー",
     "circuitBreakerSettings": "サーキットブレーカー設定",

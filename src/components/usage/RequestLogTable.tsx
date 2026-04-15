@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -31,24 +31,33 @@ import {
 interface RequestLogTableProps {
   appType?: string;
   refreshIntervalMs: number;
+  timeRange?: "1d" | "7d" | "30d";
 }
 
 const ONE_DAY_SECONDS = 24 * 60 * 60;
 const MAX_FIXED_RANGE_SECONDS = 30 * ONE_DAY_SECONDS;
+
+const TIME_RANGE_SECONDS: Record<string, number> = {
+  "1d": ONE_DAY_SECONDS,
+  "7d": 7 * ONE_DAY_SECONDS,
+  "30d": 30 * ONE_DAY_SECONDS,
+};
 
 type TimeMode = "rolling" | "fixed";
 
 export function RequestLogTable({
   appType: dashboardAppType,
   refreshIntervalMs,
+  timeRange = "1d",
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
 
+  const rollingWindowSeconds = TIME_RANGE_SECONDS[timeRange] ?? ONE_DAY_SECONDS;
+
   const getRollingRange = () => {
     const now = Math.floor(Date.now() / 1000);
-    const oneDayAgo = now - ONE_DAY_SECONDS;
-    return { startDate: oneDayAgo, endDate: now };
+    return { startDate: now - rollingWindowSeconds, endDate: now };
   };
 
   const [appliedTimeMode, setAppliedTimeMode] = useState<TimeMode>("rolling");
@@ -57,8 +66,14 @@ export function RequestLogTable({
   const [appliedFilters, setAppliedFilters] = useState<LogFilters>({});
   const [draftFilters, setDraftFilters] = useState<LogFilters>({});
   const [page, setPage] = useState(0);
+  const [pageInput, setPageInput] = useState("");
   const pageSize = 20;
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Reset page when the dashboard time range changes
+  useEffect(() => {
+    setPage(0);
+  }, [timeRange]);
 
   // When dashboard-level app filter is active (not "all"), override the local appType filter
   const dashboardAppTypeActive = dashboardAppType && dashboardAppType !== "all";
@@ -69,7 +84,7 @@ export function RequestLogTable({
   const { data: result, isLoading } = useRequestLogs({
     filters: effectiveFilters,
     timeMode: appliedTimeMode,
-    rollingWindowSeconds: ONE_DAY_SECONDS,
+    rollingWindowSeconds,
     page,
     pageSize,
     options: {
@@ -129,6 +144,15 @@ export function RequestLogTable({
     setDraftFilters({});
     setAppliedFilters({});
     setPage(0);
+  };
+
+  const handleGoToPage = () => {
+    const trimmed = pageInput.trim();
+    if (!/^\d+$/.test(trimmed)) return;
+    const parsed = Number(trimmed);
+    if (parsed < 1 || parsed > totalPages) return;
+    setPage(parsed - 1);
+    setPageInput("");
   };
 
   const handleRefresh = () => {
@@ -561,30 +585,33 @@ export function RequestLogTable({
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
-                {/* 页码按钮 */}
                 {(() => {
                   const pages: (number | string)[] = [];
-                  if (totalPages <= 7) {
+                  // 3 head + 3 tail + 3 neighborhood = 9 max distinct pages
+                  if (totalPages <= 9) {
                     for (let i = 0; i < totalPages; i++) pages.push(i);
                   } else {
-                    pages.push(0);
-                    if (page > 2) pages.push("...");
+                    const pageSet = new Set<number>();
+                    for (let i = 0; i < 3; i++) pageSet.add(i);
+                    for (let i = totalPages - 3; i < totalPages; i++)
+                      pageSet.add(i);
                     for (
-                      let i = Math.max(1, page - 1);
-                      i <= Math.min(totalPages - 2, page + 1);
+                      let i = Math.max(0, page - 1);
+                      i <= Math.min(totalPages - 1, page + 1);
                       i++
-                    ) {
-                      pages.push(i);
+                    )
+                      pageSet.add(i);
+                    const sorted = Array.from(pageSet).sort((a, b) => a - b);
+                    for (let i = 0; i < sorted.length; i++) {
+                      if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
+                        pages.push(`ellipsis-${i}`);
+                      }
+                      pages.push(sorted[i]);
                     }
-                    if (page < totalPages - 3) pages.push("...");
-                    pages.push(totalPages - 1);
                   }
-                  return pages.map((p, idx) =>
+                  return pages.map((p) =>
                     typeof p === "string" ? (
-                      <span
-                        key={`ellipsis-${idx}`}
-                        className="px-2 text-muted-foreground"
-                      >
+                      <span key={p} className="px-2 text-muted-foreground">
                         ...
                       </span>
                     ) : (
@@ -608,6 +635,21 @@ export function RequestLogTable({
                 >
                   <ChevronRight className="h-4 w-4" />
                 </Button>
+                <div className="flex items-center gap-1 ml-2">
+                  <Input
+                    type="text"
+                    value={pageInput}
+                    onChange={(e) => setPageInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleGoToPage();
+                    }}
+                    placeholder={t("usage.pageInputPlaceholder")}
+                    className="h-8 w-16 text-center text-xs"
+                  />
+                  <Button variant="outline" size="sm" onClick={handleGoToPage}>
+                    {t("usage.goToPage")}
+                  </Button>
+                </div>
               </div>
             </div>
           )}
