@@ -821,7 +821,6 @@
     "visitWebsite": "访问 {{url}}",
     "anthropicModel": "主模型",
     "anthropicSmallFastModel": "快速模型",
-    "anthropicReasoningModel": "推理模型 (Thinking)",
     "apiFormat": "API 格式",
     "apiFormatHint": "选择供应商 API 的输入格式",
     "fullUrlLabel": "完整 URL",

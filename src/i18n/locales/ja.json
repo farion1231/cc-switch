@@ -820,7 +820,6 @@
     "visitWebsite": "{{url}} を開く",
     "anthropicModel": "メインモデル",
     "anthropicSmallFastModel": "高速モデル",
-    "anthropicReasoningModel": "推論モデル（Thinking）",
     "apiFormat": "API フォーマット",
     "apiFormatHint": "プロバイダー API の入力フォーマットを選択",
     "fullUrlLabel": "フル URL",

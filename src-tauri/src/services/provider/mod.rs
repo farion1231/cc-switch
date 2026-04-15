@@ -1734,9 +1734,9 @@ impl ProviderService {
             // Auth
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
-            // Models (5 fields)
+            // Models (4 fields + 1 legacy)
             "ANTHROPIC_MODEL",
-            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",

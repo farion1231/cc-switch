@@ -314,7 +314,6 @@ export function ProviderForm({
 
   const {
     claudeModel,
-    reasoningModel,
     defaultHaikuModel,
     defaultSonnetModel,
     defaultOpusModel,
@@ -1567,7 +1566,6 @@ export function ProviderForm({
               onAutoSelectChange={setEndpointAutoSelect}
               shouldShowModelSelector={category !== "official"}
               claudeModel={claudeModel}
-              reasoningModel={reasoningModel}
               defaultHaikuModel={defaultHaikuModel}
               defaultSonnetModel={defaultSonnetModel}
               defaultOpusModel={defaultOpusModel}

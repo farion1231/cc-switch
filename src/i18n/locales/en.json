@@ -820,7 +820,6 @@
     "visitWebsite": "Visit {{url}}",
     "anthropicModel": "Main Model",
     "anthropicSmallFastModel": "Fast Model",
-    "anthropicReasoningModel": "Reasoning Model (Thinking)",
     "apiFormat": "API Format",
     "apiFormatHint": "Select the input format for the provider's API",
     "fullUrlLabel": "Full URL",
