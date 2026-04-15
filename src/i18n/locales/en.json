@@ -658,7 +658,8 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1308,7 +1309,8 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
-        "openclaw": "OpenClaw"
+        "openclaw": "OpenClaw",
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "User-level MCP path",

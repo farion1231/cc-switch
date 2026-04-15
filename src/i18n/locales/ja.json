@@ -658,7 +658,8 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes"
   },
   "sessionManager": {
     "title": "セッション管理",
@@ -1308,7 +1309,8 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
-        "openclaw": "OpenClaw"
+        "openclaw": "OpenClaw",
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",

@@ -25,6 +25,7 @@ import {
   useOpenClawLiveProviderIds,
   useOpenClawDefaultModel,
 } from "@/hooks/useOpenClaw";
+import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -105,7 +106,10 @@ export function ProviderList({
     appId === "openclaw",
   );
 
-  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw）
+  // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
+
+  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
       if (appId === "opencode") {
@@ -114,9 +118,12 @@ export function ProviderList({
       if (appId === "openclaw") {
         return openclawLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "hermes") {
+        return hermesLiveIds?.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds],
+    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -227,6 +234,10 @@ export function ProviderList({
       }
       if (appId === "openclaw") {
         const count = await providersApi.importOpenClawFromLive();
+        return count > 0;
+      }
+      if (appId === "hermes") {
+        const count = await providersApi.importHermesFromLive();
         return count > 0;
       }
       return providersApi.importDefault(appId);

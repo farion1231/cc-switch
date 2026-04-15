@@ -39,6 +39,7 @@ import {
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
+import { hermesKeys } from "@/hooks/useHermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
@@ -114,6 +115,7 @@ const VALID_APPS: AppId[] = [
   "gemini",
   "opencode",
   "openclaw",
+  "hermes",
 ];
 
 const getInitialApp = (): AppId => {
@@ -174,6 +176,7 @@ function App() {
     gemini: true,
     opencode: true,
     openclaw: true,
+    hermes: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -182,6 +185,7 @@ function App() {
     if (visibleApps.gemini) return "gemini";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
+    if (visibleApps.hermes) return "hermes";
     return "claude"; // fallback
   };
 
@@ -654,6 +658,13 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
         });
+      } else if (activeApp === "hermes") {
+        await queryClient.invalidateQueries({
+          queryKey: hermesKeys.liveProviderIds,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: hermesKeys.health,
+        });
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -704,7 +715,11 @@ function App() {
       iconColor: provider.iconColor,
     };
 
-    if (activeApp === "opencode" || activeApp === "openclaw") {
+    if (
+      activeApp === "opencode" ||
+      activeApp === "openclaw" ||
+      activeApp === "hermes"
+    ) {
       let liveProviderIds: string[] = [];
       try {
         liveProviderIds =
@@ -713,10 +728,15 @@ function App() {
                 queryKey: ["opencodeLiveProviderIds"],
                 queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
               })
-            : await queryClient.ensureQueryData({
-                queryKey: openclawKeys.liveProviderIds,
-                queryFn: () => providersApi.getOpenClawLiveProviderIds(),
-              });
+            : activeApp === "openclaw"
+              ? await queryClient.ensureQueryData({
+                  queryKey: openclawKeys.liveProviderIds,
+                  queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+                })
+              : await queryClient.ensureQueryData({
+                  queryKey: hermesKeys.liveProviderIds,
+                  queryFn: () => providersApi.getHermesLiveProviderIds(),
+                });
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
