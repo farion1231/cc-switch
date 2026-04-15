@@ -20,7 +20,8 @@ use super::{
     },
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
-        strip_entity_headers_for_rebuilt_body, SseUsageCollector,
+        strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
+        SseUsageCollector,
     },
     server::ProxyState,
     types::*,
@@ -216,10 +217,6 @@ async fn handle_claude_transform(
             "Cache-Control",
             axum::http::HeaderValue::from_static("no-cache"),
         );
-        headers.insert(
-            "Connection",
-            axum::http::HeaderValue::from_static("keep-alive"),
-        );
 
         let body = axum::body::Body::from_stream(logged_stream);
         return Ok((headers, body).into_response());
@@ -287,6 +284,7 @@ async fn handle_claude_transform(
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    strip_hop_by_hop_response_headers(&mut response_headers);
 
     for (key, value) in response_headers.iter() {
         builder = builder.header(key, value);
