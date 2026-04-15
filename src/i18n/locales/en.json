@@ -2131,6 +2131,8 @@
     "failed": "{{providerName}} check failed: {{message}}",
     "rejected": "{{providerName}} check rejected: {{message}}",
     "error": "{{providerName}} check error: {{error}}",
+    "modelNotFound": "{{providerName}} test model {{model}} does not exist or has been deprecated",
+    "modelNotFoundHint": "This model may have been retired by the provider. Update the default test model in \"Model Test Config\".",
     "httpHint": {
       "400": "Provider rejected request format. Health check probe may differ from actual usage.",
       "401": "API key may be invalid, or provider uses OAuth auth. Check failure doesn't mean it's unusable.",
