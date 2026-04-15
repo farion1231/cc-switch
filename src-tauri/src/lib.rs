@@ -971,6 +971,10 @@ pub fn run() {
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
             if let Some(window) = app.get_webview_window("main") {
+                // 在窗口首次显示前同步装饰状态，避免前端加载后再切换导致标题栏闪烁
+                // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
+                #[cfg(target_os = "linux")]
+                let _ = window.set_decorations(!settings.use_app_window_controls);
                 if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();

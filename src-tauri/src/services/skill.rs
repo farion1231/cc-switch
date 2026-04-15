@@ -680,6 +680,13 @@ impl SkillService {
                         found.display()
                     );
                     source = found;
+                } else if temp_dir.join("SKILL.md").exists() {
+                    // 根级 Skill：仓库本身就是 skill，SKILL.md 直接在解压根目录
+                    log::info!(
+                        "Skill directory '{}' not found, but SKILL.md exists at root, using temp_dir",
+                        target_name,
+                    );
+                    source = temp_dir.clone();
                 } else {
                     let _ = fs::remove_dir_all(&temp_dir);
                     return Err(anyhow!(format_skill_error(

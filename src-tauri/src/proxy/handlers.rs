@@ -622,7 +622,7 @@ async fn log_usage(
         model
     };
 
-    let request_id = uuid::Uuid::new_v4().to_string();
+    let request_id = usage.dedup_request_id();
 
     if let Err(e) = logger.log_with_calculation(
         request_id,

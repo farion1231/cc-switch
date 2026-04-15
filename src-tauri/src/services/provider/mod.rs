@@ -1407,6 +1407,16 @@ impl ProviderService {
         // Hot-switch only when BOTH: this app is taken over AND proxy server is actually running
         let should_hot_switch = (is_app_taken_over || live_taken_over) && is_proxy_running;
 
+        // Block switching to official providers when proxy takeover is active.
+        // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
+        if should_hot_switch && _provider.category.as_deref() == Some("official") {
+            return Err(AppError::localized(
+                "switch.official_blocked_by_proxy",
+                "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁。请先关闭代理接管，或选择第三方供应商。",
+                "Cannot switch to official provider while proxy takeover is active. Using proxy with official APIs may cause account bans.",
+            ));
+        }
+
         if should_hot_switch {
             // Proxy takeover mode: hot-switch only, don't write Live config
             log::info!(

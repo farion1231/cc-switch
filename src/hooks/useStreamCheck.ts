@@ -47,13 +47,37 @@ export function useStreamCheck(appId: AppId) {
           // 降级状态也重置熔断器，因为至少能通信
           resetCircuitBreaker.mutate({ providerId, appType: appId });
         } else {
-          toast.error(
-            t("streamCheck.failed", {
-              providerName: providerName,
-              message: result.message,
-              defaultValue: `${providerName} 检查失败: ${result.message}`,
-            }),
-          );
+          const httpStatus = result.httpStatus;
+          const hintKey = httpStatus
+            ? `streamCheck.httpHint.${httpStatus >= 500 ? "5xx" : httpStatus}`
+            : null;
+          const description =
+            (hintKey ? t(hintKey, { defaultValue: "" }) : "") || undefined;
+
+          // 401/403/400 = 检查被拒（供应商可能正常）；429/5xx = 临时问题
+          const isProbeRejection =
+            httpStatus != null &&
+            ([401, 403, 400, 429].includes(httpStatus) || httpStatus >= 500);
+
+          if (isProbeRejection) {
+            toast.warning(
+              t("streamCheck.rejected", {
+                providerName: providerName,
+                message: result.message,
+                defaultValue: `${providerName} 检查被拒: ${result.message}`,
+              }),
+              { description, duration: 8000, closeButton: true },
+            );
+          } else {
+            toast.error(
+              t("streamCheck.failed", {
+                providerName: providerName,
+                message: result.message,
+                defaultValue: `${providerName} 检查失败: ${result.message}`,
+              }),
+              { description, duration: 8000, closeButton: true },
+            );
+          }
         }
 
         return result;

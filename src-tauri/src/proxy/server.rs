@@ -24,7 +24,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
-use tower_http::cors::{Any, CorsLayer};
 
 /// 代理服务器状态（共享）
 #[derive(Clone)]
@@ -279,11 +278,6 @@ impl ProxyServer {
     }
 
     fn build_router(&self) -> Router {
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
-
         Router::new()
             // 健康检查
             .route("/health", get(handlers::health_check))
@@ -332,7 +326,6 @@ impl ProxyServer {
             .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
-            .layer(cors)
             .with_state(self.state.clone())
     }
 
