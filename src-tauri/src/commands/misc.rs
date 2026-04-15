@@ -865,19 +865,11 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     Ok(Some(resolved))
 }
 
-fn claude_config_is_empty(config_file: &std::path::Path) -> bool {
-    let Ok(content) = std::fs::read_to_string(config_file) else {
-        return false;
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
-    };
-
-    value
-        .get("env")
-        .and_then(serde_json::Value::as_object)
-        .map(|env| env.is_empty())
-        .unwrap_or(false)
+fn should_write_temp_claude_config(
+    env_vars: &[(String, String)],
+    claude_profile_dir: Option<&str>,
+) -> bool {
+    claude_profile_dir.is_none() && !env_vars.is_empty()
 }
 
 /// 创建临时配置文件并启动 claude 终端
@@ -888,31 +880,47 @@ fn launch_terminal_with_env(
     cwd: Option<&Path>,
     claude_profile_dir: Option<&str>,
 ) -> Result<(), String> {
-    let temp_dir = std::env::temp_dir();
-    let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
-        std::process::id()
-    ));
-
-    // 创建并写入配置文件
-    write_claude_config(&config_file, &env_vars)?;
-
     #[cfg(target_os = "macos")]
     {
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join(format!(
+            "claude_{}_{}.json",
+            provider_id,
+            std::process::id()
+        ));
+        write_claude_config(&config_file, &env_vars)?;
         launch_macos_terminal(&config_file, cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join(format!(
+            "claude_{}_{}.json",
+            provider_id,
+            std::process::id()
+        ));
+        write_claude_config(&config_file, &env_vars)?;
         launch_linux_terminal(&config_file, cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd, claude_profile_dir)?;
+        let temp_dir = std::env::temp_dir();
+        let config_file = if should_write_temp_claude_config(&env_vars, claude_profile_dir) {
+            let path = temp_dir.join(format!(
+                "claude_{}_{}.json",
+                provider_id,
+                std::process::id()
+            ));
+            write_claude_config(&path, &env_vars)?;
+            Some(path)
+        } else {
+            None
+        };
+        launch_windows_terminal(&temp_dir, config_file.as_deref(), cwd, claude_profile_dir)?;
         return Ok(());
     }
 
@@ -1215,7 +1223,7 @@ fn which_command(cmd: &str) -> bool {
 #[cfg(target_os = "windows")]
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
-    config_file: &std::path::Path,
+    config_file: Option<&std::path::Path>,
     cwd: Option<&Path>,
     claude_profile_dir: Option<&str>,
 ) -> Result<(), String> {
@@ -1223,7 +1231,6 @@ fn launch_windows_terminal(
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
     let content = if let Some(profile_dir) = claude_profile_dir {
@@ -1240,16 +1247,8 @@ del \"%~f0\" >nul 2>&1
             cwd_command = cwd_command,
             escaped_profile_dir = escaped_profile_dir,
         )
-    } else if claude_config_is_empty(config_file) {
-        format!(
-            "@echo off
-{cwd_command}
-claude
-del \"%~f0\" >nul 2>&1
-",
-            cwd_command = cwd_command,
-        )
-    } else {
+    } else if let Some(config_file) = config_file {
+        let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
         format!(
             "@echo off
 {cwd_command}
@@ -1262,6 +1261,15 @@ del \"%~f0\" >nul 2>&1
             config_path_for_batch,
             config_path_for_batch,
             config_path_for_batch,
+            cwd_command = cwd_command,
+        )
+    } else {
+        format!(
+            "@echo off
+{cwd_command}
+claude
+del \"%~f0\" >nul 2>&1
+",
             cwd_command = cwd_command,
         )
     };
@@ -1403,7 +1411,16 @@ mod tests {
         let config_path = temp.path().join("claude-empty.json");
         std::fs::write(&config_path, "{\n  \"env\": {}\n}").expect("write empty config");
 
-        assert!(claude_config_is_empty(&config_path));
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read config"))
+                .expect("parse config");
+        assert_eq!(
+            value
+                .get("env")
+                .and_then(|env| env.as_object())
+                .map(|env| env.is_empty()),
+            Some(true)
+        );
     }
 
     #[test]
@@ -1416,7 +1433,62 @@ mod tests {
         )
         .expect("write non-empty config");
 
-        assert!(!claude_config_is_empty(&config_path));
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read config"))
+                .expect("parse config");
+        assert_eq!(
+            value
+                .get("env")
+                .and_then(|env| env.as_object())
+                .map(|env| env.is_empty()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn profile_dir_mode_skips_temp_claude_config_file() {
+        let env_vars = vec![(
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            "secret-token".to_string(),
+        )];
+
+        assert!(
+            !should_write_temp_claude_config(
+                &env_vars,
+                Some(r"C:\Users\test\.claude-profiles\api")
+            ),
+            "profile-dir launches should not leave temporary provider config files behind"
+        );
+    }
+
+    #[test]
+    fn empty_claude_env_launch_skips_temp_claude_config_file() {
+        let env_vars: Vec<(String, String)> = Vec::new();
+
+        assert!(
+            !should_write_temp_claude_config(&env_vars, None),
+            "legacy launches without provider env should not create empty temp config files"
+        );
+    }
+
+    #[test]
+    fn japanese_restart_hint_is_not_placeholder_garbage() {
+        let ja = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../src/i18n/locales/ja.json"
+        ));
+        let value: serde_json::Value =
+            serde_json::from_str(ja).expect("ja locale should be valid JSON");
+        let hint = value
+            .get("providerForm")
+            .and_then(|form| form.get("claudeProfileDirRestartHint"))
+            .and_then(serde_json::Value::as_str)
+            .expect("ja restart hint should exist");
+
+        assert!(
+            !hint.contains("???"),
+            "Japanese restart hint should contain readable text instead of placeholder characters"
+        );
     }
 
     #[cfg(target_os = "windows")]
