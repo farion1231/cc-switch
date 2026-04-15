@@ -108,6 +108,7 @@
     "currentlyUsing": "Currently Using",
     "enable": "Enable",
     "inUse": "In Use",
+    "blockedByProxy": "Blocked",
     "editProvider": "Edit Provider",
     "editProviderHint": "Configuration will be applied to the current provider immediately after update.",
     "deleteProvider": "Delete Provider",
@@ -193,20 +194,22 @@
     "deleteFailed": "Failed to delete provider: {{error}}",
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
-    "proxyRequiredForSwitch": "This provider {{reason}}, requires the proxy service to work properly. Start the proxy first.",
+    "proxyRequiredForSwitch": "This provider {{reason}}, requires the routing service to work properly. Start routing first.",
     "proxyReasonCopilot": "uses GitHub Copilot as a Claude provider",
     "proxyReasonOpenAIChat": "uses OpenAI Chat API format",
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
     "proxyReasonFullUrl": "has full URL connection mode enabled",
-    "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the proxy service to be enabled",
-    "copilotProxyHint": "GitHub Copilot as a Claude provider always requires the local proxy; the proxy automatically selects Chat Completions or Responses based on the current model.",
+    "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the routing service to be enabled",
+    "copilotProxyHint": "GitHub Copilot as a Claude provider always requires local routing; routing automatically selects Chat Completions or Responses based on the current model.",
     "openLinkFailed": "Failed to open link",
     "openclawModelsRegistered": "Models have been registered to /model list",
     "openclawDefaultModelSet": "Set as default model",
     "openclawDefaultModelSetFailed": "Failed to set default model",
     "openclawNoModels": "No models configured",
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
-    "windowControlFailed": "Window control failed: {{error}}"
+    "windowControlFailed": "Window control failed: {{error}}",
+    "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -214,8 +217,8 @@
     "removeProvider": "Remove Provider",
     "removeProviderMessage": "Are you sure you want to remove provider \"{{name}}\" from the configuration?\n\nAfter removal, this provider will no longer be active, but the configuration data will be retained in CC Switch. You can re-add it at any time.",
     "proxy": {
-      "title": "Enable Local Proxy",
-      "message": "Local proxy is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
+      "title": "Enable Local Routing",
+      "message": "Local routing is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
       "confirm": "I understand, enable"
     },
     "failover": {
@@ -250,7 +253,7 @@
     "tabGeneral": "General",
     "tabAuth": "Auth",
     "tabAdvanced": "Advanced",
-    "tabProxy": "Proxy",
+    "tabProxy": "Routing",
     "authCenter": {
       "title": "OAuth Authentication Center",
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
@@ -264,10 +267,10 @@
         "description": "Manage storage paths for Claude, Codex and Gemini configurations"
       },
       "proxy": {
-        "title": "Local Proxy",
-        "description": "Control proxy service toggle, view status and port info",
-        "enableFeature": "Show Proxy Toggle on Main Page",
-        "enableFeatureDescription": "When enabled, the proxy and failover toggles will appear at the top of the main page",
+        "title": "Local Routing",
+        "description": "Control routing service toggle, view status and port info",
+        "enableFeature": "Show Routing Toggle on Main Page",
+        "enableFeatureDescription": "When enabled, the routing and failover toggles will appear at the top of the main page",
         "enableFailoverToggle": "Show Failover Toggle on Main Page",
         "enableFailoverToggleDescription": "When enabled, the failover toggle will appear independently at the top of the main page",
         "running": "Running",
@@ -619,7 +622,7 @@
     "saving": "Saving...",
     "globalProxy": {
       "label": "Global Proxy",
-      "hint": "Proxy all requests (API, Skills download, etc.). Leave empty for direct connection.",
+      "hint": "Proxy all requests (API, Skills download, etc.). When local routing is enabled, app traffic is also routed through this proxy. Leave empty for direct connection.",
       "username": "Username (optional)",
       "password": "Password (optional)",
       "test": "Test Connection",
@@ -722,7 +725,9 @@
     "copyCommand": "Copy Command",
     "copyMessage": "Copy Message",
     "messageCopied": "Message copied",
-    "conversationHistory": "Conversation History"
+    "conversationHistory": "Conversation History",
+    "expandContent": "Expand full content",
+    "collapseContent": "Collapse"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
@@ -780,7 +785,6 @@
       "siliconflow": "SiliconFlow is an official partner of CC Switch",
       "ucloud": "Compshare offers an exclusive bonus for CC Switch users — register via this link to get ¥5 platform trial credit!",
       "micu": "Micu is an official partner of CC Switch",
-      "x-code": "XCodeAPI offers a special bonus for CC Switch users — register via this link and get 10% extra credit on your first order (contact admin to claim)",
       "ctok": "Join the CTok community on the official website and subscribe to a plan.",
       "ddshub": "DDSHub offers a special bonus for CC Switch users — register via this link and get 10% extra credit on your first top-up (contact group admin to claim)!",
       "lionccapi": "LionCCAPI offers exclusive benefits for CC Switch users. After registration, add WeChat HSQBJ088888888 and mention 'cc-switch' to receive $10 free credits!",
@@ -818,10 +822,10 @@
     "fullUrlLabel": "Full URL",
     "fullUrlEnabled": "Full URL Mode",
     "fullUrlDisabled": "Mark as Full URL",
-    "fullUrlHint": "💡 Enter the full request URL. This mode requires the proxy to be enabled, and the proxy will use the URL as-is without appending a path",
+    "fullUrlHint": "💡 Enter the full request URL. This mode requires routing to be enabled, and routing will use the URL as-is without appending a path",
     "apiFormatAnthropic": "Anthropic Messages (Native)",
-    "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires proxy)",
-    "apiFormatOpenAIResponses": "OpenAI Responses API (Requires proxy)",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires routing)",
+    "apiFormatOpenAIResponses": "OpenAI Responses API (Requires routing)",
     "authField": "Auth Field",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN (Default)",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
@@ -941,11 +945,6 @@
     "testPrompt": "Test Prompt",
     "degradedThreshold": "Degraded Threshold (ms)",
     "maxRetries": "Max Retries",
-    "proxyConfig": "Proxy Config",
-    "useCustomProxy": "Use separate proxy",
-    "proxyConfigDesc": "Configure separate network proxy for this provider. Uses system proxy or global settings when disabled.",
-    "proxyUsername": "Username (optional)",
-    "proxyPassword": "Password (optional)",
     "pricingConfig": "Pricing Config",
     "useCustomPricing": "Use separate config",
     "pricingConfigDesc": "Configure separate pricing parameters for this provider. Uses global defaults when disabled.",
@@ -1089,7 +1088,7 @@
     },
     "dataSources": "Data Sources",
     "dataSource": {
-      "proxy": "Proxy",
+      "proxy": "Routing",
       "session_log": "Session Log",
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
@@ -1104,6 +1103,8 @@
       "failed": "Session sync failed"
     },
     "totalRecords": "{{total}} records total",
+    "goToPage": "Go",
+    "pageInputPlaceholder": "Page",
     "modelPricing": "Model Pricing",
     "loadPricingError": "Failed to load pricing data",
     "modelPricingDesc": "Configure token costs for each model",
@@ -1939,9 +1940,9 @@
       "addressCopied": "Address copied",
       "currentProvider": "Current Provider:",
       "waitingFirstRequest": "Current Provider: Waiting for first request...",
-      "stoppedTitle": "Proxy Service Stopped",
+      "stoppedTitle": "Routing Service Stopped",
       "stoppedDescription": "Use the toggle above to start the service",
-      "openSettings": "Configure Proxy Service",
+      "openSettings": "Configure Routing Service",
       "stats": {
         "activeConnections": "Active Connections",
         "totalRequests": "Total Requests",
@@ -1950,14 +1951,14 @@
       }
     },
     "settings": {
-      "title": "Proxy Service Settings",
-      "description": "Configure local proxy server listening address, port and runtime parameters. Changes take effect immediately after saving.",
+      "title": "Routing Service Settings",
+      "description": "Configure local routing server listening address, port and runtime parameters. Changes take effect immediately after saving.",
       "alert": {
-        "autoApply": "Changes will be automatically synced to the running proxy service without manual restart."
+        "autoApply": "Changes will be automatically synced to the running routing service without manual restart."
       },
       "basic": {
         "title": "Basic Settings",
-        "description": "Configure proxy service listening address and port."
+        "description": "Configure routing service listening address and port."
       },
       "advanced": {
         "title": "Advanced Parameters",
@@ -1971,12 +1972,12 @@
         "listenAddress": {
           "label": "Listen Address",
           "placeholder": "127.0.0.1",
-          "description": "IP address the proxy server listens on (recommended: 127.0.0.1)"
+          "description": "IP address the routing server listens on (recommended: 127.0.0.1)"
         },
         "listenPort": {
           "label": "Listen Port",
           "placeholder": "15721",
-          "description": "Port number the proxy server listens on (1024 ~ 65535)"
+          "description": "Port number the routing server listens on (1024 ~ 65535)"
         },
         "maxRetries": {
           "label": "Max Retries",
@@ -1990,7 +1991,7 @@
         },
         "enableLogging": {
           "label": "Enable Logging",
-          "description": "Log all proxy requests for troubleshooting"
+          "description": "Log all routing requests for troubleshooting"
         },
         "streamingFirstByteTimeout": {
           "label": "Streaming First Byte Timeout (sec)",
@@ -2021,29 +2022,29 @@
         "save": "Save Configuration"
       },
       "toast": {
-        "saved": "Proxy configuration saved",
+        "saved": "Routing configuration saved",
         "saveFailed": "Save failed: {{error}}"
       },
       "invalidPort": "Invalid port, please enter a number between 1024-65535",
       "invalidAddress": "Invalid address, please enter a valid IP address (e.g. 127.0.0.1) or localhost",
-      "configSaved": "Proxy configuration saved",
+      "configSaved": "Routing configuration saved",
       "configSaveFailed": "Failed to save configuration",
-      "restartRequired": "Restart proxy service for address or port changes to take effect"
+      "restartRequired": "Restart routing service for address or port changes to take effect"
     },
     "switchFailed": "Switch failed: {{error}}",
     "takeover": {
-      "hint": "Select apps to take over — once enabled, requests from that app will be routed through the local proxy",
-      "enabled": "{{app}} takeover enabled",
-      "disabled": "{{app}} takeover disabled",
-      "failed": "Failed to toggle takeover",
+      "hint": "Select apps to route — once enabled, requests from that app will go through local routing",
+      "enabled": "{{app}} routing enabled",
+      "disabled": "{{app}} routing disabled",
+      "failed": "Failed to toggle routing",
       "tooltip": {
-        "active": "{{appLabel}} is intercepting - {{address}}:{{port}}\nSwitch provider for hot switching",
-        "broken": "{{appLabel}} is intercepting, but proxy service is not running",
-        "inactive": "Intercept {{appLabel}}'s live config to route requests through local proxy"
+        "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitch provider for hot switching",
+        "broken": "{{appLabel}} is routing, but routing service is not running",
+        "inactive": "Route {{appLabel}}'s requests through local routing"
       }
     },
     "failover": {
-      "proxyRequired": "Proxy service must be started to configure failover",
+      "proxyRequired": "Routing service must be started to configure failover",
       "autoSwitch": "Auto Failover",
       "autoSwitchDescription": "When enabled, switches to queue P1 immediately and automatically tries the next provider in the queue on failures"
     },
@@ -2107,10 +2108,10 @@
       "failed": "Failed to toggle logging"
     },
     "server": {
-      "started": "Proxy service started - {{address}}:{{port}}",
-      "startFailed": "Failed to start proxy service: {{detail}}"
+      "started": "Routing service started - {{address}}:{{port}}",
+      "startFailed": "Failed to start routing service: {{detail}}"
     },
-    "stoppedWithRestore": "Proxy service stopped, all takeover configs restored",
+    "stoppedWithRestore": "Routing service stopped, all routing configs restored",
     "stopWithRestoreFailed": "Stop failed: {{detail}}"
   },
   "streamCheck": {
@@ -2128,11 +2129,21 @@
     "operational": "{{providerName}} is operational ({{responseTimeMs}}ms)",
     "degraded": "{{providerName}} is slow ({{responseTimeMs}}ms)",
     "failed": "{{providerName}} check failed: {{message}}",
-    "error": "{{providerName}} check error: {{error}}"
+    "rejected": "{{providerName}} check rejected: {{message}}",
+    "error": "{{providerName}} check error: {{error}}",
+    "httpHint": {
+      "400": "Provider rejected request format. Health check probe may differ from actual usage.",
+      "401": "API key may be invalid, or provider uses OAuth auth. Check failure doesn't mean it's unusable.",
+      "402": "Account quota or billing issue.",
+      "403": "Provider blocked this request. Some verify client identity; may work fine in actual use.",
+      "404": "Endpoint not found. Check base URL and API path.",
+      "429": "Too many requests. Try again later.",
+      "5xx": "Provider internal error. Likely temporary."
+    }
   },
   "proxyConfig": {
-    "proxyEnabled": "Proxy Enabled",
-    "appTakeover": "Proxy Enabled",
+    "proxyEnabled": "Routing Master Switch",
+    "appTakeover": "Routing Enabled",
     "perAppConfig": "Per-App Config",
     "circuitBreaker": "Circuit Breaker",
     "circuitBreakerSettings": "Circuit Breaker Settings",

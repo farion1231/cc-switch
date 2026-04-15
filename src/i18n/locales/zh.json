@@ -108,6 +108,7 @@
     "currentlyUsing": "当前使用",
     "enable": "启用",
     "inUse": "使用中",
+    "blockedByProxy": "已拦截",
     "editProvider": "编辑供应商",
     "editProviderHint": "更新配置后将立即应用到当前供应商。",
     "deleteProvider": "删除供应商",
@@ -193,20 +194,22 @@
     "deleteFailed": "删除供应商失败：{{error}}",
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
-    "proxyRequiredForSwitch": "此供应商{{reason}}，需要代理服务才能正常使用，请先启动代理",
+    "proxyRequiredForSwitch": "此供应商{{reason}}，需要路由服务才能正常使用，请先启动路由",
     "proxyReasonCopilot": "使用 GitHub Copilot 作为 Claude 供应商",
     "proxyReasonOpenAIChat": "使用 OpenAI Chat 接口格式",
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
     "proxyReasonFullUrl": "开启了完整 URL 连接模式",
-    "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启代理服务才能正常使用",
-    "copilotProxyHint": "GitHub Copilot 作为 Claude 供应商时始终需要本地代理；代理会根据当前模型自动选择 Chat Completions 或 Responses。",
+    "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启路由服务才能正常使用",
+    "copilotProxyHint": "GitHub Copilot 作为 Claude 供应商时始终需要本地路由；路由会根据当前模型自动选择 Chat Completions 或 Responses。",
     "openLinkFailed": "链接打开失败",
     "openclawModelsRegistered": "模型已注册到 /model 列表",
     "openclawDefaultModelSet": "已设为默认模型",
     "openclawDefaultModelSetFailed": "设置默认模型失败",
     "openclawNoModels": "该供应商没有配置模型",
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
-    "windowControlFailed": "窗口控制失败：{{error}}"
+    "windowControlFailed": "窗口控制失败：{{error}}",
+    "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -214,8 +217,8 @@
     "removeProvider": "移除供应商",
     "removeProviderMessage": "确定要从配置中移除供应商 \"{{name}}\" 吗？\n\n移除后该供应商将不再生效，但配置数据会保留在 CC Switch 中，您可以随时重新添加。",
     "proxy": {
-      "title": "启用本地代理服务",
-      "message": "本地代理是一项高级功能，启用前请确保您已了解其工作原理。\n\n建议先查阅相关文档或咨询您的供应商，以获取正确的配置方式。",
+      "title": "启用本地路由服务",
+      "message": "本地路由是一项高级功能，启用前请确保您已了解其工作原理。\n\n建议先查阅相关文档或咨询您的供应商，以获取正确的配置方式。",
       "confirm": "我已了解，继续启用"
     },
     "failover": {
@@ -250,7 +253,7 @@
     "tabGeneral": "通用",
     "tabAuth": "认证",
     "tabAdvanced": "高级",
-    "tabProxy": "代理",
+    "tabProxy": "路由",
     "authCenter": {
       "title": "OAuth 认证中心",
       "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
@@ -264,10 +267,10 @@
         "description": "管理 Claude、Codex 和 Gemini 的配置存储路径"
       },
       "proxy": {
-        "title": "本地代理",
-        "description": "控制代理服务开关、查看状态与端口信息",
-        "enableFeature": "在主页面显示本地代理开关",
-        "enableFeatureDescription": "开启后，主页面顶部将显示代理和故障转移开关",
+        "title": "本地路由",
+        "description": "控制路由服务开关、查看状态与端口信息",
+        "enableFeature": "在主页面显示本地路由开关",
+        "enableFeatureDescription": "开启后，主页面顶部将显示路由和故障转移开关",
         "enableFailoverToggle": "在主页面显示故障转移开关",
         "enableFailoverToggleDescription": "开启后，主页面顶部将独立显示故障转移开关",
         "running": "运行中",
@@ -619,7 +622,7 @@
     "saving": "正在保存...",
     "globalProxy": {
       "label": "全局代理",
-      "hint": "代理所有请求（API、Skills 下载等）。留空表示直连。",
+      "hint": "代理所有请求（API、Skills 下载等）。开启本地路由时，应用的请求也会经过此代理。留空表示直连。",
       "username": "用户名（可选）",
       "password": "密码（可选）",
       "test": "测试连接",
@@ -722,7 +725,9 @@
     "copyCommand": "复制命令",
     "copyMessage": "复制消息",
     "messageCopied": "已复制消息内容",
-    "conversationHistory": "对话记录"
+    "conversationHistory": "对话记录",
+    "expandContent": "展开完整内容",
+    "collapseContent": "收起"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",
@@ -780,7 +785,6 @@
       "siliconflow": "硅基流动是 CC Switch 的官方合作伙伴",
       "ucloud": "优云智算为CC Switch 的用户提供了特殊优惠，通过此链接注册，可以获得五元平台体验金！",
       "micu": "Micu 是 CC Switch 的官方合作伙伴",
-      "x-code": "XCodeAPI 为CC Switch 的用户提供特别福利，使用此链接注册后首单加赠10%的额度(联系站长领取)",
       "ctok": "官网加入CTok社群，订阅套餐。",
       "ddshub": "呆呆兽为CC Switch 的用户提供了特别福利，通过此链接注册后，首单充值可额外赠送 10% 额度（联系群主领取）！",
       "lionccapi": "LionCCAPI 为 CC Switch 的用户提供了特别福利，注册后添加客服微信HSQBJ088888888，发暗号cc-switch备注即可送10美金额度！",
@@ -819,10 +823,10 @@
     "fullUrlLabel": "完整 URL",
     "fullUrlEnabled": "完整 URL 模式",
     "fullUrlDisabled": "标记为完整 URL",
-    "fullUrlHint": "💡 请填写完整请求 URL，并且必须开启代理后使用；代理将直接使用此 URL，不拼接路径",
+    "fullUrlHint": "💡 请填写完整请求 URL，并且必须开启路由后使用；路由将直接使用此 URL，不拼接路径",
     "apiFormatAnthropic": "Anthropic Messages (原生)",
-    "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启代理)",
-    "apiFormatOpenAIResponses": "OpenAI Responses API (需开启代理)",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启路由)",
+    "apiFormatOpenAIResponses": "OpenAI Responses API (需开启路由)",
     "authField": "认证字段",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（默认）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
@@ -942,11 +946,6 @@
     "testPrompt": "测试提示词",
     "degradedThreshold": "降级阈值（毫秒）",
     "maxRetries": "最大重试次数",
-    "proxyConfig": "代理配置",
-    "useCustomProxy": "使用单独代理",
-    "proxyConfigDesc": "为此供应商配置单独的网络代理，不启用时使用系统代理或全局设置。",
-    "proxyUsername": "用户名（可选）",
-    "proxyPassword": "密码（可选）",
     "pricingConfig": "计费配置",
     "useCustomPricing": "使用单独配置",
     "pricingConfigDesc": "为此供应商配置单独的计费参数，不启用时使用全局默认配置。",
@@ -1090,7 +1089,7 @@
     },
     "dataSources": "数据来源",
     "dataSource": {
-      "proxy": "代理",
+      "proxy": "路由",
       "session_log": "会话日志",
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
@@ -1105,6 +1104,8 @@
       "failed": "会话同步失败"
     },
     "totalRecords": "共 {{total}} 条记录",
+    "goToPage": "跳转",
+    "pageInputPlaceholder": "页码",
     "modelPricing": "模型定价",
     "loadPricingError": "加载定价数据失败",
     "modelPricingDesc": "配置各模型的 Token 成本",
@@ -1940,9 +1941,9 @@
       "addressCopied": "地址已复制",
       "currentProvider": "当前 Provider：",
       "waitingFirstRequest": "当前 Provider：等待首次请求…",
-      "stoppedTitle": "代理服务已停止",
+      "stoppedTitle": "路由服务已停止",
       "stoppedDescription": "使用上方开关即可启动服务",
-      "openSettings": "配置代理服务",
+      "openSettings": "配置路由服务",
       "stats": {
         "activeConnections": "活跃连接",
         "totalRequests": "总请求数",
@@ -1951,14 +1952,14 @@
       }
     },
     "settings": {
-      "title": "代理服务设置",
-      "description": "配置本地代理服务器的监听地址、端口和运行参数，保存后立即生效。",
+      "title": "路由服务设置",
+      "description": "配置本地路由服务器的监听地址、端口和运行参数，保存后立即生效。",
       "alert": {
-        "autoApply": "保存后将自动同步到正在运行的代理服务，无需手动重启。"
+        "autoApply": "保存后将自动同步到正在运行的路由服务，无需手动重启。"
       },
       "basic": {
         "title": "基础设置",
-        "description": "配置代理服务监听的地址与端口。"
+        "description": "配置路由服务监听的地址与端口。"
       },
       "advanced": {
         "title": "高级参数",
@@ -1972,12 +1973,12 @@
         "listenAddress": {
           "label": "监听地址",
           "placeholder": "127.0.0.1",
-          "description": "代理服务器监听的 IP 地址（推荐 127.0.0.1）"
+          "description": "路由服务器监听的 IP 地址（推荐 127.0.0.1）"
         },
         "listenPort": {
           "label": "监听端口",
           "placeholder": "15721",
-          "description": "代理服务器监听的端口号（1024 ~ 65535）"
+          "description": "路由服务器监听的端口号（1024 ~ 65535）"
         },
         "maxRetries": {
           "label": "最大重试次数",
@@ -1991,7 +1992,7 @@
         },
         "enableLogging": {
           "label": "启用日志记录",
-          "description": "记录所有代理请求，便于排查问题"
+          "description": "记录所有路由请求，便于排查问题"
         },
         "streamingFirstByteTimeout": {
           "label": "流式首字超时（秒）",
@@ -2022,29 +2023,29 @@
         "save": "保存配置"
       },
       "toast": {
-        "saved": "代理配置已保存",
+        "saved": "路由配置已保存",
         "saveFailed": "保存失败: {{error}}"
       },
       "invalidPort": "端口无效，请输入 1024-65535 之间的数字",
       "invalidAddress": "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
-      "configSaved": "代理配置已保存",
+      "configSaved": "路由配置已保存",
       "configSaveFailed": "保存配置失败",
-      "restartRequired": "修改地址或端口后需要重启代理服务才能生效"
+      "restartRequired": "修改地址或端口后需要重启路由服务才能生效"
     },
     "switchFailed": "切换失败: {{error}}",
     "takeover": {
-      "hint": "选择要接管的应用，启用后该应用的请求将通过本地代理转发",
-      "enabled": "{{app}} 接管已启用",
-      "disabled": "{{app}} 接管已关闭",
-      "failed": "切换接管状态失败",
+      "hint": "选择要路由的应用，启用后该应用的请求将通过本地路由转发",
+      "enabled": "{{app}} 路由已启用",
+      "disabled": "{{app}} 路由已关闭",
+      "failed": "切换路由状态失败",
       "tooltip": {
-        "active": "{{appLabel}} 已接管 - {{address}}:{{port}}\n切换该应用供应商为热切换",
-        "broken": "{{appLabel}} 已接管，但代理服务未运行",
-        "inactive": "接管 {{appLabel}} 的 Live 配置，让该应用请求走本地代理"
+        "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切换该应用供应商为热切换",
+        "broken": "{{appLabel}} 路由中，但路由服务未运行",
+        "inactive": "路由 {{appLabel}} 的请求，让该应用请求走本地路由"
       }
     },
     "failover": {
-      "proxyRequired": "需要先启动代理服务才能配置故障转移",
+      "proxyRequired": "需要先启动路由服务才能配置故障转移",
       "autoSwitch": "自动故障转移",
       "autoSwitchDescription": "开启后将立即切换到队列 P1，并在请求失败时自动切换到队列中的下一个供应商"
     },
@@ -2108,10 +2109,10 @@
       "failed": "切换日志状态失败"
     },
     "server": {
-      "started": "代理服务已启动 - {{address}}:{{port}}",
-      "startFailed": "启动代理服务失败: {{detail}}"
+      "started": "路由服务已启动 - {{address}}:{{port}}",
+      "startFailed": "启动路由服务失败: {{detail}}"
     },
-    "stoppedWithRestore": "代理服务已关闭，已恢复所有接管配置",
+    "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
     "stopWithRestoreFailed": "停止失败: {{detail}}"
   },
   "streamCheck": {
@@ -2129,11 +2130,21 @@
     "operational": "{{providerName}} 运行正常 ({{responseTimeMs}}ms)",
     "degraded": "{{providerName}} 响应较慢 ({{responseTimeMs}}ms)",
     "failed": "{{providerName}} 检查失败: {{message}}",
-    "error": "{{providerName}} 检查出错: {{error}}"
+    "rejected": "{{providerName}} 检查被拒: {{message}}",
+    "error": "{{providerName}} 检查出错: {{error}}",
+    "httpHint": {
+      "400": "供应商拒绝了请求格式。健康检查的探测格式可能与实际使用不同。",
+      "401": "API Key 可能无效，或供应商使用 OAuth 等认证方式。检查失败不代表实际不可用。",
+      "402": "账户配额或计费问题。",
+      "403": "供应商拒绝了此请求。部分供应商会校验客户端身份，检查失败但实际使用可能正常。",
+      "404": "接口地址不存在，请检查 Base URL 和 API 路径。",
+      "429": "请求频率过高，请稍后重试。",
+      "5xx": "供应商内部错误，通常是临时问题。"
+    }
   },
   "proxyConfig": {
-    "proxyEnabled": "代理总开关",
-    "appTakeover": "代理启用",
+    "proxyEnabled": "路由总开关",
+    "appTakeover": "路由启用",
     "perAppConfig": "应用配置",
     "circuitBreaker": "熔断器配置",
     "circuitBreakerSettings": "熔断器设置",
