@@ -55,8 +55,8 @@ impl Default for StreamCheckConfig {
             max_retries: 2,
             degraded_threshold_ms: 6000,
             claude_model: "claude-haiku-4-5-20251001".to_string(),
-            codex_model: "gpt-5.1-codex@low".to_string(),
-            gemini_model: "gemini-3-pro-preview".to_string(),
+            codex_model: "gpt-5.4@low".to_string(),
+            gemini_model: "gemini-3-flash-preview".to_string(),
             test_prompt: default_test_prompt(),
         }
     }
