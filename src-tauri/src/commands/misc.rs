@@ -888,8 +888,13 @@ fn launch_terminal_with_env(
             provider_id,
             std::process::id()
         ));
-        write_claude_config(&config_file, &env_vars)?;
-        launch_macos_terminal(&config_file, cwd)?;
+        let config_file = if should_write_temp_claude_config(&env_vars, claude_profile_dir) {
+            write_claude_config(&config_file, &env_vars)?;
+            Some(config_file)
+        } else {
+            None
+        };
+        launch_macos_terminal(config_file.as_deref(), cwd, claude_profile_dir)?;
         Ok(())
     }
 
@@ -901,8 +906,13 @@ fn launch_terminal_with_env(
             provider_id,
             std::process::id()
         ));
-        write_claude_config(&config_file, &env_vars)?;
-        launch_linux_terminal(&config_file, cwd)?;
+        let config_file = if should_write_temp_claude_config(&env_vars, claude_profile_dir) {
+            write_claude_config(&config_file, &env_vars)?;
+            Some(config_file)
+        } else {
+            None
+        };
+        launch_linux_terminal(config_file.as_deref(), cwd, claude_profile_dir)?;
         Ok(())
     }
 
@@ -948,9 +958,65 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
+fn build_unix_claude_launch_script(
+    config_file: Option<&std::path::Path>,
+    script_file: &std::path::Path,
+    cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
+) -> String {
+    let cd_command = build_shell_cd_command(cwd);
+    let script_path = shell_single_quote(&script_file.to_string_lossy());
+
+    if let Some(profile_dir) = claude_profile_dir {
+        return format!(
+            r#"#!/bin/bash
+trap 'rm -f {script_path}' EXIT
+{cd_command}export CLAUDE_CONFIG_DIR={profile_dir}
+echo "Using Claude profile dir:"
+echo "$CLAUDE_CONFIG_DIR"
+claude
+exec bash --norc --noprofile
+"#,
+            script_path = script_path,
+            cd_command = cd_command,
+            profile_dir = shell_single_quote(profile_dir),
+        );
+    }
+
+    if let Some(config_file) = config_file {
+        let config_path = shell_single_quote(&config_file.to_string_lossy());
+        return format!(
+            r#"#!/bin/bash
+trap 'rm -f {config_path} {script_path}' EXIT
+{cd_command}echo "Using provider-specific claude config:"
+echo {config_path}
+claude --settings {config_path}
+exec bash --norc --noprofile
+"#,
+            config_path = config_path,
+            script_path = script_path,
+            cd_command = cd_command,
+        );
+    }
+
+    format!(
+        r#"#!/bin/bash
+trap 'rm -f {script_path}' EXIT
+{cd_command}claude
+exec bash --norc --noprofile
+"#,
+        script_path = script_path,
+        cd_command = cd_command,
+    )
+}
+
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -958,23 +1024,8 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
-
-    // Write the shell script to a temp file
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
+    let script_content =
+        build_unix_claude_launch_script(config_file, &script_file, cwd, claude_profile_dir);
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
 
@@ -1110,7 +1161,11 @@ fn launch_macos_open_app(
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -1131,22 +1186,8 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     // Create temp script file
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
-
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
+    let script_content =
+        build_unix_claude_launch_script(config_file, &script_file, cwd, claude_profile_dir);
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
 
@@ -1204,7 +1245,9 @@ exec bash --norc --noprofile
 
     // Clean up on failure
     let _ = std::fs::remove_file(&script_file);
-    let _ = std::fs::remove_file(config_file);
+    if let Some(config_file) = config_file {
+        let _ = std::fs::remove_file(config_file);
+    }
     Err(last_error)
 }
 
@@ -1469,6 +1512,21 @@ mod tests {
             !should_write_temp_claude_config(&env_vars, None),
             "legacy launches without provider env should not create empty temp config files"
         );
+    }
+
+    #[test]
+    fn unix_profile_dir_mode_uses_claude_config_dir_without_settings_file() {
+        let script = build_unix_claude_launch_script(
+            None,
+            Path::new("/tmp/launcher.sh"),
+            Some(Path::new("/tmp/project")),
+            Some("/tmp/.claude-profiles/api"),
+        );
+
+        assert!(script.contains("export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api'"));
+        assert!(script.contains("claude\n"));
+        assert!(!script.contains("--settings"));
+        assert!(!script.contains("claude_"));
     }
 
     #[test]

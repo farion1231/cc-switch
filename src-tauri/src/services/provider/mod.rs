@@ -412,6 +412,28 @@ mod tests {
         });
     }
 
+    #[test]
+    #[serial]
+    fn sync_current_claude_profile_env_preserves_external_override_without_active_provider() {
+        with_test_home(|state, home| {
+            let external_dir = home.join(".external-claude");
+            fs::create_dir_all(&external_dir).expect("create external claude dir");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &external_dir.to_string_lossy(),
+            ))
+            .expect("set external override dir");
+
+            ProviderService::sync_current_claude_profile_env(state)
+                .expect("sync without active provider should succeed");
+
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(external_dir.as_path()),
+                "passive sync should not clear an externally configured Claude override when CC Switch has no active Claude provider"
+            );
+        });
+    }
+
     fn omo_config_path(home: &Path, category: &str) -> PathBuf {
         home.join(".config").join("opencode").join(match category {
             "omo" => crate::services::omo::STANDARD.preferred_filename,
@@ -2301,12 +2323,7 @@ impl ProviderService {
         let current_id =
             match crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)? {
                 Some(id) => id,
-                None => {
-                    crate::settings::set_claude_provider_override_dir(None)?;
-                    crate::services::env_manager::set_user_env_var("CLAUDE_CONFIG_DIR", None)
-                        .map_err(AppError::Message)?;
-                    return Ok(());
-                }
+                None => return Ok(()),
             };
 
         let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
