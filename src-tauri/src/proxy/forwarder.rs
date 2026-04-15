@@ -776,32 +776,42 @@ impl RequestForwarder {
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
 
-        // --- Copilot 优化器：请求体优化 + 分类（在格式转换之前执行） ---
+        // --- Copilot 优化器：分类 + 请求体优化（在格式转换之前执行） ---
         // 注意：确定性 ID 也在此处计算，因为 mapped_body 在格式转换时会被 move
+        //
+        // 执行顺序（与 copilot-api 对齐）：
+        //   1. 先在原始 body 上分类（保留 tool_result 语义，避免误判为 user）
+        //   2. 再清洗孤立 tool_result（防止上游 API 报错）
+        //   3. 再合并 tool_result + text（减少 premium 计费）
         let copilot_optimization = if is_copilot && self.copilot_optimizer_config.enabled {
-            // 1. Tool result 合并 — 必须在分类之前执行
-            //    合并将 [tool_result, text] 变为 [tool_result(含text)]，
-            //    分类才能正确识别为 agent（全是 tool_result）而非 user（有 text block）
-            if self.copilot_optimizer_config.tool_result_merging {
-                mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
-            }
-
-            // 2. 在合并后的 body 上进行分类
+            // 1. 在原始 body 上分类 — 必须在清洗/合并之前执行
+            //    孤立 tool_result 仍保持 tool_result 类型，分类能正确识别为 agent
             let has_anthropic_beta = headers.contains_key("anthropic-beta");
             let classification = super::copilot_optimizer::classify_request(
                 &mapped_body,
                 has_anthropic_beta,
                 self.copilot_optimizer_config.compact_detection,
+                self.copilot_optimizer_config.subagent_detection,
             );
 
             log::debug!(
-                "[Copilot] 优化器分类: initiator={}, is_warmup={}, is_compact={}",
+                "[Copilot] 优化器分类: initiator={}, is_warmup={}, is_compact={}, is_subagent={}",
                 classification.initiator,
                 classification.is_warmup,
-                classification.is_compact
+                classification.is_compact,
+                classification.is_subagent
             );
 
-            // 3. Warmup 小模型降级
+            // 2. 孤立 tool_result 清理 — 分类完成后再清洗
+            //    防止上游 API 因不匹配的 tool_result 报错导致重试/重复计费
+            mapped_body = super::copilot_optimizer::sanitize_orphan_tool_results(mapped_body);
+
+            // 3. Tool result 合并 — 将 [tool_result, text] 变为 [tool_result(含text)]
+            if self.copilot_optimizer_config.tool_result_merging {
+                mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
+            }
+
+            // 4. Warmup 小模型降级
             if self.copilot_optimizer_config.warmup_downgrade && classification.is_warmup {
                 log::info!(
                     "[Copilot] Warmup 请求降级到模型: {}",
@@ -812,22 +822,52 @@ impl RequestForwarder {
             }
 
             // 预计算确定性 Request ID（在 body 被 move 之前）
-            // 使用 session_id 从 body.metadata.user_id 或请求头提取
-            let session_id = body
-                .pointer("/metadata/user_id")
+            // Session 提取优先级（与 session.rs extract_from_metadata 对齐）：
+            //   1. metadata.user_id 中的 _session_ 后缀
+            //   2. metadata.session_id（直接字段）
+            //   3. raw metadata.user_id（整串 fallback）
+            //   4. x-session-id header
+            let metadata = body.get("metadata");
+            let session_id = metadata
+                .and_then(|m| m.get("user_id"))
                 .and_then(|v| v.as_str())
-                .or_else(|| headers.get("x-session-id").and_then(|v| v.to_str().ok()))
-                .unwrap_or("");
+                .and_then(super::session::parse_session_from_user_id)
+                .or_else(|| {
+                    metadata
+                        .and_then(|m| m.get("session_id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    metadata
+                        .and_then(|m| m.get("user_id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    headers
+                        .get("x-session-id")
+                        .and_then(|v| v.to_str().ok())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_default();
             let det_request_id = if self.copilot_optimizer_config.deterministic_request_id {
                 Some(super::copilot_optimizer::deterministic_request_id(
                     &mapped_body,
-                    session_id,
+                    &session_id,
                 ))
             } else {
                 None
             };
 
-            Some((classification, det_request_id))
+            // 从 session ID 派生稳定的 interaction ID（同一主对话共享）
+            let interaction_id =
+                super::copilot_optimizer::deterministic_interaction_id(&session_id);
+
+            Some((classification, det_request_id, interaction_id))
         } else {
             None
         };
@@ -1039,11 +1079,17 @@ impl RequestForwarder {
         }
 
         // --- Copilot 优化器：动态 header 注入 ---
-        if let Some((ref classification, ref det_request_id)) = copilot_optimization {
+        if let Some((ref classification, ref det_request_id, ref interaction_id)) =
+            copilot_optimization
+        {
             for (name, value) in auth_headers.iter_mut() {
                 match name.as_str() {
                     "x-initiator" if self.copilot_optimizer_config.request_classification => {
                         *value = http::HeaderValue::from_static(classification.initiator);
+                    }
+                    "x-interaction-type" if classification.is_subagent => {
+                        // 子代理请求：conversation-subagent 不计 premium interaction
+                        *value = http::HeaderValue::from_static("conversation-subagent");
                     }
                     "x-request-id" | "x-agent-task-id" => {
                         if let Some(ref det_id) = det_request_id {
@@ -1054,6 +1100,19 @@ impl RequestForwarder {
                     }
                     _ => {}
                 }
+            }
+
+            // x-interaction-id：仅在有 session 时注入（不在 get_auth_headers 中）
+            if let Some(ref iid) = interaction_id {
+                if let Ok(hv) = http::HeaderValue::from_str(iid) {
+                    auth_headers.push((http::HeaderName::from_static("x-interaction-id"), hv));
+                }
+            }
+
+            if classification.is_subagent {
+                log::info!(
+                    "[Copilot] 子代理请求: x-initiator=agent, x-interaction-type=conversation-subagent"
+                );
             }
         }
 
@@ -1069,6 +1128,7 @@ impl RequestForwarder {
                 // 新增 headers
                 "x-initiator",
                 "x-interaction-type",
+                "x-interaction-id",
                 "x-vscode-user-agent-library-version",
                 "x-request-id",
                 "x-agent-task-id",
@@ -1287,12 +1347,8 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 解析上游代理 URL（供应商单独代理 > 全局代理 > 无）
-        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
-        let upstream_proxy_url: Option<String> = proxy_config
-            .filter(|c| c.enabled)
-            .and_then(super::http_client::build_proxy_url_from_config)
-            .or_else(super::http_client::get_current_proxy_url);
+        // 获取全局代理 URL
+        let upstream_proxy_url: Option<String> = super::http_client::get_current_proxy_url();
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
@@ -1308,7 +1364,7 @@ impl RequestForwarder {
         let response = if is_socks_proxy {
             // SOCKS5 代理：只能走 reqwest（不支持 header case 保留）
             log::debug!("[Forwarder] Using reqwest for SOCKS5 proxy");
-            let client = super::http_client::get_for_provider(proxy_config);
+            let client = super::http_client::get();
             let mut request = client.post(&url);
             if !self.non_streaming_timeout.is_zero() {
                 request = request.timeout(self.non_streaming_timeout);

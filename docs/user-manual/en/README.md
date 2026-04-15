@@ -79,7 +79,7 @@ CC Switch User Manual
 | File | Description |
 |------|-------------|
 | [4.1-service.md](./4-proxy/4.1-service.md) | Start proxy, configuration, running status |
-| [4.2-takeover.md](./4-proxy/4.2-takeover.md) | App takeover, configuration changes, status indicators |
+| [4.2-routing.md](./4-proxy/4.2-routing.md) | App routing, configuration changes, status indicators |
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | Failover queue, circuit breaker, health status |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | Usage statistics, trend charts, pricing configuration |
 | [4.5-model-test.md](./4-proxy/4.5-model-test.md) | Model test, health check, latency testing |

@@ -525,7 +525,7 @@ fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
 }
 
 #[test]
-fn switch_google_official_gemini_sets_oauth_security() {
+fn switch_google_official_gemini_preserves_env_vars() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let home = ensure_test_home();
@@ -540,7 +540,9 @@ fn switch_google_official_gemini_sets_oauth_security() {
             "google-official".to_string(),
             "Google".to_string(),
             json!({
-                "env": {}
+                "env": {
+                    "GEMINI_MODEL": "gemini-2.5-pro"
+                }
             }),
             Some("https://ai.google.dev".to_string()),
         );
@@ -558,23 +560,30 @@ fn switch_google_official_gemini_sets_oauth_security() {
     ProviderService::switch(&state, AppType::Gemini, "google-official")
         .expect("switching to Google official Gemini should succeed");
 
-    // Gemini security settings are written to ~/.gemini/settings.json, not ~/.cc-switch/settings.json
-    let gemini_settings = home.join(".gemini").join("settings.json");
+    // Verify env vars are preserved in ~/.gemini/.env
+    let env_path = home.join(".gemini").join(".env");
     assert!(
-        gemini_settings.exists(),
-        "Gemini settings.json should exist at {}",
-        gemini_settings.display()
+        env_path.exists(),
+        "Gemini .env should exist at {}",
+        env_path.display()
     );
+    let env_content = std::fs::read_to_string(&env_path).expect("read gemini .env");
+    assert!(
+        env_content.contains("GEMINI_MODEL=gemini-2.5-pro"),
+        "GEMINI_MODEL should be preserved in .env, got: {env_content}"
+    );
+
+    // Verify OAuth security flag is still set correctly
+    let gemini_settings = home.join(".gemini").join("settings.json");
     let gemini_raw = std::fs::read_to_string(&gemini_settings).expect("read gemini settings");
     let gemini_value: serde_json::Value =
         serde_json::from_str(&gemini_raw).expect("parse gemini settings");
-
     assert_eq!(
         gemini_value
             .pointer("/security/auth/selectedType")
             .and_then(|v| v.as_str()),
         Some("oauth-personal"),
-        "Gemini settings json should reflect oauth-personal for Google Official"
+        "OAuth security flag should still be set"
     );
 }
 
