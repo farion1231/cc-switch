@@ -332,7 +332,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
 
             toml_item_is_subset(target_doc.as_item(), source_doc.as_item())
         }
-        AppType::Gemini => match serde_json::from_str::<Value>(trimmed) {
+        AppType::Gemini | AppType::Hermes => match serde_json::from_str::<Value>(trimmed) {
             Ok(Value::Object(source_map)) => {
                 let Some(target_map) = settings.get("env").and_then(Value::as_object) else {
                     return false;
@@ -406,9 +406,17 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::Gemini => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
+        AppType::Gemini | AppType::Hermes => {
+            let source = serde_json::from_str::<Value>(trimmed).map_err(|e| {
+                AppError::Message(format!(
+                    "Invalid {} common config: {e}",
+                    if matches!(app_type, AppType::Gemini) {
+                        "Gemini"
+                    } else {
+                        "Hermes"
+                    }
+                ))
+            })?;
             let mut result = settings.clone();
             if let Some(env) = result.get_mut("env") {
                 json_deep_remove(env, &source);
@@ -459,9 +467,17 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::Gemini => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
+        AppType::Gemini | AppType::Hermes => {
+            let source = serde_json::from_str::<Value>(trimmed).map_err(|e| {
+                AppError::Message(format!(
+                    "Invalid {} common config: {e}",
+                    if matches!(app_type, AppType::Gemini) {
+                        "Gemini"
+                    } else {
+                        "Hermes"
+                    }
+                ))
+            })?;
             let mut result = settings.clone();
             if let Some(env) = result.get_mut("env") {
                 json_deep_merge(env, &source);
@@ -603,6 +619,10 @@ pub(crate) enum LiveSnapshot {
         env: Option<HashMap<String, String>>,
         config: Option<Value>,
     },
+    Hermes {
+        config: Option<serde_yaml::Value>,
+        env: Option<HashMap<String, String>>,
+    },
 }
 
 impl LiveSnapshot {
@@ -654,6 +674,25 @@ impl LiveSnapshot {
                         delete_file(&settings_path)?;
                     }
                     _ => {}
+                }
+            }
+            LiveSnapshot::Hermes { config, env } => {
+                use crate::hermes_config::{
+                    get_hermes_config_path, get_hermes_env_path, write_hermes_config_atomic,
+                    write_hermes_env_atomic,
+                };
+                let config_path = get_hermes_config_path();
+                if let Some(yaml) = config {
+                    write_hermes_config_atomic(yaml)?;
+                } else if config_path.exists() {
+                    delete_file(&config_path)?;
+                }
+
+                let env_path = get_hermes_env_path();
+                if let Some(env_map) = env {
+                    write_hermes_env_atomic(env_map)?;
+                } else if env_path.exists() {
+                    delete_file(&env_path)?;
                 }
             }
         }
@@ -789,6 +828,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                     }
                 }
             }
+        }
+        AppType::Hermes => {
+            log::info!(
+                "write_live_snapshot: writing Hermes provider '{}'",
+                provider.id
+            );
+            crate::hermes_config::write_hermes_live(provider)?;
         }
     }
     Ok(())
@@ -985,6 +1031,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_openclaw_config()?;
             Ok(config)
         }
+        AppType::Hermes => {
+            crate::hermes_config::read_hermes_live_settings()
+        }
     }
 }
 
@@ -1070,6 +1119,72 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         // OpenCode and OpenClaw use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw => {
             unreachable!("additive mode apps are handled by early return")
+        }
+        AppType::Hermes => {
+            use crate::hermes_config::{
+                get_hermes_config_path, get_hermes_env_path, read_hermes_config,
+                read_hermes_env,
+            };
+
+            // Check if config.yaml exists
+            let config_path = get_hermes_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "hermes.live.missing",
+                    "Hermes 配置文件不存在",
+                    "Hermes configuration file is missing",
+                ));
+            }
+
+            // Read config.yaml
+            let yaml_config = read_hermes_config()?;
+
+            // Extract model settings from YAML
+            let model_default = yaml_config
+                .get("model")
+                .and_then(|m| m.get("default"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let base_url = yaml_config
+                .get("model")
+                .and_then(|m| m.get("base_url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            // Read .env file
+            let env_path = get_hermes_env_path();
+            let env_map = if env_path.exists() {
+                read_hermes_env()?
+            } else {
+                HashMap::new()
+            };
+
+            // Find API key from env
+            let api_key = env_map
+                .get("ANTHROPIC_API_KEY")
+                .or_else(|| env_map.get("OPENROUTER_API_KEY"))
+                .or_else(|| env_map.get("HERMES_API_KEY"))
+                .or_else(|| env_map.get("OPENAI_API_KEY"))
+                .cloned()
+                .unwrap_or_default();
+
+            // Build settings_config in env-style format (like Gemini)
+            let mut env_obj = serde_json::Map::new();
+            for (k, v) in env_map {
+                env_obj.insert(k, json!(v));
+            }
+
+            json!({
+                "env": env_obj,
+                "config": {
+                    "model": model_default,
+                    "baseUrl": base_url,
+                    "apiKey": api_key
+                }
+            })
         }
     };
 

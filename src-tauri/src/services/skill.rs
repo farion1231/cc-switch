@@ -529,6 +529,9 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::Hermes => {
+                // Hermes doesn't have an override dir setting yet
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置
@@ -544,6 +547,7 @@ impl SkillService {
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
+            AppType::Hermes => home.join(".hermes").join("skills"),
         })
     }
 

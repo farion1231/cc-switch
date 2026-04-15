@@ -11,6 +11,7 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+mod hermes_config;
 mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
@@ -34,6 +35,7 @@ mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+pub use hermes_config::{get_hermes_config_path, get_hermes_env_path};
 pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
@@ -1027,6 +1029,7 @@ pub fn run() {
             commands::get_common_config_snippet,
             commands::set_common_config_snippet,
             commands::extract_common_config_snippet,
+            commands::get_hermes_auth_status,
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,

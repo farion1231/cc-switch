@@ -268,9 +268,9 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
                 // Already handled via early dispatch above
-                unreachable!("OpenCode/OpenClaw 已通过 check_once_without_adapter 处理")
+                unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
             }
         };
 
@@ -1212,6 +1212,10 @@ impl StreamCheckService {
                 // OpenClaw uses models array in settings_config
                 // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
+            AppType::Hermes => {
+                // Hermes stream check not yet implemented, use default model
+                "claude-3-5-sonnet-20241022".to_string()
             }
         }
     }

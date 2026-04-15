@@ -44,6 +44,7 @@ impl Database {
                         codex: row.get(9)?,
                         gemini: row.get(10)?,
                         opencode: row.get(11)?,
+                        hermes: false, // not yet stored in DB schema
                     },
                     installed_at: row.get(12)?,
                     content_hash: row.get(13)?,
@@ -87,6 +88,7 @@ impl Database {
                     codex: row.get(9)?,
                     gemini: row.get(10)?,
                     opencode: row.get(11)?,
+                    hermes: false, // not yet stored in DB schema
                 },
                 installed_at: row.get(12)?,
                 content_hash: row.get(13)?,

@@ -101,6 +101,12 @@ pub async fn get_config_status(app: String) -> Result<ConfigStatus, String> {
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Hermes => {
+            let hermes_dir = crate::config::get_home_dir().join(".hermes");
+            let exists = hermes_dir.exists();
+            let path = hermes_dir.to_string_lossy().to_string();
+            Ok(ConfigStatus { exists, path })
+        }
     }
 }
 
@@ -117,6 +123,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
+        AppType::Hermes => crate::config::get_home_dir().join(".hermes"),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -130,6 +137,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
+        AppType::Hermes => crate::config::get_home_dir().join(".hermes"),
     };
 
     if !config_dir.exists() {
@@ -362,4 +370,41 @@ pub async fn extract_common_config_snippet(
 
     crate::services::provider::ProviderService::extract_common_config_snippet(&state, app)
         .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+pub struct HermesAuthStatus {
+    pub logged_in: bool,
+    pub account: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_hermes_auth_status() -> Result<HermesAuthStatus, String> {
+    let auth_path = crate::config::get_home_dir().join(".hermes").join("auth.json");
+
+    if !auth_path.exists() {
+        return Ok(HermesAuthStatus {
+            logged_in: false,
+            account: None,
+        });
+    }
+
+    let content = std::fs::read_to_string(&auth_path)
+        .map_err(|e| format!("Failed to read auth.json: {}", e))?;
+
+    let auth_data: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse auth.json: {}", e))?;
+
+    // Extract account info from auth.json
+    let account = auth_data
+        .get("email")
+        .or_else(|| auth_data.get("username"))
+        .or_else(|| auth_data.get("account"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    Ok(HermesAuthStatus {
+        logged_in: account.is_some(),
+        account,
+    })
 }

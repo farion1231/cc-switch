@@ -128,6 +128,10 @@ impl McpService {
                 // Skip for now
                 log::debug!("OpenClaw MCP support is still in development, skipping sync");
             }
+            AppType::Hermes => {
+                // Hermes MCP support not yet implemented
+                log::debug!("Hermes MCP support not yet implemented, skipping sync");
+            }
         }
         Ok(())
     }
@@ -156,6 +160,10 @@ impl McpService {
             AppType::OpenClaw => {
                 // OpenClaw MCP support is still in development
                 log::debug!("OpenClaw MCP support is still in development, skipping remove");
+            }
+            AppType::Hermes => {
+                // Hermes MCP support not yet implemented
+                log::debug!("Hermes MCP support not yet implemented, skipping remove");
             }
         }
         Ok(())
