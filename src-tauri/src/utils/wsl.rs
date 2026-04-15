@@ -61,6 +61,14 @@ pub fn is_valid_wsl_distro_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_' || c == '.')
 }
 
+#[cfg(target_os = "windows")]
+fn is_docker_builtin_wsl_distro(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "docker-desktop" | "docker-desktop-data"
+    )
+}
+
 // ─── Distro enumeration ─────────────────────────────────────────────────────
 
 /// Return all installed WSL distros, excluding docker-desktop entries and
@@ -90,7 +98,7 @@ pub fn get_all_wsl_distros() -> Vec<String> {
         .filter(|line| !line.is_empty())
         .filter(|line| !line.starts_with('*'))
         .filter(|line| is_valid_wsl_distro_name(line))
-        .filter(|line| !line.to_ascii_lowercase().contains("docker"))
+        .filter(|line| !is_docker_builtin_wsl_distro(line))
         .collect()
 }
 
@@ -272,6 +280,16 @@ mod tests {
         assert!(is_valid_wsl_distro_name("Ubuntu Dev"));
         assert!(!is_valid_wsl_distro_name(""));
         assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_is_docker_builtin_wsl_distro_matches_exact_names_only() {
+        assert!(is_docker_builtin_wsl_distro("docker-desktop"));
+        assert!(is_docker_builtin_wsl_distro("docker-desktop-data"));
+        assert!(is_docker_builtin_wsl_distro("Docker-Desktop"));
+        assert!(!is_docker_builtin_wsl_distro("docker-tools"));
+        assert!(!is_docker_builtin_wsl_distro("my docker distro"));
     }
 
     #[cfg(target_os = "windows")]
