@@ -55,8 +55,8 @@ impl Default for StreamCheckConfig {
             max_retries: 2,
             degraded_threshold_ms: 6000,
             claude_model: "claude-haiku-4-5-20251001".to_string(),
-            codex_model: "gpt-5.1-codex@low".to_string(),
-            gemini_model: "gemini-3-pro-preview".to_string(),
+            codex_model: "gpt-5.4@low".to_string(),
+            gemini_model: "gemini-3-flash-preview".to_string(),
             test_prompt: default_test_prompt(),
         }
     }
@@ -74,6 +74,9 @@ pub struct StreamCheckResult {
     pub model_used: String,
     pub tested_at: i64,
     pub retry_count: u32,
+    /// 细粒度错误分类（如 "modelNotFound"），前端据此渲染专门的文案
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_category: Option<String>,
 }
 
 /// 流式健康检查服务
@@ -143,6 +146,7 @@ impl StreamCheckService {
             model_used: String::new(),
             tested_at: chrono::Utc::now().timestamp(),
             retry_count: effective_config.max_retries,
+            error_category: None,
         }))
     }
 
@@ -218,9 +222,8 @@ impl StreamCheckService {
             .or_else(|| adapter.extract_auth(provider))
             .ok_or_else(|| AppError::Message("API Key not found".to_string()))?;
 
-        // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
-        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
-        let client = crate::proxy::http_client::get_for_provider(proxy_config);
+        // 获取 HTTP 客户端
+        let client = crate::proxy::http_client::get();
         let request_timeout = std::time::Duration::from_secs(config.timeout_secs);
 
         let model_to_test = Self::resolve_test_model(app_type, provider, config);
@@ -272,34 +275,12 @@ impl StreamCheckService {
         };
 
         let response_time = start.elapsed().as_millis() as u64;
-        let tested_at = chrono::Utc::now().timestamp();
-
-        match result {
-            Ok((status_code, model)) => {
-                let health_status =
-                    Self::determine_status(response_time, config.degraded_threshold_ms);
-                Ok(StreamCheckResult {
-                    status: health_status,
-                    success: true,
-                    message: "Check succeeded".to_string(),
-                    response_time_ms: Some(response_time),
-                    http_status: Some(status_code),
-                    model_used: model,
-                    tested_at,
-                    retry_count: 0,
-                })
-            }
-            Err(e) => Ok(StreamCheckResult {
-                status: HealthStatus::Failed,
-                success: false,
-                message: e.to_string(),
-                response_time_ms: Some(response_time),
-                http_status: None,
-                model_used: String::new(),
-                tested_at,
-                retry_count: 0,
-            }),
-        }
+        Ok(Self::build_stream_check_result(
+            result,
+            response_time,
+            config.degraded_threshold_ms,
+            &model_to_test,
+        ))
     }
 
     /// Claude 流式检查
@@ -372,7 +353,7 @@ impl StreamCheckService {
             anthropic_to_responses(anthropic_body, Some(&provider.id), is_codex_oauth)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_openai_chat {
-            anthropic_to_openai(anthropic_body, Some(&provider.id))
+            anthropic_to_openai(anthropic_body)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else {
             anthropic_body
@@ -452,8 +433,7 @@ impl StreamCheckService {
                 .header("x-stainless-retry-count", "0")
                 .header("x-stainless-timeout", "600")
                 // Other headers
-                .header("sec-fetch-mode", "cors")
-                .header("connection", "keep-alive");
+                .header("sec-fetch-mode", "cors");
         }
 
         // 供应商自定义 headers 最后追加，允许覆盖内置默认值（例如 user-agent）
@@ -476,7 +456,7 @@ impl StreamCheckService {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::Message(format!("HTTP {status}: {error_text}")));
+            return Err(Self::http_status_error(status, error_text));
         }
 
         // 流式读取：只需首个 chunk
@@ -556,7 +536,7 @@ impl StreamCheckService {
                 if i == 0 && status == 404 && urls.len() > 1 {
                     continue;
                 }
-                return Err(AppError::Message(format!("HTTP {status}: {error_text}")));
+                return Err(Self::http_status_error(status, error_text));
             }
 
             let mut stream = response.bytes_stream();
@@ -631,7 +611,7 @@ impl StreamCheckService {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::Message(format!("HTTP {status}: {error_text}")));
+            return Err(Self::http_status_error(status, error_text));
         }
 
         let mut stream = response.bytes_stream();
@@ -659,9 +639,8 @@ impl StreamCheckService {
         config: &StreamCheckConfig,
         start: Instant,
     ) -> Result<StreamCheckResult, AppError> {
-        // 获取 HTTP 客户端：优先使用供应商单独代理配置，否则使用全局客户端
-        let proxy_config = provider.meta.as_ref().and_then(|m| m.proxy_config.as_ref());
-        let client = crate::proxy::http_client::get_for_provider(proxy_config);
+        // 获取 HTTP 客户端
+        let client = crate::proxy::http_client::get();
         let request_timeout = std::time::Duration::from_secs(config.timeout_secs);
 
         let model_to_test = Self::resolve_test_model(app_type, provider, config);
@@ -696,16 +675,21 @@ impl StreamCheckService {
             result,
             response_time,
             config.degraded_threshold_ms,
+            &model_to_test,
         ))
     }
 
     /// 将 check_*_stream 的原始结果包装成 StreamCheckResult
     ///
     /// 抽取自 check_once 的末尾逻辑，以便 OpenCode/OpenClaw 的独立分支复用。
+    ///
+    /// `model_tested` 是本次探测使用的模型名，用于在失败场景下仍能把模型信息透传给前端，
+    /// 方便针对"模型不存在 / 已下架"这类错误渲染专门的提示。
     fn build_stream_check_result(
         result: Result<(u16, String), AppError>,
         response_time: u64,
         degraded_threshold_ms: u64,
+        model_tested: &str,
     ) -> StreamCheckResult {
         let tested_at = chrono::Utc::now().timestamp();
         match result {
@@ -718,18 +702,65 @@ impl StreamCheckService {
                 model_used: model,
                 tested_at,
                 retry_count: 0,
+                error_category: None,
             },
-            Err(e) => StreamCheckResult {
-                status: HealthStatus::Failed,
-                success: false,
-                message: e.to_string(),
-                response_time_ms: Some(response_time),
-                http_status: None,
-                model_used: String::new(),
-                tested_at,
-                retry_count: 0,
-            },
+            Err(e) => {
+                let (http_status, message, error_category) = match &e {
+                    AppError::HttpStatus { status, body } => {
+                        let category = Self::detect_error_category(*status, body);
+                        (
+                            Some(*status),
+                            Self::classify_http_status(*status).to_string(),
+                            category.map(|s| s.to_string()),
+                        )
+                    }
+                    _ => (None, e.to_string(), None),
+                };
+                StreamCheckResult {
+                    status: HealthStatus::Failed,
+                    success: false,
+                    message,
+                    response_time_ms: Some(response_time),
+                    http_status,
+                    model_used: model_tested.to_string(),
+                    tested_at,
+                    retry_count: 0,
+                    error_category,
+                }
+            }
         }
+    }
+
+    /// 基于 HTTP 状态码和响应体识别细粒度错误分类。
+    ///
+    /// 目前仅识别"模型不存在 / 已下架"：各厂商该类错误通常返回 4xx，body 中会包含
+    /// 如 `model_not_found`（OpenAI）、`does not exist`、`invalid model`、`not_found_error`
+    /// + `model` 字样（Anthropic）等标记。
+    pub(crate) fn detect_error_category(status: u16, body: &str) -> Option<&'static str> {
+        // 只检查 4xx；5xx 的错误信息里可能巧合出现"model"之类的词，容易误判
+        if !(400..500).contains(&status) {
+            return None;
+        }
+        let lower = body.to_lowercase();
+        // 必须提到 "model"，避免通用 404 / 400 被误判
+        if !lower.contains("model") {
+            return None;
+        }
+        let indicators = [
+            "model_not_found",
+            "model not found",
+            "does not exist",
+            "invalid_model",
+            "invalid model",
+            "unknown_model",
+            "unknown model",
+            "is not a valid model",
+            "not_found_error", // Anthropic 的 type 字段
+        ];
+        if indicators.iter().any(|s| lower.contains(s)) {
+            return Some("modelNotFound");
+        }
+        None
     }
 
     /// OpenClaw 流式检查分发器
@@ -1126,6 +1157,39 @@ impl StreamCheckService {
         }
     }
 
+    /// 构造 HTTP 状态码错误，截断过长的响应体
+    fn http_status_error(status: u16, body: String) -> AppError {
+        let body = if body.len() > 200 {
+            // 安全截断：找到 200 字节内最近的 char 边界
+            let mut end = 200;
+            while end > 0 && !body.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…", &body[..end])
+        } else {
+            body
+        };
+        AppError::HttpStatus { status, body }
+    }
+
+    /// 将 HTTP 状态码映射为简短的分类标签
+    pub(crate) fn classify_http_status(status: u16) -> &'static str {
+        match status {
+            400 => "Bad request (400)",
+            401 => "Auth rejected (401)",
+            402 => "Payment required (402)",
+            403 => "Access denied (403)",
+            404 => "Not found (404)",
+            429 => "Rate limited (429)",
+            500 => "Internal server error (500)",
+            502 => "Bad gateway (502)",
+            503 => "Service unavailable (503)",
+            504 => "Gateway timeout (504)",
+            s if (500..600).contains(&s) => "Server error",
+            _ => "HTTP error",
+        }
+    }
+
     fn resolve_test_model(
         app_type: &AppType,
         provider: &Provider,
@@ -1456,6 +1520,51 @@ mod tests {
         let (model, effort) = StreamCheckService::parse_model_with_effort("gpt-4o-mini");
         assert_eq!(model, "gpt-4o-mini");
         assert_eq!(effort, None);
+    }
+
+    #[test]
+    fn test_detect_model_not_found() {
+        // OpenAI 典型响应：404 + model_not_found 错误码
+        let openai_404 = r#"{"error":{"message":"The model `gpt-5.1-codex` does not exist or you do not have access to it","type":"invalid_request_error","param":null,"code":"model_not_found"}}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(404, openai_404),
+            Some("modelNotFound")
+        );
+
+        // Anthropic 典型响应：404 + not_found_error + 提到 model
+        let anthropic_404 = r#"{"type":"error","error":{"type":"not_found_error","message":"model: claude-deprecated"}}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(404, anthropic_404),
+            Some("modelNotFound")
+        );
+
+        // 400 + invalid model 也算
+        let bad_req = r#"{"error":{"message":"invalid model specified"}}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(400, bad_req),
+            Some("modelNotFound")
+        );
+
+        // 通用 404（比如 Base URL 错误），body 里没有 model 字样 → 不应误判
+        let generic_404 = r#"{"error":"Not Found"}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(404, generic_404),
+            None
+        );
+
+        // 5xx 就算 body 里有 "model does not exist" 也不分类（避免误判）
+        let server_error = r#"{"error":"model does not exist"}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(500, server_error),
+            None
+        );
+
+        // 401 鉴权错误（body 里没有 model 字样）
+        let auth_err = r#"{"error":"Invalid API key"}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(401, auth_err),
+            None
+        );
     }
 
     #[test]

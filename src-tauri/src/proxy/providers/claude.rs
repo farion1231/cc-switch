@@ -81,12 +81,48 @@ pub fn transform_claude_request_for_api_format(
     provider: &Provider,
     api_format: &str,
 ) -> Result<serde_json::Value, ProxyError> {
-    let cache_key = provider
+    // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
+    // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
+    // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
+    let is_copilot = provider
         .meta
         .as_ref()
-        .and_then(|m| m.prompt_cache_key.as_deref())
-        .unwrap_or(&provider.id);
+        .and_then(|m| m.provider_type.as_deref())
+        == Some("github_copilot")
+        || provider
+            .settings_config
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .is_some_and(|u| u.contains("githubcopilot.com"));
+    let session_cache_key: Option<String> = if is_copilot {
+        let metadata = body.get("metadata");
+        // Session 提取优先级（与 forwarder 和 session.rs 统一）：
+        //   1. metadata.user_id 中的 _session_ 后缀
+        //   2. metadata.session_id（直接字段）
+        metadata
+            .and_then(|m| m.get("user_id"))
+            .and_then(|v| v.as_str())
+            .and_then(super::super::session::parse_session_from_user_id)
+            .or_else(|| {
+                metadata
+                    .and_then(|m| m.get("session_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+            })
+    } else {
+        None
+    };
 
+    let cache_key = session_cache_key
+        .as_deref()
+        .or_else(|| {
+            provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.prompt_cache_key.as_deref())
+        })
+        .unwrap_or(&provider.id);
     match api_format {
         "openai_responses" => {
             // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
@@ -102,7 +138,7 @@ pub fn transform_claude_request_for_api_format(
                 is_codex_oauth,
             )
         }
-        "openai_chat" => super::transform::anthropic_to_openai(body, Some(cache_key)),
+        "openai_chat" => super::transform::anthropic_to_openai(body),
         _ => Ok(body),
     }
 }
@@ -456,6 +492,7 @@ impl ProviderAdapter for ClaudeAdapter {
                         HeaderName::from_static("x-interaction-type"),
                         HeaderValue::from_static("conversation-agent"),
                     ),
+                    // x-interaction-id 由 forwarder 按需注入（仅在有 session 时）
                     (
                         HeaderName::from_static("x-vscode-user-agent-library-version"),
                         HeaderValue::from_static("electron-fetch"),

@@ -41,7 +41,7 @@ pub async fn fetch_models(
     }
 
     let models_url = build_models_url(base_url, is_full_url)?;
-    let client = crate::proxy::http_client::get_for_provider(None);
+    let client = crate::proxy::http_client::get();
 
     let response = client
         .get(&models_url)

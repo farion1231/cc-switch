@@ -45,6 +45,7 @@ export function RequestLogTable({
   const [appliedFilters, setAppliedFilters] = useState<LogFilters>({});
   const [draftFilters, setDraftFilters] = useState<LogFilters>({});
   const [page, setPage] = useState(0);
+  const [pageInput, setPageInput] = useState("");
   const pageSize = 20;
 
   const dashboardAppTypeActive = dashboardAppType && dashboardAppType !== "all";
@@ -101,6 +102,15 @@ export function RequestLogTable({
     setPage(0);
   };
 
+  const handleGoToPage = () => {
+    const trimmed = pageInput.trim();
+    if (!/^\d+$/.test(trimmed)) return;
+    const parsed = Number(trimmed);
+    if (parsed < 1 || parsed > totalPages) return;
+    setPage(parsed - 1);
+    setPageInput("");
+  };
+
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
 
@@ -108,7 +118,6 @@ export function RequestLogTable({
     <div className="space-y-4">
       <div className="rounded-lg border bg-card/50 p-2 backdrop-blur-sm">
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* App type */}
           {/* App type */}
           <Select
             value={
@@ -376,32 +385,79 @@ export function RequestLogTable({
 
           <div className="flex items-center justify-between text-sm text-muted-foreground">
             <span>{t("usage.totalRecords", { total })}</span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <Button
                 size="sm"
                 variant="outline"
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
-                aria-label={t("usage.previousPage", {
-                  defaultValue: "Previous page",
-                })}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <span>
-                {page + 1} / {Math.max(totalPages, 1)}
-              </span>
+              {(() => {
+                const pages: (number | string)[] = [];
+                if (totalPages <= 9) {
+                  for (let i = 0; i < totalPages; i++) pages.push(i);
+                } else {
+                  const pageSet = new Set<number>();
+                  for (let i = 0; i < 3; i++) pageSet.add(i);
+                  for (let i = totalPages - 3; i < totalPages; i++)
+                    pageSet.add(i);
+                  for (
+                    let i = Math.max(0, page - 1);
+                    i <= Math.min(totalPages - 1, page + 1);
+                    i++
+                  )
+                    pageSet.add(i);
+                  const sorted = Array.from(pageSet).sort((a, b) => a - b);
+                  for (let i = 0; i < sorted.length; i++) {
+                    if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
+                      pages.push(`ellipsis-${i}`);
+                    }
+                    pages.push(sorted[i]);
+                  }
+                }
+                return pages.map((p) =>
+                  typeof p === "string" ? (
+                    <span key={p} className="px-2 text-muted-foreground">
+                      ...
+                    </span>
+                  ) : (
+                    <Button
+                      key={p}
+                      variant={p === page ? "default" : "outline"}
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setPage(p)}
+                    >
+                      {p + 1}
+                    </Button>
+                  ),
+                );
+              })()}
               <Button
                 size="sm"
                 variant="outline"
                 disabled={page >= totalPages - 1}
                 onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                aria-label={t("usage.nextPage", {
-                  defaultValue: "Next page",
-                })}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
+              <div className="flex items-center gap-1 ml-2">
+                <Input
+                  type="text"
+                  value={pageInput}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleGoToPage();
+                  }}
+                  placeholder={t("usage.pageInputPlaceholder")}
+                  className="h-8 w-16 text-center text-xs"
+                />
+                <Button variant="outline" size="sm" onClick={handleGoToPage}>
+                  {t("usage.goToPage")}
+                </Button>
+              </div>
             </div>
           </div>
         </>

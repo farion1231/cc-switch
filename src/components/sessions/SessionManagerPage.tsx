@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -69,8 +70,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const { data, isLoading, refetch } = useSessionsQuery();
   const sessions = data ?? [];
   const detailRef = useRef<HTMLDivElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
     null,
   );
@@ -134,6 +134,20 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const deleteSessionMutation = useDeleteSessionMutation();
   const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
 
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 120,
+    overscan: 5,
+    gap: 12,
+  });
+
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+  }, [selectedKey]);
+
   useEffect(() => {
     const validKeys = new Set(
       sessions.map((session) => getSessionKey(session)),
@@ -166,37 +180,36 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   }, [messages]);
 
   const scrollToMessage = (index: number) => {
-    const el = messageRefs.current.get(index);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      setActiveMessageIndex(index);
-      setTocDialogOpen(false); // 关闭弹窗
-      // 清除高亮状态
-      setTimeout(() => setActiveMessageIndex(null), 2000);
-    }
+    virtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });
+    setActiveMessageIndex(index);
+    setTocDialogOpen(false);
+    setTimeout(() => setActiveMessageIndex(null), 2000);
   };
 
-  // 清理定时器
-  useEffect(() => {
-    return () => {
-      // 这里的 setTimeout 其实无法直接清理，因为它在函数闭包里。
-      // 如果要严格清理，需要用 useRef 存 timer id。
-      // 但对于 2秒的高亮清除，通常不清理也没大问题。
-      // 为了代码规范，我们在组件卸载时将 activeMessageIndex 重置 (虽然 React 会处理)
-    };
-  }, []);
+  const handleCopy = useCallback(
+    async (text: string, successMessage: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        toast.success(successMessage);
+      } catch (error) {
+        toast.error(
+          extractErrorMessage(error) ||
+            t("common.error", { defaultValue: "Copy failed" }),
+        );
+      }
+    },
+    [t],
+  );
 
-  const handleCopy = async (text: string, successMessage: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(successMessage);
-    } catch (error) {
-      toast.error(
-        extractErrorMessage(error) ||
-          t("common.error", { defaultValue: "Copy failed" }),
+  const handleMessageCopy = useCallback(
+    (content: string) => {
+      void handleCopy(
+        content,
+        t("sessionManager.messageCopied", { defaultValue: "已复制消息内容" }),
       );
-    }
-  };
+    },
+    [handleCopy, t],
+  );
 
   const handleResume = async () => {
     if (!selectedSession?.resumeCommand) return;
@@ -973,9 +986,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                   <CardContent className="flex-1 min-h-0 p-0">
                     <div className="flex h-full min-w-0">
                       {/* 消息列表 */}
-                      <ScrollArea className="flex-1 min-w-0">
-                        <div className="p-4 min-w-0">
-                          <div className="flex items-center gap-2 mb-3">
+                      <div className="flex-1 min-w-0 flex flex-col">
+                        <div className="px-4 pt-4 pb-2 min-w-0">
+                          <div className="flex items-center gap-2">
                             <MessageSquare className="size-4 text-muted-foreground" />
                             <span className="text-sm font-medium">
                               {t("sessionManager.conversationHistory", {
@@ -986,7 +999,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               {messages.length}
                             </Badge>
                           </div>
-
+                        </div>
+                        <div
+                          ref={scrollContainerRef}
+                          className="flex-1 overflow-y-auto px-4 pb-4 min-w-0"
+                        >
                           {isLoadingMessages ? (
                             <div className="flex items-center justify-center py-12">
                               <RefreshCw className="size-5 animate-spin text-muted-foreground" />
@@ -999,32 +1016,41 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               </p>
                             </div>
                           ) : (
-                            <div className="space-y-3">
-                              {messages.map((message, index) => (
-                                <SessionMessageItem
-                                  key={`${message.role}-${index}`}
-                                  message={message}
-                                  index={index}
-                                  isActive={activeMessageIndex === index}
-                                  searchQuery={search}
-                                  setRef={(el) => {
-                                    if (el) messageRefs.current.set(index, el);
-                                  }}
-                                  onCopy={(content) =>
-                                    handleCopy(
-                                      content,
-                                      t("sessionManager.messageCopied", {
-                                        defaultValue: "已复制消息内容",
-                                      }),
-                                    )
-                                  }
-                                />
-                              ))}
-                              <div ref={messagesEndRef} />
+                            <div
+                              style={{
+                                height: virtualizer.getTotalSize(),
+                                position: "relative",
+                              }}
+                            >
+                              {virtualizer
+                                .getVirtualItems()
+                                .map((virtualRow) => (
+                                  <div
+                                    key={virtualRow.key}
+                                    data-index={virtualRow.index}
+                                    ref={virtualizer.measureElement}
+                                    style={{
+                                      position: "absolute",
+                                      top: 0,
+                                      left: 0,
+                                      width: "100%",
+                                      transform: `translateY(${virtualRow.start}px)`,
+                                    }}
+                                  >
+                                    <SessionMessageItem
+                                      message={messages[virtualRow.index]}
+                                      isActive={
+                                        activeMessageIndex === virtualRow.index
+                                      }
+                                      searchQuery={search}
+                                      onCopy={handleMessageCopy}
+                                    />
+                                  </div>
+                                ))}
                             </div>
                           )}
                         </div>
-                      </ScrollArea>
+                      </div>
 
                       {/* 右侧目录 - 类似少数派 (大屏幕) */}
                       <SessionTocSidebar

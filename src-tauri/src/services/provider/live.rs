@@ -1099,7 +1099,7 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
     // One-time auth type detection to avoid repeated detection
     let auth_type = detect_gemini_auth_type(provider);
 
-    let mut env_map = json_to_env(&provider.settings_config)?;
+    let env_map = json_to_env(&provider.settings_config)?;
 
     // Prepare config to write to ~/.gemini/settings.json
     // Behavior:
@@ -1143,17 +1143,12 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
 
     match auth_type {
         GeminiAuthType::GoogleOfficial => {
-            // Google official uses OAuth, clear env
-            env_map.clear();
+            // Google Official uses OAuth, no API key validation needed.
+            // Write user's env vars as-is (e.g. GEMINI_MODEL, custom vars).
             write_gemini_env_atomic(&env_map)?;
         }
-        GeminiAuthType::Packycode => {
-            // PackyCode provider, uses API Key (strict validation on switch)
-            validate_gemini_settings_strict(&provider.settings_config)?;
-            write_gemini_env_atomic(&env_map)?;
-        }
-        GeminiAuthType::Generic => {
-            // Generic provider, uses API Key (strict validation on switch)
+        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
+            // API Key mode -- require GEMINI_API_KEY
             validate_gemini_settings_strict(&provider.settings_config)?;
             write_gemini_env_atomic(&env_map)?;
         }
