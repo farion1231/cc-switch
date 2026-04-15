@@ -40,12 +40,23 @@ export function RepoManagerPanel({
     url: string,
   ): { owner: string; name: string } | null => {
     let cleaned = url.trim();
-    cleaned = cleaned.replace(/^https?:\/\/github\.com\//, "");
     cleaned = cleaned.replace(/\.git$/, "");
 
-    const parts = cleaned.split("/");
-    if (parts.length === 2 && parts[0] && parts[1]) {
-      return { owner: parts[0], name: parts[1] };
+    if (/^https?:\/\//.test(cleaned)) {
+      try {
+        const parsed = new URL(cleaned);
+        const pathParts = parsed.pathname.split("/").filter(Boolean);
+        if (pathParts.length >= 2) {
+          return { owner: pathParts[0], name: pathParts[1] };
+        }
+      } catch {
+        return null;
+      }
+    } else {
+      const parts = cleaned.split("/");
+      if (parts.length === 2 && parts[0] && parts[1]) {
+        return { owner: parts[0], name: parts[1] };
+      }
     }
 
     return null;
