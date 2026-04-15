@@ -238,11 +238,14 @@ fn upsert_opencode_provider_at(
     config: Value,
 ) -> Result<(), AppError> {
     let mut full_config = if path.exists() {
-        read_json_file::<Value>(path)
-            .unwrap_or_else(|_| json!({ "$schema": "https://opencode.ai/config.json" }))
+        read_opencode_json5_value(path)?
     } else {
         json!({ "$schema": "https://opencode.ai/config.json" })
     };
+
+    if !full_config.is_object() {
+        full_config = json!({});
+    }
 
     if full_config.get("provider").is_none() {
         full_config["provider"] = json!({});
@@ -260,11 +263,14 @@ fn upsert_opencode_provider_at(
 
 fn remove_opencode_provider_at(path: &Path, provider_id: &str) -> Result<(), AppError> {
     let mut config = if path.exists() {
-        read_json_file::<Value>(path)
-            .unwrap_or_else(|_| json!({ "$schema": "https://opencode.ai/config.json" }))
+        read_opencode_json5_value(path)?
     } else {
         return Ok(());
     };
+
+    if !config.is_object() {
+        return Ok(());
+    }
 
     if let Some(providers) = config.get_mut("provider").and_then(|v| v.as_object_mut()) {
         providers.remove(provider_id);
@@ -279,14 +285,7 @@ fn upsert_openclaw_provider_at(
     provider_config: Value,
 ) -> Result<(), AppError> {
     let mut full_config = if path.exists() {
-        read_openclaw_json5_value(path).unwrap_or_else(|_| {
-            json!({
-                "models": {
-                    "mode": "merge",
-                    "providers": {}
-                }
-            })
-        })
+        read_openclaw_json5_value(path)?
     } else {
         json!({
             "models": {
@@ -329,14 +328,7 @@ fn upsert_openclaw_provider_at(
 
 fn remove_openclaw_provider_at(path: &Path, provider_id: &str) -> Result<(), AppError> {
     let mut config = if path.exists() {
-        read_openclaw_json5_value(path).unwrap_or_else(|_| {
-            json!({
-                "models": {
-                    "mode": "merge",
-                    "providers": {}
-                }
-            })
-        })
+        read_openclaw_json5_value(path)?
     } else {
         return Ok(());
     };
@@ -350,6 +342,12 @@ fn remove_openclaw_provider_at(path: &Path, provider_id: &str) -> Result<(), App
     }
 
     write_json_file(path, &config)
+}
+
+fn read_opencode_json5_value(path: &Path) -> Result<Value, AppError> {
+    let content = std::fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+    json5::from_str(&content)
+        .map_err(|e| AppError::Config(format!("Failed to parse OpenCode config as JSON5: {e}")))
 }
 
 fn read_openclaw_json5_value(path: &Path) -> Result<Value, AppError> {
@@ -2184,6 +2182,82 @@ mod tests {
     }
 
     #[test]
+    fn upsert_opencode_provider_preserves_valid_json5_sections() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cc-switch-opencode-json5-{unique}.json"));
+
+        std::fs::write(
+            &path,
+            r#"{
+  // valid JSON5 config with unrelated sections
+  $schema: 'https://opencode.ai/config.json',
+  runtime: {
+    profile: 'coding',
+  },
+  provider: {},
+}"#,
+        )
+        .expect("should write JSON5 opencode config");
+
+        upsert_opencode_provider_at(
+            &path,
+            "test-provider",
+            json!({
+                "npm": "@acme/provider",
+                "options": {
+                    "baseUrl": "https://example.com"
+                }
+            }),
+        )
+        .expect("upsert should preserve valid JSON5 content");
+
+        let written = read_opencode_json5_value(&path).expect("should read updated JSON5 config");
+        assert_eq!(written["runtime"]["profile"], json!("coding"));
+        assert_eq!(written["$schema"], json!("https://opencode.ai/config.json"));
+        assert_eq!(
+            written["provider"]["test-provider"]["npm"],
+            json!("@acme/provider")
+        );
+        assert_eq!(
+            written["provider"]["test-provider"]["options"]["baseUrl"],
+            json!("https://example.com")
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn upsert_opencode_provider_returns_error_for_invalid_json5() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cc-switch-opencode-invalid-{unique}.json"));
+
+        std::fs::write(&path, "{ provider: { broken: true, }")
+            .expect("should write invalid opencode config");
+
+        let result = upsert_opencode_provider_at(
+            &path,
+            "test-provider",
+            json!({
+                "npm": "@acme/provider"
+            }),
+        );
+
+        assert!(result.is_err(), "invalid JSON5 should return an error");
+
+        let original =
+            std::fs::read_to_string(&path).expect("should keep original config on error");
+        assert_eq!(original, "{ provider: { broken: true, }");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn upsert_openclaw_provider_recovers_when_models_is_not_an_object() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2288,6 +2362,42 @@ mod tests {
         assert_eq!(
             written["models"]["providers"]["test-provider"]["api"]["baseUrl"],
             json!("https://example.com")
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn upsert_openclaw_provider_returns_error_for_invalid_json5() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cc-switch-openclaw-invalid-{unique}.json"));
+
+        std::fs::write(
+            &path,
+            "{ models: { mode: 'merge', providers: { broken: true, }",
+        )
+        .expect("should write invalid openclaw config");
+
+        let result = upsert_openclaw_provider_at(
+            &path,
+            "test-provider",
+            json!({
+                "api": {
+                    "baseUrl": "https://example.com"
+                }
+            }),
+        );
+
+        assert!(result.is_err(), "invalid JSON5 should return an error");
+
+        let original =
+            std::fs::read_to_string(&path).expect("should keep original config on error");
+        assert_eq!(
+            original,
+            "{ models: { mode: 'merge', providers: { broken: true, }"
         );
 
         let _ = std::fs::remove_file(&path);
