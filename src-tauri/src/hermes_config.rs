@@ -26,11 +26,6 @@ pub fn get_hermes_env_path() -> PathBuf {
     get_hermes_dir().join(".env")
 }
 
-/// 获取 Hermes auth.json 文件路径
-pub fn get_hermes_auth_path() -> PathBuf {
-    get_hermes_dir().join("auth.json")
-}
-
 /// 读取 Hermes config.yaml 文件
 ///
 /// 如果文件不存在，返回空的 YAML mapping。
@@ -123,47 +118,68 @@ pub fn write_hermes_env_atomic(env: &HashMap<String, String>) -> Result<(), AppE
     Ok(())
 }
 
-/// 读取 Hermes 当前配置，返回 JSON `{model, base_url, api_key}`
+/// 读取 Hermes 当前配置
 ///
-/// 从 config.yaml 读取 model.default、model.provider、model.base_url，
-/// 从 .env 读取 API key（OPENROUTER_API_KEY 或 ANTHROPIC_API_KEY 等）。
+/// 从 config.yaml 的 custom_providers 列表中获取当前 provider 的配置。
+/// 当前 provider 由 model.provider 字段指定。
+/// 返回 JSON `{model, base_url, api_key, provider_name}`
 pub fn read_hermes_live_settings() -> Result<JsonValue, AppError> {
     let yaml = read_hermes_config()?;
-    let env = read_hermes_env()?;
 
-    let model = yaml
+    // 获取当前 model 设置
+    let model_default = yaml
         .get("model")
         .and_then(|m| m.get("default"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
 
-    let base_url = yaml
+    let model_provider = yaml
         .get("model")
-        .and_then(|m| m.get("base_url"))
+        .and_then(|m| m.get("provider"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
 
-    // Pick the first API key found in the env file
-    let api_key = env
-        .get("OPENROUTER_API_KEY")
-        .or_else(|| env.get("ANTHROPIC_API_KEY"))
-        .or_else(|| env.get("OPENAI_API_KEY"))
-        .cloned()
-        .unwrap_or_default();
+    // 从 custom_providers 列表中查找当前 provider
+    let custom_providers = yaml.get("custom_providers").and_then(|p| p.as_sequence());
+
+    let mut base_url = String::new();
+    let mut api_key = String::new();
+
+    if let Some(providers) = custom_providers {
+        for provider in providers {
+            if let Some(name) = provider.get("name").and_then(|n| n.as_str()) {
+                if name == model_provider {
+                    base_url = provider
+                        .get("base_url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    api_key = provider
+                        .get("api_key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    break;
+                }
+            }
+        }
+    }
 
     Ok(serde_json::json!({
-        "model": model,
+        "model": model_default,
         "base_url": base_url,
         "api_key": api_key,
+        "provider_name": model_provider,
     }))
 }
 
-/// 将 Provider 配置写入 Hermes 的 config.yaml 和 .env
+/// 将 Provider 配置写入 Hermes 的 config.yaml
 ///
-/// 更新 config.yaml 中的 model.provider、model.default、model.base_url，
-/// 保留其他所有字段。API key 写入 .env，保留其他 env 变量。
+/// Hermes 使用 custom_providers 列表存储 provider 配置。
+/// 更新 model.provider、model.default 指向当前 provider，
+/// 并更新或添加 custom_providers 中的对应条目。
 pub fn write_hermes_live(provider: &Provider) -> Result<(), AppError> {
     log::info!(
         "[hermes_config] write_hermes_live: provider_id={}, provider_name={}",
@@ -171,7 +187,6 @@ pub fn write_hermes_live(provider: &Provider) -> Result<(), AppError> {
         provider.name
     );
 
-    // --- config.yaml ---
     let mut yaml = read_hermes_config()?;
 
     // Ensure yaml is a mapping
@@ -201,7 +216,7 @@ pub fn write_hermes_live(provider: &Provider) -> Result<(), AppError> {
 
     let provider_name = provider.name.clone();
 
-    // Patch model section in YAML, preserving other fields
+    // 1. 更新 model section
     {
         let mapping = yaml.as_mapping_mut().expect("yaml is a mapping");
         let model_key = serde_yaml::Value::String("model".to_string());
@@ -211,56 +226,111 @@ pub fn write_hermes_live(provider: &Provider) -> Result<(), AppError> {
             .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
 
         if let Some(model_map) = model_section.as_mapping_mut() {
-            let default_key = serde_yaml::Value::String("default".to_string());
-            let base_url_key = serde_yaml::Value::String("base_url".to_string());
-
+            // 更新 default model
             if !model_str.is_empty() {
-                model_map.insert(default_key, serde_yaml::Value::String(model_str));
-            } else {
-                model_map.remove(&default_key);
+                model_map.insert(
+                    serde_yaml::Value::String("default".to_string()),
+                    serde_yaml::Value::String(model_str.clone()),
+                );
             }
+            // 更新 provider name
             model_map.insert(
                 serde_yaml::Value::String("provider".to_string()),
-                serde_yaml::Value::String(provider_name),
+                serde_yaml::Value::String(provider_name.clone()),
             );
-            if !base_url_str.is_empty() {
-                model_map.insert(base_url_key, serde_yaml::Value::String(base_url_str));
-            } else {
-                model_map.remove(&base_url_key);
+        }
+    }
+
+    // 2. 更新或添加 custom_providers
+    {
+        let mapping = yaml.as_mapping_mut().expect("yaml is a mapping");
+        let providers_key = serde_yaml::Value::String("custom_providers".to_string());
+
+        // 确保 custom_providers 存在
+        if !mapping.contains_key(&providers_key) {
+            mapping.insert(
+                providers_key.clone(),
+                serde_yaml::Value::Sequence(vec![]),
+            );
+        }
+
+        let providers = mapping.get_mut(&providers_key).expect("custom_providers exists");
+        
+        if let Some(providers_seq) = providers.as_sequence_mut() {
+            // 查找是否已存在同名 provider
+            let mut found = false;
+            for existing_provider in providers_seq.iter_mut() {
+                if let Some(existing_name) = existing_provider.get("name").and_then(|n| n.as_str()) {
+                    if existing_name == provider_name {
+                        // 更新现有 provider
+                        if let Some(provider_map) = existing_provider.as_mapping_mut() {
+                            if !base_url_str.is_empty() {
+                                provider_map.insert(
+                                    serde_yaml::Value::String("base_url".to_string()),
+                                    serde_yaml::Value::String(base_url_str.clone()),
+                                );
+                            }
+                            if !api_key_str.is_empty() {
+                                provider_map.insert(
+                                    serde_yaml::Value::String("api_key".to_string()),
+                                    serde_yaml::Value::String(api_key_str.clone()),
+                                );
+                            }
+                            if !model_str.is_empty() {
+                                provider_map.insert(
+                                    serde_yaml::Value::String("model".to_string()),
+                                    serde_yaml::Value::String(model_str.clone()),
+                                );
+                            }
+                            // 确保 transport 字段存在
+                            if !provider_map.contains_key(serde_yaml::Value::String("transport".to_string())) {
+                                provider_map.insert(
+                                    serde_yaml::Value::String("transport".to_string()),
+                                    serde_yaml::Value::String("openai_chat".to_string()),
+                                );
+                            }
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            // 如果不存在，添加新的 provider
+            if !found {
+                let mut new_provider = serde_yaml::Mapping::new();
+                new_provider.insert(
+                    serde_yaml::Value::String("name".to_string()),
+                    serde_yaml::Value::String(provider_name.clone()),
+                );
+                if !base_url_str.is_empty() {
+                    new_provider.insert(
+                        serde_yaml::Value::String("base_url".to_string()),
+                        serde_yaml::Value::String(base_url_str),
+                    );
+                }
+                if !api_key_str.is_empty() {
+                    new_provider.insert(
+                        serde_yaml::Value::String("api_key".to_string()),
+                        serde_yaml::Value::String(api_key_str),
+                    );
+                }
+                if !model_str.is_empty() {
+                    new_provider.insert(
+                        serde_yaml::Value::String("model".to_string()),
+                        serde_yaml::Value::String(model_str),
+                    );
+                }
+                new_provider.insert(
+                    serde_yaml::Value::String("transport".to_string()),
+                    serde_yaml::Value::String("openai_chat".to_string()),
+                );
+                providers_seq.push(serde_yaml::Value::Mapping(new_provider));
             }
         }
     }
 
     write_hermes_config_atomic(&yaml)?;
-
-    // --- .env ---
-    if !api_key_str.is_empty() {
-        let mut env = read_hermes_env()?;
-
-        // Determine which key name to use based on provider settings_config
-        let settings_str = serde_json::to_string(&provider.settings_config).unwrap_or_default();
-        let key_name = if settings_str.contains("ANTHROPIC_API_KEY") {
-            "ANTHROPIC_API_KEY"
-        } else if settings_str.contains("OPENROUTER_API_KEY") {
-            "OPENROUTER_API_KEY"
-        } else {
-            "HERMES_API_KEY"
-        };
-
-        // Clear all known API key vars before writing the correct one
-        env.remove("ANTHROPIC_API_KEY");
-        env.remove("OPENROUTER_API_KEY");
-        env.remove("OPENAI_API_KEY");
-        env.remove("HERMES_API_KEY");
-
-        env.insert(key_name.to_string(), api_key_str);
-        write_hermes_env_atomic(&env)?;
-
-        log::info!(
-            "[hermes_config] write_hermes_live: wrote api_key to .env key={}",
-            key_name
-        );
-    }
 
     log::info!("[hermes_config] write_hermes_live: done");
     Ok(())
@@ -270,7 +340,6 @@ pub fn write_hermes_live(provider: &Provider) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use serial_test::serial;
-    use std::collections::HashMap;
     use std::env;
 
     #[test]
@@ -284,28 +353,42 @@ mod tests {
         let mut model_map = serde_yaml::Mapping::new();
         model_map.insert(
             serde_yaml::Value::String("default".to_string()),
-            serde_yaml::Value::String("claude-3-5-sonnet".to_string()),
+            serde_yaml::Value::String("claude-sonnet-4-6".to_string()),
         );
         model_map.insert(
             serde_yaml::Value::String("provider".to_string()),
-            serde_yaml::Value::String("anthropic".to_string()),
-        );
-        model_map.insert(
-            serde_yaml::Value::String("base_url".to_string()),
-            serde_yaml::Value::String("https://api.anthropic.com".to_string()),
+            serde_yaml::Value::String("api-proxy-claude".to_string()),
         );
         yaml.as_mapping_mut()
             .unwrap()
             .insert(serde_yaml::Value::String("model".to_string()), serde_yaml::Value::Mapping(model_map));
 
-        let mut other_section = serde_yaml::Mapping::new();
-        other_section.insert(
-            serde_yaml::Value::String("key".to_string()),
-            serde_yaml::Value::String("value".to_string()),
+        let mut custom_providers = vec![];
+        let mut provider_map = serde_yaml::Mapping::new();
+        provider_map.insert(
+            serde_yaml::Value::String("name".to_string()),
+            serde_yaml::Value::String("api-proxy-claude".to_string()),
         );
+        provider_map.insert(
+            serde_yaml::Value::String("base_url".to_string()),
+            serde_yaml::Value::String("https://api.example.com/v1".to_string()),
+        );
+        provider_map.insert(
+            serde_yaml::Value::String("api_key".to_string()),
+            serde_yaml::Value::String("sk-test-key".to_string()),
+        );
+        provider_map.insert(
+            serde_yaml::Value::String("model".to_string()),
+            serde_yaml::Value::String("claude-sonnet-4-6".to_string()),
+        );
+        provider_map.insert(
+            serde_yaml::Value::String("transport".to_string()),
+            serde_yaml::Value::String("openai_chat".to_string()),
+        );
+        custom_providers.push(serde_yaml::Value::Mapping(provider_map));
         yaml.as_mapping_mut()
             .unwrap()
-            .insert(serde_yaml::Value::String("other_section".to_string()), serde_yaml::Value::Mapping(other_section));
+            .insert(serde_yaml::Value::String("custom_providers".to_string()), serde_yaml::Value::Sequence(custom_providers));
 
         write_hermes_config_atomic(&yaml).unwrap();
         let read_yaml = read_hermes_config().unwrap();
@@ -315,28 +398,27 @@ mod tests {
                 .get("model")
                 .and_then(|m| m.get("default"))
                 .and_then(|v| v.as_str()),
-            Some("claude-3-5-sonnet")
+            Some("claude-sonnet-4-6")
         );
         assert_eq!(
             read_yaml
                 .get("model")
                 .and_then(|m| m.get("provider"))
                 .and_then(|v| v.as_str()),
-            Some("anthropic")
+            Some("api-proxy-claude")
+        );
+
+        // Verify custom_providers
+        let providers = read_yaml.get("custom_providers").and_then(|p| p.as_sequence()).unwrap();
+        assert_eq!(providers.len(), 1);
+        let first_provider = &providers[0];
+        assert_eq!(
+            first_provider.get("name").and_then(|n| n.as_str()),
+            Some("api-proxy-claude")
         );
         assert_eq!(
-            read_yaml
-                .get("model")
-                .and_then(|m| m.get("base_url"))
-                .and_then(|v| v.as_str()),
-            Some("https://api.anthropic.com")
-        );
-        assert_eq!(
-            read_yaml
-                .get("other_section")
-                .and_then(|s| s.get("key"))
-                .and_then(|v| v.as_str()),
-            Some("value")
+            first_provider.get("base_url").and_then(|v| v.as_str()),
+            Some("https://api.example.com/v1")
         );
 
         match old_test_home {
@@ -353,25 +435,14 @@ mod tests {
         env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
 
         let mut env: HashMap<String, String> = HashMap::new();
-        env.insert("OPENROUTER_API_KEY".to_string(), "sk-or-test".to_string());
+        env.insert("TELEGRAM_BOT_TOKEN".to_string(), "test-token".to_string());
         env.insert("OTHER_KEY".to_string(), "other-value".to_string());
-        env.insert("CUSTOM_VAR".to_string(), "custom".to_string());
 
         write_hermes_env_atomic(&env).unwrap();
 
-        // Update only the API key
-        let mut updated_env = read_hermes_env().unwrap();
-        updated_env.insert("OPENROUTER_API_KEY".to_string(), "sk-or-new".to_string());
-        write_hermes_env_atomic(&updated_env).unwrap();
-
-        let final_env = read_hermes_env().unwrap();
-
-        assert_eq!(
-            final_env.get("OPENROUTER_API_KEY"),
-            Some(&"sk-or-new".to_string())
-        );
-        assert_eq!(final_env.get("OTHER_KEY"), Some(&"other-value".to_string()));
-        assert_eq!(final_env.get("CUSTOM_VAR"), Some(&"custom".to_string()));
+        let read_env = read_hermes_env().unwrap();
+        assert_eq!(read_env.get("TELEGRAM_BOT_TOKEN"), Some(&"test-token".to_string()));
+        assert_eq!(read_env.get("OTHER_KEY"), Some(&"other-value".to_string()));
 
         match old_test_home {
             Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
@@ -388,14 +459,11 @@ mod tests {
 
         let provider = Provider::with_id(
             "test-1".to_string(),
-            "Test Provider".to_string(),
+            "My Custom Provider".to_string(),
             serde_json::json!({
-                "model": "claude-3-5-sonnet",
-                "base_url": "https://api.anthropic.com",
-                "api_key": "sk-ant-test",
-                "env": {
-                    "ANTHROPIC_API_KEY": "sk-ant-test"
-                }
+                "model": "claude-sonnet-4-6",
+                "base_url": "https://api.custom.com/v1",
+                "api_key": "sk-custom-key",
             }),
             None,
         );
@@ -403,30 +471,28 @@ mod tests {
         write_hermes_live(&provider).unwrap();
 
         let yaml = read_hermes_config().unwrap();
-        let env_map = read_hermes_env().unwrap();
 
+        // 验证 model section
         assert_eq!(
             yaml.get("model")
                 .and_then(|m| m.get("default"))
                 .and_then(|v| v.as_str()),
-            Some("claude-3-5-sonnet")
+            Some("claude-sonnet-4-6")
         );
         assert_eq!(
             yaml.get("model")
                 .and_then(|m| m.get("provider"))
                 .and_then(|v| v.as_str()),
-            Some("Test Provider")
+            Some("My Custom Provider")
         );
-        assert_eq!(
-            yaml.get("model")
-                .and_then(|m| m.get("base_url"))
-                .and_then(|v| v.as_str()),
-            Some("https://api.anthropic.com")
-        );
-        assert_eq!(
-            env_map.get("ANTHROPIC_API_KEY"),
-            Some(&"sk-ant-test".to_string())
-        );
+
+        // 验证 custom_providers
+        let providers = yaml.get("custom_providers").and_then(|p| p.as_sequence()).unwrap();
+        assert!(providers.len() >= 1);
+        let found = providers.iter().any(|p| {
+            p.get("name").and_then(|n| n.as_str()) == Some("My Custom Provider")
+        });
+        assert!(found, "custom_providers should contain 'My Custom Provider'");
 
         match old_test_home {
             Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),

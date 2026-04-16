@@ -16,6 +16,7 @@ interface DirectorySettingsProps {
   codexDir?: string;
   geminiDir?: string;
   opencodeDir?: string;
+  hermesDir?: string;
   onDirectoryChange: (app: AppId, value?: string) => void;
   onBrowseDirectory: (app: AppId) => Promise<void>;
   onResetDirectory: (app: AppId) => Promise<void>;
@@ -31,6 +32,7 @@ export function DirectorySettings({
   codexDir,
   geminiDir,
   opencodeDir,
+  hermesDir: _hermesDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,

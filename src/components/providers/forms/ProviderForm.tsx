@@ -37,6 +37,10 @@ import {
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
+import {
+  hermesProviderPresets,
+  type HermesProviderPreset,
+} from "@/config/hermesProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
@@ -56,6 +60,7 @@ import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
+import { HermesFormFields } from "./HermesFormFields";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
@@ -75,6 +80,7 @@ import {
   useSpeedTestEndpoints,
   useCodexTomlValidation,
   useGeminiConfigState,
+  useHermesConfigState,
   useGeminiCommonConfig,
   useOmoModelSource,
   useOpencodeFormState,
@@ -103,7 +109,8 @@ type PresetEntry = {
     | CodexProviderPreset
     | GeminiProviderPreset
     | OpenCodeProviderPreset
-    | OpenClawProviderPreset;
+    | OpenClawProviderPreset
+    | HermesProviderPreset;
 };
 
 interface ProviderFormProps {
@@ -450,6 +457,11 @@ export function ProviderForm({
         id: `openclaw-${index}`,
         preset,
       }));
+    } else if (appId === "hermes") {
+      return hermesProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `hermes-${index}`,
+        preset,
+      }));
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -592,6 +604,21 @@ export function ProviderForm({
     initialEnabled:
       appId === "gemini" ? initialData?.meta?.commonConfigEnabled : undefined,
     selectedPresetId: selectedPresetId ?? undefined,
+  });
+
+  // ── Extracted hooks: Hermes ─────────────────────
+
+  const {
+    hermesApiKey,
+    hermesBaseUrl,
+    hermesModel,
+    handleHermesApiKeyChange,
+    handleHermesBaseUrlChange,
+    handleHermesModelChange,
+    resetHermesConfig,
+    buildHermesSettingsConfig,
+  } = useHermesConfigState({
+    initialData: appId === "hermes" ? initialData : undefined,
   });
 
   // ── Extracted hooks: OpenCode / OMO / OpenClaw ─────────────────────
@@ -906,6 +933,9 @@ export function ProviderForm({
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
       }
+    } else if (appId === "hermes") {
+      const hermesConfig = buildHermesSettingsConfig();
+      settingsConfig = JSON.stringify(hermesConfig);
     } else if (
       appId === "opencode" &&
       (category === "omo" || category === "omo-slim")
@@ -1182,6 +1212,20 @@ export function ProviderForm({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  // 使用 API Key 链接 hook (Hermes)
+  const {
+    shouldShowApiKeyLink: shouldShowHermesApiKeyLink,
+    websiteUrl: hermesWebsiteUrl,
+    isPartner: isHermesPartner,
+    partnerPromotionKey: hermesPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "hermes",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -1212,6 +1256,10 @@ export function ProviderForm({
       // OpenClaw 自定义模式：重置为空配置
       if (appId === "openclaw") {
         openclawForm.resetOpenclawState();
+      }
+      // Hermes 自定义模式：重置为空配置
+      if (appId === "hermes") {
+        resetHermesConfig({});
       }
       return;
     }
@@ -1256,6 +1304,22 @@ export function ProviderForm({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
         websiteUrl: preset.websiteUrl ?? "",
         settingsConfig: JSON.stringify(preset.settingsConfig, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    if (appId === "hermes") {
+      const preset = entry.preset as ProviderPreset;
+      const config = preset.settingsConfig as Record<string, unknown>;
+
+      resetHermesConfig(config);
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });
@@ -1636,6 +1700,31 @@ export function ProviderForm({
               shouldShowModelField={true}
               model={geminiModel}
               onModelChange={handleGeminiModelChange}
+              speedTestEndpoints={speedTestEndpoints}
+            />
+          )}
+
+          {appId === "hermes" && (
+            <HermesFormFields
+              providerId={providerId}
+              apiKey={hermesApiKey}
+              onApiKeyChange={handleHermesApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowHermesApiKeyLink}
+              websiteUrl={hermesWebsiteUrl}
+              isPartner={isHermesPartner}
+              partnerPromotionKey={hermesPartnerPromotionKey}
+              shouldShowSpeedTest={shouldShowSpeedTest}
+              baseUrl={hermesBaseUrl}
+              onBaseUrlChange={handleHermesBaseUrlChange}
+              isEndpointModalOpen={isEndpointModalOpen}
+              onEndpointModalToggle={setIsEndpointModalOpen}
+              onCustomEndpointsChange={setDraftCustomEndpoints}
+              autoSelect={endpointAutoSelect}
+              onAutoSelectChange={setEndpointAutoSelect}
+              shouldShowModelField={true}
+              model={hermesModel}
+              onModelChange={handleHermesModelChange}
               speedTestEndpoints={speedTestEndpoints}
             />
           )}

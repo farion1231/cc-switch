@@ -175,6 +175,7 @@ function App() {
     hermes: true,
     opencode: true,
     openclaw: true,
+    hermes: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -184,6 +185,7 @@ function App() {
     if (visibleApps.hermes) return "hermes";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
+    if (visibleApps.hermes) return "hermes";
     return "claude"; // fallback
   };
 

@@ -72,6 +72,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       hermes: defaultEnabledApps.includes("hermes"),
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
+      hermes: defaultEnabledApps.includes("hermes"),
     };
   });
 

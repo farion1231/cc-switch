@@ -167,6 +167,15 @@
         "oauthTitle": "OAuth 认证模式",
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
+      },
+      "hermes": {
+        "model": "模型",
+        "authStatusTitle": "Hermes OAuth 状态",
+        "authLoggedIn": "已登录：{{account}}",
+        "authNotLoggedIn": "未登录。请在终端运行 'hermes auth login' 进行认证。",
+        "officialTitle": "官方供应商",
+        "officialHint": "Anthropic 官方供应商使用默认设置，无需 API Key。",
+        "apiKeyPlaceholder": "请输入 API Key"
       }
     }
   },
@@ -656,7 +665,8 @@
     "gemini": "Gemini",
     "hermes": "Hermes",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes"
   },
   "sessionManager": {
     "title": "会话管理",
@@ -1290,7 +1300,8 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
-        "openclaw": "OpenClaw"
+        "openclaw": "OpenClaw",
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",

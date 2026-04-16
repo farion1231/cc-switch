@@ -1029,7 +1029,6 @@ pub fn run() {
             commands::get_common_config_snippet,
             commands::set_common_config_snippet,
             commands::extract_common_config_snippet,
-            commands::get_hermes_auth_status,
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
