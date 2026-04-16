@@ -175,14 +175,12 @@ function App() {
     hermes: true,
     opencode: true,
     openclaw: true,
-    hermes: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
     if (visibleApps.claude) return "claude";
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
-    if (visibleApps.hermes) return "hermes";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";

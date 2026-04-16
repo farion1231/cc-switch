@@ -69,7 +69,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       claude: defaultEnabledApps.includes("claude"),
       codex: defaultEnabledApps.includes("codex"),
       gemini: defaultEnabledApps.includes("gemini"),
-      hermes: defaultEnabledApps.includes("hermes"),
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
