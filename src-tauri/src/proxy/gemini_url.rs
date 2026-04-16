@@ -56,35 +56,81 @@ fn should_normalize_gemini_full_url(base_url: &str) -> bool {
         .map_or(base_url, |(base, _)| base)
         .trim_end_matches('/');
     let (base_without_query, _) = split_query(base_url);
-    let (_, path) = split_origin_and_path(base_without_query);
+    let (origin, path) = split_origin_and_path(base_without_query);
 
     if path.is_empty() || path == "/" {
         return true;
     }
 
     let path = path.trim_end_matches('/');
-    // Only classify a path as a "structured Gemini endpoint" — safe to
-    // rewrite to /v1beta/models/{model}:method — when the `/models/`
-    // segment is actually followed by a Gemini `*:generateContent` /
-    // `*:streamGenerateContent` method call. Bare `path.contains("/v1/models/")`
-    // would also match legitimate opaque relay routes like
-    // `/v1/models/invoke`, which are *not* Gemini-structured and must be
-    // preserved as-is.
-    matches_structured_gemini_models_path(path)
+    let on_google_host = is_google_gemini_host(extract_host(origin));
+
+    // Unconditional layer: the `/models/...:generateContent` structure is
+    // Gemini-specific, and `/v1beta*` / deep OpenAI-compat paths
+    // (`/v1beta/openai/...`, `/openai/chat/completions`, `/openai/responses`)
+    // are specific enough to Gemini or AI-Studio that treating them as
+    // structured on any host is safe.
+    if matches_structured_gemini_models_path(path)
         || path.ends_with("/v1beta")
-        || path.ends_with("/v1")
         || path.ends_with("/v1beta/models")
-        || path.ends_with("/v1/models")
-        || path.ends_with("/models")
         || path.ends_with("/v1beta/openai")
-        || path.ends_with("/v1/openai")
-        || path.ends_with("/openai")
         || path.ends_with("/v1beta/openai/chat/completions")
-        || path.ends_with("/v1/openai/chat/completions")
-        || path.ends_with("/openai/chat/completions")
         || path.ends_with("/v1beta/openai/responses")
-        || path.ends_with("/v1/openai/responses")
+        || path.ends_with("/openai/chat/completions")
         || path.ends_with("/openai/responses")
+        || path.ends_with("/v1/openai/chat/completions")
+        || path.ends_with("/v1/openai/responses")
+    {
+        return true;
+    }
+
+    // Generic REST suffixes (`/v1`, `/models`, etc.) legitimately appear on
+    // opaque relays — e.g. `https://relay.example/custom/v1` is a relay
+    // root, not a Gemini base. Only treat these as "structured Gemini" when
+    // the host itself is Google's Gemini or Vertex AI endpoint.
+    if on_google_host
+        && (path.ends_with("/v1")
+            || path.ends_with("/v1/models")
+            || path.ends_with("/models")
+            || path.ends_with("/v1/openai")
+            || path.ends_with("/openai"))
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Extract the host portion of an origin like `https://host:port` or
+/// `https://host`. Returns an empty string if no host can be found (e.g.
+/// bare `http://`).
+fn extract_host(origin: &str) -> &str {
+    let after_scheme = origin.split_once("://").map_or(origin, |(_, rest)| rest);
+    // authority may carry credentials (`user:pass@host`) and a port
+    // (`host:port`). Strip userinfo first, then port.
+    let without_userinfo = after_scheme
+        .rsplit_once('@')
+        .map_or(after_scheme, |(_, h)| h);
+    let without_port = without_userinfo
+        .split_once(':')
+        .map_or(without_userinfo, |(h, _)| h);
+    // Strip trailing `/` defensively (split_origin_and_path already handled
+    // it, but this helper may be reused elsewhere).
+    without_port.trim_end_matches('/')
+}
+
+/// Returns true when `host` is one of Google's Gemini / Vertex AI endpoints.
+/// Case-insensitive. Requires exact match or a real `-aiplatform.googleapis.com`
+/// subdomain suffix — not a substring match, so lookalikes like
+/// `aiplatform.example.com` are rejected.
+fn is_google_gemini_host(host: &str) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+    let host_lower = host.to_ascii_lowercase();
+    host_lower == "generativelanguage.googleapis.com"
+        || host_lower == "aiplatform.googleapis.com"
+        || host_lower.ends_with("-aiplatform.googleapis.com")
 }
 
 fn split_query(input: &str) -> (&str, Option<&str>) {
@@ -325,5 +371,134 @@ mod tests {
             url,
             "https://relay.example/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Google-host whitelist tests (generic REST suffix handling)
+    //
+    // Generic REST conventions like `/v1`, `/models`, `/openai` legitimately
+    // appear on opaque relays. `should_normalize_gemini_full_url` only
+    // treats these as structured Gemini endpoints when the host itself is
+    // Google's Gemini or Vertex AI endpoint.
+    // ------------------------------------------------------------------
+
+    /// Regression: a relay whose fixed path ends with `/v1` (a ubiquitous
+    /// REST convention) used to be rewritten to
+    /// `/v1beta/models/{model}:generateContent`, dropping the relay's own
+    /// `/v1` endpoint.
+    #[test]
+    fn preserves_opaque_full_url_with_v1_suffix() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/custom/v1",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/custom/v1?alt=sse");
+    }
+
+    /// Companion case: bare `/models` suffix on a non-Google host is a
+    /// generic REST path, not a Gemini-structured endpoint.
+    #[test]
+    fn preserves_opaque_full_url_with_models_suffix() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/custom/models",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/custom/models?alt=sse");
+    }
+
+    /// Companion case: `/v1/models` — same ambiguity as `/models`, with the
+    /// version prefix. Must stay as-is on non-Google hosts.
+    #[test]
+    fn preserves_opaque_full_url_with_v1_models_suffix() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/custom/v1/models",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/custom/v1/models?alt=sse");
+    }
+
+    /// Companion case: a relay that exposes an `/openai` compatibility
+    /// surface without the deep `/openai/chat/completions` path. Must stay
+    /// as-is on non-Google hosts.
+    #[test]
+    fn preserves_opaque_full_url_with_openai_suffix_on_non_google_host() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/custom/openai",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/custom/openai?alt=sse");
+    }
+
+    /// Counter-case: `/v1` on the official Gemini host must still be
+    /// normalized to the full `/v1beta/models/...` endpoint — users who
+    /// paste `https://generativelanguage.googleapis.com/v1` as their base
+    /// URL expect the proxy to resolve the method path.
+    #[test]
+    fn normalizes_google_host_with_v1_suffix() {
+        let url = resolve_gemini_native_url(
+            "https://generativelanguage.googleapis.com/v1",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    /// Counter-case: `/models` on the official Gemini host is recognized
+    /// and normalized.
+    #[test]
+    fn normalizes_google_host_with_models_suffix() {
+        let url = resolve_gemini_native_url(
+            "https://generativelanguage.googleapis.com/models",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    /// Counter-case: Vertex AI regional endpoints live under
+    /// `*-aiplatform.googleapis.com`. Those should also be treated as
+    /// Google-host for the whitelist.
+    #[test]
+    fn normalizes_vertex_aiplatform_host_with_v1_suffix() {
+        let url = resolve_gemini_native_url(
+            "https://us-central1-aiplatform.googleapis.com/v1",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(
+            url,
+            "https://us-central1-aiplatform.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    /// Safety: the Google-host whitelist must do an exact/suffix match, not
+    /// a `contains`. A lookalike host like `aiplatform.example.com` must
+    /// NOT be treated as Google.
+    #[test]
+    fn preserves_non_google_aiplatform_lookalike_host() {
+        let url = resolve_gemini_native_url(
+            "https://aiplatform.example.com/v1",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(url, "https://aiplatform.example.com/v1?alt=sse");
     }
 }
