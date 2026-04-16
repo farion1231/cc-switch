@@ -663,3 +663,92 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
         "live entries unknown to DB should be preserved"
     );
 }
+
+#[test]
+fn import_default_config_hermes_reads_from_custom_providers() {
+    use cc_switch_lib::get_hermes_config_path;
+
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    // 创建 Hermes 配置目录和文件
+    let hermes_dir = home.join(".hermes");
+    fs::create_dir_all(&hermes_dir).expect("create hermes dir");
+
+    let config_path = get_hermes_config_path();
+    let config_yaml = r#"
+model:
+  default: claude-sonnet-4-6
+  provider: "My Custom Provider"
+
+custom_providers:
+  - name: "My Custom Provider"
+    base_url: "https://api.custom.com/v1"
+    api_key: "sk-custom-key"
+    model: "claude-sonnet-4-6"
+    transport: "openai_chat"
+
+  - name: "Another Provider"
+    base_url: "https://api.another.com/v1"
+    api_key: "sk-another-key"
+    model: "claude-opus-4"
+    transport: "openai_chat"
+"#;
+    fs::write(&config_path, config_yaml).expect("write hermes config.yaml");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::Hermes)
+        .expect("import default config succeeds");
+
+    // 验证导入的 provider
+    let providers = state
+        .db
+        .get_all_providers(AppType::Hermes.as_str())
+        .expect("get all providers");
+
+    // 只应该导入当前激活的 provider（由 model.provider 指定）
+    let current_id = state
+        .db
+        .get_current_provider(AppType::Hermes.as_str())
+        .expect("get current provider");
+    assert_eq!(current_id.as_deref(), Some("default"));
+
+    let default_provider = providers.get("default").expect("default provider");
+
+    // 验证 provider name 是从 custom_providers 中读取的
+    assert_eq!(default_provider.name, "My Custom Provider");
+
+    // 验证 settings_config 包含正确的字段
+    assert_eq!(
+        default_provider
+            .settings_config
+            .get("name")
+            .and_then(|v| v.as_str()),
+        Some("My Custom Provider")
+    );
+    assert_eq!(
+        default_provider
+            .settings_config
+            .get("base_url")
+            .and_then(|v| v.as_str()),
+        Some("https://api.custom.com/v1")
+    );
+    assert_eq!(
+        default_provider
+            .settings_config
+            .get("api_key")
+            .and_then(|v| v.as_str()),
+        Some("sk-custom-key")
+    );
+    assert_eq!(
+        default_provider
+            .settings_config
+            .get("model")
+            .and_then(|v| v.as_str()),
+        Some("claude-sonnet-4-6")
+    );
+}

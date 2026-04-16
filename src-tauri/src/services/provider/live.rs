@@ -1119,9 +1119,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             unreachable!("additive mode apps are handled by early return")
         }
         AppType::Hermes => {
-            use crate::hermes_config::{
-                get_hermes_config_path, get_hermes_env_path, read_hermes_config, read_hermes_env,
-            };
+            use crate::hermes_config::{get_hermes_config_path, read_hermes_config};
 
             // Check if config.yaml exists
             let config_path = get_hermes_config_path();
@@ -1136,61 +1134,83 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             // Read config.yaml
             let yaml_config = read_hermes_config()?;
 
-            // Extract model settings from YAML
+            // Get current provider name from model.provider
+            let current_provider_name = yaml_config
+                .get("model")
+                .and_then(|m| m.get("provider"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            // Get current model from model.default
             let model_default = yaml_config
                 .get("model")
                 .and_then(|m| m.get("default"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+                .unwrap_or("");
 
-            let base_url = yaml_config
-                .get("model")
-                .and_then(|m| m.get("base_url"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            // Find the current provider in custom_providers list
+            let custom_providers = yaml_config
+                .get("custom_providers")
+                .and_then(|p| p.as_sequence());
 
-            // Read .env file
-            let env_path = get_hermes_env_path();
-            let env_map = if env_path.exists() {
-                read_hermes_env()?
+            let (base_url, api_key, provider_model) = if let Some(providers) = custom_providers {
+                let mut found_base_url = String::new();
+                let mut found_api_key = String::new();
+                let mut found_model = String::new();
+
+                for provider in providers {
+                    if let Some(name) = provider.get("name").and_then(|n| n.as_str()) {
+                        if name == current_provider_name {
+                            found_base_url = provider
+                                .get("base_url")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            found_api_key = provider
+                                .get("api_key")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            found_model = provider
+                                .get("model")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            break;
+                        }
+                    }
+                }
+
+                (found_base_url, found_api_key, found_model)
             } else {
-                HashMap::new()
+                (String::new(), String::new(), String::new())
             };
 
-            // Find API key from env
-            let api_key = env_map
-                .get("ANTHROPIC_API_KEY")
-                .or_else(|| env_map.get("OPENROUTER_API_KEY"))
-                .or_else(|| env_map.get("HERMES_API_KEY"))
-                .or_else(|| env_map.get("OPENAI_API_KEY"))
-                .cloned()
-                .unwrap_or_default();
-
-            // Build settings_config in env-style format (like Gemini)
-            let mut env_obj = serde_json::Map::new();
-            for (k, v) in env_map {
-                env_obj.insert(k, json!(v));
-            }
-
+            // Build settings_config using snake_case to match write_hermes_live format
             json!({
-                "env": env_obj,
-                "config": {
-                    "model": model_default,
-                    "baseUrl": base_url,
-                    "apiKey": api_key
-                }
+                "name": current_provider_name,
+                "model": if !provider_model.is_empty() { provider_model } else { model_default.to_string() },
+                "base_url": base_url,
+                "api_key": api_key,
+                "transport": "openai_chat"
             })
         }
     };
 
-    let mut provider = Provider::with_id(
-        "default".to_string(),
-        "default".to_string(),
-        settings_config,
-        None,
-    );
+    // For Hermes, extract provider name from settings_config
+    let provider_name = if matches!(app_type, AppType::Hermes) {
+        settings_config
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("default")
+            .to_string()
+    } else {
+        "default".to_string()
+    };
+
+    let mut provider =
+        Provider::with_id("default".to_string(), provider_name, settings_config, None);
     provider.category = Some("custom".to_string());
 
     state.db.save_provider(app_type.as_str(), &provider)?;
@@ -1299,6 +1319,16 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
     opencode_config::remove_provider(provider_id)?;
     log::info!("OpenCode provider '{provider_id}' removed from live config");
 
+    Ok(())
+}
+
+/// Remove a Hermes provider from the live configuration
+///
+/// Removes the provider from custom_providers list in ~/.hermes/config.yaml.
+/// Note: provider_name (display name) is used as the key, not provider_id.
+pub(crate) fn remove_hermes_provider_from_live(provider_name: &str) -> Result<(), AppError> {
+    crate::hermes_config::remove_hermes_provider_from_live(provider_name)?;
+    log::info!("Hermes provider '{provider_name}' removed from live config");
     Ok(())
 }
 

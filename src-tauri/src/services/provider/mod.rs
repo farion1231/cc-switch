@@ -35,7 +35,8 @@ pub(crate) use live::{
 
 // Internal re-exports
 use live::{
-    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
+    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
+    remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -1297,6 +1298,13 @@ impl ProviderService {
             return Err(AppError::Message(
                 "无法删除当前正在使用的供应商".to_string(),
             ));
+        }
+
+        // For Hermes: remove from custom_providers in live config
+        if matches!(app_type, AppType::Hermes) {
+            if let Some(provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
+                remove_hermes_provider_from_live(&provider.name)?;
+            }
         }
 
         state.db.delete_provider(app_type.as_str(), id)

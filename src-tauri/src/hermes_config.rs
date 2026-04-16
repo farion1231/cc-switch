@@ -70,6 +70,7 @@ pub fn write_hermes_config_atomic(yaml: &serde_yaml::Value) -> Result<(), AppErr
 }
 
 /// 读取 Hermes .env 文件
+#[allow(dead_code)]
 pub fn read_hermes_env() -> Result<HashMap<String, String>, AppError> {
     let path = get_hermes_env_path();
 
@@ -338,6 +339,124 @@ pub fn write_hermes_live(provider: &Provider) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 从 Hermes config.yaml 的 custom_providers 中移除指定 provider
+///
+/// 仅删除 custom_providers 列表中的条目，不修改 model section。
+/// 如果 provider 不存在，静默返回成功。
+pub fn remove_hermes_provider_from_live(provider_name: &str) -> Result<(), AppError> {
+    log::info!(
+        "[hermes_config] remove_hermes_provider_from_live: provider_name={}",
+        provider_name
+    );
+
+    // 检查 Hermes 配置目录是否存在
+    if !get_hermes_dir().exists() {
+        log::debug!("Hermes config directory doesn't exist, skipping removal");
+        return Ok(());
+    }
+
+    let mut yaml = read_hermes_config()?;
+
+    // 确保 yaml 是一个 mapping
+    if !yaml.is_mapping() {
+        return Ok(());
+    }
+
+    let mapping = yaml.as_mapping_mut().expect("yaml is a mapping");
+    let providers_key = serde_yaml::Value::String("custom_providers".to_string());
+
+    // 检查 custom_providers 是否存在
+    let Some(providers) = mapping.get_mut(&providers_key) else {
+        return Ok(());
+    };
+
+    let Some(providers_seq) = providers.as_sequence_mut() else {
+        return Ok(());
+    };
+
+    // 查找并移除指定 provider
+    let initial_len = providers_seq.len();
+    providers_seq.retain(|p| {
+        p.get("name")
+            .and_then(|n| n.as_str())
+            .is_none_or(|n| n != provider_name)
+    });
+
+    if providers_seq.len() < initial_len {
+        log::info!(
+            "[hermes_config] Removed provider '{}' from custom_providers",
+            provider_name
+        );
+        write_hermes_config_atomic(&yaml)?;
+    } else {
+        log::debug!(
+            "[hermes_config] Provider '{}' not found in custom_providers",
+            provider_name
+        );
+    }
+
+    Ok(())
+}
+
+/// 仅更新 Hermes config.yaml 的 model section（切换当前 provider）
+///
+/// 更新 model.provider 和 model.default，不修改 custom_providers 列表。
+/// 用于切换当前激活的 provider。
+#[allow(dead_code)]
+pub fn set_current_hermes_provider(
+    provider_name: &str,
+    model: Option<&str>,
+) -> Result<(), AppError> {
+    log::info!(
+        "[hermes_config] set_current_hermes_provider: provider_name={}, model={:?}",
+        provider_name,
+        model
+    );
+
+    // 检查 Hermes 配置目录是否存在
+    if !get_hermes_dir().exists() {
+        log::debug!("Hermes config directory doesn't exist, skipping set current");
+        return Ok(());
+    }
+
+    let mut yaml = read_hermes_config()?;
+
+    // 确保 yaml 是一个 mapping
+    if !yaml.is_mapping() {
+        yaml = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+
+    let mapping = yaml.as_mapping_mut().expect("yaml is a mapping");
+    let model_key = serde_yaml::Value::String("model".to_string());
+
+    let model_section = mapping
+        .entry(model_key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+
+    if let Some(model_map) = model_section.as_mapping_mut() {
+        // 更新 provider name
+        model_map.insert(
+            serde_yaml::Value::String("provider".to_string()),
+            serde_yaml::Value::String(provider_name.to_string()),
+        );
+
+        // 如果提供了 model，也更新 default
+        if let Some(model_str) = model {
+            if !model_str.is_empty() {
+                model_map.insert(
+                    serde_yaml::Value::String("default".to_string()),
+                    serde_yaml::Value::String(model_str.to_string()),
+                );
+            }
+        }
+    }
+
+    write_hermes_config_atomic(&yaml)?;
+
+    log::info!("[hermes_config] set_current_hermes_provider: done");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,6 +628,132 @@ mod tests {
             found,
             "custom_providers should contain 'My Custom Provider'"
         );
+
+        match old_test_home {
+            Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_remove_hermes_provider_from_live() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let old_test_home = env::var_os("CC_SWITCH_TEST_HOME");
+        env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
+
+        // 创建两个 provider
+        let provider1 = Provider::with_id(
+            "test-1".to_string(),
+            "Provider One".to_string(),
+            serde_json::json!({
+                "model": "claude-sonnet-4-6",
+                "base_url": "https://api.one.com/v1",
+                "api_key": "sk-key-one",
+            }),
+            None,
+        );
+
+        let provider2 = Provider::with_id(
+            "test-2".to_string(),
+            "Provider Two".to_string(),
+            serde_json::json!({
+                "model": "claude-opus-4",
+                "base_url": "https://api.two.com/v1",
+                "api_key": "sk-key-two",
+            }),
+            None,
+        );
+
+        // 写入两个 provider
+        write_hermes_live(&provider1).unwrap();
+        write_hermes_live(&provider2).unwrap();
+
+        // 验证两个 provider 都存在
+        let yaml = read_hermes_config().unwrap();
+        let providers = yaml
+            .get("custom_providers")
+            .and_then(|p| p.as_sequence())
+            .unwrap();
+        assert_eq!(providers.len(), 2);
+
+        // 删除第一个 provider
+        remove_hermes_provider_from_live("Provider One").unwrap();
+
+        // 验证只剩一个 provider
+        let yaml = read_hermes_config().unwrap();
+        let providers = yaml
+            .get("custom_providers")
+            .and_then(|p| p.as_sequence())
+            .unwrap();
+        assert_eq!(providers.len(), 1);
+
+        // 验证剩余的是 Provider Two
+        let remaining_name = providers[0].get("name").and_then(|n| n.as_str()).unwrap();
+        assert_eq!(remaining_name, "Provider Two");
+
+        // 验证删除不存在的 provider 不会出错
+        remove_hermes_provider_from_live("Non-existent Provider").unwrap();
+
+        // 验证 provider 数量不变
+        let yaml = read_hermes_config().unwrap();
+        let providers = yaml
+            .get("custom_providers")
+            .and_then(|p| p.as_sequence())
+            .unwrap();
+        assert_eq!(providers.len(), 1);
+
+        match old_test_home {
+            Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_set_current_hermes_provider() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let old_test_home = env::var_os("CC_SWITCH_TEST_HOME");
+        env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
+
+        // 创建一个 provider
+        let provider = Provider::with_id(
+            "test-1".to_string(),
+            "Test Provider".to_string(),
+            serde_json::json!({
+                "model": "claude-sonnet-4-6",
+                "base_url": "https://api.test.com/v1",
+                "api_key": "sk-test-key",
+            }),
+            None,
+        );
+        write_hermes_live(&provider).unwrap();
+
+        // 切换到不同的 provider（仅更新 model section）
+        set_current_hermes_provider("Another Provider", Some("claude-opus-4")).unwrap();
+
+        let yaml = read_hermes_config().unwrap();
+
+        // 验证 model section 已更新
+        assert_eq!(
+            yaml.get("model")
+                .and_then(|m| m.get("provider"))
+                .and_then(|v| v.as_str()),
+            Some("Another Provider")
+        );
+        assert_eq!(
+            yaml.get("model")
+                .and_then(|m| m.get("default"))
+                .and_then(|v| v.as_str()),
+            Some("claude-opus-4")
+        );
+
+        // 验证 custom_providers 仍然只有一个（没有被修改）
+        let providers = yaml
+            .get("custom_providers")
+            .and_then(|p| p.as_sequence())
+            .unwrap();
+        assert_eq!(providers.len(), 1);
 
         match old_test_home {
             Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),

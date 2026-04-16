@@ -45,9 +45,7 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
 fn read_hermes_mcp_servers_map() -> Result<HashMap<String, Value>, AppError> {
     let yaml = read_hermes_config()?;
 
-    let mcp_servers = yaml
-        .get("mcp_servers")
-        .and_then(|v| v.as_mapping());
+    let mcp_servers = yaml.get("mcp_servers").and_then(|v| v.as_mapping());
 
     if let Some(servers_map) = mcp_servers {
         let mut result = HashMap::new();
@@ -93,10 +91,7 @@ fn set_hermes_mcp_servers_map(servers: &HashMap<String, Value>) -> Result<(), Ap
                 format!("Failed to convert Hermes MCP config: {e}"),
             )
         })?;
-        mcp_map.insert(
-            serde_yaml::Value::String(id.clone()),
-            yaml_val,
-        );
+        mcp_map.insert(serde_yaml::Value::String(id.clone()), yaml_val);
     }
 
     mapping.insert(mcp_key, serde_yaml::Value::Mapping(mcp_map));
