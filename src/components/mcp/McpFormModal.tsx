@@ -67,6 +67,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     gemini: boolean;
     opencode: boolean;
     openclaw: boolean;
+    hermes: boolean;
   }>(() => {
     if (initialData?.apps) {
       return { ...initialData.apps };
@@ -77,6 +78,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       gemini: defaultEnabledApps.includes("gemini"),
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
+      hermes: defaultEnabledApps.includes("hermes"),
     };
   });
 

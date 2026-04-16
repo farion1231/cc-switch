@@ -113,7 +113,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   }, [skillUpdates]);
 
   const enabledCounts = useMemo(() => {
-    const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0, openclaw: 0 };
+    const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0, openclaw: 0, hermes: 0 };
     if (!skills) return counts;
     skills.forEach((skill) => {
       for (const app of MCP_SKILLS_APP_IDS) {
@@ -736,6 +736,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           gemini: skill.foundIn.includes("gemini"),
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
+          hermes: false,
         },
       ]),
     ),
@@ -761,6 +762,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           gemini: false,
           opencode: false,
           openclaw: false,
+          hermes: false,
         },
       })),
     );
@@ -815,6 +817,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                               gemini: false,
                               opencode: false,
                               openclaw: false,
+                              hermes: false,
                             }),
                             [app]: enabled,
                           },

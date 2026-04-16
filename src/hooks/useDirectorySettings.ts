@@ -5,7 +5,7 @@ import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
-type DirectoryKey = "appConfig" | "claude" | "codex" | "gemini" | "opencode";
+type DirectoryKey = "appConfig" | "claude" | "codex" | "gemini" | "opencode" | "hermes";
 
 export interface ResolvedDirectories {
   appConfig: string;
@@ -13,6 +13,7 @@ export interface ResolvedDirectories {
   codex: string;
   gemini: string;
   opencode: string;
+  hermes: string;
 }
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -46,7 +47,9 @@ const computeDefaultConfigDir = async (
           ? ".codex"
           : app === "gemini"
             ? ".gemini"
-            : ".config/opencode";
+            : app === "opencode"
+              ? ".config/opencode"
+              : ".hermes";
     return await join(home, folder);
   } catch (error) {
     console.error(
@@ -78,6 +81,7 @@ export interface UseDirectorySettingsResult {
     codexDir?: string,
     geminiDir?: string,
     opencodeDir?: string,
+    hermesDir?: string,
   ) => void;
 }
 
@@ -105,6 +109,7 @@ export function useDirectorySettings({
     codex: "",
     gemini: "",
     opencode: "",
+    hermes: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -114,6 +119,7 @@ export function useDirectorySettings({
     codex: "",
     gemini: "",
     opencode: "",
+    hermes: "",
   });
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
 
@@ -130,22 +136,26 @@ export function useDirectorySettings({
           codexDir,
           geminiDir,
           opencodeDir,
+          hermesDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
           defaultGeminiDir,
           defaultOpencodeDir,
+          defaultHermesDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
           settingsApi.getConfigDir("codex"),
           settingsApi.getConfigDir("gemini"),
           settingsApi.getConfigDir("opencode"),
+          settingsApi.getConfigDir("hermes"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
           computeDefaultConfigDir("gemini"),
           computeDefaultConfigDir("opencode"),
+          computeDefaultConfigDir("hermes"),
         ]);
 
         if (!active) return;
@@ -158,6 +168,7 @@ export function useDirectorySettings({
           codex: defaultCodexDir ?? "",
           gemini: defaultGeminiDir ?? "",
           opencode: defaultOpencodeDir ?? "",
+          hermes: defaultHermesDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -169,6 +180,7 @@ export function useDirectorySettings({
           codex: codexDir || defaultsRef.current.codex,
           gemini: geminiDir || defaultsRef.current.gemini,
           opencode: opencodeDir || defaultsRef.current.opencode,
+          hermes: hermesDir || defaultsRef.current.hermes,
         });
       } catch (error) {
         console.error(
@@ -201,7 +213,9 @@ export function useDirectorySettings({
               ? { codexConfigDir: sanitized }
               : key === "gemini"
                 ? { geminiConfigDir: sanitized }
-                : { opencodeConfigDir: sanitized },
+                : key === "opencode"
+                  ? { opencodeConfigDir: sanitized }
+                  : { hermesConfigDir: sanitized },
         );
       }
 
@@ -229,7 +243,9 @@ export function useDirectorySettings({
             ? "codex"
             : app === "gemini"
               ? "gemini"
-              : "opencode",
+              : app === "opencode"
+                ? "opencode"
+                : "hermes",
         value,
       );
     },
@@ -245,7 +261,9 @@ export function useDirectorySettings({
             ? "codex"
             : app === "gemini"
               ? "gemini"
-              : "opencode";
+              : app === "opencode"
+                ? "opencode"
+                : "hermes";
       const currentValue =
         key === "claude"
           ? (settings?.claudeConfigDir ?? resolvedDirs.claude)
@@ -253,7 +271,9 @@ export function useDirectorySettings({
             ? (settings?.codexConfigDir ?? resolvedDirs.codex)
             : key === "gemini"
               ? (settings?.geminiConfigDir ?? resolvedDirs.gemini)
-              : (settings?.opencodeConfigDir ?? resolvedDirs.opencode);
+              : key === "opencode"
+                ? (settings?.opencodeConfigDir ?? resolvedDirs.opencode)
+                : (settings?.hermesConfigDir ?? resolvedDirs.hermes);
 
       try {
         const picked = await settingsApi.selectConfigDirectory(currentValue);
@@ -301,7 +321,9 @@ export function useDirectorySettings({
             ? "codex"
             : app === "gemini"
               ? "gemini"
-              : "opencode";
+              : app === "opencode"
+                ? "opencode"
+                : "hermes";
       if (!defaultsRef.current[key]) {
         const fallback = await computeDefaultConfigDir(app);
         if (fallback) {
@@ -335,6 +357,7 @@ export function useDirectorySettings({
       codexDir?: string,
       geminiDir?: string,
       opencodeDir?: string,
+      hermesDir?: string,
     ) => {
       setAppConfigDir(initialAppConfigDirRef.current);
       setResolvedDirs({
@@ -344,6 +367,7 @@ export function useDirectorySettings({
         codex: codexDir ?? defaultsRef.current.codex,
         gemini: geminiDir ?? defaultsRef.current.gemini,
         opencode: opencodeDir ?? defaultsRef.current.opencode,
+        hermes: hermesDir ?? defaultsRef.current.hermes,
       });
     },
     [],

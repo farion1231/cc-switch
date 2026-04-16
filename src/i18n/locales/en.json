@@ -167,6 +167,15 @@
         "oauthTitle": "OAuth Authentication Mode",
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
+      },
+      "hermes": {
+        "model": "Model",
+        "authStatusTitle": "Hermes OAuth Status",
+        "authLoggedIn": "Logged in as: {{account}}",
+        "authNotLoggedIn": "Not logged in. Run 'hermes auth login' in terminal to authenticate.",
+        "officialTitle": "Official Provider",
+        "officialHint": "Anthropic official provider uses default settings. No API key required.",
+        "apiKeyPlaceholder": "Enter API Key"
       }
     }
   },
@@ -655,7 +664,8 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1288,7 +1298,8 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
-        "openclaw": "OpenClaw"
+        "openclaw": "OpenClaw",
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "User-level MCP path",

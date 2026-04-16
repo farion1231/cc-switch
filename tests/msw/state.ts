@@ -66,6 +66,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   },
   opencode: {},
   openclaw: {},
+  hermes: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -74,6 +75,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   gemini: "gemini-1",
   opencode: "",
   openclaw: "",
+  hermes: "",
 });
 
 let providers = createDefaultProviders();
@@ -153,6 +155,7 @@ let mcpConfigs: McpConfigState = {
         gemini: false,
         opencode: false,
         openclaw: false,
+        hermes: false,
       },
       server: {
         type: "stdio",
@@ -171,6 +174,7 @@ let mcpConfigs: McpConfigState = {
         gemini: false,
         opencode: false,
         openclaw: false,
+        hermes: false,
       },
       server: {
         type: "http",
@@ -181,6 +185,7 @@ let mcpConfigs: McpConfigState = {
   gemini: {},
   opencode: {},
   openclaw: {},
+  hermes: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -216,6 +221,7 @@ export const resetProviderState = () => {
           gemini: false,
           opencode: false,
           openclaw: false,
+          hermes: false,
         },
         server: {
           type: "stdio",
@@ -234,6 +240,7 @@ export const resetProviderState = () => {
           gemini: false,
           opencode: false,
           openclaw: false,
+          hermes: false,
         },
         server: {
           type: "http",
@@ -244,6 +251,7 @@ export const resetProviderState = () => {
     gemini: {},
     opencode: {},
     openclaw: {},
+    hermes: {},
   };
 };
 
