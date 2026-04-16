@@ -88,10 +88,15 @@ describe("RequestLogTable", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
 
     await waitFor(() => {
-      expect(screen.getByText("2 / 6")).toBeInTheDocument();
+      expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          page: 1,
+          range: initialRange,
+        }),
+      );
     });
 
     rerender(
@@ -104,15 +109,13 @@ describe("RequestLogTable", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("1 / 6")).toBeInTheDocument();
+      expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          page: 0,
+          range: nextRange,
+        }),
+      );
     });
-
-    expect(useRequestLogsMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        page: 0,
-        range: nextRange,
-      }),
-    );
   });
 
   it("resets pagination when the dashboard app filter changes", async () => {
@@ -126,10 +129,15 @@ describe("RequestLogTable", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
 
     await waitFor(() => {
-      expect(screen.getByText("2 / 6")).toBeInTheDocument();
+      expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          page: 1,
+          range,
+        }),
+      );
     });
 
     rerender(
@@ -142,13 +150,12 @@ describe("RequestLogTable", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("1 / 6")).toBeInTheDocument();
+      expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          page: 0,
+          range,
+        }),
+      );
     });
-
-    expect(useRequestLogsMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        page: 0,
-      }),
-    );
   });
 });
