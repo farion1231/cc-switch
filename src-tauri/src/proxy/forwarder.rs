@@ -1142,10 +1142,10 @@ impl RequestForwarder {
             .parse::<http::Uri>()
             .ok()
             .and_then(|u| u.authority().map(|a| a.to_string()));
-        let apply_openrouter_codex_header_guard =
-            should_guard_openrouter_codex_headers(adapter.name(), &base_url, &effective_endpoint);
+        let strip_openrouter_hop_by_hop_headers =
+            should_strip_openrouter_hop_by_hop_request_headers(provider, &base_url);
         let connection_header_tokens =
-            apply_openrouter_codex_header_guard.then(|| collect_connection_header_tokens(headers));
+            strip_openrouter_hop_by_hop_headers.then(|| collect_connection_header_tokens(headers));
 
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if adapter.name() == "Claude" {
@@ -1223,9 +1223,9 @@ impl RequestForwarder {
                 continue;
             }
 
-            // --- OpenRouter chat/responses 专用：补充剥离 hop-by-hop 请求头 ---
+            // --- OpenRouter 全请求：补充剥离 hop-by-hop 请求头 ---
             if let Some(connection_header_tokens) = connection_header_tokens.as_ref() {
-                if should_strip_openrouter_codex_request_header(key_str, connection_header_tokens) {
+                if should_strip_openrouter_request_header(key_str, connection_header_tokens) {
                     continue;
                 }
             }
@@ -1528,7 +1528,7 @@ fn is_bedrock_provider(provider: &Provider) -> bool {
         .unwrap_or(false)
 }
 
-const OPENROUTER_CODEX_HOP_BY_HOP_REQUEST_HEADERS: &[&str] = &[
+const OPENROUTER_HOP_BY_HOP_REQUEST_HEADERS: &[&str] = &[
     "connection",
     "keep-alive",
     "proxy-authenticate",
@@ -1540,24 +1540,15 @@ const OPENROUTER_CODEX_HOP_BY_HOP_REQUEST_HEADERS: &[&str] = &[
     "upgrade",
 ];
 
-fn should_guard_openrouter_codex_headers(
-    adapter_name: &str,
-    base_url: &str,
-    endpoint: &str,
-) -> bool {
-    if adapter_name != "Codex" || !base_url.contains("openrouter.ai") {
-        return false;
-    }
+fn should_strip_openrouter_hop_by_hop_request_headers(provider: &Provider, base_url: &str) -> bool {
+    let provider_type = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.as_deref())
+        .unwrap_or_default();
 
-    let path = endpoint
-        .split_once('?')
-        .map(|(path, _)| path)
-        .unwrap_or(endpoint);
-
-    matches!(
-        path,
-        "/chat/completions" | "/responses" | "/responses/compact"
-    )
+    provider_type.eq_ignore_ascii_case(ProviderType::OpenRouter.as_str())
+        || base_url.to_ascii_lowercase().contains("openrouter.ai")
 }
 
 fn collect_connection_header_tokens(
@@ -1574,12 +1565,12 @@ fn collect_connection_header_tokens(
         .collect()
 }
 
-fn should_strip_openrouter_codex_request_header(
+fn should_strip_openrouter_request_header(
     key_str: &str,
     connection_header_tokens: &std::collections::HashSet<String>,
 ) -> bool {
     let lower_key = key_str.to_ascii_lowercase();
-    OPENROUTER_CODEX_HOP_BY_HOP_REQUEST_HEADERS.contains(&lower_key.as_str())
+    OPENROUTER_HOP_BY_HOP_REQUEST_HEADERS.contains(&lower_key.as_str())
         || connection_header_tokens.contains(lower_key.as_str())
 }
 
@@ -1981,52 +1972,69 @@ mod tests {
     }
 
     #[test]
-    fn should_guard_openrouter_codex_headers_only_for_openrouter_chat_and_responses() {
-        assert!(should_guard_openrouter_codex_headers(
-            "Codex",
-            "https://openrouter.ai/api/v1",
-            "/chat/completions"
+    fn should_strip_openrouter_hop_by_hop_request_headers_for_any_openrouter_base_url() {
+        let mut custom_domain_openrouter = Provider::with_id(
+            "openrouter-custom".to_string(),
+            "OpenRouter Custom".to_string(),
+            serde_json::json!({}),
+            None,
+        );
+        custom_domain_openrouter.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("openrouter".to_string()),
+            ..Default::default()
+        });
+
+        assert!(should_strip_openrouter_hop_by_hop_request_headers(
+            &Provider::with_id(
+                "a".to_string(),
+                "A".to_string(),
+                serde_json::json!({}),
+                None
+            ),
+            "https://openrouter.ai/api"
         ));
-        assert!(should_guard_openrouter_codex_headers(
-            "Codex",
-            "https://openrouter.ai/api/v1",
-            "/responses?stream=true"
+        assert!(should_strip_openrouter_hop_by_hop_request_headers(
+            &Provider::with_id(
+                "b".to_string(),
+                "B".to_string(),
+                serde_json::json!({}),
+                None
+            ),
+            "https://OPENROUTER.ai/api/v1"
         ));
-        assert!(should_guard_openrouter_codex_headers(
-            "Codex",
-            "https://openrouter.ai/api/v1",
-            "/responses/compact"
+        assert!(should_strip_openrouter_hop_by_hop_request_headers(
+            &custom_domain_openrouter,
+            "https://relay.example/custom"
         ));
-        assert!(!should_guard_openrouter_codex_headers(
-            "Claude",
-            "https://openrouter.ai/api",
-            "/v1/messages"
-        ));
-        assert!(!should_guard_openrouter_codex_headers(
-            "Codex",
-            "https://api.openai.com/v1",
-            "/responses"
+        assert!(!should_strip_openrouter_hop_by_hop_request_headers(
+            &Provider::with_id(
+                "c".to_string(),
+                "C".to_string(),
+                serde_json::json!({}),
+                None
+            ),
+            "https://api.openai.com/v1"
         ));
     }
 
     #[test]
-    fn should_strip_openrouter_codex_request_header_covers_static_and_dynamic_hop_by_hop_headers() {
+    fn should_strip_openrouter_request_header_covers_static_and_dynamic_hop_by_hop_headers() {
         let mut connection_tokens = std::collections::HashSet::new();
         connection_tokens.insert("x-custom-hop".to_string());
 
-        assert!(should_strip_openrouter_codex_request_header(
+        assert!(should_strip_openrouter_request_header(
             "connection",
             &connection_tokens
         ));
-        assert!(should_strip_openrouter_codex_request_header(
+        assert!(should_strip_openrouter_request_header(
             "proxy-connection",
             &connection_tokens
         ));
-        assert!(should_strip_openrouter_codex_request_header(
+        assert!(should_strip_openrouter_request_header(
             "x-custom-hop",
             &connection_tokens
         ));
-        assert!(!should_strip_openrouter_codex_request_header(
+        assert!(!should_strip_openrouter_request_header(
             "anthropic-version",
             &connection_tokens
         ));
