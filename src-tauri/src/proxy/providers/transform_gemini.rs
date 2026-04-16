@@ -413,15 +413,31 @@ fn find_matching_shadow_turn_for_assistant_message(
         return None;
     }
 
-    shadow_turns.iter().enumerate().find_map(|(index, turn)| {
-        turn.tool_calls
-            .iter()
-            .any(|tool_call| {
+    // Prefer exact tool-call id match. With identical tool suffixes across
+    // servers (e.g. `server_a:search` and `server_b:search`) the
+    // normalized-name clause below would otherwise match an earlier shadow
+    // turn whose id is actually wrong for this message, mis-routing replay
+    // state (functionCall id / thoughtSignature) for later tool_result
+    // resolution. Only fall back to name matching when id-based lookup fails
+    // or when the incoming message carries no ids at all.
+    if !tool_use_ids.is_empty() {
+        if let Some(index) = shadow_turns.iter().position(|turn| {
+            turn.tool_calls.iter().any(|tool_call| {
                 tool_call
                     .id
                     .as_deref()
                     .is_some_and(|id| tool_use_ids.contains(id))
-                    || tool_use_names.contains(tool_call.name.as_str())
+            })
+        }) {
+            return Some(index);
+        }
+    }
+
+    shadow_turns.iter().enumerate().find_map(|(index, turn)| {
+        turn.tool_calls
+            .iter()
+            .any(|tool_call| {
+                tool_use_names.contains(tool_call.name.as_str())
                     || tool_use_names.contains(normalize_tool_name(&tool_call.name))
             })
             .then_some(index)
@@ -1498,6 +1514,173 @@ mod tests {
         assert_eq!(
             result["contents"][0]["parts"][0]["thoughtSignature"],
             "sig-tool-1"
+        );
+    }
+
+    /// Regression for P1: two shadow turns whose suffix-normalized names
+    /// collide (e.g. `server_a:search` / `server_b:search` both normalize to
+    /// `search`). When the incoming assistant tool_use carries a valid,
+    /// different id, exact-id matching must win over the normalized-name
+    /// clause — otherwise replay picks the wrong shadow turn and later
+    /// tool_result resolution mis-routes.
+    #[test]
+    fn shadow_replay_prefers_exact_id_match_over_normalized_name_collision() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "prov",
+            "sess",
+            json!({
+                "parts": [{
+                    "functionCall": {
+                        "id": "call_a",
+                        "name": "server_a:search",
+                        "args": { "q": "alpha" }
+                    },
+                    "thoughtSignature": "sig-a"
+                }]
+            }),
+            vec![GeminiToolCallMeta::new(
+                Some("call_a"),
+                "server_a:search",
+                json!({ "q": "alpha" }),
+                Some("sig-a"),
+            )],
+        );
+        store.record_assistant_turn(
+            "prov",
+            "sess",
+            json!({
+                "parts": [{
+                    "functionCall": {
+                        "id": "call_b",
+                        "name": "server_b:search",
+                        "args": { "q": "beta" }
+                    },
+                    "thoughtSignature": "sig-b"
+                }]
+            }),
+            vec![GeminiToolCallMeta::new(
+                Some("call_b"),
+                "server_b:search",
+                json!({ "q": "beta" }),
+                Some("sig-b"),
+            )],
+        );
+
+        // Two assistant turns: the first references call_b, the second
+        // call_a. Positional fallback would align msg[0] to turn 0 (call_a)
+        // and msg[1] to turn 1 (call_b) — both wrong. The old `||` chain
+        // would also mis-match through the normalized "search" name.
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_b", "name": "server_b:search", "input": { "q": "beta" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_b", "content": "ok-b" }
+                    ]
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_a", "name": "server_a:search", "input": { "q": "alpha" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_a", "content": "ok-a" }
+                    ]
+                }
+            ]
+        });
+
+        let result =
+            anthropic_to_gemini_with_shadow(input, Some(&store), Some("prov"), Some("sess"))
+                .unwrap();
+
+        // msg[0] replays shadow turn 1 (server_b:search) because id=call_b.
+        assert_eq!(
+            result["contents"][0]["parts"][0]["functionCall"]["name"],
+            "server_b:search"
+        );
+        assert_eq!(
+            result["contents"][0]["parts"][0]["thoughtSignature"],
+            "sig-b"
+        );
+        // msg[2] replays shadow turn 0 (server_a:search) because id=call_a,
+        // even though turn 1 was already consumed above.
+        assert_eq!(
+            result["contents"][2]["parts"][0]["functionCall"]["name"],
+            "server_a:search"
+        );
+        assert_eq!(
+            result["contents"][2]["parts"][0]["thoughtSignature"],
+            "sig-a"
+        );
+    }
+
+    /// When the incoming tool_use carries no id (or only empty-string ids),
+    /// the layered matcher must still fall back to name-based matching so
+    /// that shadow replay keeps working for providers that omit ids.
+    #[test]
+    fn shadow_replay_falls_back_to_name_when_ids_absent() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "prov",
+            "sess",
+            json!({
+                "parts": [{
+                    "functionCall": {
+                        "name": "lookup",
+                        "args": {}
+                    },
+                    "thoughtSignature": "sig-lookup"
+                }]
+            }),
+            vec![GeminiToolCallMeta::new(
+                None::<&str>,
+                "lookup",
+                json!({}),
+                Some("sig-lookup"),
+            )],
+        );
+
+        // id is an empty string; extract_assistant_tool_use_keys filters it
+        // out, so tool_use_ids is empty and matching must go through names.
+        // A trailing user text turn keeps the assistant turn well-formed
+        // without feeding a tool_result back (which would require a real id).
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "", "name": "lookup", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": "ack"
+                }
+            ]
+        });
+
+        let result =
+            anthropic_to_gemini_with_shadow(input, Some(&store), Some("prov"), Some("sess"))
+                .unwrap();
+
+        assert_eq!(
+            result["contents"][0]["parts"][0]["functionCall"]["name"],
+            "lookup"
+        );
+        assert_eq!(
+            result["contents"][0]["parts"][0]["thoughtSignature"],
+            "sig-lookup"
         );
     }
 
