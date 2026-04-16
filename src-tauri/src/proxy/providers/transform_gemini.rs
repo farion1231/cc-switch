@@ -590,22 +590,35 @@ pub fn rectify_tool_call_args(
         }
     }
 
-    if let Some(parameters_value) = args_object.remove("parameters") {
-        if let Some(parameters_object) = parameters_value.as_object() {
-            for expected_key in &hint.expected_keys {
-                if args_object.contains_key(expected_key) {
-                    continue;
-                }
-                let Some(value) = parameters_object.get(expected_key) else {
-                    continue;
-                };
-                let normalized_value = match value {
-                    Value::Array(values) if values.len() == 1 => values[0].clone(),
-                    _ => value.clone(),
-                };
-                args_object.insert(expected_key.clone(), normalized_value);
-                changed = true;
+    let expects_parameters_key = hint.expected_keys.iter().any(|key| key == "parameters");
+    if !expects_parameters_key {
+        let extracted_parameters = args_object
+            .get("parameters")
+            .and_then(|value| value.as_object())
+            .map(|parameters_object| {
+                hint.expected_keys
+                    .iter()
+                    .filter_map(|expected_key| {
+                        if args_object.contains_key(expected_key) {
+                            return None;
+                        }
+                        let value = parameters_object.get(expected_key)?;
+                        let normalized_value = match value {
+                            Value::Array(values) if values.len() == 1 => values[0].clone(),
+                            _ => value.clone(),
+                        };
+                        Some((expected_key.clone(), normalized_value))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if !extracted_parameters.is_empty() {
+            for (expected_key, normalized_value) in extracted_parameters {
+                args_object.insert(expected_key, normalized_value);
             }
+            args_object.remove("parameters");
+            changed = true;
         }
     }
 
@@ -1107,6 +1120,56 @@ mod tests {
         );
         assert!(result["content"][0]["input"].get("name").is_none());
         assert!(result["content"][0]["input"].get("parameters").is_none());
+    }
+
+    #[test]
+    fn gemini_to_anthropic_preserves_legitimate_parameters_arg() {
+        let input = json!({
+            "responseId": "resp_params",
+            "modelVersion": "gemini-2.5-pro",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "id": "call_1",
+                            "name": "ConfigTool",
+                            "args": {
+                                "parameters": {
+                                    "mode": "safe",
+                                    "retries": 2
+                                }
+                            }
+                        }
+                    }]
+                }
+            }]
+        });
+        let hints = extract_anthropic_tool_schema_hints(&json!({
+            "tools": [{
+                "name": "ConfigTool",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "mode": { "type": "string" },
+                                "retries": { "type": "integer" }
+                            }
+                        }
+                    },
+                    "required": ["parameters"]
+                }
+            }]
+        }));
+
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, Some(&hints))
+                .unwrap();
+
+        assert_eq!(result["content"][0]["input"]["parameters"]["mode"], "safe");
+        assert_eq!(result["content"][0]["input"]["parameters"]["retries"], 2);
     }
 
     #[test]

@@ -5,7 +5,7 @@
 
 use super::gemini_shadow::{GeminiShadowStore, GeminiToolCallMeta};
 use super::transform_gemini::{rectify_tool_call_parts, AnthropicToolSchemaHints};
-use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
@@ -185,6 +185,7 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
+        let mut utf8_remainder = Vec::new();
         let mut message_id: Option<String> = None;
         let mut current_model: Option<String> = None;
         let mut has_sent_message_start = false;
@@ -202,8 +203,7 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    buffer.push_str(&text);
+                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                     while let Some(block) = take_sse_block(&mut buffer) {
                         if block.trim().is_empty() {
@@ -582,6 +582,44 @@ mod tests {
         assert!(output.contains("\"text\":\"Hi\""));
         assert!(output.contains("\"text\":\" there\""));
         assert!(output.contains("event: message_stop"));
+    }
+
+    #[test]
+    fn preserves_utf8_boundaries_when_json_payload_spans_chunks() {
+        let payload = json!({
+            "responseId": "resp_utf8",
+            "modelVersion": "gemini-2.5-pro",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [{ "text": "你好，Gemini" }]
+                }
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 4,
+                "totalTokenCount": 8
+            }
+        });
+        let chunk = format!("data: {}\n\n", serde_json::to_string(&payload).unwrap());
+        let split_at = chunk.find("你好").unwrap() + 1;
+        let chunk_bytes = chunk.into_bytes();
+        let stream = futures::stream::iter([
+            Ok::<Bytes, std::io::Error>(Bytes::from(chunk_bytes[..split_at].to_vec())),
+            Ok::<Bytes, std::io::Error>(Bytes::from(chunk_bytes[split_at..].to_vec())),
+        ]);
+        let converted = create_anthropic_sse_stream_from_gemini(stream, None, None, None, None);
+        let output = futures::executor::block_on(async move {
+            converted
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(|item| String::from_utf8(item.unwrap().to_vec()).unwrap())
+                .collect::<Vec<_>>()
+                .join("")
+        });
+
+        assert!(output.contains("你好，Gemini"));
+        assert!(!output.contains('\u{fffd}'));
     }
 
     #[test]
