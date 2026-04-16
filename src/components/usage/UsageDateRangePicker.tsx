@@ -11,9 +11,31 @@ import {
 import { cn } from "@/lib/utils";
 import { resolveUsageRange } from "@/lib/usageRange";
 import { getLocaleFromLanguage } from "./format";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 
 type DraftField = "start" | "end";
+
+const PRESETS: UsageRangePreset[] = ["today", "1d", "7d", "14d", "30d"];
+
+function getPresetLabel(
+  preset: UsageRangePreset,
+  t: (key: string, options?: { defaultValue?: string }) => string,
+): string {
+  switch (preset) {
+    case "today":
+      return t("usage.presetToday", { defaultValue: "当天" });
+    case "1d":
+      return t("usage.preset1d", { defaultValue: "1d" });
+    case "7d":
+      return t("usage.preset7d", { defaultValue: "7d" });
+    case "14d":
+      return t("usage.preset14d", { defaultValue: "14d" });
+    case "30d":
+      return t("usage.preset30d", { defaultValue: "30d" });
+    case "custom":
+      return t("usage.customRange", { defaultValue: "自定义" });
+  }
+}
 
 interface UsageDateRangePickerProps {
   selection: UsageRangeSelection;
@@ -281,6 +303,25 @@ export function UsageDateRangePicker({
         className="w-[340px] max-w-[calc(100vw-2rem)] p-3 sm:w-[620px]"
         align="end"
       >
+        {/* Preset shortcuts */}
+        <div className="flex flex-wrap gap-1.5 pb-2 border-b border-border/40">
+          {PRESETS.map((preset) => (
+            <Button
+              key={preset}
+              type="button"
+              size="sm"
+              variant={selection.preset === preset ? "default" : "outline"}
+              className="h-7 px-2.5 text-xs"
+              onClick={() => {
+                onApply({ preset });
+                setOpen(false);
+              }}
+            >
+              {getPresetLabel(preset, t)}
+            </Button>
+          ))}
+        </div>
+
         <div className="flex flex-col gap-3 sm:flex-row">
           {/* Left: date fields */}
           <div className="space-y-2 sm:w-[250px] sm:flex-none">

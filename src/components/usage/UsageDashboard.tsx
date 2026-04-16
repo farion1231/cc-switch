@@ -10,7 +10,6 @@ import type {
   UsageRangePreset,
   UsageRangeSelection,
 } from "@/types/usage";
-import { useUsageSummary } from "@/lib/query/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
@@ -30,7 +29,7 @@ import {
 } from "@/components/ui/accordion";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { cn } from "@/lib/utils";
-import { fmtUsd, getLocaleFromLanguage, parseFiniteNumber } from "./format";
+import { getLocaleFromLanguage } from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -41,8 +40,6 @@ const APP_FILTER_OPTIONS: AppTypeFilter[] = [
   "codex",
   "gemini",
 ];
-
-const RANGE_PRESETS: UsageRangePreset[] = ["today", "1d", "7d", "14d", "30d"];
 
 function getPresetLabel(
   preset: UsageRangePreset,
@@ -96,10 +93,6 @@ export function UsageDashboard() {
     ).toLocaleString(locale)}`;
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
-  const { data: summaryData } = useUsageSummary(range, appType, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -117,32 +110,30 @@ export function UsageDashboard() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-4 space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {APP_FILTER_OPTIONS.map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setAppType(type)}
-                  className={cn(
-                    "px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
-                    appType === type
-                      ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
-                      : "text-muted-foreground hover:text-primary hover:bg-muted/50 border border-transparent",
-                  )}
-                >
-                  {t(`usage.appFilter.${type}`)}
-                </button>
-              ))}
-            </div>
+        <div className="rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-4">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {APP_FILTER_OPTIONS.map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setAppType(type)}
+                className={cn(
+                  "px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                  appType === type
+                    ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
+                    : "text-muted-foreground hover:text-primary hover:bg-muted/50 border border-transparent",
+                )}
+              >
+                {t(`usage.appFilter.${type}`)}
+              </button>
+            ))}
 
-            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <div className="ml-auto flex items-center gap-2">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-9 px-2 text-xs text-muted-foreground"
+                className="h-8 px-2 text-xs text-muted-foreground"
                 title={t("common.refresh", "刷新")}
                 onClick={changeRefreshInterval}
               >
@@ -150,38 +141,12 @@ export function UsageDashboard() {
                 {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
               </Button>
 
-              {RANGE_PRESETS.map((preset) => (
-                <Button
-                  key={preset}
-                  type="button"
-                  size="sm"
-                  variant={range.preset === preset ? "default" : "outline"}
-                  onClick={() => setRange({ preset })}
-                >
-                  {getPresetLabel(preset, t)}
-                </Button>
-              ))}
-
               <UsageDateRangePicker
                 selection={range}
                 triggerLabel={rangeLabel}
                 onApply={(nextRange) => setRange(nextRange)}
               />
             </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">{rangeLabel}</span>
-            <span className="text-border">|</span>
-            <span>
-              {(summaryData?.totalRequests ?? 0).toLocaleString()}{" "}
-              {t("usage.requestsLabel")}
-            </span>
-            <span className="text-border">|</span>
-            <span>
-              {fmtUsd(parseFiniteNumber(summaryData?.totalCost) ?? 0, 4)}{" "}
-              {t("usage.costLabel")}
-            </span>
           </div>
         </div>
       </div>
@@ -229,6 +194,7 @@ export function UsageDashboard() {
                 rangeLabel={rangeLabel}
                 appType={appType}
                 refreshIntervalMs={refreshIntervalMs}
+                onRangeChange={setRange}
               />
             </TabsContent>
 

@@ -19,7 +19,8 @@ import {
 } from "@/components/ui/select";
 import { useRequestLogs } from "@/lib/query/usage";
 import type { LogFilters, UsageRangeSelection } from "@/types/usage";
-import { Calendar, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import {
   fmtInt,
   fmtUsd,
@@ -32,6 +33,7 @@ interface RequestLogTableProps {
   rangeLabel: string;
   appType?: string;
   refreshIntervalMs: number;
+  onRangeChange?: (range: UsageRangeSelection) => void;
 }
 
 export function RequestLogTable({
@@ -39,6 +41,7 @@ export function RequestLogTable({
   rangeLabel,
   appType: dashboardAppType,
   refreshIntervalMs,
+  onRangeChange,
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
 
@@ -205,13 +208,13 @@ export function RequestLogTable({
             />
           </div>
 
-          {/* Time range badge */}
-          <div className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border/60 bg-background px-2 text-xs text-muted-foreground">
-            <Calendar className="h-3.5 w-3.5 shrink-0" />
-            <span className="max-w-[180px] truncate text-foreground">
-              {rangeLabel}
-            </span>
-          </div>
+          {onRangeChange && (
+            <UsageDateRangePicker
+              selection={range}
+              triggerLabel={rangeLabel}
+              onApply={onRangeChange}
+            />
+          )}
 
           {/* Search & Reset (icon-only) */}
           <Button
