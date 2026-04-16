@@ -3,7 +3,7 @@ use crate::error::AppError;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 获取 Gemini 配置目录路径（支持设置覆盖）
 pub fn get_gemini_dir() -> PathBuf {
@@ -153,6 +153,7 @@ pub fn read_gemini_env() -> Result<HashMap<String, String>, AppError> {
 }
 
 /// 写入 Gemini .env 文件（原子操作）
+#[allow(dead_code)]
 pub fn write_gemini_env_atomic(map: &HashMap<String, String>) -> Result<(), AppError> {
     let path = get_gemini_env_path();
 
@@ -186,6 +187,36 @@ pub fn write_gemini_env_atomic(map: &HashMap<String, String>) -> Result<(), AppE
         fs::set_permissions(&path, perms).map_err(|e| AppError::io(&path, e))?;
     }
 
+    Ok(())
+}
+
+/// Apply owner-only permissions to a Gemini .env file and its parent directory.
+///
+/// Sets the directory to 0700 and the file to 0600 so that credentials are not
+/// readable by other local users.  No-op on non-Unix platforms.
+pub fn harden_gemini_env_perms(path: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if let Some(parent) = path.parent() {
+            let mut perms = fs::metadata(parent)
+                .map_err(|e| AppError::io(parent, e))?
+                .permissions();
+            perms.set_mode(0o700);
+            fs::set_permissions(parent, perms).map_err(|e| AppError::io(parent, e))?;
+        }
+
+        let mut perms = fs::metadata(path)
+            .map_err(|e| AppError::io(path, e))?
+            .permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(path, perms).map_err(|e| AppError::io(path, e))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
     Ok(())
 }
 
@@ -291,6 +322,7 @@ pub fn get_gemini_settings_path() -> PathBuf {
 ///
 /// # 参数
 /// - `selected_type`: 要设置的 selectedType 值（如 "gemini-api-key" 或 "oauth-personal"）
+#[allow(dead_code)]
 fn update_selected_type(selected_type: &str) -> Result<(), AppError> {
     let settings_path = get_gemini_settings_path();
 
@@ -348,6 +380,7 @@ fn update_selected_type(selected_type: &str) -> Result<(), AppError> {
 /// ```
 ///
 /// 保留文件中的其他所有字段。
+#[allow(dead_code)]
 pub fn write_packycode_settings() -> Result<(), AppError> {
     update_selected_type("gemini-api-key")
 }
@@ -366,6 +399,7 @@ pub fn write_packycode_settings() -> Result<(), AppError> {
 /// ```
 ///
 /// 保留文件中的其他所有字段。
+#[allow(dead_code)]
 pub fn write_google_oauth_settings() -> Result<(), AppError> {
     update_selected_type("oauth-personal")
 }

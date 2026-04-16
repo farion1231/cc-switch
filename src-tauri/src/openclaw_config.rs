@@ -656,6 +656,7 @@ pub fn get_provider(id: &str) -> Result<Option<Value>, AppError> {
 /// 设置供应商配置（原始 JSON）
 ///
 /// 写入到 `models.providers`
+#[allow(dead_code)]
 pub fn set_provider(id: &str, provider_config: Value) -> Result<OpenClawWriteOutcome, AppError> {
     let mut full_config = read_openclaw_config()?;
     let root = ensure_object(&mut full_config);
@@ -680,6 +681,7 @@ pub fn set_provider(id: &str, provider_config: Value) -> Result<OpenClawWriteOut
 }
 
 /// 删除供应商配置
+#[allow(dead_code)]
 pub fn remove_provider(id: &str) -> Result<OpenClawWriteOutcome, AppError> {
     let mut config = read_openclaw_config()?;
     let mut removed = false;
@@ -729,6 +731,7 @@ pub fn get_typed_providers() -> Result<IndexMap<String, OpenClawProviderConfig>,
 }
 
 /// 设置供应商配置（类型化）
+#[allow(dead_code)]
 pub fn set_typed_provider(
     id: &str,
     config: &OpenClawProviderConfig,
@@ -1063,7 +1066,7 @@ mod tests {
 }
 "#;
 
-        with_test_paths(source, |_| {
+        with_test_paths(source, |config_path| {
             let outcome = remove_provider("1-copy").unwrap();
             assert!(outcome.backup_path.is_some());
 
@@ -1077,7 +1080,7 @@ mod tests {
 
             assert!(providers.is_empty());
 
-            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            let written = fs::read_to_string(config_path).unwrap();
             assert!(written.contains("\"providers\": {}"));
         });
     }

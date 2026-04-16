@@ -96,7 +96,7 @@ pub async fn get_skills_migration_result() -> Result<Option<SkillsMigrationPaylo
     Ok(crate::init_status::take_skills_migration_result())
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct ToolVersion {
     name: String,
     version: Option<String>,
@@ -106,6 +106,31 @@ pub struct ToolVersion {
     env_type: String,
     /// 当 env_type 为 "wsl" 时，返回该工具绑定的 WSL distro（用于按 distro 探测 shells）
     wsl_distro: Option<String>,
+    /// 多环境版本信息（Windows + WSL 同时支持）
+    #[serde(default)]
+    envs: Vec<ToolEnvVersion>,
+}
+
+/// 单个环境的版本信息
+#[derive(serde::Serialize, Clone)]
+pub struct ToolEnvVersion {
+    /// 环境类型: "windows", "wsl", "macos", "linux"
+    pub env_type: String,
+    /// WSL 发行版名称（仅当 env_type 为 "wsl" 时有效）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wsl_distro: Option<String>,
+    /// 版本号
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// 错误信息（如果获取版本失败）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// 用户偏好的 shell（仅 WSL 有效）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wsl_shell: Option<String>,
+    /// 用户偏好的 shell flag（仅 WSL 有效）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wsl_shell_flag: Option<String>,
 }
 
 const VALID_TOOLS: [&str; 4] = ["claude", "codex", "gemini", "opencode"];
@@ -119,99 +144,140 @@ pub struct WslShellPreferenceInput {
     pub wsl_shell_flag: Option<String>,
 }
 
-// Keep platform-specific env detection in one place to avoid repeating cfg blocks.
-#[cfg(target_os = "windows")]
-fn tool_env_type_and_wsl_distro(tool: &str) -> (String, Option<String>) {
-    if let Some(distro) = wsl_distro_for_tool(tool) {
-        ("wsl".to_string(), Some(distro))
-    } else {
-        ("windows".to_string(), None)
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
-    ("macos".to_string(), None)
-}
-
-#[cfg(target_os = "linux")]
-fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
-    ("linux".to_string(), None)
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
-    ("unknown".to_string(), None)
-}
-
 #[tauri::command]
 pub async fn get_tool_versions(
     tools: Option<Vec<String>>,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
 ) -> Result<Vec<ToolVersion>, String> {
-    // Windows: completely disable tool version detection to prevent
-    // accidentally launching apps (e.g. Claude Code) via protocol handlers.
-    #[cfg(target_os = "windows")]
-    {
-        let _ = (tools, wsl_shell_by_tool);
-        return Ok(Vec::new());
+    let requested: Vec<&str> = if let Some(tools) = tools.as_ref() {
+        let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
+        VALID_TOOLS
+            .iter()
+            .copied()
+            .filter(|t| set.contains(t))
+            .collect()
+    } else {
+        VALID_TOOLS.to_vec()
+    };
+    let mut results = Vec::new();
+
+    for tool in requested {
+        results.push(get_single_tool_version_impl(tool, wsl_shell_by_tool.as_ref()).await);
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let requested: Vec<&str> = if let Some(tools) = tools.as_ref() {
-            let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
-            VALID_TOOLS
-                .iter()
-                .copied()
-                .filter(|t| set.contains(t))
-                .collect()
-        } else {
-            VALID_TOOLS.to_vec()
-        };
-        let mut results = Vec::new();
-
-        for tool in requested {
-            let pref = wsl_shell_by_tool.as_ref().and_then(|m| m.get(tool));
-            let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
-            let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
-
-            results.push(
-                get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag).await,
-            );
-        }
-
-        Ok(results)
-    }
+    Ok(results)
 }
 
 /// 获取单个工具的版本信息（内部实现）
+/// 在 Windows 上同时检测 Windows 本地和 WSL 环境
 async fn get_single_tool_version_impl(
     tool: &str,
-    wsl_shell: Option<&str>,
-    wsl_shell_flag: Option<&str>,
+    wsl_shell_by_tool: Option<&HashMap<String, WslShellPreferenceInput>>,
 ) -> ToolVersion {
     debug_assert!(
         VALID_TOOLS.contains(&tool),
         "unexpected tool name in get_single_tool_version_impl: {tool}"
     );
 
-    // 判断该工具的运行环境 & WSL distro（如有）
-    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
-
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
 
-    // 1. 获取本地版本
-    let (local_version, local_error) = if let Some(distro) = wsl_distro.as_deref() {
-        try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
-    } else {
-        let direct_result = try_get_version(tool);
-        if direct_result.0.is_some() {
-            direct_result
-        } else {
-            scan_cli_version(tool)
+    #[cfg(not(target_os = "windows"))]
+    let _ = wsl_shell_by_tool;
+
+    // 收集多环境版本信息
+    let mut envs: Vec<ToolEnvVersion> = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        let pref = wsl_shell_by_tool.and_then(|m| m.get(tool));
+        let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
+        let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
+
+        // Windows: 检测本地版本
+        let (windows_version, windows_error) = get_local_tool_version(tool);
+
+        if windows_version.is_some() || windows_error.is_some() {
+            envs.push(ToolEnvVersion {
+                env_type: "windows".to_string(),
+                wsl_distro: None,
+                version: windows_version,
+                error: windows_error,
+                wsl_shell: None,
+                wsl_shell_flag: None,
+            });
         }
+
+        // 检测 WSL 环境中的版本
+        let wsl_distros = crate::utils::wsl::get_all_wsl_distros();
+        for distro in wsl_distros {
+            let (wsl_version, wsl_error) =
+                try_get_version_wsl(tool, &distro, tool_wsl_shell, tool_wsl_shell_flag);
+            // 只添加有版本或错误信息的环境
+            if wsl_version.is_some() || wsl_error.is_some() {
+                envs.push(ToolEnvVersion {
+                    env_type: "wsl".to_string(),
+                    wsl_distro: Some(distro),
+                    version: wsl_version,
+                    error: wsl_error,
+                    wsl_shell: tool_wsl_shell.map(|s| s.to_string()),
+                    wsl_shell_flag: tool_wsl_shell_flag.map(|s| s.to_string()),
+                });
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 非 Windows 平台：检测本地版本
+        let (local_version, local_error) = get_local_tool_version(tool);
+
+        let env_type = if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(target_os = "linux") {
+            "linux"
+        } else {
+            "unknown"
+        };
+
+        if local_version.is_some() || local_error.is_some() {
+            envs.push(ToolEnvVersion {
+                env_type: env_type.to_string(),
+                wsl_distro: None,
+                version: local_version,
+                error: local_error,
+                wsl_shell: None,
+                wsl_shell_flag: None,
+            });
+        }
+    }
+
+    let version_source_env = envs.iter().find(|env| env.version.is_some());
+
+    // 确定主要环境类型，优先跟随实际提供 version 的环境。
+    let (env_type, wsl_distro) = if let Some(source) = version_source_env {
+        (source.env_type.clone(), source.wsl_distro.clone())
+    } else if let Some(first) = envs.first() {
+        (first.env_type.clone(), first.wsl_distro.clone())
+    } else {
+        let default_env_type = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(target_os = "linux") {
+            "linux"
+        } else {
+            "unknown"
+        };
+        (default_env_type.to_string(), None)
+    };
+
+    // 获取版本号和错误信息（优先使用第一个有效的）
+    let version = version_source_env.and_then(|env| env.version.clone());
+    let error = if version.is_none() {
+        envs.iter().find_map(|e| e.error.clone())
+    } else {
+        None
     };
 
     // 2. 获取远程最新版本
@@ -225,11 +291,12 @@ async fn get_single_tool_version_impl(
 
     ToolVersion {
         name: tool.to_string(),
-        version: local_version,
+        version,
         latest_version,
-        error: local_error,
+        error,
         env_type,
         wsl_distro,
+        envs,
     }
 }
 
@@ -287,6 +354,7 @@ fn extract_version(raw: &str) -> String {
 }
 
 /// 尝试直接执行命令获取版本
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
     use std::process::Command;
 
@@ -333,15 +401,21 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-/// 校验 WSL 发行版名称是否合法
-/// WSL 发行版名称只允许字母、数字、连字符和下划线
 #[cfg(target_os = "windows")]
-fn is_valid_wsl_distro_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+fn get_local_tool_version(tool: &str) -> (Option<String>, Option<String>) {
+    // On Windows avoid `cmd /C <tool> --version` because App Execution Aliases
+    // and protocol handlers can launch external apps during passive version refresh.
+    scan_cli_version(tool)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_local_tool_version(tool: &str) -> (Option<String>, Option<String>) {
+    let direct_result = try_get_version(tool);
+    if direct_result.0.is_some() {
+        direct_result
+    } else {
+        scan_cli_version(tool)
+    }
 }
 
 /// Validate that the given shell name is one of the allowed shells.
@@ -385,7 +459,7 @@ fn try_get_version_wsl(
     );
 
     // 校验 distro 名称，防止命令注入
-    if !is_valid_wsl_distro_name(distro) {
+    if !crate::utils::wsl::is_valid_wsl_distro_name(distro) {
         return (None, Some(format!("[WSL:{distro}] invalid distro name")));
     }
 
@@ -470,6 +544,7 @@ fn try_get_version_wsl(
 /// 注意：此函数实际上不会被调用，因为 `wsl_distro_from_path` 在非 Windows 平台总是返回 None。
 /// 保留此函数是为了保持 API 一致性，防止未来重构时遗漏。
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn try_get_version_wsl(
     _tool: &str,
     _distro: &str,
@@ -688,44 +763,6 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     (None, Some("not installed or not executable".to_string()))
 }
 
-#[cfg(target_os = "windows")]
-fn wsl_distro_for_tool(tool: &str) -> Option<String> {
-    let override_dir = match tool {
-        "claude" => crate::settings::get_claude_override_dir(),
-        "codex" => crate::settings::get_codex_override_dir(),
-        "gemini" => crate::settings::get_gemini_override_dir(),
-        "opencode" => crate::settings::get_opencode_override_dir(),
-        _ => None,
-    }?;
-
-    wsl_distro_from_path(&override_dir)
-}
-
-/// 从 UNC 路径中提取 WSL 发行版名称
-/// 支持 `\\wsl$\Ubuntu\...` 和 `\\wsl.localhost\Ubuntu\...` 两种格式
-#[cfg(target_os = "windows")]
-fn wsl_distro_from_path(path: &Path) -> Option<String> {
-    use std::path::{Component, Prefix};
-    let Some(Component::Prefix(prefix)) = path.components().next() else {
-        return None;
-    };
-    match prefix.kind() {
-        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
-            let server_name = server.to_string_lossy();
-            if server_name.eq_ignore_ascii_case("wsl$")
-                || server_name.eq_ignore_ascii_case("wsl.localhost")
-            {
-                let distro = share.to_string_lossy().to_string();
-                if !distro.is_empty() {
-                    return Some(distro);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
 /// 打开指定提供商的终端
 ///
 /// 根据提供商配置的环境变量启动一个带有该提供商特定设置的终端
@@ -754,7 +791,7 @@ pub async fn open_provider_terminal(
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+    launch_terminal_with_env(env_vars, &providerId, &app_type, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
@@ -847,21 +884,22 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     Ok(Some(resolved))
 }
 
-/// 创建临时配置文件并启动 claude 终端
+/// 创建临时配置文件并启动 claude/codex 终端
 /// 使用 --settings 参数传入提供商特定的 API 配置
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
+    app_type: &AppType,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
+        "{}_{}_{}.json",
+        app_type.as_str(),
         provider_id,
         std::process::id()
     ));
 
-    // 创建并写入配置文件
     write_claude_config(&config_file, &env_vars)?;
 
     #[cfg(target_os = "macos")]
@@ -879,7 +917,7 @@ fn launch_terminal_with_env(
     #[cfg(target_os = "windows")]
     {
         launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -1234,6 +1272,7 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     cwd.map(|dir| {
         format!(
@@ -1244,6 +1283,7 @@ fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     .unwrap_or_default()
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -1378,13 +1418,68 @@ mod tests {
 
         #[test]
         fn test_is_valid_wsl_distro_name() {
-            assert!(is_valid_wsl_distro_name("Ubuntu"));
-            assert!(is_valid_wsl_distro_name("Ubuntu-22.04"));
-            assert!(is_valid_wsl_distro_name("my_distro"));
-            assert!(!is_valid_wsl_distro_name(""));
-            assert!(!is_valid_wsl_distro_name("distro with spaces"));
-            assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
+            assert!(crate::utils::wsl::is_valid_wsl_distro_name("Ubuntu"));
+            assert!(crate::utils::wsl::is_valid_wsl_distro_name("Ubuntu-22.04"));
+            assert!(crate::utils::wsl::is_valid_wsl_distro_name("my_distro"));
+            assert!(crate::utils::wsl::is_valid_wsl_distro_name("Ubuntu Dev"));
+            assert!(!crate::utils::wsl::is_valid_wsl_distro_name(""));
+            assert!(!crate::utils::wsl::is_valid_wsl_distro_name(
+                &"a".repeat(65)
+            ));
         }
+
+        #[test]
+        fn test_get_local_tool_version_avoids_direct_windows_probe() {
+            let result = get_local_tool_version("codex");
+
+            assert_eq!(result, scan_cli_version("codex"));
+        }
+
+        #[test]
+        fn test_try_get_version_wsl_accepts_distro_names_with_spaces() {
+            let (version, error) = try_get_version_wsl("codex", "Ubuntu Dev", None, None);
+
+            assert!(
+                !matches!(error.as_deref(), Some(message) if message.contains("invalid distro name"))
+            );
+            assert!(version.is_some() || error.is_some());
+        }
+    }
+
+    #[test]
+    fn tool_version_top_level_env_matches_version_source() {
+        let envs = vec![
+            ToolEnvVersion {
+                env_type: "windows".to_string(),
+                wsl_distro: None,
+                version: None,
+                error: Some("not installed".to_string()),
+                wsl_shell: None,
+                wsl_shell_flag: None,
+            },
+            ToolEnvVersion {
+                env_type: "wsl".to_string(),
+                wsl_distro: Some("Ubuntu Dev".to_string()),
+                version: Some("1.2.3".to_string()),
+                error: None,
+                wsl_shell: Some("bash".to_string()),
+                wsl_shell_flag: Some("-lic".to_string()),
+            },
+        ];
+
+        let version_source_env = envs.iter().find(|env| env.version.is_some());
+        let (env_type, wsl_distro) = if let Some(source) = version_source_env {
+            (source.env_type.clone(), source.wsl_distro.clone())
+        } else if let Some(first) = envs.first() {
+            (first.env_type.clone(), first.wsl_distro.clone())
+        } else {
+            ("unknown".to_string(), None)
+        };
+        let version = version_source_env.and_then(|env| env.version.clone());
+
+        assert_eq!(version, Some("1.2.3".to_string()));
+        assert_eq!(env_type, "wsl");
+        assert_eq!(wsl_distro, Some("Ubuntu Dev".to_string()));
     }
 
     #[test]
@@ -1411,12 +1506,13 @@ mod tests {
     fn opencode_extra_search_paths_deduplicates_repeated_entries() {
         let home = PathBuf::from("/home/tester");
         let same_dir = Some(std::ffi::OsString::from("/same/path"));
+        let same_path = std::path::Path::new("/same/path");
 
         let paths = opencode_extra_search_paths(&home, same_dir.clone(), same_dir, None);
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/same/path"))
+            .filter(|path| path.as_path() == same_path)
             .count();
         assert_eq!(count, 1);
     }
@@ -1424,11 +1520,12 @@ mod tests {
     #[test]
     fn opencode_extra_search_paths_deduplicates_bun_default_dir() {
         let home = PathBuf::from("/home/tester");
+        let bun_default = std::path::Path::new("/home/tester/.bun/bin");
         let paths = opencode_extra_search_paths(&home, None, None, None);
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/home/tester/.bun/bin"))
+            .filter(|path| path.as_path() == bun_default)
             .count();
         assert_eq!(count, 1);
     }

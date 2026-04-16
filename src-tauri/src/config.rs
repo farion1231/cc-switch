@@ -69,9 +69,7 @@ pub fn get_claude_mcp_path() -> PathBuf {
     get_default_claude_mcp_path()
 }
 
-/// 获取 Claude Code 主配置文件路径
-pub fn get_claude_settings_path() -> PathBuf {
-    let dir = get_claude_config_dir();
+fn resolve_claude_settings_path_in_dir(dir: &Path) -> PathBuf {
     let settings = dir.join("settings.json");
     if settings.exists() {
         return settings;
@@ -83,6 +81,25 @@ pub fn get_claude_settings_path() -> PathBuf {
     }
     // 默认新建：回落到标准文件名 settings.json（不再生成 claude.json）
     settings
+}
+
+/// 获取 Claude Code 主配置文件路径
+pub fn get_claude_settings_path() -> PathBuf {
+    resolve_claude_settings_path_in_dir(&get_claude_config_dir())
+}
+
+/// 获取 Claude Code 主配置文件路径集合（主路径 + 可推导的附加路径）
+///
+/// 返回值保证：
+/// - 第一个路径始终是主路径（`get_claude_settings_path()` 对应目录）
+/// - 去重（Windows 下不区分大小写）
+pub fn get_claude_settings_paths() -> Vec<PathBuf> {
+    let primary_dir = get_claude_config_dir();
+    let raw_paths = crate::utils::wsl::expand_wsl_dirs(&primary_dir, &[".claude"])
+        .into_iter()
+        .map(|dir| resolve_claude_settings_path_in_dir(&dir))
+        .collect();
+    crate::utils::wsl::dedupe_paths(raw_paths)
 }
 
 /// 获取应用配置目录路径 (~/.cc-switch)
