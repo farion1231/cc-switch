@@ -73,6 +73,7 @@ const generatePresetTemplates = (
     headers: {
       "Content-Type": "application/json",
       "Authorization": "Bearer {{accessToken}}",
+      "User-Agent": "cc-switch/1.0",
       "New-Api-User": "{{userId}}"
     },
   },
