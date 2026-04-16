@@ -149,7 +149,11 @@ pub fn transform_claude_request_for_api_format(
         "openai_chat" => {
             let mut result = super::transform::anthropic_to_openai(body)?;
             // Inject prompt_cache_key only if explicitly configured in meta
-            if let Some(key) = provider.meta.as_ref().and_then(|m| m.prompt_cache_key.as_deref()) {
+            if let Some(key) = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.prompt_cache_key.as_deref())
+            {
                 result["prompt_cache_key"] = serde_json::json!(key);
             }
             Ok(result)
