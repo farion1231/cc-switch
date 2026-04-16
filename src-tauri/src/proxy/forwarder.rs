@@ -9,7 +9,10 @@ use super::{
     failover_switch::FailoverSwitchManager,
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
-    providers::{get_adapter, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType},
+    providers::{
+        gemini_shadow::GeminiShadowStore, get_adapter, AuthInfo, AuthStrategy, ProviderAdapter,
+        ProviderType,
+    },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
@@ -43,12 +46,15 @@ pub struct RequestForwarder {
     router: Arc<ProviderRouter>,
     status: Arc<RwLock<ProxyStatus>>,
     current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+    gemini_shadow: Arc<GeminiShadowStore>,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
     app_handle: Option<tauri::AppHandle>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
+    /// 代理会话 ID（用于 Gemini Native shadow replay）
+    session_id: String,
     /// 整流器配置
     rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -66,9 +72,11 @@ impl RequestForwarder {
         non_streaming_timeout: u64,
         status: Arc<RwLock<ProxyStatus>>,
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+        gemini_shadow: Arc<GeminiShadowStore>,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
+        session_id: String,
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
@@ -79,9 +87,11 @@ impl RequestForwarder {
             router,
             status,
             current_providers,
+            gemini_shadow,
             failover_manager,
             app_handle,
             current_provider_id_at_start,
+            session_id,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -918,7 +928,7 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot)
+                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
             } else {
                 (
                     endpoint.to_string(),
@@ -928,7 +938,13 @@ impl RequestForwarder {
                 )
             };
 
-        let url = if is_full_url {
+        let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
+            super::gemini_url::resolve_gemini_native_url(
+                &base_url,
+                &effective_endpoint,
+                is_full_url,
+            )
+        } else if is_full_url {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
@@ -944,6 +960,8 @@ impl RequestForwarder {
                     mapped_body,
                     provider,
                     api_format,
+                    Some(&self.session_id),
+                    Some(self.gemini_shadow.as_ref()),
                 )?
             } else {
                 adapter.transform_request(mapped_body, provider)?
@@ -1143,8 +1161,11 @@ impl RequestForwarder {
             .ok()
             .and_then(|u| u.authority().map(|a| a.to_string()));
 
+        let should_send_anthropic_headers = adapter.name() == "Claude"
+            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
+
         // 预计算 anthropic-beta 值（仅 Claude）
-        let anthropic_beta_value = if adapter.name() == "Claude" {
+        let anthropic_beta_value = if should_send_anthropic_headers {
             const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
             Some(if let Some(beta) = headers.get("anthropic-beta") {
                 if let Ok(beta_str) = beta.to_str() {
@@ -1264,8 +1285,10 @@ impl RequestForwarder {
 
             // --- anthropic-version — 透传客户端值 ---
             if key_str.eq_ignore_ascii_case("anthropic-version") {
-                saw_anthropic_version = true;
-                ordered_headers.append(key.clone(), value.clone());
+                if should_send_anthropic_headers {
+                    saw_anthropic_version = true;
+                    ordered_headers.append(key.clone(), value.clone());
+                }
                 continue;
             }
 
@@ -1306,7 +1329,7 @@ impl RequestForwarder {
         }
 
         // anthropic-version：仅在缺失时补充默认值
-        if adapter.name() == "Claude" && !saw_anthropic_version {
+        if should_send_anthropic_headers && !saw_anthropic_version {
             ordered_headers.append(
                 "anthropic-version",
                 http::HeaderValue::from_static("2023-06-01"),
@@ -1650,6 +1673,7 @@ fn rewrite_claude_transform_endpoint(
     endpoint: &str,
     api_format: &str,
     is_copilot: bool,
+    body: &Value,
 ) -> (String, Option<String>) {
     let (path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = if is_claude_messages_path(path) {
@@ -1660,6 +1684,36 @@ fn rewrite_claude_transform_endpoint(
 
     if !is_claude_messages_path(path) {
         return (endpoint.to_string(), passthrough_query);
+    }
+
+    if api_format == "gemini_native" {
+        let model =
+            super::providers::transform_gemini::extract_gemini_model(body).unwrap_or("unknown");
+        // Accept both bare ids (`gemini-2.5-pro`) and the resource-name
+        // form (`models/gemini-2.5-pro`) that Gemini SDKs emit. See
+        // `normalize_gemini_model_id` for rationale.
+        let model = super::gemini_url::normalize_gemini_model_id(model);
+        let is_stream = body
+            .get("stream")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let target_path = if is_stream {
+            format!("/v1beta/models/{model}:streamGenerateContent")
+        } else {
+            format!("/v1beta/models/{model}:generateContent")
+        };
+
+        let rewritten_query = merge_query_params(
+            passthrough_query.as_deref(),
+            if is_stream { Some("alt=sse") } else { None },
+        );
+
+        let rewritten = match rewritten_query.as_deref() {
+            Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+            _ => target_path,
+        };
+
+        return (rewritten, rewritten_query);
     }
 
     let target_path = if is_copilot && api_format == "openai_responses" {
@@ -1678,6 +1732,26 @@ fn rewrite_claude_transform_endpoint(
     };
 
     (rewritten, passthrough_query)
+}
+
+fn merge_query_params(base_query: Option<&str>, extra_param: Option<&str>) -> Option<String> {
+    let mut params: Vec<String> = base_query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .filter(|pair| !pair.is_empty())
+        .filter(|pair| !pair.starts_with("alt="))
+        .map(ToString::to_string)
+        .collect();
+
+    if let Some(extra_param) = extra_param {
+        params.push(extra_param.to_string());
+    }
+
+    if params.is_empty() {
+        None
+    } else {
+        Some(params.join("&"))
+    }
 }
 
 fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
@@ -1808,6 +1882,7 @@ mod tests {
             "/v1/messages?beta=true&foo=bar",
             "openai_chat",
             false,
+            &json!({ "model": "gpt-5.4" }),
         );
 
         assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
@@ -1820,6 +1895,7 @@ mod tests {
             "/claude/v1/messages?beta=true&x-id=1",
             "openai_responses",
             false,
+            &json!({ "model": "gpt-5.4" }),
         );
 
         assert_eq!(endpoint, "/v1/responses?x-id=1");
@@ -1828,8 +1904,12 @@ mod tests {
 
     #[test]
     fn rewrite_claude_transform_endpoint_uses_copilot_path() {
-        let (endpoint, passthrough_query) =
-            rewrite_claude_transform_endpoint("/v1/messages?beta=true&x-id=1", "anthropic", true);
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&x-id=1",
+            "anthropic",
+            true,
+            &json!({ "model": "claude-sonnet-4-6" }),
+        );
 
         assert_eq!(endpoint, "/chat/completions?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
@@ -1841,6 +1921,7 @@ mod tests {
             "/v1/messages?beta=true&x-id=1",
             "openai_responses",
             true,
+            &json!({ "model": "gpt-5.4" }),
         );
 
         assert_eq!(endpoint, "/v1/responses?x-id=1");
@@ -1848,10 +1929,94 @@ mod tests {
     }
 
     #[test]
+    fn rewrite_claude_transform_endpoint_maps_gemini_generate_content() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&x-id=1",
+            "gemini_native",
+            false,
+            &json!({ "model": "gemini-2.5-pro" }),
+        );
+
+        assert_eq!(
+            endpoint,
+            "/v1beta/models/gemini-2.5-pro:generateContent?x-id=1"
+        );
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    /// Regression: body.model arriving as the resource-name form
+    /// `models/gemini-2.5-pro` must not produce a doubled
+    /// `/v1beta/models/models/...` path.
+    #[test]
+    fn rewrite_claude_transform_endpoint_strips_gemini_model_resource_prefix() {
+        let (endpoint, _) = rewrite_claude_transform_endpoint(
+            "/v1/messages",
+            "gemini_native",
+            false,
+            &json!({ "model": "models/gemini-2.5-pro" }),
+        );
+
+        assert_eq!(endpoint, "/v1beta/models/gemini-2.5-pro:generateContent");
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_maps_gemini_streaming() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true",
+            "gemini_native",
+            false,
+            &json!({ "model": "gemini-2.5-flash", "stream": true }),
+        );
+
+        assert_eq!(
+            endpoint,
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+        assert_eq!(passthrough_query.as_deref(), Some("alt=sse"));
+    }
+
+    #[test]
     fn append_query_to_full_url_preserves_existing_query_string() {
         let url = append_query_to_full_url("https://relay.example/api?foo=bar", Some("x-id=1"));
 
         assert_eq!(url, "https://relay.example/api?foo=bar&x-id=1");
+    }
+
+    #[test]
+    fn build_gemini_native_url_uses_origin_when_base_ends_with_v1beta() {
+        let url = crate::proxy::gemini_url::build_gemini_native_url(
+            "https://generativelanguage.googleapis.com/v1beta",
+            "/v1beta/models/gemini-2.5-pro:generateContent",
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+        );
+    }
+
+    #[test]
+    fn build_gemini_native_url_uses_origin_when_base_already_contains_models_prefix() {
+        let url = crate::proxy::gemini_url::build_gemini_native_url(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn resolve_gemini_native_url_keeps_opaque_full_url_as_is() {
+        let url = crate::proxy::gemini_url::resolve_gemini_native_url(
+            "https://relay.example/custom/generate-content",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/custom/generate-content?alt=sse");
     }
 
     #[test]

@@ -113,7 +113,7 @@ interface ClaudeFormFieldsProps {
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
-  // API Format (for third-party providers that use OpenAI Chat Completions format)
+  // API Format (for Claude-compatible providers that need request/response conversion)
   apiFormat: ClaudeApiFormat;
   onApiFormatChange: (format: ClaudeApiFormat) => void;
 
@@ -436,7 +436,14 @@ export function ClaudeFormFields({
               ? t("providerForm.apiHintResponses")
               : apiFormat === "openai_chat"
                 ? t("providerForm.apiHintOAI")
-                : t("providerForm.apiHint")
+                : apiFormat === "gemini_native"
+                  ? t("providerForm.apiHintGeminiNative")
+                  : t("providerForm.apiHint")
+          }
+          fullUrlHint={
+            apiFormat === "gemini_native"
+              ? t("providerForm.fullUrlHintGeminiNative")
+              : undefined
           }
           onManageClick={() => onEndpointModalToggle(true)}
           showFullUrlToggle={true}
@@ -509,6 +516,11 @@ export function ClaudeFormFields({
                     <SelectItem value="openai_responses">
                       {t("providerForm.apiFormatOpenAIResponses", {
                         defaultValue: "OpenAI Responses API (需转换)",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="gemini_native">
+                      {t("providerForm.apiFormatGeminiNative", {
+                        defaultValue: "Gemini Native generateContent (需转换)",
                       })}
                     </SelectItem>
                   </SelectContent>

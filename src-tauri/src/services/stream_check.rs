@@ -12,8 +12,10 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::gemini_url::{normalize_gemini_model_id, resolve_gemini_native_url};
 use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
+use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
@@ -288,6 +290,8 @@ impl StreamCheckService {
     /// 根据供应商的 api_format 选择请求格式：
     /// - "anthropic" (默认): Anthropic Messages API (/v1/messages)
     /// - "openai_chat": OpenAI Chat Completions API (/v1/chat/completions)
+    /// - "openai_responses": OpenAI Responses API (/v1/responses)
+    /// - "gemini_native": Gemini Native streamGenerateContent
     ///
     /// `extra_headers` 是一个可选的供应商级自定义 header 集合（从 OpenClaw
     /// 的 `settings_config.headers` 或 OpenCode 的 `settings_config.options.headers`
@@ -329,8 +333,14 @@ impl StreamCheckService {
             .unwrap_or(false);
         let is_openai_chat = effective_api_format == "openai_chat";
         let is_openai_responses = effective_api_format == "openai_responses";
-        let url =
-            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
+        let is_gemini_native = effective_api_format == "gemini_native";
+        let url = Self::resolve_claude_stream_url(
+            base,
+            auth.strategy,
+            effective_api_format,
+            is_full_url,
+            model,
+        );
 
         let max_tokens = if is_openai_responses { 16 } else { 1 };
 
@@ -351,6 +361,9 @@ impl StreamCheckService {
 
         let body = if is_openai_responses {
             anthropic_to_responses(anthropic_body, Some(&provider.id), is_codex_oauth)
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+        } else if is_gemini_native {
+            anthropic_to_gemini(anthropic_body)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_openai_chat {
             anthropic_to_openai(anthropic_body)
@@ -387,6 +400,23 @@ impl StreamCheckService {
                 .header("x-vscode-user-agent-library-version", "electron-fetch")
                 .header("x-request-id", &request_id)
                 .header("x-agent-task-id", &request_id);
+        } else if is_gemini_native {
+            request_builder = match auth.strategy {
+                AuthStrategy::GoogleOAuth => {
+                    let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
+                    request_builder
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("x-goog-api-client", "GeminiCLI/1.0")
+                        .header("content-type", "application/json")
+                        .header("accept", "text/event-stream")
+                        .header("accept-encoding", "identity")
+                }
+                _ => request_builder
+                    .header("x-goog-api-key", &auth.api_key)
+                    .header("content-type", "application/json")
+                    .header("accept", "text/event-stream")
+                    .header("accept-encoding", "identity"),
+            };
         } else if is_openai_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder
@@ -568,13 +598,16 @@ impl StreamCheckService {
         extra_headers: Option<&serde_json::Map<String, serde_json::Value>>,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
+        // Strip `models/` resource-name prefix from the model id — see
+        // `normalize_gemini_model_id` for rationale.
+        let normalized_model = normalize_gemini_model_id(model);
         // Gemini 原生 API: /v1beta/models/{model}:streamGenerateContent?alt=sse
         // 智能处理 /v1beta 路径：如果 base_url 不包含版本路径，则添加 /v1beta
         // alt=sse 参数使 API 返回 SSE 格式（text/event-stream）而非 JSON 数组
         let url = if base.contains("/v1beta") || base.contains("/v1/") {
-            format!("{base}/models/{model}:streamGenerateContent?alt=sse")
+            format!("{base}/models/{normalized_model}:streamGenerateContent?alt=sse")
         } else {
-            format!("{base}/v1beta/models/{model}:streamGenerateContent?alt=sse")
+            format!("{base}/v1beta/models/{normalized_model}:streamGenerateContent?alt=sse")
         };
 
         // Gemini 原生请求体格式
@@ -1292,7 +1325,19 @@ impl StreamCheckService {
         auth_strategy: AuthStrategy,
         api_format: &str,
         is_full_url: bool,
+        model: &str,
     ) -> String {
+        if api_format == "gemini_native" {
+            // Strip an optional `models/` resource-name prefix so that model
+            // identifiers copied from Gemini SDK outputs (e.g.
+            // `models/gemini-2.5-pro`) don't produce a doubled
+            // `/v1beta/models/models/...` URL.
+            let normalized_model = normalize_gemini_model_id(model);
+            let endpoint =
+                format!("/v1beta/models/{normalized_model}:streamGenerateContent?alt=sse");
+            return resolve_gemini_native_url(base_url, &endpoint, is_full_url);
+        }
+
         if is_full_url {
             return base_url.to_string();
         }
@@ -1621,6 +1666,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_chat",
             true,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://relay.example/v1/chat/completions");
@@ -1633,6 +1679,7 @@ mod tests {
             AuthStrategy::GitHubCopilot,
             "openai_chat",
             false,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
@@ -1645,6 +1692,7 @@ mod tests {
             AuthStrategy::GitHubCopilot,
             "openai_responses",
             false,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/v1/responses");
@@ -1657,6 +1705,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_chat",
             false,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://example.com/v1/chat/completions");
@@ -1669,6 +1718,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_responses",
             false,
+            "gpt-5.4",
         );
 
         assert_eq!(url, "https://example.com/v1/responses");
@@ -1681,9 +1731,76 @@ mod tests {
             AuthStrategy::Anthropic,
             "anthropic",
             false,
+            "claude-sonnet-4-6",
         );
 
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://generativelanguage.googleapis.com",
+            AuthStrategy::Google,
+            "gemini_native",
+            false,
+            "gemini-2.5-flash",
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native_full_url_openai_compat_base() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            AuthStrategy::Google,
+            "gemini_native",
+            true,
+            "gemini-2.5-flash",
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native_opaque_full_url() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://relay.example/custom/generate-content",
+            AuthStrategy::Google,
+            "gemini_native",
+            true,
+            "gemini-2.5-flash",
+        );
+
+        assert_eq!(url, "https://relay.example/custom/generate-content?alt=sse");
+    }
+
+    /// Regression: Gemini SDK outputs commonly surface model ids as the
+    /// resource-name form `models/gemini-2.5-pro`. Interpolating that raw
+    /// value used to produce `/v1beta/models/models/gemini-2.5-pro:...`
+    /// which the upstream rejects and the health check records as a
+    /// false-negative for an otherwise valid provider.
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native_strips_models_prefix() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://generativelanguage.googleapis.com",
+            AuthStrategy::Google,
+            "gemini_native",
+            false,
+            "models/gemini-2.5-pro",
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+        );
     }
 
     #[test]
