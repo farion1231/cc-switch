@@ -385,8 +385,8 @@ impl StreamCheckService {
                 .header("x-initiator", "user")
                 .header("x-interaction-type", "conversation-agent")
                 .header("x-vscode-user-agent-library-version", "electron-fetch")
-                .header("x-request-id", &request_id)
-                .header("x-agent-task-id", &request_id);
+                .header("x-request-id", request_id.as_str())
+                .header("x-agent-task-id", request_id.as_str());
         } else if is_openai_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder

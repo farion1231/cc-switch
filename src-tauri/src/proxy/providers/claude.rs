@@ -16,6 +16,164 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use serde_json::Value;
+
+/// 为每个上游请求生成唯一 request ID。
+fn generate_request_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// 判断当前 Copilot 请求是否属于 agent continuation / tool loop。
+fn is_agent_initiated(request_body: Option<&Value>) -> bool {
+    let Some(body) = request_body else {
+        return false;
+    };
+
+    if let Some(messages) = body.get("messages").and_then(|msgs| msgs.as_array()) {
+        if messages.is_empty() {
+            return false;
+        }
+
+        let last_index = match messages.iter().rposition(|msg| msg.get("role").is_some()) {
+            Some(index) => index,
+            None => return false,
+        };
+        let last_message = &messages[last_index];
+        let last_role = last_message
+            .get("role")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+
+        if matches!(last_role, "assistant" | "tool") {
+            return true;
+        }
+
+        if last_role == "user" {
+            if last_message_contains_tool_result(last_message) {
+                return true;
+            }
+
+            if last_index >= 1 && previous_message_contains_tool_use(&messages[last_index - 1]) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    if let Some(inputs) = body.get("input").and_then(|input| input.as_array()) {
+        if inputs.is_empty() {
+            return false;
+        }
+
+        let last_index = inputs.len() - 1;
+        let last = &inputs[last_index];
+        if last
+            .get("role")
+            .and_then(|value| value.as_str())
+            .is_some_and(|role| role == "assistant")
+        {
+            return true;
+        }
+
+        if input_item_is_agent_continuation(last) {
+            return true;
+        }
+
+        if last
+            .get("role")
+            .and_then(|value| value.as_str())
+            .is_some_and(|role| role == "user")
+            && last_message_contains_tool_result(last)
+        {
+            return true;
+        }
+
+        if last_index >= 1 {
+            let previous = &inputs[last_index - 1];
+            if input_item_requests_tool_continuation(previous) {
+                return last_message_contains_tool_result(last)
+                    || input_item_is_agent_continuation(last);
+            }
+        }
+
+        return false;
+    }
+
+    false
+}
+
+fn last_message_contains_tool_result(message: &Value) -> bool {
+    message
+        .get("content")
+        .and_then(|content| content.as_array())
+        .is_some_and(|parts| {
+            parts.iter().any(|part| {
+                part.get("type")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|part_type| part_type == "tool_result")
+            })
+        })
+}
+
+fn previous_message_contains_tool_use(message: &Value) -> bool {
+    if message
+        .get("role")
+        .and_then(|value| value.as_str())
+        .is_none_or(|role| role != "assistant")
+    {
+        return false;
+    }
+
+    message
+        .get("content")
+        .and_then(|content| content.as_array())
+        .is_some_and(|parts| {
+            parts.iter().any(|part| {
+                part.get("type")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|part_type| part_type == "tool_use")
+            })
+        })
+}
+
+fn input_item_is_agent_continuation(item: &Value) -> bool {
+    if item
+        .get("role")
+        .and_then(|value| value.as_str())
+        .is_some_and(|role| role == "assistant")
+    {
+        return true;
+    }
+
+    matches!(
+        item.get("type").and_then(|value| value.as_str()),
+        Some(
+            "function_call"
+                | "function_call_arguments"
+                | "computer_call"
+                | "function_call_output"
+                | "function_call_response"
+                | "tool_result"
+                | "computer_call_output"
+        )
+    )
+}
+
+fn input_item_requests_tool_continuation(item: &Value) -> bool {
+    if item
+        .get("role")
+        .and_then(|value| value.as_str())
+        .is_some_and(|role| role == "assistant")
+    {
+        return true;
+    }
+
+    matches!(
+        item.get("type").and_then(|value| value.as_str()),
+        Some("function_call" | "function_call_arguments" | "computer_call")
+    )
+}
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -426,7 +584,11 @@ impl ProviderAdapter for ClaudeAdapter {
         base
     }
 
-    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+        request_body: Option<&serde_json::Value>,
+    ) -> Vec<(http::HeaderName, http::HeaderValue)> {
         use http::{HeaderName, HeaderValue};
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
         let bearer = format!("Bearer {}", auth.api_key);
@@ -452,9 +614,14 @@ impl ProviderAdapter for ClaudeAdapter {
                 ]
             }
             AuthStrategy::GitHubCopilot => {
-                // 生成请求追踪 ID
-                let request_id = uuid::Uuid::new_v4().to_string();
-                vec![
+                let request_id = generate_request_id();
+                let initiator = if is_agent_initiated(request_body) {
+                    "agent"
+                } else {
+                    "user"
+                };
+
+                let mut headers = vec![
                     (
                         HeaderName::from_static("authorization"),
                         HeaderValue::from_str(&bearer).unwrap(),
@@ -486,7 +653,7 @@ impl ProviderAdapter for ClaudeAdapter {
                     ),
                     (
                         HeaderName::from_static("x-initiator"),
-                        HeaderValue::from_static("user"),
+                        HeaderValue::from_static(initiator),
                     ),
                     (
                         HeaderName::from_static("x-interaction-type"),
@@ -505,7 +672,24 @@ impl ProviderAdapter for ClaudeAdapter {
                         HeaderName::from_static("x-agent-task-id"),
                         HeaderValue::from_str(&request_id).unwrap(),
                     ),
-                ]
+                ];
+
+                // 添加 machine ID 和 session ID（如果存在）
+                if let Some(machine_id) = &auth.machine_id {
+                    headers.push((
+                        HeaderName::from_static("vscode-machineid"),
+                        HeaderValue::from_str(machine_id).unwrap(),
+                    ));
+                }
+
+                if let Some(session_id) = &auth.session_id {
+                    headers.push((
+                        HeaderName::from_static("vscode-sessionid"),
+                        HeaderValue::from_str(session_id).unwrap(),
+                    ));
+                }
+
+                headers
             }
             _ => vec![],
         }
@@ -592,6 +776,103 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn test_is_agent_initiated_for_tool_result_continuation() {
+        let body = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tool-1", "name": "search", "input": {}}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tool-1", "content": "ok"}
+                    ]
+                }
+            ]
+        });
+
+        assert!(is_agent_initiated(Some(&body)));
+    }
+
+    #[test]
+    fn test_is_agent_initiated_for_plain_user_message() {
+        let body = json!({
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Hello"}
+                    ]
+                }
+            ]
+        });
+
+        assert!(!is_agent_initiated(Some(&body)));
+    }
+
+    #[test]
+    fn test_is_agent_initiated_for_responses_tool_output() {
+        let body = json!({
+            "input": [
+                {"type": "function_call_output", "call_id": "call-1", "output": "ok"}
+            ]
+        });
+
+        assert!(is_agent_initiated(Some(&body)));
+    }
+
+    #[test]
+    fn test_is_agent_initiated_for_plain_follow_up_after_tool_history() {
+        let body = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tool-1", "name": "search", "input": {}}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tool-1", "content": "ok"}
+                    ]
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I found the result"}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "请继续解释这个结果"}
+                    ]
+                }
+            ]
+        });
+
+        assert!(!is_agent_initiated(Some(&body)));
+    }
+
+    #[test]
+    fn test_is_agent_initiated_for_responses_plain_follow_up_after_tool_history() {
+        let body = json!({
+            "input": [
+                {"type": "function_call", "call_id": "call-1", "name": "search", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "call-1", "output": "ok"},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I found the result"}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "请继续解释这个结果"}]}
+            ]
+        });
+
+        assert!(!is_agent_initiated(Some(&body)));
     }
 
     #[test]

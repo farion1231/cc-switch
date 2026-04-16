@@ -30,7 +30,15 @@ pub trait ProviderAdapter: Send + Sync {
     ///
     /// The forwarder inserts these at the position of the original auth header
     /// so that header order is preserved.
-    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)>;
+    ///
+    /// # Parameters
+    /// - `auth`: Authentication information
+    /// - `request_body`: Optional request body for generating deterministic request IDs (used by Copilot)
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+        request_body: Option<&Value>,
+    ) -> Vec<(http::HeaderName, http::HeaderValue)>;
 
     /// 是否需要格式转换
     fn needs_transform(&self, _provider: &Provider) -> bool {

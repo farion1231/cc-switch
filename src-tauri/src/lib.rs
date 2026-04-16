@@ -794,8 +794,17 @@ pub fn run() {
                 use tokio::sync::RwLock;
 
                 let app_config_dir = crate::config::get_app_config_dir();
-                let copilot_auth_manager = CopilotAuthManager::new(app_config_dir);
-                app.manage(CopilotAuthState(Arc::new(RwLock::new(copilot_auth_manager))));
+                let copilot_auth_manager = Arc::new(RwLock::new(CopilotAuthManager::new(
+                    app_config_dir,
+                )));
+                app.manage(CopilotAuthState(Arc::clone(&copilot_auth_manager)));
+                tauri::async_runtime::spawn(async move {
+                    copilot_auth_manager
+                        .read()
+                        .await
+                        .initialize_background_tasks()
+                        .await;
+                });
                 log::info!("✓ CopilotAuthManager initialized");
             }
 
