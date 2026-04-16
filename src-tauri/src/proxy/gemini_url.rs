@@ -566,6 +566,48 @@ mod tests {
         );
     }
 
+    /// Regression guard: in non-full-URL mode, a versioned third-party
+    /// relay base must have its `/v1beta` suffix **stripped** so the
+    /// appended standard endpoint (`/v1beta/models/{model}:method`) does
+    /// not produce a doubled `/v1beta/v1beta/models/...` path. Non-full
+    /// mode's contract is "base URL + cc-switch appends the canonical
+    /// Gemini endpoint" — a user who wants a relay's custom namespace
+    /// (e.g. `/v1/models/...`) must use full-URL mode instead.
+    ///
+    /// This test pins the intentional asymmetry with
+    /// `preserves_opaque_full_url_with_bare_v1beta_suffix` (full-URL
+    /// preserves, non-full strips) so nobody "fixes" one side into
+    /// breaking the other.
+    #[test]
+    fn strips_versioned_relay_base_suffix_in_non_full_url_mode() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/custom/v1beta",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            false,
+        );
+
+        assert_eq!(
+            url,
+            "https://relay.example/custom/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    /// Companion case: `/v1` base suffix also stripped in non-full-URL
+    /// mode regardless of host.
+    #[test]
+    fn strips_v1_relay_base_suffix_in_non_full_url_mode() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/custom/v1",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            false,
+        );
+
+        assert_eq!(
+            url,
+            "https://relay.example/custom/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
     // ------------------------------------------------------------------
     // Model ID normalization tests.
     //
