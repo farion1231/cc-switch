@@ -2,7 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { AppId } from "@/lib/api/types";
 
-export type AppType = "claude" | "codex" | "gemini" | "opencode" | "openclaw" | "hermes";
+export type AppType =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "opencode"
+  | "openclaw"
+  | "hermes";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
