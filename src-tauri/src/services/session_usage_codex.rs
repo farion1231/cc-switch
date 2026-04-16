@@ -297,18 +297,16 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
         };
 
         match event_type {
-            "session_meta" => {
-                if state.session_id.is_none() {
-                    let payload = value.get("payload");
-                    state.session_id = payload
-                        .and_then(|p| {
-                            p.get("session_id")
-                                .or_else(|| p.get("sessionId"))
-                                .or_else(|| p.get("id"))
-                        })
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                }
+            "session_meta" if state.session_id.is_none() => {
+                let payload = value.get("payload");
+                state.session_id = payload
+                    .and_then(|p| {
+                        p.get("session_id")
+                            .or_else(|| p.get("sessionId"))
+                            .or_else(|| p.get("id"))
+                    })
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
             }
             "turn_context" => {
                 if let Some(payload) = value.get("payload") {

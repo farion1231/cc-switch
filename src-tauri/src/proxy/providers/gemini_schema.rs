@@ -188,10 +188,8 @@ fn to_gemini_schema(schema: Value) -> Value {
                             result.insert("properties".to_string(), Value::Object(converted));
                         }
                     }
-                    "items" => {
-                        if value.is_object() {
-                            result.insert("items".to_string(), to_gemini_schema(value));
-                        }
+                    "items" if value.is_object() => {
+                        result.insert("items".to_string(), to_gemini_schema(value));
                     }
                     "anyOf" => {
                         if let Some(values) = value.as_array() {
