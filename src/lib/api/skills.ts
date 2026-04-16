@@ -15,6 +15,7 @@ export interface SkillApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  hermes: boolean;
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;

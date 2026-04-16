@@ -28,6 +28,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
     claude: "CLAUDE.md",
     codex: "AGENTS.md",
     gemini: "GEMINI.md",
+    hermes: "AGENTS.md",
     opencode: "AGENTS.md",
     openclaw: "AGENTS.md",
     hermes: "HERMES.md",

@@ -663,6 +663,7 @@
     "claude": "Claude",
     "codex": "Codex",
     "gemini": "Gemini",
+    "hermes": "Hermes",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"

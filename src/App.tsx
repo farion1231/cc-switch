@@ -172,6 +172,7 @@ function App() {
     claude: true,
     codex: true,
     gemini: true,
+    hermes: true,
     opencode: true,
     openclaw: true,
     hermes: true,
@@ -181,6 +182,7 @@ function App() {
     if (visibleApps.claude) return "claude";
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
+    if (visibleApps.hermes) return "hermes";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";

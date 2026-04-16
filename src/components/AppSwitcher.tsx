@@ -18,6 +18,7 @@ const ALL_APPS: AppId[] = [
   "openclaw",
   "hermes",
 ];
+
 const STORAGE_KEY = "cc-switch-last-app";
 
 export function AppSwitcher({
@@ -36,6 +37,7 @@ export function AppSwitcher({
     claude: "claude",
     codex: "openai",
     gemini: "gemini",
+    hermes: "terminal",
     opencode: "opencode",
     openclaw: "openclaw",
     hermes: "anthropic",
@@ -44,6 +46,7 @@ export function AppSwitcher({
     claude: "Claude",
     codex: "Codex",
     gemini: "Gemini",
+    hermes: "Hermes",
     opencode: "OpenCode",
     openclaw: "OpenClaw",
     hermes: "Hermes",

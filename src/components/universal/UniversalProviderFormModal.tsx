@@ -50,6 +50,7 @@ export function UniversalProviderFormModal({
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
+  const [hermesEnabled, setHermesEnabled] = useState(true);
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
@@ -71,6 +72,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
+      setHermesEnabled(editingProvider.apps.hermes);
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -90,6 +92,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
+      setHermesEnabled(defaultPreset.defaultApps.hermes);
       setModels(JSON.parse(JSON.stringify(defaultPreset.defaultModels)));
     }
   }, [editingProvider, initialPreset, isOpen]);
@@ -103,6 +106,7 @@ export function UniversalProviderFormModal({
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
+        setHermesEnabled(preset.defaultApps.hermes);
         setModels(JSON.parse(JSON.stringify(preset.defaultModels)));
       }
     },
@@ -200,6 +204,7 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            hermes: hermesEnabled,
           },
           models,
         }
@@ -217,6 +222,7 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        hermes: hermesEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -259,6 +265,7 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            hermes: hermesEnabled,
           },
           models,
         }
@@ -276,6 +283,7 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        hermes: hermesEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -509,6 +517,16 @@ requires_openai_auth = true`;
               <Switch
                 checked={geminiEnabled}
                 onCheckedChange={setGeminiEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="terminal" name="Hermes" size={20} />
+                <span className="font-medium">Hermes</span>
+              </div>
+              <Switch
+                checked={hermesEnabled}
+                onCheckedChange={setHermesEnabled}
               />
             </div>
           </div>
