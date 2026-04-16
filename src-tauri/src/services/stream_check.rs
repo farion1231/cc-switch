@@ -684,7 +684,7 @@ impl StreamCheckService {
 
         let result = match app_type {
             AppType::OpenClaw => {
-                Self::check_openclaw_stream(
+                Self::check_additive_app_stream(
                     &client,
                     provider,
                     &model_to_test,
@@ -704,8 +704,7 @@ impl StreamCheckService {
                 .await
             }
             AppType::Hermes => {
-                // Hermes uses the same check path as OpenClaw for now
-                Self::check_openclaw_stream(
+                Self::check_additive_app_stream(
                     &client,
                     provider,
                     &model_to_test,
@@ -819,7 +818,7 @@ impl StreamCheckService {
     /// - `anthropic-messages`   → check_claude_stream + api_format="anthropic" (ClaudeAuth 策略)
     /// - `google-generative-ai` → check_gemini_stream (Google API Key 策略)
     /// - `bedrock-converse-stream` → 不支持（需要 AWS SigV4 签名）
-    async fn check_openclaw_stream(
+    async fn check_additive_app_stream(
         client: &Client,
         provider: &Provider,
         model: &str,
@@ -829,7 +828,7 @@ impl StreamCheckService {
         // 自定义认证头（如 Longcat 的 `apikey` 头）不走标准 Bearer，
         // 具体头名由 OpenClaw 网关内部决定，cc-switch 无法准确构造，
         // 因此直接返回友好错误而不是让用户看到一个误导性的 401。
-        if Self::openclaw_uses_auth_header(provider) {
+        if Self::additive_app_uses_auth_header(provider) {
             return Err(AppError::localized(
                 "openclaw_auth_header_not_supported",
                 "该供应商使用自定义认证头，暂不支持流式健康检查。建议直接通过 OpenClaw 测试。",
@@ -922,8 +921,8 @@ impl StreamCheckService {
         }
     }
 
-    /// 判断 OpenClaw 供应商是否使用自定义认证头（`authHeader: true`）
-    fn openclaw_uses_auth_header(provider: &Provider) -> bool {
+    /// 判断 additive-mode 供应商是否使用自定义认证头（`authHeader: true`）
+    fn additive_app_uses_auth_header(provider: &Provider) -> bool {
         provider
             .settings_config
             .get("authHeader")
@@ -1040,7 +1039,7 @@ impl StreamCheckService {
                 .await
             }
             Some("@ai-sdk/anthropic") => {
-                // 见 check_openclaw_stream 对 anthropic-messages 的注释：
+                // 见 check_additive_app_stream 对 anthropic-messages 的处理：
                 // 用 ClaudeAuth（Bearer-only）兼容中转服务。
                 let auth = AuthInfo::new(api_key, AuthStrategy::ClaudeAuth);
                 Self::check_claude_stream(
@@ -1420,24 +1419,24 @@ mod tests {
     }
 
     #[test]
-    fn test_openclaw_uses_auth_header_true() {
+    fn test_additive_app_uses_auth_header_true() {
         let p = make_provider(serde_json::json!({
             "baseUrl": "https://api.longcat.chat/v1",
             "apiKey": "k",
             "api": "openai-completions",
             "authHeader": true,
         }));
-        assert!(StreamCheckService::openclaw_uses_auth_header(&p));
+        assert!(StreamCheckService::additive_app_uses_auth_header(&p));
     }
 
     #[test]
-    fn test_openclaw_uses_auth_header_default_false() {
+    fn test_additive_app_uses_auth_header_default_false() {
         let p = make_provider(serde_json::json!({
             "baseUrl": "https://api.deepseek.com/v1",
             "apiKey": "k",
             "api": "openai-completions",
         }));
-        assert!(!StreamCheckService::openclaw_uses_auth_header(&p));
+        assert!(!StreamCheckService::additive_app_uses_auth_header(&p));
     }
 
     #[test]

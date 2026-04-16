@@ -12,12 +12,14 @@ interface UseHermesFormStateParams {
   getSettingsConfig: () => string;
 }
 
+const HERMES_DEFAULT_CONFIG_OBJ = {
+  name: "",
+  base_url: "",
+  api_key: "",
+} as const;
+
 export const HERMES_DEFAULT_CONFIG = JSON.stringify(
-  {
-    name: "",
-    base_url: "",
-    api_key: "",
-  },
+  HERMES_DEFAULT_CONFIG_OBJ,
   null,
   2,
 );
@@ -46,8 +48,7 @@ function parseHermesField<T>(
     if (initialData?.settingsConfig) {
       return (initialData.settingsConfig[field] as T) || fallback;
     }
-    const config = JSON.parse(HERMES_DEFAULT_CONFIG);
-    return (config[field] as T) || fallback;
+    return ((HERMES_DEFAULT_CONFIG_OBJ as Record<string, unknown>)[field] as T) || fallback;
   } catch {
     return fallback;
   }
