@@ -16,12 +16,37 @@ pub enum GeminiFunctionParameters {
 }
 
 pub fn build_gemini_function_parameters(input_schema: Value) -> GeminiFunctionParameters {
-    let schema = normalize_json_schema(input_schema);
+    let schema = ensure_object_schema(normalize_json_schema(input_schema));
 
     if requires_parameters_json_schema(&schema) {
         GeminiFunctionParameters::JsonSchema(schema)
     } else {
         GeminiFunctionParameters::Schema(to_gemini_schema(schema))
+    }
+}
+
+/// Vertex AI rejects FunctionDeclarations whose `parameters` schema lacks an
+/// explicit `type: "object"`, returning:
+///
+/// > functionDeclaration parameters schema should be of type OBJECT.
+///
+/// Anthropic tools sometimes arrive with empty or type-less `input_schema`
+/// (e.g. no-argument tools like Claude Code's `TodoRead`). Normalize those to
+/// `{type: "object", properties: {}}` so the Gemini upstream accepts them.
+///
+/// References: google-gemini/generative-ai-python#423, BerriAI/litellm#5055.
+fn ensure_object_schema(schema: Value) -> Value {
+    match schema {
+        Value::Object(mut obj) => {
+            obj.entry("type".to_string())
+                .or_insert_with(|| json!("object"));
+            if obj.get("type").and_then(|v| v.as_str()) == Some("object") {
+                obj.entry("properties".to_string())
+                    .or_insert_with(|| json!({}));
+            }
+            Value::Object(obj)
+        }
+        other => other,
     }
 }
 
@@ -274,5 +299,42 @@ mod tests {
 
         assert!(result.get("parameters").is_none());
         assert!(result.get("parametersJsonSchema").is_some());
+    }
+
+    /// Regression for P2 (Vertex AI rejecting empty schemas): zero-argument
+    /// Anthropic tools (no `input_schema`) must produce `parameters` with an
+    /// explicit `type: "object"` and an empty `properties` map so the Gemini
+    /// upstream does not return `schema should be of type OBJECT`.
+    #[test]
+    fn empty_input_schema_produces_explicit_object_type() {
+        let result = build_gemini_function_declaration("ping", Some("no-arg"), json!({}));
+
+        assert_eq!(result["parameters"]["type"], "object");
+        assert!(result["parameters"]["properties"].is_object());
+    }
+
+    /// A schema that carries descriptive fields but no `type` is still a
+    /// zero-arg object for Gemini purposes — promote it explicitly.
+    #[test]
+    fn input_schema_missing_type_is_promoted_to_object() {
+        let result = build_gemini_function_declaration(
+            "noop",
+            None,
+            json!({ "description": "does nothing" }),
+        );
+
+        assert_eq!(result["parameters"]["type"], "object");
+        assert!(result["parameters"]["properties"].is_object());
+    }
+
+    /// Defensive: an atomic (non-object) schema is left untouched, because
+    /// forcing `type: "object"` here would corrupt primitive parameter types
+    /// that happen to flow through this path.
+    #[test]
+    fn non_object_schema_is_not_mutated() {
+        let result = build_gemini_function_declaration("bare", None, json!({ "type": "string" }));
+
+        assert_eq!(result["parameters"]["type"], "string");
+        assert!(result["parameters"].get("properties").is_none());
     }
 }

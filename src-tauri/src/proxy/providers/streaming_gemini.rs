@@ -4,7 +4,10 @@
 //! SSE events for Claude-compatible clients.
 
 use super::gemini_shadow::{GeminiShadowStore, GeminiToolCallMeta};
-use super::transform_gemini::{rectify_tool_call_parts, AnthropicToolSchemaHints};
+use super::transform_gemini::{
+    is_synthesized_tool_call_id, rectify_tool_call_parts, synthesize_tool_call_id,
+    AnthropicToolSchemaHints,
+};
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
@@ -116,19 +119,50 @@ fn merge_tool_call_snapshots(
     tool_call_snapshots: &mut Vec<GeminiToolCallMeta>,
     incoming: Vec<GeminiToolCallMeta>,
 ) {
-    for tool_call in incoming {
-        let existing_index =
-            tool_call_snapshots
+    // Gemini's `streamGenerateContent?alt=sse` delivers each chunk as the
+    // cumulative snapshot of `content.parts`. For the same tool call across
+    // chunks we therefore need to map an incoming entry back to whichever
+    // snapshot entry it describes:
+    //
+    // 1. If both sides carry a genuine Gemini id, match by id.
+    // 2. Otherwise match by position in the cumulative `parts` array — this
+    //    is how parallel no-id calls stay distinguishable.
+    //
+    // A previous implementation fell back to matching by `name`, which silently
+    // merged two parallel calls to the same function into one entry (losing
+    // the first call's args). That fallback is removed here.
+    for (position, mut tool_call) in incoming.into_iter().enumerate() {
+        let existing_index = match tool_call.id.as_deref() {
+            Some(incoming_id) => tool_call_snapshots
                 .iter()
-                .position(|existing| match (&existing.id, &tool_call.id) {
-                    (Some(existing_id), Some(incoming_id)) => existing_id == incoming_id,
-                    _ => existing.name == tool_call.name,
-                });
+                .position(|existing| existing.id.as_deref() == Some(incoming_id)),
+            None => tool_call_snapshots
+                .get(position)
+                .filter(|existing| match existing.id.as_deref() {
+                    // Only merge into a positional match when the prior
+                    // snapshot was itself id-less (or we synthesized one).
+                    // A snapshot with a genuine Gemini id at this index is
+                    // treated as a different call — the incoming entry gets
+                    // its own synthesized id below.
+                    Some(id) => is_synthesized_tool_call_id(id),
+                    None => true,
+                })
+                .map(|_| position),
+        };
 
         if let Some(index) = existing_index {
-            tool_call_snapshots[index] = tool_call;
-        } else {
-            tool_call_snapshots.push(tool_call);
+            // Preserve any synthesized id assigned on a previous chunk so the
+            // Anthropic-visible id stays stable across the whole stream.
+            let preserved_id = tool_call_snapshots[index].id.clone();
+            tool_call.id = tool_call.id.or(preserved_id);
+        }
+        if tool_call.id.is_none() {
+            tool_call.id = Some(synthesize_tool_call_id());
+        }
+
+        match existing_index {
+            Some(index) => tool_call_snapshots[index] = tool_call,
+            None => tool_call_snapshots.push(tool_call),
         }
     }
 }
@@ -804,5 +838,47 @@ mod tests {
         assert!(output.contains("git-commit"));
         assert!(output.contains("详细分析内容 编写提交信息 分多次提交代码"));
         assert!(!output.contains("\\\"parameters\\\""));
+    }
+
+    /// Regression for the P1 finding: when Gemini emits two parallel calls to
+    /// the same function without providing ids, both must be surfaced to the
+    /// Anthropic client with distinct synthesized ids. The previous
+    /// name-based fallback in `merge_tool_call_snapshots` collapsed them into
+    /// a single entry, causing silent data loss for the first call.
+    #[test]
+    fn parallel_same_name_no_id_calls_preserve_both() {
+        let output = collect_stream_output(vec![
+            "data: {\"responseId\":\"r1\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\"}}},{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"Osaka\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":5,\"totalTokenCount\":8}}\n\n",
+        ]);
+
+        let tool_use_start_count = output.matches("\"type\":\"tool_use\"").count();
+        assert_eq!(
+            tool_use_start_count, 2,
+            "both parallel calls must survive merge_tool_call_snapshots"
+        );
+        // `input_json_delta.partial_json` is a string, so the city keys appear
+        // JSON-escaped inside the outer SSE `data:` payload. Match against
+        // the raw escape sequences rather than the canonical JSON form.
+        assert!(output.contains("Tokyo"));
+        assert!(output.contains("Osaka"));
+        // Each tool_use must carry a non-empty synthesized id so Claude Code
+        // can disambiguate the two tool_result round-trips.
+        let synth_count = output.matches("\"id\":\"gemini_synth_").count();
+        assert_eq!(synth_count, 2);
+    }
+
+    /// When Gemini keeps sending the same no-id functionCall across cumulative
+    /// chunks, the synthesized id must stay stable so the Anthropic client
+    /// sees a single tool_use block with consistent args updates rather than
+    /// duplicates.
+    #[test]
+    fn no_id_tool_call_reuses_synthesized_id_across_cumulative_chunks() {
+        let output = collect_stream_output(vec![
+            "data: {\"responseId\":\"r2\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":6}}\n\n",
+            "data: {\"responseId\":\"r2\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\",\"units\":\"c\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":9}}\n\n",
+        ]);
+
+        assert_eq!(output.matches("\"type\":\"tool_use\"").count(), 1);
+        assert!(output.contains("\"units\\\":\\\"c\\\""));
     }
 }

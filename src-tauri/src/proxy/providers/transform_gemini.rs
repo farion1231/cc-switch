@@ -18,6 +18,27 @@ pub struct AnthropicToolSchemaHint {
 
 pub type AnthropicToolSchemaHints = HashMap<String, AnthropicToolSchemaHint>;
 
+/// Prefix used for Anthropic-visible tool call ids that we synthesize when
+/// Gemini's `functionCall` omits the `id` field (Gemini 2.x parallel calls
+/// often do). The prefix is how downstream request-path code recognizes that
+/// the id is not a real Gemini id and must be stripped before forwarding back
+/// to Gemini as `functionResponse.id`.
+pub(crate) const SYNTHESIZED_ID_PREFIX: &str = "gemini_synth_";
+
+/// Generate a unique tool-call id that is safe to expose to Anthropic clients
+/// but must not be sent upstream to Gemini. Uses UUID v4 simple encoding
+/// (32 lowercase hex chars) so that any number of parallel calls in the same
+/// response remain distinguishable.
+pub(crate) fn synthesize_tool_call_id() -> String {
+    format!("{SYNTHESIZED_ID_PREFIX}{}", uuid::Uuid::new_v4().simple())
+}
+
+/// Returns true if `id` was produced by [`synthesize_tool_call_id`] and
+/// therefore must be stripped when building Gemini request bodies.
+pub(crate) fn is_synthesized_tool_call_id(id: &str) -> bool {
+    id.starts_with(SYNTHESIZED_ID_PREFIX)
+}
+
 pub fn anthropic_to_gemini(body: Value) -> Result<Value, ProxyError> {
     anthropic_to_gemini_with_shadow(body, None, None, None)
 }
@@ -77,10 +98,19 @@ pub fn anthropic_to_gemini_with_shadow(
     Ok(result)
 }
 
+/// Convenience wrapper over [`gemini_to_anthropic_with_shadow_and_hints`]
+/// with no shadow store or schema hints. Used by the shared
+/// `ProviderAdapter::transform_response` path and by tests.
+#[allow(dead_code)] // kept as public API for non-streaming transform paths
 pub fn gemini_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     gemini_to_anthropic_with_shadow(body, None, None, None)
 }
 
+/// Convenience wrapper for callers that have a shadow store but no tool
+/// schema hints. Production call sites funnel through
+/// [`gemini_to_anthropic_with_shadow_and_hints`] directly; this helper exists
+/// for test ergonomics and future external callers.
+#[allow(dead_code)] // kept as public API for shadow-only transform paths
 pub fn gemini_to_anthropic_with_shadow(
     body: Value,
     shadow_store: Option<&GeminiShadowStore>,
@@ -153,9 +183,15 @@ pub fn gemini_to_anthropic_with_shadow_and_hints(
 
         if let Some(function_call) = part.get("functionCall") {
             has_tool_use = true;
+            let id = function_call
+                .get("id")
+                .and_then(|value| value.as_str())
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(synthesize_tool_call_id);
             content.push(json!({
                 "type": "tool_use",
-                "id": function_call.get("id").and_then(|value| value.as_str()).unwrap_or(""),
+                "id": id,
                 "name": function_call.get("name").and_then(|value| value.as_str()).unwrap_or(""),
                 "input": function_call.get("args").cloned().unwrap_or_else(|| json!({}))
             }));
@@ -499,13 +535,18 @@ fn convert_message_content_to_parts(
                     tool_name_by_id.insert(id.to_string(), name.to_string());
                 }
 
-                parts.push(json!({
-                    "functionCall": {
-                        "id": id,
-                        "name": name,
-                        "args": block.get("input").cloned().unwrap_or_else(|| json!({}))
-                    }
-                }));
+                // A synthesized id is an internal proxy identifier — never
+                // forward it to Gemini. Gemini will disambiguate the missing
+                // id by call order, matching its own earlier response shape.
+                let mut function_call = json!({
+                    "name": name,
+                    "args": block.get("input").cloned().unwrap_or_else(|| json!({}))
+                });
+                if !id.is_empty() && !is_synthesized_tool_call_id(id) {
+                    function_call["id"] = json!(id);
+                }
+
+                parts.push(json!({ "functionCall": function_call }));
             }
             "tool_result" => {
                 let tool_use_id = block
@@ -521,13 +562,16 @@ fn convert_message_content_to_parts(
                         ))
                     })?;
 
-                parts.push(json!({
-                    "functionResponse": {
-                        "id": tool_use_id,
-                        "name": name,
-                        "response": normalize_tool_result_response(block.get("content"))
-                    }
-                }));
+                // See `tool_use` above: synthesized ids must not leak upstream.
+                let mut function_response = json!({
+                    "name": name,
+                    "response": normalize_tool_result_response(block.get("content"))
+                });
+                if !tool_use_id.is_empty() && !is_synthesized_tool_call_id(tool_use_id) {
+                    function_response["id"] = json!(tool_use_id);
+                }
+
+                parts.push(json!({ "functionResponse": function_response }));
             }
             "thinking" | "redacted_thinking" => {}
             _ => {}
@@ -559,11 +603,31 @@ fn normalize_tool_result_response(content: Option<&Value>) -> Value {
 }
 
 fn shadow_parts(content: &Value) -> Option<Vec<Value>> {
-    content
+    let mut parts = content
         .get("parts")
         .and_then(|value| value.as_array())
         .cloned()
-        .or_else(|| content.as_array().cloned())
+        .or_else(|| content.as_array().cloned())?;
+    // Strip synthesized ids before these parts are replayed into a Gemini
+    // request body. The shadow store records the Anthropic-facing id so that
+    // a tool_result round-trip can find the tool's name, but sending the
+    // synthetic value as `functionCall.id` upstream would leak an internal
+    // identifier.
+    for part in &mut parts {
+        let Some(function_call) = part.get_mut("functionCall").and_then(|v| v.as_object_mut())
+        else {
+            continue;
+        };
+        let drop_id = function_call
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|id| id.is_empty() || is_synthesized_tool_call_id(id))
+            .unwrap_or(true);
+        if drop_id {
+            function_call.remove("id");
+        }
+    }
+    Some(parts)
 }
 
 pub fn extract_anthropic_tool_schema_hints(body: &Value) -> AnthropicToolSchemaHints {
@@ -788,8 +852,18 @@ fn extract_tool_call_meta(parts: &[Value]) -> Vec<GeminiToolCallMeta> {
         .iter()
         .filter_map(|part| {
             let function_call = part.get("functionCall")?;
+            // Ensure every surfaced tool call carries a distinguishing id.
+            // Gemini 2.x may omit `id` on parallel calls; synthesizing a
+            // unique replacement prevents downstream merge/replay logic from
+            // collapsing distinct calls onto a single empty-string key.
+            let id = function_call
+                .get("id")
+                .and_then(|value| value.as_str())
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(synthesize_tool_call_id);
             Some(GeminiToolCallMeta::new(
-                function_call.get("id").and_then(|value| value.as_str()),
+                Some(id),
                 function_call
                     .get("name")
                     .and_then(|value| value.as_str())
@@ -1393,6 +1467,162 @@ mod tests {
         assert_eq!(
             result["contents"][0]["parts"][0]["thoughtSignature"],
             "sig-tool-1"
+        );
+    }
+
+    /// Regression for P1: Gemini 2.x may return parallel calls without ids.
+    /// Each Anthropic-visible tool_use must carry a unique id so the Claude
+    /// Code client can map tool_result responses back correctly.
+    #[test]
+    fn gemini_to_anthropic_synthesizes_unique_ids_for_missing_functioncall_ids() {
+        let input = json!({
+            "responseId": "r1",
+            "modelVersion": "gemini-2.5-pro",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [
+                        { "functionCall": { "name": "foo", "args": {} } },
+                        { "functionCall": { "name": "foo", "args": { "k": 1 } } }
+                    ]
+                }
+            }]
+        });
+
+        let result = gemini_to_anthropic(input).unwrap();
+        let id0 = result["content"][0]["id"].as_str().unwrap();
+        let id1 = result["content"][1]["id"].as_str().unwrap();
+        assert!(is_synthesized_tool_call_id(id0));
+        assert!(is_synthesized_tool_call_id(id1));
+        assert_ne!(id0, id1, "synthesized ids must be unique per call");
+    }
+
+    /// Ensures the proxy does not leak synthesized ids back to Gemini when
+    /// Claude Code replies with a tool_result: the id must be stripped from
+    /// both `functionCall.id` and `functionResponse.id`.
+    #[test]
+    fn tool_result_with_synthesized_id_omits_id_in_gemini_request() {
+        let synth = synthesize_tool_call_id();
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": &synth, "name": "get_weather", "input": { "city": "X" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": &synth, "content": "sunny" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let fc = &result["contents"][0]["parts"][0]["functionCall"];
+        assert!(
+            fc.get("id").is_none(),
+            "synthesized id must not leak upstream in functionCall"
+        );
+        assert_eq!(fc["name"], "get_weather");
+        let fr = &result["contents"][1]["parts"][0]["functionResponse"];
+        assert!(
+            fr.get("id").is_none(),
+            "synthesized id must not leak upstream in functionResponse"
+        );
+        assert_eq!(fr["name"], "get_weather");
+    }
+
+    /// Genuine Gemini-assigned ids must round-trip unchanged so that Gemini
+    /// can correlate the tool result with its own prior functionCall entry.
+    #[test]
+    fn tool_result_with_genuine_gemini_id_round_trips() {
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_real_1", "name": "get_weather", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_real_1", "content": "ok" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        assert_eq!(
+            result["contents"][0]["parts"][0]["functionCall"]["id"],
+            "call_real_1"
+        );
+        assert_eq!(
+            result["contents"][1]["parts"][0]["functionResponse"]["id"],
+            "call_real_1"
+        );
+    }
+
+    /// Shadow replay must also strip synthesized ids when it reconstructs
+    /// the assistant's `functionCall` parts from a previously recorded turn.
+    #[test]
+    fn shadow_replay_strips_synthesized_id_from_function_call() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        let synth = synthesize_tool_call_id();
+        store.record_assistant_turn(
+            "prov",
+            "sess",
+            json!({
+                "parts": [{
+                    "functionCall": {
+                        "id": &synth,
+                        "name": "get_weather",
+                        "args": { "city": "Tokyo" }
+                    }
+                }]
+            }),
+            vec![GeminiToolCallMeta::new(
+                Some(synth.clone()),
+                "get_weather",
+                json!({ "city": "Tokyo" }),
+                None::<String>,
+            )],
+        );
+
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": &synth, "name": "get_weather", "input": { "city": "Tokyo" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": &synth, "content": "sunny" }
+                    ]
+                }
+            ]
+        });
+
+        let result =
+            anthropic_to_gemini_with_shadow(input, Some(&store), Some("prov"), Some("sess"))
+                .unwrap();
+        // The assistant message was replayed from shadow; its synthesized id
+        // must be absent from the upstream functionCall representation.
+        assert!(result["contents"][0]["parts"][0]["functionCall"]
+            .get("id")
+            .is_none());
+        // And the tool_result round-trip must still resolve the name via the
+        // shadow map even when the id is synthesized.
+        assert_eq!(
+            result["contents"][1]["parts"][0]["functionResponse"]["name"],
+            "get_weather"
         );
     }
 }
