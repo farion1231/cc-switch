@@ -63,9 +63,14 @@ fn should_normalize_gemini_full_url(base_url: &str) -> bool {
     }
 
     let path = path.trim_end_matches('/');
-    path.contains("/v1beta/models/")
-        || path.contains("/v1/models/")
-        || matches_bare_gemini_models_path(path)
+    // Only classify a path as a "structured Gemini endpoint" — safe to
+    // rewrite to /v1beta/models/{model}:method — when the `/models/`
+    // segment is actually followed by a Gemini `*:generateContent` /
+    // `*:streamGenerateContent` method call. Bare `path.contains("/v1/models/")`
+    // would also match legitimate opaque relay routes like
+    // `/v1/models/invoke`, which are *not* Gemini-structured and must be
+    // preserved as-is.
+    matches_structured_gemini_models_path(path)
         || path.ends_with("/v1beta")
         || path.ends_with("/v1")
         || path.ends_with("/v1beta/models")
@@ -80,8 +85,6 @@ fn should_normalize_gemini_full_url(base_url: &str) -> bool {
         || path.ends_with("/v1beta/openai/responses")
         || path.ends_with("/v1/openai/responses")
         || path.ends_with("/openai/responses")
-        || path.contains(":generateContent")
-        || path.contains(":streamGenerateContent")
 }
 
 fn split_query(input: &str) -> (&str, Option<&str>) {
@@ -150,13 +153,25 @@ fn normalize_prefix(prefix: &str) -> String {
     }
 }
 
-fn matches_bare_gemini_models_path(path: &str) -> bool {
-    if let Some(idx) = path.find("/models/") {
-        let after = &path[idx + "/models/".len()..];
-        after.contains(":generateContent") || after.contains(":streamGenerateContent")
-    } else {
-        false
+/// Returns true when `path` contains a `/models/` segment followed by a
+/// canonical Gemini method call (`*:generateContent` or
+/// `*:streamGenerateContent`). The `/models/` segment alone is not enough:
+/// opaque relay routes such as `/v1/models/invoke` or `/custom/models/foo`
+/// also contain `/models/` but are not Gemini-structured and must not be
+/// rewritten.
+fn matches_structured_gemini_models_path(path: &str) -> bool {
+    let mut cursor = path;
+    while let Some(idx) = cursor.find("/models/") {
+        let after = &cursor[idx + "/models/".len()..];
+        if after.contains(":generateContent") || after.contains(":streamGenerateContent") {
+            return true;
+        }
+        // Advance past this `/models/` occurrence so a later Gemini-style
+        // segment in the same path (unusual but cheap to handle) can still
+        // match.
+        cursor = &cursor[idx + "/models/".len()..];
     }
+    false
 }
 
 fn merge_queries(base_query: Option<&str>, endpoint_query: Option<&str>) -> Option<String> {
@@ -264,5 +279,51 @@ mod tests {
         );
 
         assert_eq!(url, "https://relay.example/custom/models/invoke?alt=sse");
+    }
+
+    /// Regression: a relay whose fixed path starts with `/v1/models/` is an
+    /// opaque route, not a Gemini-structured endpoint. The previous
+    /// heuristic matched any `contains("/v1/models/")` and rewrote it to
+    /// `/v1beta/models/{model}:generateContent`, dropping the relay's own
+    /// route component (`/invoke`) and sending traffic to the wrong place.
+    #[test]
+    fn preserves_opaque_full_url_with_v1_models_prefix() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/v1/models/invoke",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/v1/models/invoke?alt=sse");
+    }
+
+    /// Same regression, `/v1beta/models/` variant — relays may use Google's
+    /// path layout defensively for routing while still being opaque.
+    #[test]
+    fn preserves_opaque_full_url_with_v1beta_models_prefix() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/v1beta/models/route",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(url, "https://relay.example/v1beta/models/route?alt=sse");
+    }
+
+    /// Counter-case: a full URL that *does* carry a genuine Gemini method
+    /// segment (`:generateContent`) under `/v1/models/` should still be
+    /// recognized as structured and normalized to the requested model.
+    #[test]
+    fn normalizes_structured_v1_models_path_with_method_segment() {
+        let url = resolve_gemini_native_url(
+            "https://relay.example/v1/models/gemini-2.5-pro:generateContent",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(
+            url,
+            "https://relay.example/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
     }
 }

@@ -427,12 +427,32 @@ impl ProviderAdapter for ClaudeAdapter {
 
         match provider_type {
             ProviderType::GeminiCli => {
-                if let Some(creds) =
-                    super::gemini::GeminiAdapter::new().parse_oauth_credentials(&key)
-                {
-                    Some(AuthInfo::with_access_token(key, creds.access_token))
-                } else {
-                    Some(AuthInfo::new(key, AuthStrategy::GoogleOAuth))
+                // Parse stored OAuth JSON and only attach access_token when
+                // it's actually usable. `parse_oauth_credentials` accepts
+                // refresh-token-only JSON (which is legitimate before the
+                // first refresh) and also surfaces `{"access_token": "", ...}`
+                // for expired credentials. In both cases we would otherwise
+                // send `Authorization: Bearer ` to upstream and get a 401.
+                //
+                // CC Switch does not currently exchange the refresh_token for
+                // a fresh access_token. Until that path exists, degrade to
+                // plain GoogleOAuth strategy (which still sends the raw key
+                // as a fallback) and log loudly so users know to refresh
+                // their `~/.gemini/oauth_creds.json`.
+                match super::gemini::GeminiAdapter::new().parse_oauth_credentials(&key) {
+                    Some(creds) if !creds.access_token.is_empty() => {
+                        Some(AuthInfo::with_access_token(key, creds.access_token))
+                    }
+                    Some(_) => {
+                        log::warn!(
+                            "[Gemini OAuth] access_token missing or empty for provider `{}`; \
+                             bearer auth will likely fail with 401. Refresh \
+                             ~/.gemini/oauth_creds.json via the gemini CLI to obtain a new token.",
+                            provider.id
+                        );
+                        Some(AuthInfo::new(key, AuthStrategy::GoogleOAuth))
+                    }
+                    None => Some(AuthInfo::new(key, AuthStrategy::GoogleOAuth)),
                 }
             }
             ProviderType::Gemini => Some(AuthInfo::new(key, AuthStrategy::Google)),
@@ -750,6 +770,92 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-proxy-key");
         assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
+    }
+
+    /// Regression: a Gemini OAuth credential JSON that carries only a
+    /// refresh_token (no active access_token) must not be surfaced as an
+    /// `AuthInfo` whose bearer would be empty. Without the guard, downstream
+    /// header injection produces `Authorization: Bearer ` and a deterministic
+    /// 401 from upstream.
+    #[test]
+    fn test_extract_auth_gemini_cli_refresh_only_json_does_not_expose_empty_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let refresh_only_json =
+            r#"{"refresh_token":"rt-abc","client_id":"cid","client_secret":"cs"}"#;
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": refresh_only_json
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        // access_token must not be surfaced as `Some("")` — the OAuth header
+        // builder uses `access_token.as_ref().unwrap_or(&api_key)`, so a
+        // `Some("")` would win over the raw key and emit `Bearer `.
+        assert!(
+            auth.access_token.as_deref().is_none_or(|t| !t.is_empty()),
+            "empty access_token leaked into AuthInfo"
+        );
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+    }
+
+    /// Companion case: a JSON credential with an empty-string `access_token`
+    /// field (the shape an expired credential can take after partial writes)
+    /// must degrade the same way.
+    #[test]
+    fn test_extract_auth_gemini_cli_empty_access_token_degrades_to_raw_key() {
+        let adapter = ClaudeAdapter::new();
+        let expired_json = r#"{"access_token":"","refresh_token":"rt-abc","client_id":"cid","client_secret":"cs"}"#;
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": expired_json
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert!(
+            auth.access_token.as_deref().is_none_or(|t| !t.is_empty()),
+            "empty access_token leaked into AuthInfo"
+        );
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+    }
+
+    /// Counter-case: a well-formed JSON credential with a non-empty
+    /// access_token must still flow through the OAuth path unchanged.
+    #[test]
+    fn test_extract_auth_gemini_cli_valid_json_keeps_access_token() {
+        let adapter = ClaudeAdapter::new();
+        let valid_json = r#"{"access_token":"ya29.valid","refresh_token":"rt"}"#;
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": valid_json
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.access_token.as_deref(), Some("ya29.valid"));
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
     }
 
     #[test]
