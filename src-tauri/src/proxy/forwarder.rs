@@ -1689,6 +1689,10 @@ fn rewrite_claude_transform_endpoint(
     if api_format == "gemini_native" {
         let model =
             super::providers::transform_gemini::extract_gemini_model(body).unwrap_or("unknown");
+        // Accept both bare ids (`gemini-2.5-pro`) and the resource-name
+        // form (`models/gemini-2.5-pro`) that Gemini SDKs emit. See
+        // `normalize_gemini_model_id` for rationale.
+        let model = super::gemini_url::normalize_gemini_model_id(model);
         let is_stream = body
             .get("stream")
             .and_then(|value| value.as_bool())
@@ -1938,6 +1942,21 @@ mod tests {
             "/v1beta/models/gemini-2.5-pro:generateContent?x-id=1"
         );
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    /// Regression: body.model arriving as the resource-name form
+    /// `models/gemini-2.5-pro` must not produce a doubled
+    /// `/v1beta/models/models/...` path.
+    #[test]
+    fn rewrite_claude_transform_endpoint_strips_gemini_model_resource_prefix() {
+        let (endpoint, _) = rewrite_claude_transform_endpoint(
+            "/v1/messages",
+            "gemini_native",
+            false,
+            &json!({ "model": "models/gemini-2.5-pro" }),
+        );
+
+        assert_eq!(endpoint, "/v1beta/models/gemini-2.5-pro:generateContent");
     }
 
     #[test]

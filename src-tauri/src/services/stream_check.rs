@@ -12,7 +12,7 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::gemini_url::resolve_gemini_native_url;
+use crate::proxy::gemini_url::{normalize_gemini_model_id, resolve_gemini_native_url};
 use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
@@ -598,13 +598,16 @@ impl StreamCheckService {
         extra_headers: Option<&serde_json::Map<String, serde_json::Value>>,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
+        // Strip `models/` resource-name prefix from the model id — see
+        // `normalize_gemini_model_id` for rationale.
+        let normalized_model = normalize_gemini_model_id(model);
         // Gemini 原生 API: /v1beta/models/{model}:streamGenerateContent?alt=sse
         // 智能处理 /v1beta 路径：如果 base_url 不包含版本路径，则添加 /v1beta
         // alt=sse 参数使 API 返回 SSE 格式（text/event-stream）而非 JSON 数组
         let url = if base.contains("/v1beta") || base.contains("/v1/") {
-            format!("{base}/models/{model}:streamGenerateContent?alt=sse")
+            format!("{base}/models/{normalized_model}:streamGenerateContent?alt=sse")
         } else {
-            format!("{base}/v1beta/models/{model}:streamGenerateContent?alt=sse")
+            format!("{base}/v1beta/models/{normalized_model}:streamGenerateContent?alt=sse")
         };
 
         // Gemini 原生请求体格式
@@ -1325,7 +1328,13 @@ impl StreamCheckService {
         model: &str,
     ) -> String {
         if api_format == "gemini_native" {
-            let endpoint = format!("/v1beta/models/{model}:streamGenerateContent?alt=sse");
+            // Strip an optional `models/` resource-name prefix so that model
+            // identifiers copied from Gemini SDK outputs (e.g.
+            // `models/gemini-2.5-pro`) don't produce a doubled
+            // `/v1beta/models/models/...` URL.
+            let normalized_model = normalize_gemini_model_id(model);
+            let endpoint =
+                format!("/v1beta/models/{normalized_model}:streamGenerateContent?alt=sse");
             return resolve_gemini_native_url(base_url, &endpoint, is_full_url);
         }
 
@@ -1771,6 +1780,27 @@ mod tests {
         );
 
         assert_eq!(url, "https://relay.example/custom/generate-content?alt=sse");
+    }
+
+    /// Regression: Gemini SDK outputs commonly surface model ids as the
+    /// resource-name form `models/gemini-2.5-pro`. Interpolating that raw
+    /// value used to produce `/v1beta/models/models/gemini-2.5-pro:...`
+    /// which the upstream rejects and the health check records as a
+    /// false-negative for an otherwise valid provider.
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native_strips_models_prefix() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://generativelanguage.googleapis.com",
+            AuthStrategy::Google,
+            "gemini_native",
+            false,
+            "models/gemini-2.5-pro",
+        );
+
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+        );
     }
 
     #[test]
