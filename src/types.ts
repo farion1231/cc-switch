@@ -176,6 +176,7 @@ export interface VisibleApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  hermes: boolean;
   opencode: boolean;
   openclaw: boolean;
 }
@@ -342,6 +343,7 @@ export interface McpApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  hermes: boolean;
   opencode: boolean;
   openclaw: boolean;
 }
@@ -387,6 +389,7 @@ export interface UniversalProviderApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  hermes: boolean;
 }
 
 // Claude 模型配置

@@ -252,7 +252,7 @@ export function ProxyPanel({
                   })}
                 </p>
                 <div className="grid gap-2 sm:grid-cols-3">
-                  {(["claude", "codex", "gemini"] as const).map((appType) => {
+                  {(["claude", "codex", "gemini", "hermes"] as const).map((appType) => {
                     const isEnabled =
                       takeoverStatus?.[
                         appType as keyof typeof takeoverStatus
