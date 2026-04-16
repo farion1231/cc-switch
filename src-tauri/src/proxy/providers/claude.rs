@@ -297,6 +297,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("ANTHROPIC_AUTH_TOKEN")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 log::debug!("[Claude] 使用 ANTHROPIC_AUTH_TOKEN");
@@ -305,6 +306,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("ANTHROPIC_API_KEY")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 log::debug!("[Claude] 使用 ANTHROPIC_API_KEY");
@@ -314,6 +316,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("OPENROUTER_API_KEY")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 log::debug!("[Claude] 使用 OPENROUTER_API_KEY");
@@ -323,6 +326,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("OPENAI_API_KEY")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 log::debug!("[Claude] 使用 OPENAI_API_KEY");
@@ -336,6 +340,7 @@ impl ClaudeAdapter {
             .get("apiKey")
             .or_else(|| provider.settings_config.get("api_key"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
             .filter(|s| !s.is_empty())
         {
             log::debug!("[Claude] 使用 apiKey/api_key");
@@ -855,6 +860,60 @@ mod tests {
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.access_token.as_deref(), Some("ya29.valid"));
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+    }
+
+    /// 回归:从 oauth_creds.json 复制时常带前导换行/空格。未 trim 时
+    /// `starts_with('{')` 会落空,导致误分类为 `ProviderType::Gemini`,再
+    /// 以 raw JSON 当 `x-goog-api-key` 发出去触发 401。trim 应在 provider
+    /// 类型判定和 OAuth 解析前统一生效。
+    #[test]
+    fn test_extract_auth_gemini_cli_json_with_leading_whitespace_classifies_correctly() {
+        let adapter = ClaudeAdapter::new();
+        let valid_json = r#"{"access_token":"ya29.valid","refresh_token":"rt"}"#;
+        let key_with_whitespace = format!("\n  {valid_json}\n");
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": key_with_whitespace
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.access_token.as_deref(), Some("ya29.valid"));
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+    }
+
+    /// 回归:裸 `ya29.` access_token 若带前导换行,也应被 trim 后识别为
+    /// Gemini CLI OAuth,避免前导空白把 `starts_with("ya29.")` 检查顶穿。
+    #[test]
+    fn test_extract_auth_gemini_cli_access_token_with_leading_newline_classifies_correctly() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": "\nya29.raw-token-value\n"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.access_token.as_deref(), Some("ya29.raw-token-value"));
         assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
     }
 
