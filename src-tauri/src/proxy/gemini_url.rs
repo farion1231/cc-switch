@@ -50,8 +50,7 @@ pub fn build_gemini_native_url(base_url: &str, endpoint: &str) -> String {
 
     let endpoint_path = format!("/{}", endpoint_without_query.trim_start_matches('/'));
     let (origin, raw_path) = split_origin_and_path(base_without_query);
-    let on_google_host = is_google_gemini_host(extract_host(origin));
-    let prefix_path = normalize_gemini_base_path(raw_path, on_google_host);
+    let prefix_path = normalize_gemini_base_path(raw_path);
 
     let mut url = if prefix_path.is_empty() {
         format!("{origin}{endpoint_path}")
@@ -170,24 +169,18 @@ fn split_origin_and_path(base_url: &str) -> (&str, &str) {
     (&base_url[..path_start], &base_url[path_start..])
 }
 
-fn normalize_gemini_base_path(path: &str, on_google_host: bool) -> String {
+fn normalize_gemini_base_path(path: &str) -> String {
     let path = path.trim_end_matches('/');
     if path.is_empty() || path == "/" {
         return String::new();
     }
 
-    // 无条件层:Gemini 专属的结构化 `/models/...:method` path。非 Google
-    // host 上也不可能作为 relay 的合法固定端点(这是方法调用,不是资源
-    // 根),统一剥到 `/models/` 之前。
     for marker in ["/v1beta/models/", "/v1/models/", "/models/"] {
         if let Some(index) = path.find(marker) {
             return normalize_prefix(&path[..index]);
         }
     }
 
-    // 无条件层:深 OpenAI-compat endpoint 也属于 Gemini 专属语法
-    // (`/openai/chat/completions`、`/openai/responses` 及其版本前缀变体),
-    // 非 Google host 上也不是合理的 relay 终端路径。
     for suffix in [
         "/v1beta/openai/chat/completions",
         "/v1/openai/chat/completions",
@@ -195,26 +188,6 @@ fn normalize_gemini_base_path(path: &str, on_google_host: bool) -> String {
         "/v1beta/openai/responses",
         "/v1/openai/responses",
         "/openai/responses",
-    ] {
-        if path == suffix {
-            return String::new();
-        }
-        if let Some(prefix) = path.strip_suffix(suffix) {
-            return normalize_prefix(prefix);
-        }
-    }
-
-    // Google-host gated 层:通用版本/资源根后缀(`/v1`、`/v1beta`、
-    // `/models`、`/openai` 及子目录)在 Google / Vertex host 上确实是
-    // 官方命名空间,值得归一化;但在第三方 relay 上可能是合法固定前缀
-    // (`https://relay.example/custom/v1` 等),必须原样保留,否则会把
-    // 出站 URL 改写成 `.../v1beta/models/...` 并打到错误的后端。与
-    // `should_normalize_gemini_full_url` 第二层对称。
-    if !on_google_host {
-        return path.to_string();
-    }
-
-    for suffix in [
         "/v1beta/openai",
         "/v1/openai",
         "/openai",
@@ -590,143 +563,6 @@ mod tests {
         assert_eq!(
             url,
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
-        );
-    }
-
-    // ------------------------------------------------------------------
-    // Non-full-URL mode tests (`is_full_url == false`).
-    //
-    // Prior to this gate, `build_gemini_native_url` unconditionally stripped
-    // `/v1`, `/v1beta`, `/models`, `/openai` suffixes regardless of host —
-    // so a third-party relay base URL like `https://relay.example/custom/v1`
-    // would be silently rewritten to `.../custom/v1beta/models/...` and
-    // 404 at the relay. The fix applies the same Google-host whitelist
-    // that full-URL mode uses: only Google / Vertex hosts get the generic
-    // version / resource-root suffixes stripped. Gemini-specific grammars
-    // (`/models/...:method` and deep `/openai/*` endpoints) still normalize
-    // on any host — those are unambiguous and not plausible relay terminal
-    // paths.
-    // ------------------------------------------------------------------
-
-    /// Regression: non-full-URL + third-party relay base with a `/v1`
-    /// prefix must preserve the prefix so the relay's own routing layer
-    /// decides what to do with the appended method path.
-    #[test]
-    fn preserves_opaque_v1_suffix_in_non_full_url_mode() {
-        let url = resolve_gemini_native_url(
-            "https://relay.example/custom/v1",
-            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-            false,
-        );
-
-        assert_eq!(
-            url,
-            "https://relay.example/custom/v1/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
-        );
-    }
-
-    /// Companion case: `/v1beta` suffix on a non-Google host must be
-    /// preserved in non-full-URL mode too. Previously this was stripped
-    /// regardless of host.
-    #[test]
-    fn preserves_opaque_v1beta_suffix_in_non_full_url_mode() {
-        let url = resolve_gemini_native_url(
-            "https://relay.example/custom/v1beta",
-            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-            false,
-        );
-
-        assert_eq!(
-            url,
-            "https://relay.example/custom/v1beta/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
-        );
-    }
-
-    /// Companion case: bare `/models` suffix on a non-Google host stays
-    /// as-is. Relay might mount the Gemini-compatible namespace at this
-    /// path prefix specifically.
-    #[test]
-    fn preserves_opaque_models_suffix_in_non_full_url_mode() {
-        let url = resolve_gemini_native_url(
-            "https://relay.example/custom/models",
-            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-            false,
-        );
-
-        assert_eq!(
-            url,
-            "https://relay.example/custom/models/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
-        );
-    }
-
-    /// Companion case: bare `/openai` resource-root suffix on a non-Google
-    /// host stays as-is. Only the *deep* OpenAI-compat endpoints
-    /// (`/openai/chat/completions`, `/openai/responses` and variants) are
-    /// stripped unconditionally — those are Gemini-specific grammar.
-    #[test]
-    fn preserves_opaque_openai_suffix_in_non_full_url_mode() {
-        let url = resolve_gemini_native_url(
-            "https://relay.example/custom/openai",
-            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-            false,
-        );
-
-        assert_eq!(
-            url,
-            "https://relay.example/custom/openai/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
-        );
-    }
-
-    /// Counter-case: `/v1beta` on the official Gemini host in non-full-URL
-    /// mode must still normalize. This is the most common official-host
-    /// shape pasted from AI Studio documentation.
-    #[test]
-    fn strips_v1_suffix_on_google_host_in_non_full_url_mode() {
-        let url = resolve_gemini_native_url(
-            "https://generativelanguage.googleapis.com/v1beta",
-            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-            false,
-        );
-
-        assert_eq!(
-            url,
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
-        );
-    }
-
-    /// Boundary: structured `/models/...:method` paths are Gemini-specific
-    /// grammar and must be rewritten regardless of host, even in non-full
-    /// mode. A user who pasted a full method URL but forgot to toggle
-    /// full-URL on should still get the expected endpoint.
-    #[test]
-    fn strips_structured_model_method_suffix_regardless_of_host_in_non_full_url_mode() {
-        let url = resolve_gemini_native_url(
-            "https://relay.example/custom/v1/models/foo:generateContent",
-            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-            false,
-        );
-
-        assert_eq!(
-            url,
-            "https://relay.example/custom/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
-        );
-    }
-
-    /// Boundary: deep OpenAI-compat endpoints are unambiguous Gemini-
-    /// specific terminal paths and are rewritten on any host. Mirrors
-    /// `preserves_custom_proxy_prefix_while_stripping_openai_suffix` for
-    /// the non-full-URL flow.
-    #[test]
-    fn strips_deep_openai_compat_endpoint_on_non_google_host_in_non_full_url_mode() {
-        let url = resolve_gemini_native_url(
-            "https://relay.example/custom/v1beta/openai/chat/completions",
-            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
-            false,
-        );
-
-        assert_eq!(
-            url,
-            "https://relay.example/custom/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
         );
     }
 
