@@ -408,6 +408,32 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
             }
         }
 
+        if let (Some(store), Some(provider_id), Some(session_id)) = (
+            shadow_store.as_ref(),
+            provider_id.as_deref(),
+            session_id.as_deref(),
+        ) {
+            let tool_calls = tool_call_snapshots.clone();
+            let shadow_text = if accumulated_text.is_empty() {
+                blocked_text.as_deref()
+            } else {
+                Some(accumulated_text.as_str())
+            };
+            let shadow_parts = build_shadow_assistant_parts(
+                shadow_text,
+                text_thought_signature.as_deref(),
+                &tool_calls,
+            );
+            if !shadow_parts.is_empty() {
+                store.record_assistant_turn(
+                    provider_id,
+                    session_id,
+                    json!({ "parts": shadow_parts }),
+                    tool_calls.clone(),
+                );
+            }
+        }
+
         let tool_calls = tool_call_snapshots;
         for tool_call in &tool_calls {
             let index = next_content_index;
@@ -439,31 +465,6 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
                 "index": index
             });
             yield Ok(encode_sse("content_block_stop", &stop_event));
-        }
-
-        if let (Some(store), Some(provider_id), Some(session_id)) = (
-            shadow_store.as_ref(),
-            provider_id.as_deref(),
-            session_id.as_deref(),
-        ) {
-            let shadow_text = if accumulated_text.is_empty() {
-                blocked_text.as_deref()
-            } else {
-                Some(accumulated_text.as_str())
-            };
-            let shadow_parts = build_shadow_assistant_parts(
-                shadow_text,
-                text_thought_signature.as_deref(),
-                &tool_calls,
-            );
-            if !shadow_parts.is_empty() {
-                store.record_assistant_turn(
-                    provider_id,
-                    session_id,
-                    json!({ "parts": shadow_parts }),
-                    tool_calls.clone(),
-                );
-            }
         }
 
         let stop_reason = map_finish_reason(
@@ -664,6 +665,41 @@ mod tests {
             second_turn["contents"][1]["parts"][0]["thoughtSignature"],
             "sig-1"
         );
+    }
+
+    #[test]
+    fn stores_tool_shadow_before_tool_use_events_are_fully_drained() {
+        let store = Arc::new(GeminiShadowStore::with_limits(8, 4));
+        let chunks = vec![
+            "data: {\"responseId\":\"resp_tool_shadow\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call_1\",\"name\":\"Bash\",\"args\":{\"command\":\"ls -R\"}},\"thoughtSignature\":\"sig-tool-1\"}]}}],\"usageMetadata\":{\"promptTokenCount\":5,\"totalTokenCount\":8}}\n\n".to_string(),
+        ];
+        let stream = futures::stream::iter(
+            chunks
+                .into_iter()
+                .map(|chunk| Ok::<Bytes, std::io::Error>(Bytes::from(chunk))),
+        );
+        let mut converted = Box::pin(create_anthropic_sse_stream_from_gemini(
+            stream,
+            Some(store.clone()),
+            Some("provider-a".to_string()),
+            Some("session-1".to_string()),
+            None,
+        ));
+
+        futures::executor::block_on(async {
+            while let Some(item) = converted.next().await {
+                let event = String::from_utf8(item.unwrap().to_vec()).unwrap();
+                if event.contains("\"type\":\"tool_use\"") {
+                    break;
+                }
+            }
+        });
+
+        let shadow = store
+            .latest_assistant_content("provider-a", "session-1")
+            .unwrap();
+        assert_eq!(shadow["parts"][0]["functionCall"]["name"], "Bash");
+        assert_eq!(shadow["parts"][0]["thoughtSignature"], "sig-tool-1");
     }
 
     #[test]

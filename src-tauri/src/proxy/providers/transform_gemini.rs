@@ -268,6 +268,7 @@ fn convert_messages_to_contents(
     shadow_turns: &[GeminiAssistantTurn],
 ) -> Result<Vec<Value>, ProxyError> {
     let mut contents = Vec::new();
+    let mut used_shadow_indices = HashSet::new();
     let total_assistant_messages = messages
         .iter()
         .filter(|message| message.get("role").and_then(|value| value.as_str()) == Some("assistant"))
@@ -290,12 +291,20 @@ fn convert_messages_to_contents(
         let gemini_role = if role == "assistant" { "model" } else { "user" };
 
         let parts = if role == "assistant" {
-            let shadow_index = assistant_seen_index
+            let positional_shadow_index = assistant_seen_index
                 .checked_sub(shadow_start_index)
-                .filter(|index| *index < effective_shadow_turns.len());
+                .filter(|index| *index < effective_shadow_turns.len())
+                .filter(|index| !used_shadow_indices.contains(index));
+            let tool_use_match_index = find_matching_shadow_turn_for_assistant_message(
+                message.get("content"),
+                effective_shadow_turns,
+            )
+            .filter(|index| !used_shadow_indices.contains(index));
             assistant_seen_index += 1;
+            let shadow_index = tool_use_match_index.or(positional_shadow_index);
 
             if let Some(index) = shadow_index {
+                used_shadow_indices.insert(index);
                 let shadow_turn = &effective_shadow_turns[index];
                 merge_tool_names_from_shadow(shadow_turn, &mut tool_name_by_id);
                 if let Some(parts) = shadow_parts(&shadow_turn.assistant_content) {
@@ -329,6 +338,67 @@ fn convert_messages_to_contents(
     }
 
     Ok(contents)
+}
+
+fn find_matching_shadow_turn_for_assistant_message(
+    content: Option<&Value>,
+    shadow_turns: &[GeminiAssistantTurn],
+) -> Option<usize> {
+    let (tool_use_ids, tool_use_names) = extract_assistant_tool_use_keys(content);
+    if tool_use_ids.is_empty() && tool_use_names.is_empty() {
+        return None;
+    }
+
+    shadow_turns.iter().enumerate().find_map(|(index, turn)| {
+        turn.tool_calls
+            .iter()
+            .any(|tool_call| {
+                tool_call
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| tool_use_ids.contains(id))
+                    || tool_use_names.contains(tool_call.name.as_str())
+                    || tool_use_names.contains(normalize_tool_name(&tool_call.name))
+            })
+            .then_some(index)
+    })
+}
+
+fn extract_assistant_tool_use_keys(content: Option<&Value>) -> (HashSet<String>, HashSet<String>) {
+    let mut tool_use_ids = HashSet::new();
+    let mut tool_use_names = HashSet::new();
+    let Some(blocks) = content.and_then(|value| value.as_array()) else {
+        return (tool_use_ids, tool_use_names);
+    };
+
+    for block in blocks {
+        if block.get("type").and_then(|value| value.as_str()) != Some("tool_use") {
+            continue;
+        }
+
+        if let Some(id) = block
+            .get("id")
+            .and_then(|value| value.as_str())
+            .filter(|id| !id.is_empty())
+        {
+            tool_use_ids.insert(id.to_string());
+        }
+
+        if let Some(name) = block
+            .get("name")
+            .and_then(|value| value.as_str())
+            .filter(|name| !name.is_empty())
+        {
+            tool_use_names.insert(name.to_string());
+            tool_use_names.insert(normalize_tool_name(name).to_string());
+        }
+    }
+
+    (tool_use_ids, tool_use_names)
+}
+
+fn normalize_tool_name(name: &str) -> &str {
+    name.rsplit(':').next().unwrap_or(name)
 }
 
 fn convert_message_content_to_parts(
@@ -1257,6 +1327,72 @@ mod tests {
         assert_eq!(
             result["contents"][2]["parts"][0]["functionCall"]["name"],
             "tool_2"
+        );
+    }
+
+    #[test]
+    fn shadow_replay_matches_tool_use_turn_by_id_when_position_drifts() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "prov",
+            "sess",
+            json!({
+                "parts": [{
+                    "functionCall": {
+                        "id": "call_1",
+                        "name": "Bash",
+                        "args": { "command": "ls -R" }
+                    },
+                    "thoughtSignature": "sig-tool-1"
+                }]
+            }),
+            vec![GeminiToolCallMeta::new(
+                Some("call_1"),
+                "Bash",
+                json!({ "command": "ls -R" }),
+                Some("sig-tool-1"),
+            )],
+        );
+
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "default_api:Bash",
+                            "input": { "command": "ls -R" }
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "ok" }
+                    ]
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "text", "text": "local-only assistant turn without Gemini shadow" }
+                    ]
+                }
+            ]
+        });
+
+        let result =
+            anthropic_to_gemini_with_shadow(input, Some(&store), Some("prov"), Some("sess"))
+                .unwrap();
+
+        assert_eq!(
+            result["contents"][0]["parts"][0]["functionCall"]["name"],
+            "Bash"
+        );
+        assert_eq!(
+            result["contents"][0]["parts"][0]["thoughtSignature"],
+            "sig-tool-1"
         );
     }
 }
