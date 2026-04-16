@@ -122,7 +122,28 @@ fn merge_tool_call_snapshots(
         let existing_index = match tool_call.id.as_deref() {
             Some(incoming_id) => tool_call_snapshots
                 .iter()
-                .position(|existing| existing.id.as_deref() == Some(incoming_id)),
+                .position(|existing| existing.id.as_deref() == Some(incoming_id))
+                .or_else(|| {
+                    // Fallback for the "synth -> real id upgrade" case:
+                    // Gemini's cumulative stream may deliver the first chunk
+                    // of a tool call without an id (we synthesize one) and
+                    // then upgrade it to a genuine id on a later chunk. A
+                    // pure id-match would miss the existing synthesized
+                    // snapshot and push a second entry, yielding duplicate
+                    // `tool_use` content blocks at stream end. If the
+                    // same-position slot currently holds a synthesized id,
+                    // merge into it — `or(preserved_id)` below will keep
+                    // the real id, dropping the synthesized one.
+                    tool_call_snapshots
+                        .get(position)
+                        .filter(|existing| {
+                            matches!(
+                                existing.id.as_deref(),
+                                Some(id) if is_synthesized_tool_call_id(id)
+                            )
+                        })
+                        .map(|_| position)
+                }),
             None => tool_call_snapshots
                 .get(position)
                 .filter(|existing| match existing.id.as_deref() {
@@ -140,8 +161,24 @@ fn merge_tool_call_snapshots(
         if let Some(index) = existing_index {
             // Preserve any synthesized id assigned on a previous chunk so the
             // Anthropic-visible id stays stable across the whole stream.
+            // When incoming carries a real Gemini id and the slot holds a
+            // synthesized one, `Some(real).or(Some(synth)) == Some(real)`
+            // so the upgrade wins naturally.
             let preserved_id = tool_call_snapshots[index].id.clone();
             tool_call.id = tool_call.id.or(preserved_id);
+
+            // Preserve `thought_signature` across chunks. Gemini's cumulative
+            // stream may include `thoughtSignature` on one chunk and omit it
+            // on a subsequent cumulative snapshot of the same part, even
+            // though the signature still belongs to the call. A blind
+            // overwrite would drop it, so the shadow turn we record (and
+            // later replay) would be missing `thoughtSignature` and the
+            // upstream would reject the follow-up for invalid signature.
+            if tool_call.thought_signature.is_none() {
+                tool_call
+                    .thought_signature
+                    .clone_from(&tool_call_snapshots[index].thought_signature);
+            }
         }
         if tool_call.id.is_none() {
             tool_call.id = Some(synthesize_tool_call_id());
@@ -455,6 +492,33 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
             }
         }
 
+        // ------------------------------------------------------------------
+        // Known trade-off: tool-call ordering vs. interleaved text.
+        //
+        // We emit all `tool_use` blocks *after* the final text
+        // `content_block_stop` above. If Gemini returns parts interleaved
+        // like `[text_a, functionCall_1, text_b, functionCall_2]`, the
+        // Anthropic-facing stream reorders them into `[text(a+b),
+        // tool_use_1, tool_use_2]`, whereas `gemini_to_anthropic_with_shadow_and_hints`
+        // (non-streaming) preserves the original part order.
+        //
+        // This is intentional given the current design:
+        //   1. Gemini `streamGenerateContent?alt=sse` delivers each chunk as
+        //      a *cumulative* snapshot of `content.parts`. Emitting a
+        //      `tool_use` content block on first observation would require
+        //      closing the still-accumulating text block, then re-opening a
+        //      new text block when more text arrives — producing many
+        //      fragmented content blocks per message.
+        //   2. Anthropic clients we target (claude-code and similar) consume
+        //      a message's tool calls by scanning for `tool_use` blocks and
+        //      do not depend on strict text ↔ tool interleaving for
+        //      correctness of tool execution or result routing.
+        //
+        // If a future client requires strict part-order fidelity in the
+        // streaming path, the fix is to track each part's original index,
+        // segment the accumulated text into multiple content blocks at
+        // tool-call boundaries, and flush in original order.
+        // ------------------------------------------------------------------
         let tool_calls = tool_call_snapshots;
         for tool_call in &tool_calls {
             let index = next_content_index;
@@ -913,5 +977,78 @@ mod tests {
         assert_eq!(output.matches("\"type\":\"tool_use\"").count(), 1);
         assert!(!output.contains("\"id\":\"\""));
         assert_eq!(output.matches("\"id\":\"gemini_synth_").count(), 1);
+    }
+
+    /// Regression for Codex P1: Gemini's cumulative stream may deliver a
+    /// `functionCall` without an id (we synthesize one) and then upgrade
+    /// to a genuine id on a later chunk. Without a positional fallback in
+    /// the `Some(incoming_id)` branch of `merge_tool_call_snapshots`, the
+    /// real id would fail to match the existing synthesized snapshot and
+    /// push a second entry — yielding duplicate `tool_use` blocks at
+    /// stream end (one synthesized, one real) and breaking tool_result
+    /// correlation.
+    #[test]
+    fn upgraded_real_id_merges_into_existing_synthesized_snapshot() {
+        let output = collect_stream_output(vec![
+            // Chunk 1: no id -> a `gemini_synth_*` id is assigned.
+            "data: {\"responseId\":\"rupg\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":6}}\n\n",
+            // Chunk 2: cumulative snapshot upgrades the same call to a
+            // real Gemini id. Must merge into the existing slot, not
+            // spawn a second snapshot.
+            "data: {\"responseId\":\"rupg\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"real_id_abc\",\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\",\"units\":\"c\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":9}}\n\n",
+        ]);
+
+        // Exactly one tool_use block (not two).
+        assert_eq!(
+            output.matches("\"type\":\"tool_use\"").count(),
+            1,
+            "id upgrade must merge into the synthesized snapshot, not duplicate it: {output}"
+        );
+        // The emitted tool_use id is the real Gemini id, not the synthesized one.
+        assert!(
+            output.contains("\"id\":\"real_id_abc\""),
+            "expected real id to win after upgrade: {output}"
+        );
+        assert!(
+            !output.contains("\"id\":\"gemini_synth_"),
+            "synthesized id must be dropped when a real id arrives: {output}"
+        );
+        // Args from the final cumulative snapshot are emitted.
+        assert!(output.contains("units"));
+    }
+
+    /// Regression for Codex P2: Gemini's cumulative stream may include
+    /// `thoughtSignature` on one chunk and omit it on a later cumulative
+    /// snapshot of the same call. A blind `tool_call_snapshots[index] =
+    /// tool_call` overwrite would drop the signature, so the shadow turn
+    /// recorded (and later replayed to Gemini) would miss
+    /// `thoughtSignature` and the upstream would reject the follow-up.
+    /// `merge_tool_call_snapshots` must retain the prior signature when
+    /// the incoming chunk does not carry one.
+    #[test]
+    fn thought_signature_preserved_when_later_chunk_omits_it() {
+        let store = Arc::new(GeminiShadowStore::with_limits(8, 4));
+        collect_stream_output_with_shadow(
+            vec![
+                // Chunk 1: carries thoughtSignature "sig-keep".
+                "data: {\"responseId\":\"rsig\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call_1\",\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\"}},\"thoughtSignature\":\"sig-keep\"}]}}],\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":6}}\n\n",
+                // Chunk 2: cumulative update for the same call, but
+                // thoughtSignature is omitted — common for Gemini's
+                // one-shot signature fields.
+                "data: {\"responseId\":\"rsig\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call_1\",\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\",\"units\":\"c\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":9}}\n\n",
+            ],
+            store.clone(),
+            "provider-sig",
+            "session-sig",
+        );
+
+        let shadow = store
+            .latest_assistant_content("provider-sig", "session-sig")
+            .expect("shadow turn must be recorded");
+        assert_eq!(shadow["parts"][0]["functionCall"]["id"], "call_1");
+        assert_eq!(
+            shadow["parts"][0]["thoughtSignature"], "sig-keep",
+            "prior thoughtSignature must survive a later chunk that omits it: {shadow}"
+        );
     }
 }
