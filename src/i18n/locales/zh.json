@@ -1980,6 +1980,11 @@
           "placeholder": "15721",
           "description": "路由服务器监听的端口号（1024 ~ 65535）"
         },
+        "upstreamUrl": {
+          "label": "Upstream URL",
+          "placeholder": "http://127.0.0.1:15721",
+          "description": "写回到各应用配置的代理地址（仅支持 http/https origin；留空则使用监听地址/端口）。如果指向其他端口，请在该地址上运行转发/调试代理并转发到本应用监听端口。"
+        },
         "maxRetries": {
           "label": "最大重试次数",
           "placeholder": "3",
@@ -2030,6 +2035,7 @@
       "invalidAddress": "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
       "configSaved": "路由配置已保存",
       "configSaveFailed": "保存配置失败",
+      "invalidUpstreamUrl": "Upstream URL 无效，请输入 http(s)://host:port（仅 origin，不允许 path/query/fragment）",
       "restartRequired": "修改地址或端口后需要重启路由服务才能生效"
     },
     "switchFailed": "切换失败: {{error}}",

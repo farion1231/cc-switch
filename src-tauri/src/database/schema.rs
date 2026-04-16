@@ -123,6 +123,7 @@ impl Database {
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+            upstream_url TEXT,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
             max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
@@ -283,6 +284,9 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 尝试添加 upstream_url 列到 proxy_config 表
+        let _ = conn.execute("ALTER TABLE proxy_config ADD COLUMN upstream_url TEXT", []);
 
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
