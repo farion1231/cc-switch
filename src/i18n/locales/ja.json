@@ -80,7 +80,7 @@
     "hideAttribution": "AI署名を非表示",
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
-    "effortHigh": "高強度思考",
+    "effortMax": "最大強度思考",
     "disableAutoUpgrade": "自動アップグレードを無効化"
   },
   "header": {
