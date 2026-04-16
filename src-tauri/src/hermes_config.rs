@@ -283,7 +283,7 @@ pub fn write_hermes_live(provider: &Provider) -> Result<(), AppError> {
                                 );
                             }
                             // 确保 transport 字段存在
-                            if !provider_map.contains_key(&serde_yaml::Value::String("transport".to_string())) {
+                            if !provider_map.contains_key(serde_yaml::Value::String("transport".to_string())) {
                                 provider_map.insert(
                                     serde_yaml::Value::String("transport".to_string()),
                                     serde_yaml::Value::String("openai_chat".to_string()),
