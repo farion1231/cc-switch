@@ -163,6 +163,34 @@ pub fn gemini_to_anthropic_with_shadow_and_hints(
     let mut rectified_parts = parts.clone();
     rectify_tool_call_parts(&mut rectified_parts, tool_schema_hints);
 
+    // Pre-pass: for every `functionCall` that lacks an id (or carries an
+    // empty-string id), synthesize one and write it back into
+    // `rectified_parts`. Three independent readers — the
+    // Anthropic-visible `content[tool_use]` block below, the shadow
+    // store's `assistant_content` (cloned from `rectified_parts` further
+    // down), and `extract_tool_call_meta(&rectified_parts)` that populates
+    // `shadow_turn.tool_calls` — must all see the same id. Otherwise the
+    // client would receive id A while the shadow stored id B, and the
+    // next round's `tool_result(tool_use_id=A)` would fail to resolve
+    // through `tool_name_by_id` (which is built from the shadow), raising
+    // `Unable to resolve Gemini functionResponse.name`. Streaming path
+    // already has this single-source-of-truth property via
+    // `tool_call_snapshots`.
+    for part in rectified_parts.iter_mut() {
+        let Some(function_call) = part.get_mut("functionCall").and_then(|v| v.as_object_mut())
+        else {
+            continue;
+        };
+        let needs_synth = function_call
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.is_empty())
+            .unwrap_or(true);
+        if needs_synth {
+            function_call.insert("id".to_string(), json!(synthesize_tool_call_id()));
+        }
+    }
+
     let mut content = Vec::new();
     let mut has_tool_use = false;
 
@@ -1623,6 +1651,316 @@ mod tests {
         assert_eq!(
             result["contents"][1]["parts"][0]["functionResponse"]["name"],
             "get_weather"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Non-streaming shadow id coherence regressions.
+    //
+    // When Gemini returns a `functionCall` without an id (common in 2.x
+    // parallel calls) the proxy must synthesize a single id that is
+    // consistent across:
+    //   (a) the Anthropic `content[tool_use].id` sent to the client
+    //   (b) `shadow_content.parts[].functionCall.id` recorded in shadow
+    //   (c) `shadow_turn.tool_calls[].id` recorded in shadow
+    // Previously the non-streaming path generated independent UUIDs in (a)
+    // and (c), so the next round's `tool_result(tool_use_id=A)` would
+    // fail to resolve through `tool_name_by_id` (populated from (c)).
+    // ------------------------------------------------------------------
+
+    /// The id surfaced to the Anthropic client must equal the id recorded
+    /// in the shadow's `tool_calls` metadata and the shadow's serialized
+    /// `functionCall.id`. All three are read back as the same string.
+    #[test]
+    fn non_stream_shadow_id_matches_client_visible_id() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        let body = json!({
+            "responseId": "r-coherence",
+            "modelVersion": "gemini-2.5-pro",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [{
+                        "functionCall": { "name": "get_weather", "args": { "city": "Tokyo" } }
+                    }]
+                }
+            }]
+        });
+
+        let response = gemini_to_anthropic_with_shadow_and_hints(
+            body,
+            Some(&store),
+            Some("prov"),
+            Some("sess"),
+            None,
+        )
+        .unwrap();
+
+        let client_id = response["content"][0]["id"].as_str().unwrap();
+        assert!(
+            is_synthesized_tool_call_id(client_id),
+            "client-facing id must be synthesized for no-id Gemini responses"
+        );
+
+        let snapshot = store.get_session("prov", "sess").expect("shadow recorded");
+        // (c) tool_calls metadata must agree with the client-visible id.
+        let shadow_tool_call_id = snapshot.turns[0].tool_calls[0]
+            .id
+            .as_deref()
+            .expect("tool_calls id populated");
+        assert_eq!(
+            shadow_tool_call_id, client_id,
+            "shadow.tool_calls id must equal client-visible id"
+        );
+        // (b) assistant_content parts must agree too, so that
+        // `merge_tool_names_from_parts` sees the same id on replay.
+        let shadow_part_id = snapshot.turns[0].assistant_content["parts"][0]["functionCall"]["id"]
+            .as_str()
+            .expect("assistant_content functionCall id populated");
+        assert_eq!(
+            shadow_part_id, client_id,
+            "shadow assistant_content functionCall.id must equal client-visible id"
+        );
+    }
+
+    /// Scenario A: the client-side history was truncated so the next
+    /// request only contains `[tool_result(tool_use_id=A)]` without a
+    /// preceding assistant echo. The request must still resolve because
+    /// `build_tool_name_map_from_shadow_turns` now surfaces the same id
+    /// the client was given.
+    #[test]
+    fn non_stream_missing_id_scenario_a_truncated_history_resolves() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        let turn1 = json!({
+            "responseId": "r-truncated",
+            "modelVersion": "gemini-2.5-pro",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [{
+                        "functionCall": { "name": "get_weather", "args": { "city": "Tokyo" } }
+                    }]
+                }
+            }]
+        });
+        let anthropic_response = gemini_to_anthropic_with_shadow_and_hints(
+            turn1,
+            Some(&store),
+            Some("prov"),
+            Some("sess"),
+            None,
+        )
+        .unwrap();
+        let client_id = anthropic_response["content"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Turn 2 — client replays ONLY the tool_result. No assistant echo.
+        let turn2_input = json!({
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": &client_id, "content": "sunny" }
+                    ]
+                }
+            ]
+        });
+        let result =
+            anthropic_to_gemini_with_shadow(turn2_input, Some(&store), Some("prov"), Some("sess"))
+                .expect("scenario A must resolve tool name through shadow");
+        assert_eq!(
+            result["contents"][0]["parts"][0]["functionResponse"]["name"],
+            "get_weather"
+        );
+    }
+
+    /// Scenario B: the client replays the full history. The proxy picks
+    /// the shadow-replay branch (not `convert_message_content_to_parts`),
+    /// which strips the synthesized id from the outgoing `functionCall`.
+    /// `tool_name_by_id` must still have been populated from the shadow
+    /// so the following `tool_result(A)` resolves.
+    #[test]
+    fn non_stream_missing_id_scenario_b_full_history_replay_resolves() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        let turn1 = json!({
+            "responseId": "r-full",
+            "modelVersion": "gemini-2.5-pro",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [{
+                        "functionCall": { "name": "get_weather", "args": { "city": "Tokyo" } }
+                    }]
+                }
+            }]
+        });
+        let anthropic_response = gemini_to_anthropic_with_shadow_and_hints(
+            turn1,
+            Some(&store),
+            Some("prov"),
+            Some("sess"),
+            None,
+        )
+        .unwrap();
+        let client_id = anthropic_response["content"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Turn 2 — full history: assistant tool_use + tool_result.
+        let turn2_input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": &client_id,
+                            "name": "get_weather",
+                            "input": { "city": "Tokyo" }
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": &client_id, "content": "sunny" }
+                    ]
+                }
+            ]
+        });
+        let result =
+            anthropic_to_gemini_with_shadow(turn2_input, Some(&store), Some("prov"), Some("sess"))
+                .expect("scenario B must resolve tool name through shadow replay");
+
+        // Shadow-replay path: `functionCall.id` is stripped for the
+        // assistant turn (the synthesized id must not leak upstream).
+        assert!(
+            result["contents"][0]["parts"][0]["functionCall"]
+                .get("id")
+                .is_none(),
+            "synthesized id must not leak to Gemini in shadow replay"
+        );
+        assert_eq!(
+            result["contents"][0]["parts"][0]["functionCall"]["name"],
+            "get_weather"
+        );
+        // The tool_result round-trip resolves through the shadow map.
+        assert_eq!(
+            result["contents"][1]["parts"][0]["functionResponse"]["name"],
+            "get_weather"
+        );
+    }
+
+    /// Regression: when Gemini returns an id, nothing is synthesized.
+    /// The original id is round-tripped in both the Anthropic response
+    /// and the shadow store, and it flows back to Gemini on the next
+    /// functionResponse.
+    #[test]
+    fn non_stream_preserves_original_gemini_id_when_present() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        let body = json!({
+            "responseId": "r-preserve",
+            "modelVersion": "gemini-2.5-pro",
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "id": "call_real_1",
+                            "name": "get_weather",
+                            "args": { "city": "Tokyo" }
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let response = gemini_to_anthropic_with_shadow_and_hints(
+            body,
+            Some(&store),
+            Some("prov"),
+            Some("sess"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(response["content"][0]["id"], "call_real_1");
+        let snapshot = store.get_session("prov", "sess").unwrap();
+        assert_eq!(
+            snapshot.turns[0].tool_calls[0].id.as_deref(),
+            Some("call_real_1")
+        );
+        assert_eq!(
+            snapshot.turns[0].assistant_content["parts"][0]["functionCall"]["id"],
+            "call_real_1"
+        );
+    }
+
+    /// Defensive: if a shadow turn somehow carries a synthesized
+    /// `functionCall.id` (e.g. recorded by this path), replaying it via
+    /// `anthropic_to_gemini_with_shadow` must strip the id before sending
+    /// upstream, so Gemini never sees the internal identifier.
+    #[test]
+    fn non_stream_synthesized_id_not_leaked_to_gemini_via_shadow_replay() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        let synth = synthesize_tool_call_id();
+        store.record_assistant_turn(
+            "prov",
+            "sess",
+            json!({
+                "parts": [{
+                    "functionCall": {
+                        "id": &synth,
+                        "name": "get_weather",
+                        "args": { "city": "Tokyo" }
+                    }
+                }]
+            }),
+            vec![GeminiToolCallMeta::new(
+                Some(synth.clone()),
+                "get_weather",
+                json!({ "city": "Tokyo" }),
+                None::<String>,
+            )],
+        );
+
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": &synth,
+                            "name": "get_weather",
+                            "input": { "city": "Tokyo" }
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": &synth, "content": "sunny" }
+                    ]
+                }
+            ]
+        });
+        let result =
+            anthropic_to_gemini_with_shadow(input, Some(&store), Some("prov"), Some("sess"))
+                .unwrap();
+        assert!(
+            result["contents"][0]["parts"][0]["functionCall"]
+                .get("id")
+                .is_none(),
+            "shadow replay must strip synthesized functionCall.id"
+        );
+        assert!(
+            result["contents"][1]["parts"][0]["functionResponse"]
+                .get("id")
+                .is_none(),
+            "functionResponse.id must also be omitted for synthesized ids"
         );
     }
 }
