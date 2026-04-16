@@ -147,7 +147,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Gemini => build_gemini_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_openclaw_settings(request),
-        AppType::Hermes => build_openclaw_settings(request), // Hermes uses same format as OpenClaw
+        AppType::Hermes => build_hermes_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -419,6 +419,46 @@ fn build_openclaw_settings(request: &DeepLinkImportRequest) -> serde_json::Value
             json!([{ "id": model, "name": model }]),
         );
     }
+
+    json!(config)
+}
+
+/// Build Hermes provider settings_config from deeplink request
+///
+/// Hermes uses snake_case field names to match config.yaml format:
+/// - name: Provider display name
+/// - base_url: API endpoint
+/// - api_key: API key
+/// - model: Model name
+/// - transport: Transport type (default: "openai_chat")
+fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    // Build Hermes provider config using snake_case
+    let mut config = serde_json::Map::new();
+
+    // Provider name
+    if let Some(name) = &request.name {
+        config.insert("name".to_string(), json!(name));
+    }
+
+    // API endpoint (snake_case)
+    if !endpoint.is_empty() {
+        config.insert("base_url".to_string(), json!(endpoint));
+    }
+
+    // API key (snake_case)
+    if let Some(api_key) = &request.api_key {
+        config.insert("api_key".to_string(), json!(api_key));
+    }
+
+    // Model name (single string, not array)
+    if let Some(model) = &request.model {
+        config.insert("model".to_string(), json!(model));
+    }
+
+    // Transport type (default to openai_chat for compatibility)
+    config.insert("transport".to_string(), json!("openai_chat"));
 
     json!(config)
 }
