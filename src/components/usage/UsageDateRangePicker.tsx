@@ -9,33 +9,13 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { resolveUsageRange } from "@/lib/usageRange";
+import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { getLocaleFromLanguage } from "./format";
 import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 
 type DraftField = "start" | "end";
 
 const PRESETS: UsageRangePreset[] = ["today", "1d", "7d", "14d", "30d"];
-
-function getPresetLabel(
-  preset: UsageRangePreset,
-  t: (key: string, options?: { defaultValue?: string }) => string,
-): string {
-  switch (preset) {
-    case "today":
-      return t("usage.presetToday", { defaultValue: "当天" });
-    case "1d":
-      return t("usage.preset1d", { defaultValue: "1d" });
-    case "7d":
-      return t("usage.preset7d", { defaultValue: "7d" });
-    case "14d":
-      return t("usage.preset14d", { defaultValue: "14d" });
-    case "30d":
-      return t("usage.preset30d", { defaultValue: "30d" });
-    case "custom":
-      return t("usage.customRange", { defaultValue: "自定义" });
-  }
-}
 
 interface UsageDateRangePickerProps {
   selection: UsageRangeSelection;
@@ -317,7 +297,7 @@ export function UsageDateRangePicker({
                 setOpen(false);
               }}
             >
-              {getPresetLabel(preset, t)}
+              {getUsageRangePresetLabel(preset, t)}
             </Button>
           ))}
         </div>
@@ -432,6 +412,9 @@ export function UsageDateRangePicker({
                   <button
                     key={day.toISOString()}
                     type="button"
+                    aria-label={day.toLocaleDateString(locale)}
+                    aria-current={isToday ? "date" : undefined}
+                    aria-pressed={isEndpoint}
                     className={cn(
                       "relative h-7 rounded text-xs transition-colors",
                       !isCurrentMonth && "text-muted-foreground/30",

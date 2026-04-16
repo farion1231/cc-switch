@@ -5,11 +5,7 @@ import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
-import type {
-  AppTypeFilter,
-  UsageRangePreset,
-  UsageRangeSelection,
-} from "@/types/usage";
+import type { AppTypeFilter, UsageRangeSelection } from "@/types/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
@@ -30,7 +26,7 @@ import {
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { cn } from "@/lib/utils";
 import { getLocaleFromLanguage } from "./format";
-import { resolveUsageRange } from "@/lib/usageRange";
+import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -40,26 +36,6 @@ const APP_FILTER_OPTIONS: AppTypeFilter[] = [
   "codex",
   "gemini",
 ];
-
-function getPresetLabel(
-  preset: UsageRangePreset,
-  t: (key: string, options?: { defaultValue?: string }) => string,
-): string {
-  switch (preset) {
-    case "today":
-      return t("usage.presetToday", { defaultValue: "当天" });
-    case "1d":
-      return t("usage.preset1d", { defaultValue: "1d" });
-    case "7d":
-      return t("usage.preset7d", { defaultValue: "7d" });
-    case "14d":
-      return t("usage.preset14d", { defaultValue: "14d" });
-    case "30d":
-      return t("usage.preset30d", { defaultValue: "30d" });
-    case "custom":
-      return t("usage.customRange", { defaultValue: "日历筛选" });
-  }
-}
 
 export function UsageDashboard() {
   const { t, i18n } = useTranslation();
@@ -85,7 +61,7 @@ export function UsageDashboard() {
   const resolvedRange = useMemo(() => resolveUsageRange(range), [range]);
   const rangeLabel = useMemo(() => {
     if (range.preset !== "custom") {
-      return getPresetLabel(range.preset, t);
+      return getUsageRangePresetLabel(range.preset, t);
     }
 
     return `${new Date(resolvedRange.startDate * 1000).toLocaleString(locale)} - ${new Date(

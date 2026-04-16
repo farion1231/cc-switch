@@ -3,8 +3,6 @@ import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 const DAY_SECONDS = 24 * 60 * 60;
 const DAY_MS = DAY_SECONDS * 1000;
 
-export const MAX_CUSTOM_USAGE_RANGE_SECONDS = 30 * DAY_SECONDS;
-
 export interface ResolvedUsageRange {
   startDate: number;
   endDate: number;
@@ -60,25 +58,22 @@ export function resolveUsageRange(
   }
 }
 
-export function timestampToLocalDatetime(timestamp: number): string {
-  const date = new Date(timestamp * 1000);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
-
-export function localDatetimeToTimestamp(datetime: string): number | undefined {
-  if (!datetime || datetime.length < 16) {
-    return undefined;
+export function getUsageRangePresetLabel(
+  preset: UsageRangePreset,
+  t: (key: string, options?: { defaultValue?: string }) => string,
+): string {
+  switch (preset) {
+    case "today":
+      return t("usage.presetToday", { defaultValue: "当天" });
+    case "1d":
+      return t("usage.preset1d", { defaultValue: "1d" });
+    case "7d":
+      return t("usage.preset7d", { defaultValue: "7d" });
+    case "14d":
+      return t("usage.preset14d", { defaultValue: "14d" });
+    case "30d":
+      return t("usage.preset30d", { defaultValue: "30d" });
+    case "custom":
+      return t("usage.customRange", { defaultValue: "日历筛选" });
   }
-
-  const timestamp = new Date(datetime).getTime();
-  if (Number.isNaN(timestamp)) {
-    return undefined;
-  }
-
-  return Math.floor(timestamp / 1000);
 }
