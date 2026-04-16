@@ -248,19 +248,19 @@ pub fn write_hermes_live(provider: &Provider) -> Result<(), AppError> {
 
         // 确保 custom_providers 存在
         if !mapping.contains_key(&providers_key) {
-            mapping.insert(
-                providers_key.clone(),
-                serde_yaml::Value::Sequence(vec![]),
-            );
+            mapping.insert(providers_key.clone(), serde_yaml::Value::Sequence(vec![]));
         }
 
-        let providers = mapping.get_mut(&providers_key).expect("custom_providers exists");
-        
+        let providers = mapping
+            .get_mut(&providers_key)
+            .expect("custom_providers exists");
+
         if let Some(providers_seq) = providers.as_sequence_mut() {
             // 查找是否已存在同名 provider
             let mut found = false;
             for existing_provider in providers_seq.iter_mut() {
-                if let Some(existing_name) = existing_provider.get("name").and_then(|n| n.as_str()) {
+                if let Some(existing_name) = existing_provider.get("name").and_then(|n| n.as_str())
+                {
                     if existing_name == provider_name {
                         // 更新现有 provider
                         if let Some(provider_map) = existing_provider.as_mapping_mut() {
@@ -283,7 +283,9 @@ pub fn write_hermes_live(provider: &Provider) -> Result<(), AppError> {
                                 );
                             }
                             // 确保 transport 字段存在
-                            if !provider_map.contains_key(serde_yaml::Value::String("transport".to_string())) {
+                            if !provider_map
+                                .contains_key(serde_yaml::Value::String("transport".to_string()))
+                            {
                                 provider_map.insert(
                                     serde_yaml::Value::String("transport".to_string()),
                                     serde_yaml::Value::String("openai_chat".to_string()),
@@ -359,9 +361,10 @@ mod tests {
             serde_yaml::Value::String("provider".to_string()),
             serde_yaml::Value::String("api-proxy-claude".to_string()),
         );
-        yaml.as_mapping_mut()
-            .unwrap()
-            .insert(serde_yaml::Value::String("model".to_string()), serde_yaml::Value::Mapping(model_map));
+        yaml.as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String("model".to_string()),
+            serde_yaml::Value::Mapping(model_map),
+        );
 
         let mut custom_providers = vec![];
         let mut provider_map = serde_yaml::Mapping::new();
@@ -386,9 +389,10 @@ mod tests {
             serde_yaml::Value::String("openai_chat".to_string()),
         );
         custom_providers.push(serde_yaml::Value::Mapping(provider_map));
-        yaml.as_mapping_mut()
-            .unwrap()
-            .insert(serde_yaml::Value::String("custom_providers".to_string()), serde_yaml::Value::Sequence(custom_providers));
+        yaml.as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String("custom_providers".to_string()),
+            serde_yaml::Value::Sequence(custom_providers),
+        );
 
         write_hermes_config_atomic(&yaml).unwrap();
         let read_yaml = read_hermes_config().unwrap();
@@ -409,7 +413,10 @@ mod tests {
         );
 
         // Verify custom_providers
-        let providers = read_yaml.get("custom_providers").and_then(|p| p.as_sequence()).unwrap();
+        let providers = read_yaml
+            .get("custom_providers")
+            .and_then(|p| p.as_sequence())
+            .unwrap();
         assert_eq!(providers.len(), 1);
         let first_provider = &providers[0];
         assert_eq!(
@@ -441,7 +448,10 @@ mod tests {
         write_hermes_env_atomic(&env).unwrap();
 
         let read_env = read_hermes_env().unwrap();
-        assert_eq!(read_env.get("TELEGRAM_BOT_TOKEN"), Some(&"test-token".to_string()));
+        assert_eq!(
+            read_env.get("TELEGRAM_BOT_TOKEN"),
+            Some(&"test-token".to_string())
+        );
         assert_eq!(read_env.get("OTHER_KEY"), Some(&"other-value".to_string()));
 
         match old_test_home {
@@ -487,12 +497,18 @@ mod tests {
         );
 
         // 验证 custom_providers
-        let providers = yaml.get("custom_providers").and_then(|p| p.as_sequence()).unwrap();
+        let providers = yaml
+            .get("custom_providers")
+            .and_then(|p| p.as_sequence())
+            .unwrap();
         assert!(providers.len() >= 1);
-        let found = providers.iter().any(|p| {
-            p.get("name").and_then(|n| n.as_str()) == Some("My Custom Provider")
-        });
-        assert!(found, "custom_providers should contain 'My Custom Provider'");
+        let found = providers
+            .iter()
+            .any(|p| p.get("name").and_then(|n| n.as_str()) == Some("My Custom Provider"));
+        assert!(
+            found,
+            "custom_providers should contain 'My Custom Provider'"
+        );
 
         match old_test_home {
             Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),

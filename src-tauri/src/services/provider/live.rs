@@ -1031,9 +1031,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_openclaw_config()?;
             Ok(config)
         }
-        AppType::Hermes => {
-            crate::hermes_config::read_hermes_live_settings()
-        }
+        AppType::Hermes => crate::hermes_config::read_hermes_live_settings(),
     }
 }
 
@@ -1122,8 +1120,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
         AppType::Hermes => {
             use crate::hermes_config::{
-                get_hermes_config_path, get_hermes_env_path, read_hermes_config,
-                read_hermes_env,
+                get_hermes_config_path, get_hermes_env_path, read_hermes_config, read_hermes_env,
             };
 
             // Check if config.yaml exists
