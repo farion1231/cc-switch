@@ -176,7 +176,6 @@ export interface VisibleApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
-  hermes: boolean;
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
@@ -346,7 +345,6 @@ export interface McpApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
-  hermes: boolean;
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
