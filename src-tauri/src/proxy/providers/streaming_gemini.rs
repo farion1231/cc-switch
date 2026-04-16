@@ -5,8 +5,8 @@
 
 use super::gemini_shadow::{GeminiShadowStore, GeminiToolCallMeta};
 use super::transform_gemini::{
-    is_synthesized_tool_call_id, rectify_tool_call_parts, synthesize_tool_call_id,
-    AnthropicToolSchemaHints,
+    build_anthropic_usage, is_synthesized_tool_call_id, rectify_tool_call_parts,
+    synthesize_tool_call_id, AnthropicToolSchemaHints,
 };
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 use bytes::Bytes;
@@ -14,39 +14,6 @@ use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
-
-fn anthropic_usage_from_gemini(usage: Option<&Value>) -> Value {
-    let Some(usage) = usage else {
-        return json!({
-            "input_tokens": 0,
-            "output_tokens": 0
-        });
-    };
-
-    let input_tokens = usage
-        .get("promptTokenCount")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(0);
-    let total_tokens = usage
-        .get("totalTokenCount")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(0);
-    let output_tokens = total_tokens.saturating_sub(input_tokens);
-
-    let mut result = json!({
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens
-    });
-
-    if let Some(cached) = usage
-        .get("cachedContentTokenCount")
-        .and_then(|value| value.as_u64())
-    {
-        result["cache_read_input_tokens"] = json!(cached);
-    }
-
-    result
-}
 
 fn map_finish_reason(reason: Option<&str>, has_tool_use: bool, blocked: bool) -> &'static str {
     if blocked {
@@ -309,7 +276,7 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
                                     "type": "message",
                                     "role": "assistant",
                                     "model": current_model.clone().unwrap_or_default(),
-                                    "usage": anthropic_usage_from_gemini(chunk_json.get("usageMetadata"))
+                                    "usage": build_anthropic_usage(chunk_json.get("usageMetadata"))
                                 }
                             });
                             yield Ok(encode_sse("message_start", &event));
@@ -413,7 +380,7 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
                     "type": "message",
                     "role": "assistant",
                     "model": current_model.clone().unwrap_or_default(),
-                    "usage": anthropic_usage_from_gemini(latest_usage.as_ref())
+                    "usage": build_anthropic_usage(latest_usage.as_ref())
                 }
             });
             yield Ok(encode_sse("message_start", &event));
@@ -526,7 +493,7 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
             !tool_calls.is_empty(),
             blocked_text.is_some(),
         );
-        let usage = anthropic_usage_from_gemini(latest_usage.as_ref());
+        let usage = build_anthropic_usage(latest_usage.as_ref());
         let message_delta = json!({
             "type": "message_delta",
             "delta": {

@@ -959,7 +959,10 @@ fn map_tool_choice(tool_choice: Option<&Value>) -> Result<Option<Value>, ProxyEr
     }
 }
 
-fn build_anthropic_usage(usage: Option<&Value>) -> Value {
+/// Convert a Gemini `usageMetadata` object into an Anthropic-style `usage`
+/// object. Used by both the streaming SSE converter and the non-streaming
+/// transform path so the two emit identical shapes.
+pub(crate) fn build_anthropic_usage(usage: Option<&Value>) -> Value {
     let Some(usage) = usage else {
         return json!({
             "input_tokens": 0,
