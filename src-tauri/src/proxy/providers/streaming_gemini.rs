@@ -84,8 +84,19 @@ fn extract_tool_calls(
         .iter()
         .filter_map(|part| {
             let function_call = part.get("functionCall")?;
+            // Treat an explicit empty-string id as equivalent to a missing
+            // one. Some Gemini relays serialize absent ids as `"id": ""`;
+            // without this filter the `Some("")` value would flow into
+            // `merge_tool_call_snapshots`, match itself across chunks, and
+            // collapse parallel no-id calls into a single snapshot with an
+            // empty-string tool_use id.
+            let id = function_call
+                .get("id")
+                .and_then(|value| value.as_str())
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
             Some(GeminiToolCallMeta::new(
-                function_call.get("id").and_then(|value| value.as_str()),
+                id,
                 function_call
                     .get("name")
                     .and_then(|value| value.as_str())
@@ -132,6 +143,15 @@ fn merge_tool_call_snapshots(
     // merged two parallel calls to the same function into one entry (losing
     // the first call's args). That fallback is removed here.
     for (position, mut tool_call) in incoming.into_iter().enumerate() {
+        // Treat an empty-string id as "missing" throughout this function.
+        // `extract_tool_calls` already filters `""` at the source, but upstream
+        // callers that build `GeminiToolCallMeta` by hand (tests, future code)
+        // could still send `Some("")` — collapsing it here keeps the invariant
+        // local to this merge step.
+        if tool_call.id.as_deref() == Some("") {
+            tool_call.id = None;
+        }
+
         let existing_index = match tool_call.id.as_deref() {
             Some(incoming_id) => tool_call_snapshots
                 .iter()
@@ -880,5 +900,51 @@ mod tests {
 
         assert_eq!(output.matches("\"type\":\"tool_use\"").count(), 1);
         assert!(output.contains("\"units\\\":\\\"c\\\""));
+    }
+
+    /// Regression for the follow-up Codex P1: some Gemini relays serialize
+    /// an absent functionCall id as `"id": ""` rather than omitting the
+    /// field. Without a filter, `Some("")` would reach
+    /// `merge_tool_call_snapshots`, two parallel no-id calls would match
+    /// each other on the empty-string id, and the second would overwrite
+    /// the first — silently losing a call. Also the emitted Anthropic
+    /// `tool_use.id` would be the empty string, so tool_result
+    /// correlation from the Claude client would break.
+    #[test]
+    fn parallel_empty_string_id_calls_are_treated_as_missing_and_preserved() {
+        let output = collect_stream_output(vec![
+            "data: {\"responseId\":\"r3\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"\",\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\"}}},{\"functionCall\":{\"id\":\"\",\"name\":\"get_weather\",\"args\":{\"city\":\"Osaka\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":5,\"totalTokenCount\":8}}\n\n",
+        ]);
+
+        let tool_use_count = output.matches("\"type\":\"tool_use\"").count();
+        assert_eq!(
+            tool_use_count, 2,
+            "both parallel calls must survive even when ids are explicit empty strings"
+        );
+        assert!(output.contains("Tokyo"));
+        assert!(output.contains("Osaka"));
+        // No tool_use may emit an empty id — each must get its own
+        // synthesized id so tool_result correlation works.
+        assert!(
+            !output.contains("\"id\":\"\""),
+            "empty tool_use id leaked through: {output}"
+        );
+        let synth_count = output.matches("\"id\":\"gemini_synth_").count();
+        assert_eq!(synth_count, 2);
+    }
+
+    /// Companion regression: a single-chunk stream whose sole functionCall
+    /// carries `"id": ""` must still emit exactly one tool_use with a
+    /// synthesized id, not an empty one. This covers the non-parallel
+    /// degraded-relay case that the parallel test above subsumes.
+    #[test]
+    fn single_empty_string_id_tool_call_gets_synthesized_id() {
+        let output = collect_stream_output(vec![
+            "data: {\"responseId\":\"r4\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"\",\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\"}}}]}}],\"usageMetadata\":{\"promptTokenCount\":3,\"totalTokenCount\":5}}\n\n",
+        ]);
+
+        assert_eq!(output.matches("\"type\":\"tool_use\"").count(), 1);
+        assert!(!output.contains("\"id\":\"\""));
+        assert_eq!(output.matches("\"id\":\"gemini_synth_").count(), 1);
     }
 }
