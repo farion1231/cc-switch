@@ -622,6 +622,8 @@ export function ProviderForm({
     buildHermesSettingsConfig,
   } = useHermesConfigState({
     initialData: appId === "hermes" ? initialData : undefined,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
   });
 
   // ── Extracted hooks: OpenCode / OMO / OpenClaw ─────────────────────

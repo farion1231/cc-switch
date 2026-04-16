@@ -530,7 +530,9 @@ impl SkillService {
                 }
             }
             AppType::Hermes => {
-                // Hermes doesn't have an override dir setting yet
+                if let Some(custom) = crate::settings::get_hermes_override_dir() {
+                    return Ok(custom.join("skills"));
+                }
             }
         }
 
