@@ -14,6 +14,7 @@ pub struct FailoverQueueItem {
     pub provider_id: String,
     pub provider_name: String,
     pub sort_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_notes: Option<String>,
 }
 
