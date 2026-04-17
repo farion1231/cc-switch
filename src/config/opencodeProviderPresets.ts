@@ -63,6 +63,11 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       modalities: { input: ["text", "image", "video"], output: ["text"] },
     },
     {
+      id: "step-3.5-flash-2603",
+      name: "Step 3.5 Flash 2603",
+      contextLimit: 262144,
+    },
+    {
       id: "step-3.5-flash",
       name: "Step 3.5 Flash",
       contextLimit: 262144,
@@ -524,8 +529,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "step-3.5-flash": { name: "Step 3.5 Flash" },
         "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603" },
+        "step-3.5-flash": { name: "Step 3.5 Flash" },
       },
     },
     category: "cn_official",
@@ -557,8 +562,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "step-3.5-flash": { name: "Step 3.5 Flash" },
         "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603" },
+        "step-3.5-flash": { name: "Step 3.5 Flash" },
       },
     },
     category: "cn_official",

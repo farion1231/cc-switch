@@ -349,13 +349,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "step-3.5-flash",
-          name: "Step 3.5 Flash",
+          id: "step-3.5-flash-2603",
+          name: "Step 3.5 Flash 2603",
           contextWindow: 262144,
         },
         {
-          id: "step-3.5-flash-2603",
-          name: "Step 3.5 Flash 2603",
+          id: "step-3.5-flash",
+          name: "Step 3.5 Flash",
           contextWindow: 262144,
         },
       ],
@@ -377,10 +377,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "stepfun/step-3.5-flash" },
+      model: { primary: "stepfun/step-3.5-flash-2603" },
       modelCatalog: {
-        "stepfun/step-3.5-flash": { alias: "StepFun" },
-        "stepfun/step-3.5-flash-2603": { alias: "StepFun 2603" },
+        "stepfun/step-3.5-flash-2603": { alias: "StepFun" },
+        "stepfun/step-3.5-flash": { alias: "StepFun Flash" },
       },
     },
   },
@@ -394,13 +394,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "step-3.5-flash",
-          name: "Step 3.5 Flash",
+          id: "step-3.5-flash-2603",
+          name: "Step 3.5 Flash 2603",
           contextWindow: 262144,
         },
         {
-          id: "step-3.5-flash-2603",
-          name: "Step 3.5 Flash 2603",
+          id: "step-3.5-flash",
+          name: "Step 3.5 Flash",
           contextWindow: 262144,
         },
       ],
@@ -422,10 +422,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "stepfun-en/step-3.5-flash" },
+      model: { primary: "stepfun-en/step-3.5-flash-2603" },
       modelCatalog: {
-        "stepfun-en/step-3.5-flash": { alias: "StepFun" },
-        "stepfun-en/step-3.5-flash-2603": { alias: "StepFun 2603" },
+        "stepfun-en/step-3.5-flash-2603": { alias: "StepFun" },
+        "stepfun-en/step-3.5-flash": { alias: "StepFun Flash" },
       },
     },
   },
