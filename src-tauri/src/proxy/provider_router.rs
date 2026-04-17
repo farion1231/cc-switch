@@ -6,7 +6,8 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig, CircuitState};
+use crate::proxy::failover_switch::FailoverSwitchManager;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -18,6 +19,8 @@ pub struct ProviderRouter {
     db: Arc<Database>,
     /// 熔断器管理器 - key 格式: "app_type:provider_id"
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
+    /// 自动回切管理器（由 ProxyServer 构造时注入）
+    failover_switch_manager: Arc<RwLock<Option<Arc<FailoverSwitchManager>>>>,
 }
 
 impl ProviderRouter {
@@ -26,7 +29,17 @@ impl ProviderRouter {
         Self {
             db,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            failover_switch_manager: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// 设置自动回切管理器
+    pub fn set_failover_switch_manager(&self, mgr: Arc<FailoverSwitchManager>) {
+        // fire-and-forget，settle 后才正式启用
+        let mgr_ref = self.failover_switch_manager.clone();
+        tokio::spawn(async move {
+            *mgr_ref.write().await = Some(mgr);
+        });
     }
 
     /// 选择可用的供应商（支持故障转移）
@@ -143,6 +156,42 @@ impl ProviderRouter {
 
         if success {
             breaker.record_success(used_half_open_permit).await;
+
+            // [FO-BACK] 自动回切：当前用的是 P2+，且 P1 已从熔断恢复
+            if let Some(ref mgr) = *self.failover_switch_manager.read().await {
+                let ordered_ids: Vec<String> = match self.db.get_failover_queue(app_type) {
+                    Ok(ids) => ids.into_iter().map(|item| item.provider_id).collect(),
+                    Err(_) => Vec::new(),
+                };
+
+                if let Some(p1_id) = ordered_ids.first() {
+                    if provider_id != *p1_id {
+                        // 当前不在 P1，检查 P1 是否已恢复为 Closed
+                        let p1_circuit_key = format!("{app_type}:{}", p1_id);
+                        let p1_breaker = self.get_or_create_circuit_breaker(&p1_circuit_key).await;
+                        if p1_breaker.get_state().await == CircuitState::Closed {
+                            let all = match self.db.get_all_providers(app_type) {
+                                Ok(p) => p,
+                                Err(_) => return Ok(()),
+                            };
+                            if let Some(p1) = all.get(p1_id) {
+                                log::info!(
+                                    "[FO-BACK] P1 {} 恢复为 Closed（当前: {}），触发自动回切",
+                                    p1.name,
+                                    provider_id
+                                );
+                                let fm = mgr.clone();
+                                let pid = p1.id.clone();
+                                let pname = p1.name.clone();
+                                let at = app_type.to_string();
+                                tokio::spawn(async move {
+                                    let _ = fm.try_switch(None, &at, &pid, &pname).await;
+                                });
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             breaker.record_failure(used_half_open_permit).await;
         }
