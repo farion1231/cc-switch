@@ -182,6 +182,7 @@ pub async fn upload(
 /// Download remote snapshot and apply to local database + skills.
 pub async fn download(
     db: &crate::database::Database,
+    proxy_service: &crate::services::ProxyService,
     settings: &mut WebDavSyncSettings,
 ) -> Result<Value, AppError> {
     settings.validate()?;
@@ -216,6 +217,11 @@ pub async fn download(
     )
     .await?;
 
+    let _guard = crate::services::proxy::restore_mutation_guard()
+        .lock()
+        .await;
+    ensure_restore_allowed(proxy_service).await?;
+
     // Apply snapshot
     apply_snapshot(db, &db_sql, &skills_zip)?;
 
@@ -231,6 +237,24 @@ pub async fn download(
         "sourceLayout": snapshot.layout.as_str(),
         "sourcePath": remote_dir_display(settings, snapshot.layout),
     }))
+}
+
+async fn ensure_restore_allowed(
+    proxy_service: &crate::services::ProxyService,
+) -> Result<(), AppError> {
+    if proxy_service
+        .has_restore_blocking_proxy_state()
+        .await
+        .map_err(AppError::Config)?
+    {
+        return Err(localized(
+            "webdav.sync.restore_blocked_proxy_active",
+            "当前本地代理或接管状态仍然活跃，请先恢复本地代理状态后再执行 WebDAV 恢复",
+            "Local proxy or takeover state is still active. Restore local proxy state before running WebDAV restore.",
+        ));
+    }
+
+    Ok(())
 }
 
 /// Fetch remote manifest info without downloading artifacts.
@@ -669,6 +693,11 @@ fn validate_artifact_size_limit(artifact_name: &str, size: u64) -> Result<(), Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
+    use crate::provider::Provider;
+    use crate::services::ProxyService;
+    use std::sync::Arc;
+    use tempfile::TempDir;
 
     fn artifact(sha256: &str, size: u64) -> ArtifactMeta {
         ArtifactMeta {
@@ -880,5 +909,53 @@ mod tests {
     #[test]
     fn validate_artifact_size_limit_accepts_limit_boundary() {
         assert!(validate_artifact_size_limit("skills.zip", MAX_SYNC_ARTIFACT_BYTES).is_ok());
+    }
+
+    #[tokio::test]
+    async fn ensure_restore_allowed_rejects_takeover_artifacts_even_when_enabled_flag_is_false() {
+        let temp_home = TempDir::new().expect("create temp home");
+        std::env::set_var("HOME", temp_home.path());
+        std::env::set_var("USERPROFILE", temp_home.path());
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let proxy_service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "claude-provider".to_string(),
+            "Claude Provider".to_string(),
+            serde_json::json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "db-key"
+                }
+            }),
+            Some("claude".to_string()),
+        );
+        db.save_provider("claude", &provider)
+            .expect("save claude provider");
+        db.set_current_provider("claude", &provider.id)
+            .expect("set current claude provider");
+        db.save_live_backup("claude", "{\"env\":{}}")
+            .await
+            .expect("seed live backup");
+
+        let mut proxy_config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("get claude proxy config");
+        proxy_config.enabled = false;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("persist cleared enabled flag");
+
+        let err = ensure_restore_allowed(&proxy_service)
+            .await
+            .expect_err("live backup should still block restore");
+        assert!(
+            err.to_string().contains("restore")
+                || err.to_string().contains("恢复")
+                || err.to_string().contains("proxy"),
+            "unexpected error: {err}"
+        );
     }
 }

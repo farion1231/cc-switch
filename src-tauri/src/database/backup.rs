@@ -7,7 +7,7 @@ use crate::config::get_app_config_dir;
 use crate::error::AppError;
 use chrono::{Local, Utc};
 use rusqlite::backup::Backup;
-use rusqlite::types::ValueRef;
+use rusqlite::types::Value;
 use rusqlite::Connection;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,6 +33,64 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
 ];
 
+const PROXY_CONFIG_LOCAL_COLUMNS: &[&str] =
+    &["proxy_enabled", "listen_address", "listen_port", "enabled"];
+
+#[derive(Clone, Copy)]
+enum SyncNeutralValue {
+    Integer(i64),
+    Text(&'static str),
+}
+
+impl SyncNeutralValue {
+    fn into_sql_value(self) -> Value {
+        match self {
+            Self::Integer(value) => Value::Integer(value),
+            Self::Text(value) => Value::Text(value.to_string()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SyncNeutralizedColumn {
+    column: &'static str,
+    value: SyncNeutralValue,
+}
+
+#[derive(Clone, Copy)]
+struct SyncRowTransform {
+    table: &'static str,
+    key_column: &'static str,
+    local_columns: &'static [&'static str],
+    export_defaults: &'static [SyncNeutralizedColumn],
+}
+
+const PROXY_CONFIG_EXPORT_DEFAULTS: &[SyncNeutralizedColumn] = &[
+    SyncNeutralizedColumn {
+        column: "proxy_enabled",
+        value: SyncNeutralValue::Integer(0),
+    },
+    SyncNeutralizedColumn {
+        column: "listen_address",
+        value: SyncNeutralValue::Text("127.0.0.1"),
+    },
+    SyncNeutralizedColumn {
+        column: "listen_port",
+        value: SyncNeutralValue::Integer(15721),
+    },
+    SyncNeutralizedColumn {
+        column: "enabled",
+        value: SyncNeutralValue::Integer(0),
+    },
+];
+
+const SYNC_ROW_TRANSFORMS: &[SyncRowTransform] = &[SyncRowTransform {
+    table: "proxy_config",
+    key_column: "app_type",
+    local_columns: PROXY_CONFIG_LOCAL_COLUMNS,
+    export_defaults: PROXY_CONFIG_EXPORT_DEFAULTS,
+}];
+
 /// A database backup entry for the UI
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,13 +104,13 @@ impl Database {
     /// 导出为 SQLite 兼容的 SQL 文本（内存字符串，完整导出）
     pub fn export_sql_string(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        Self::dump_sql(&snapshot, &[])
+        Self::dump_sql(&snapshot, &[], &[])
     }
 
     /// Export SQL for sync (WebDAV), skipping local-only tables' data
     pub fn export_sql_string_for_sync(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        Self::dump_sql(&snapshot, SYNC_SKIP_TABLES)
+        Self::dump_sql(&snapshot, SYNC_SKIP_TABLES, SYNC_ROW_TRANSFORMS)
     }
 
     /// 导出为 SQLite 兼容的 SQL 文本
@@ -82,19 +140,20 @@ impl Database {
 
     /// 从 SQL 字符串导入，返回生成的备份 ID（若无备份则为空字符串）
     pub fn import_sql_string(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, &[])
+        self.import_sql_string_inner(sql_raw, &[], &[])
     }
 
     /// Import SQL generated for sync, then restore local-only tables from the
     /// current device snapshot before replacing the main database.
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
+        self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES, SYNC_ROW_TRANSFORMS)
     }
 
     fn import_sql_string_inner(
         &self,
         sql_raw: &str,
         preserve_tables: &[&str],
+        row_transforms: &[SyncRowTransform],
     ) -> Result<String, AppError> {
         let sql_content = sql_raw.trim_start_matches('\u{feff}');
         Self::validate_cc_switch_sql_export(sql_content)?;
@@ -102,7 +161,7 @@ impl Database {
         // 导入前备份现有数据库
         let backup_path = self.backup_database_file()?;
 
-        let local_snapshot = if preserve_tables.is_empty() {
+        let local_snapshot = if preserve_tables.is_empty() && row_transforms.is_empty() {
             None
         } else {
             Some(self.snapshot_to_memory()?)
@@ -127,6 +186,7 @@ impl Database {
         Self::validate_basic_state(&temp_conn)?;
         if let Some(local_snapshot) = local_snapshot.as_ref() {
             Self::restore_tables(local_snapshot, &temp_conn, preserve_tables)?;
+            Self::restore_row_transforms(local_snapshot, &temp_conn, row_transforms)?;
         }
 
         // 使用 Backup 将临时库原子写回主库
@@ -227,6 +287,111 @@ impl Database {
                     .execute(&insert_sql, rusqlite::params_from_iter(values.iter()))
                     .map_err(|e| AppError::Database(format!("恢复表 {table} 数据失败: {e}")))?;
             }
+        }
+
+        Ok(())
+    }
+
+    fn restore_row_transforms(
+        source_conn: &Connection,
+        target_conn: &Connection,
+        transforms: &[SyncRowTransform],
+    ) -> Result<(), AppError> {
+        for transform in transforms {
+            Self::restore_row_transform(source_conn, target_conn, transform)?;
+        }
+        Ok(())
+    }
+
+    fn restore_row_transform(
+        source_conn: &Connection,
+        target_conn: &Connection,
+        transform: &SyncRowTransform,
+    ) -> Result<(), AppError> {
+        if !Self::table_exists(source_conn, transform.table)?
+            || !Self::table_exists(target_conn, transform.table)?
+        {
+            return Ok(());
+        }
+
+        let source_columns = Self::get_table_columns(source_conn, transform.table)?;
+        let target_columns = Self::get_table_columns(target_conn, transform.table)?;
+        if !source_columns
+            .iter()
+            .any(|column| column == transform.key_column)
+            || !target_columns
+                .iter()
+                .any(|column| column == transform.key_column)
+        {
+            return Ok(());
+        }
+
+        let local_columns = transform
+            .local_columns
+            .iter()
+            .copied()
+            .filter(|column| {
+                source_columns.iter().any(|existing| existing == column)
+                    && target_columns.iter().any(|existing| existing == column)
+            })
+            .collect::<Vec<_>>();
+        if local_columns.is_empty() {
+            return Ok(());
+        }
+
+        let select_columns = std::iter::once(transform.key_column)
+            .chain(local_columns.iter().copied())
+            .map(Self::quote_ident)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let select_sql = format!(
+            "SELECT {select_columns} FROM {}",
+            Self::quote_ident(transform.table)
+        );
+        let assignments = local_columns
+            .iter()
+            .enumerate()
+            .map(|(idx, column)| format!("{} = ?{}", Self::quote_ident(column), idx + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let update_sql = format!(
+            "UPDATE {} SET {assignments} WHERE {} = ?{}",
+            Self::quote_ident(transform.table),
+            Self::quote_ident(transform.key_column),
+            local_columns.len() + 1
+        );
+
+        let mut stmt = source_conn.prepare(&select_sql).map_err(|e| {
+            AppError::Database(format!(
+                "读取本地表 {} 的同步字段失败: {e}",
+                transform.table
+            ))
+        })?;
+        let mut rows = stmt.query([]).map_err(|e| {
+            AppError::Database(format!("查询本地表 {} 数据失败: {e}", transform.table))
+        })?;
+
+        while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+            let mut values = Vec::with_capacity(local_columns.len() + 1);
+            for idx in 1..=local_columns.len() {
+                values.push(
+                    row.get::<_, Value>(idx)
+                        .map_err(|e| AppError::Database(e.to_string()))?,
+                );
+            }
+            values.push(
+                row.get::<_, Value>(0)
+                    .map_err(|e| AppError::Database(e.to_string()))?,
+            );
+
+            target_conn
+                .execute(&update_sql, rusqlite::params_from_iter(values.iter()))
+                .map_err(|e| {
+                    AppError::Database(format!(
+                        "恢复本地表 {} 的同步字段失败: {e}",
+                        transform.table
+                    ))
+                })?;
         }
 
         Ok(())
@@ -384,7 +549,11 @@ impl Database {
     }
 
     /// 导出数据库为 SQL 文本
-    fn dump_sql(conn: &Connection, skip_tables: &[&str]) -> Result<String, AppError> {
+    fn dump_sql(
+        conn: &Connection,
+        skip_tables: &[&str],
+        row_transforms: &[SyncRowTransform],
+    ) -> Result<String, AppError> {
         let mut output = String::new();
         let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let user_version: i64 = conn
@@ -450,10 +619,14 @@ impl Database {
             while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
                 let mut values = Vec::with_capacity(columns.len());
                 for idx in 0..columns.len() {
-                    let value = row
-                        .get_ref(idx)
-                        .map_err(|e| AppError::Database(e.to_string()))?;
-                    values.push(Self::format_sql_value(value)?);
+                    values.push(
+                        row.get::<_, Value>(idx)
+                            .map_err(|e| AppError::Database(e.to_string()))?,
+                    );
+                }
+
+                if let Some(transform) = row_transforms.iter().find(|t| t.table == table) {
+                    Self::apply_export_defaults(&columns, &mut values, transform);
                 }
 
                 let cols = columns
@@ -463,7 +636,11 @@ impl Database {
                     .join(", ");
                 output.push_str(&format!(
                     "INSERT INTO \"{table}\" ({cols}) VALUES ({});\n",
-                    values.join(", ")
+                    values
+                        .iter()
+                        .map(Self::format_owned_sql_value)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", ")
                 ));
             }
         }
@@ -488,19 +665,13 @@ impl Database {
         Ok(columns)
     }
 
-    /// 格式化 SQL 值
-    fn format_sql_value(value: ValueRef<'_>) -> Result<String, AppError> {
+    fn format_owned_sql_value(value: &Value) -> Result<String, AppError> {
         match value {
-            ValueRef::Null => Ok("NULL".to_string()),
-            ValueRef::Integer(i) => Ok(i.to_string()),
-            ValueRef::Real(f) => Ok(f.to_string()),
-            ValueRef::Text(t) => {
-                let text = std::str::from_utf8(t)
-                    .map_err(|e| AppError::Database(format!("文本字段不是有效的 UTF-8: {e}")))?;
-                let escaped = text.replace('\'', "''");
-                Ok(format!("'{escaped}'"))
-            }
-            ValueRef::Blob(bytes) => {
+            Value::Null => Ok("NULL".to_string()),
+            Value::Integer(i) => Ok(i.to_string()),
+            Value::Real(f) => Ok(f.to_string()),
+            Value::Text(text) => Ok(format!("'{}'", text.replace('\'', "''"))),
+            Value::Blob(bytes) => {
                 let mut s = String::from("X'");
                 for b in bytes {
                     use std::fmt::Write;
@@ -510,6 +681,22 @@ impl Database {
                 Ok(s)
             }
         }
+    }
+
+    fn apply_export_defaults(
+        columns: &[String],
+        values: &mut [Value],
+        transform: &SyncRowTransform,
+    ) {
+        for default in transform.export_defaults {
+            if let Some(idx) = columns.iter().position(|column| column == default.column) {
+                values[idx] = default.value.into_sql_value();
+            }
+        }
+    }
+
+    fn quote_ident(value: &str) -> String {
+        format!("\"{}\"", value.replace('"', "\"\""))
     }
 
     /// List all database backup files, sorted by creation time (newest first)
@@ -692,7 +879,74 @@ mod tests {
     use super::Database;
     use crate::error::AppError;
     use crate::settings::{update_settings, AppSettings};
+    use rusqlite::Connection;
     use serial_test::serial;
+
+    fn seed_provider(conn: &Connection, id: &str) -> Result<(), AppError> {
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES (?1, 'claude', ?2, '{}', '{}')",
+            rusqlite::params![id, format!("Provider {id}")],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn set_proxy_row(
+        conn: &Connection,
+        app_type: &str,
+        proxy_enabled: bool,
+        listen_address: &str,
+        listen_port: i64,
+        enabled: bool,
+        auto_failover_enabled: bool,
+        max_retries: i64,
+    ) -> Result<(), AppError> {
+        conn.execute(
+            "UPDATE proxy_config
+             SET proxy_enabled = ?2,
+                 listen_address = ?3,
+                 listen_port = ?4,
+                 enabled = ?5,
+                 auto_failover_enabled = ?6,
+                 max_retries = ?7
+             WHERE app_type = ?1",
+            rusqlite::params![
+                app_type,
+                if proxy_enabled { 1 } else { 0 },
+                listen_address,
+                listen_port,
+                if enabled { 1 } else { 0 },
+                if auto_failover_enabled { 1 } else { 0 },
+                max_retries,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn read_proxy_row(
+        conn: &Connection,
+        app_type: &str,
+    ) -> Result<(bool, String, i64, bool, bool, i64), AppError> {
+        conn.query_row(
+            "SELECT proxy_enabled, listen_address, listen_port, enabled, auto_failover_enabled, max_retries
+             FROM proxy_config WHERE app_type = ?1",
+            [app_type],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? != 0,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get::<_, i64>(3)? != 0,
+                    row.get::<_, i64>(4)? != 0,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
 
     #[test]
     fn sync_import_preserves_local_only_tables() -> Result<(), AppError> {
@@ -776,6 +1030,97 @@ mod tests {
         assert_eq!(
             stream_logs, 1,
             "local stream check logs should be preserved"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn sync_import_preserves_local_proxy_config_local_fields() -> Result<(), AppError> {
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            seed_provider(&conn, "remote-provider")?;
+            set_proxy_row(
+                &conn,
+                "claude",
+                false,
+                "192.168.10.10",
+                31001,
+                false,
+                true,
+                9,
+            )?;
+            set_proxy_row(&conn, "codex", true, "192.168.10.11", 31002, true, false, 8)?;
+            set_proxy_row(
+                &conn,
+                "gemini",
+                false,
+                "192.168.10.12",
+                31003,
+                true,
+                true,
+                7,
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string()?;
+
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            seed_provider(&conn, "local-provider")?;
+            set_proxy_row(&conn, "claude", true, "10.0.0.1", 21001, true, false, 1)?;
+            set_proxy_row(&conn, "codex", false, "10.0.0.2", 21002, false, true, 2)?;
+            set_proxy_row(&conn, "gemini", true, "10.0.0.3", 21003, false, false, 3)?;
+        }
+
+        local_db.import_sql_string_for_sync(&remote_sql)?;
+
+        let conn = crate::database::lock_conn!(local_db.conn);
+        assert_eq!(
+            read_proxy_row(&conn, "claude")?,
+            (true, "10.0.0.1".to_string(), 21001, true, true, 9)
+        );
+        assert_eq!(
+            read_proxy_row(&conn, "codex")?,
+            (false, "10.0.0.2".to_string(), 21002, false, false, 8)
+        );
+        assert_eq!(
+            read_proxy_row(&conn, "gemini")?,
+            (true, "10.0.0.3".to_string(), 21003, false, true, 7)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn sync_export_scrubs_proxy_config_local_fields_but_keeps_strategy_fields(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            seed_provider(&conn, "portable-provider")?;
+            set_proxy_row(&conn, "claude", true, "10.1.0.1", 41001, true, true, 6)?;
+            set_proxy_row(&conn, "codex", true, "10.1.0.2", 41002, true, false, 5)?;
+            set_proxy_row(&conn, "gemini", true, "10.1.0.3", 41003, true, true, 4)?;
+        }
+
+        let sync_sql = db.export_sql_string_for_sync()?;
+        let old_client_db = Database::memory()?;
+        old_client_db.import_sql_string(&sync_sql)?;
+
+        let conn = crate::database::lock_conn!(old_client_db.conn);
+        assert_eq!(
+            read_proxy_row(&conn, "claude")?,
+            (false, "127.0.0.1".to_string(), 15721, false, true, 6)
+        );
+        assert_eq!(
+            read_proxy_row(&conn, "codex")?,
+            (false, "127.0.0.1".to_string(), 15721, false, false, 5)
+        );
+        assert_eq!(
+            read_proxy_row(&conn, "gemini")?,
+            (false, "127.0.0.1".to_string(), 15721, false, true, 4)
         );
 
         Ok(())

@@ -14,8 +14,8 @@ use crate::services::provider::{
 };
 use serde_json::{json, Value};
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::{Mutex, RwLock};
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
@@ -33,6 +33,11 @@ const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 6] = [
     // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
     "ANTHROPIC_SMALL_FAST_MODEL",
 ];
+
+pub(crate) fn restore_mutation_guard() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Clone)]
 pub struct ProxyService {
@@ -154,6 +159,11 @@ impl ProxyService {
 
     /// 启动代理服务器
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
+        let _guard = restore_mutation_guard().lock().await;
+        self.start_unlocked().await
+    }
+
+    async fn start_unlocked(&self) -> Result<ProxyServerInfo, String> {
         // 1. 启动时自动设置 proxy_enabled = true
         let mut global_config = self
             .db
@@ -204,6 +214,8 @@ impl ProxyService {
 
     /// 启动代理服务器（带 Live 配置接管）
     pub async fn start_with_takeover(&self) -> Result<ProxyServerInfo, String> {
+        let _guard = restore_mutation_guard().lock().await;
+
         // 1. 备份各应用的 Live 配置
         self.backup_live_configs().await?;
 
@@ -242,7 +254,7 @@ impl ProxyService {
         }
 
         // 5. 启动代理服务器
-        match self.start().await {
+        match self.start_unlocked().await {
             Ok(info) => Ok(info),
             Err(e) => {
                 // 启动失败，恢复原始配置
@@ -300,13 +312,22 @@ impl ProxyService {
     /// - 开启：自动启动代理服务，仅接管当前 app 的 Live 配置
     /// - 关闭：仅恢复当前 app 的 Live 配置；若无其它接管，则自动停止代理服务
     pub async fn set_takeover_for_app(&self, app_type: &str, enabled: bool) -> Result<(), String> {
+        let _guard = restore_mutation_guard().lock().await;
+        self.set_takeover_for_app_unlocked(app_type, enabled).await
+    }
+
+    async fn set_takeover_for_app_unlocked(
+        &self,
+        app_type: &str,
+        enabled: bool,
+    ) -> Result<(), String> {
         let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
         let app_type_str = app.as_str();
 
         if enabled {
             // 1) 代理服务未运行则自动启动
             if !self.is_running().await {
-                self.start().await?;
+                self.start_unlocked().await?;
             }
 
             // 2) 已接管则直接返回（幂等）；但如果缺少备份或占位符残留，需要重建接管
@@ -429,7 +450,7 @@ impl ProxyService {
 
             if self.is_running().await {
                 // 此时没有任何 app 处于接管状态，停止服务即可
-                let _ = self.stop().await;
+                let _ = self.stop_unlocked().await;
             }
         }
 
@@ -699,6 +720,11 @@ impl ProxyService {
 
     /// 停止代理服务器
     pub async fn stop(&self) -> Result<(), String> {
+        let _guard = restore_mutation_guard().lock().await;
+        self.stop_unlocked().await
+    }
+
+    async fn stop_unlocked(&self) -> Result<(), String> {
         if let Some(server) = self.server.write().await.take() {
             server
                 .stop()
@@ -730,8 +756,9 @@ impl ProxyService {
     ///
     /// 会清除 settings 表中的代理状态，下次启动不会自动恢复。
     pub async fn stop_with_restore(&self) -> Result<(), String> {
+        let _guard = restore_mutation_guard().lock().await;
         // 1. 停止代理服务器（即使未运行也继续执行恢复逻辑）
-        if let Err(e) = self.stop().await {
+        if let Err(e) = self.stop_unlocked().await {
             log::warn!("停止代理服务器失败（将继续恢复 Live 配置）: {e}");
         }
 
@@ -777,8 +804,9 @@ impl ProxyService {
     ///
     /// 用于程序正常退出时，保留代理状态以便下次启动时自动恢复
     pub async fn stop_with_restore_keep_state(&self) -> Result<(), String> {
+        let _guard = restore_mutation_guard().lock().await;
         // 1. 停止代理服务器（即使未运行也继续执行恢复逻辑）
-        if let Err(e) = self.stop().await {
+        if let Err(e) = self.stop_unlocked().await {
             log::warn!("停止代理服务器失败（将继续恢复 Live 配置）: {e}");
         }
 
@@ -1815,8 +1843,54 @@ impl ProxyService {
             .map_err(|e| format!("获取代理配置失败: {e}"))
     }
 
+    /// 更新全局代理配置（统一字段）
+    pub async fn update_global_proxy_config(
+        &self,
+        config: GlobalProxyConfig,
+    ) -> Result<(), String> {
+        let _guard = restore_mutation_guard().lock().await;
+        self.db
+            .update_global_proxy_config(config)
+            .await
+            .map_err(|e| format!("保存全局代理配置失败: {e}"))
+    }
+
+    /// 更新指定应用的代理配置（应用级字段）
+    pub async fn update_proxy_config_for_app(&self, config: AppProxyConfig) -> Result<(), String> {
+        let _guard = restore_mutation_guard().lock().await;
+        self.db
+            .update_proxy_config_for_app(config)
+            .await
+            .map_err(|e| format!("保存应用代理配置失败: {e}"))
+    }
+
+    pub async fn set_default_cost_multiplier(
+        &self,
+        app_type: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        let _guard = restore_mutation_guard().lock().await;
+        self.db
+            .set_default_cost_multiplier(app_type, value)
+            .await
+            .map_err(|e| format!("保存默认成本倍率失败: {e}"))
+    }
+
+    pub async fn set_pricing_model_source(
+        &self,
+        app_type: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        let _guard = restore_mutation_guard().lock().await;
+        self.db
+            .set_pricing_model_source(app_type, value)
+            .await
+            .map_err(|e| format!("保存计费模式来源失败: {e}"))
+    }
+
     /// 更新代理配置
     pub async fn update_config(&self, config: &ProxyConfig) -> Result<(), String> {
+        let _guard = restore_mutation_guard().lock().await;
         // 记录旧配置用于判定是否需要重启
         let previous = self
             .db
@@ -1901,6 +1975,34 @@ impl ProxyService {
         self.server.read().await.is_some()
     }
 
+    /// 检查当前是否存在会让 WebDAV restore 不安全的本地代理状态
+    pub async fn has_restore_blocking_proxy_state(&self) -> Result<bool, String> {
+        if self.is_running().await {
+            return Ok(true);
+        }
+        if self
+            .db
+            .has_any_live_backup()
+            .await
+            .map_err(|e| format!("读取 live 备份状态失败: {e}"))?
+        {
+            return Ok(true);
+        }
+        if self.detect_takeover_in_live_configs() {
+            return Ok(true);
+        }
+        if self
+            .db
+            .is_live_takeover_active()
+            .await
+            .map_err(|e| format!("读取代理接管状态失败: {e}"))?
+        {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
     /// 热更新熔断器配置
     ///
     /// 如果代理服务器正在运行，将新配置应用到所有已创建的熔断器实例
@@ -1941,6 +2043,9 @@ mod tests {
     use crate::provider::ProviderMeta;
     use serial_test::serial;
     use std::env;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     struct TempHome {
@@ -2106,6 +2211,191 @@ model = "gpt-5.1-codex"
             !env.contains_key("ANTHROPIC_API_KEY"),
             "should not add ANTHROPIC_API_KEY when absent"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn has_restore_blocking_proxy_state_is_true_when_live_backup_exists_without_enabled_flag()
+    {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        db.save_live_backup("claude", "{\"env\":{}}")
+            .await
+            .expect("seed live backup");
+
+        let config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("get proxy config");
+        assert!(
+            !config.enabled,
+            "enabled flag should remain false for the stronger-artefact test"
+        );
+        assert!(
+            service
+                .has_restore_blocking_proxy_state()
+                .await
+                .expect("check restore blocking proxy state"),
+            "live backup should block restore even when enabled is false"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn has_restore_blocking_proxy_state_is_true_when_live_config_residue_exists_without_enabled_flag(
+    ) {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                }
+            }))
+            .expect("seed taken-over claude live config");
+
+        let config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("get claude proxy config");
+        assert!(
+            !config.enabled,
+            "enabled flag should remain false for the live-residue test"
+        );
+        assert!(
+            service
+                .has_restore_blocking_proxy_state()
+                .await
+                .expect("check restore blocking proxy state"),
+            "live config residue should block restore even when enabled is false"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn proxy_config_update_waits_for_restore_mutation_guard() {
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let initial = service.get_config().await.expect("read initial config");
+        let mut updated = initial.clone();
+        updated.listen_port = if initial.listen_port == 15721 {
+            15722
+        } else {
+            initial.listen_port + 1
+        };
+        let expected_port = updated.listen_port;
+
+        let guard = restore_mutation_guard().lock().await;
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_bg = Arc::clone(&completed);
+        let service_bg = service.clone();
+        let handle = tokio::spawn(async move {
+            service_bg
+                .update_config(&updated)
+                .await
+                .expect("update config after guard release");
+            completed_bg.store(true, Ordering::SeqCst);
+        });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !completed.load(Ordering::SeqCst),
+            "config update should wait behind the restore/mutation guard"
+        );
+        assert!(
+            !handle.is_finished(),
+            "config update task should still be blocked by the guard"
+        );
+
+        drop(guard);
+
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("config update task should finish after guard release")
+            .expect("config update task should succeed");
+
+        assert_eq!(
+            service
+                .get_config()
+                .await
+                .expect("read config after guard release")
+                .listen_port,
+            expected_port
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn start_with_takeover_waits_for_restore_mutation_guard() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "claude-provider".to_string(),
+            "Claude Provider".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "db-key"
+                }
+            }),
+            Some("claude".to_string()),
+        );
+        db.save_provider("claude", &provider)
+            .expect("save claude provider");
+        db.set_current_provider("claude", &provider.id)
+            .expect("set current provider");
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "live-key"
+                }
+            }))
+            .expect("seed claude live config");
+
+        let guard = restore_mutation_guard().lock().await;
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_bg = Arc::clone(&completed);
+        let service_bg = service.clone();
+        let handle = tokio::spawn(async move {
+            service_bg
+                .start_with_takeover()
+                .await
+                .expect("start with takeover after guard release");
+            completed_bg.store(true, Ordering::SeqCst);
+        });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !completed.load(Ordering::SeqCst),
+            "start_with_takeover should wait behind the restore/mutation guard"
+        );
+        assert!(
+            !handle.is_finished(),
+            "start_with_takeover task should still be blocked by the guard"
+        );
+
+        drop(guard);
+
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("start_with_takeover task should complete after guard release")
+            .expect("start_with_takeover task should succeed");
+
+        service
+            .stop_with_restore()
+            .await
+            .expect("cleanup started proxy");
     }
 
     #[tokio::test]

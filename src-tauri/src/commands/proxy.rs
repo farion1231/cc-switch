@@ -86,10 +86,7 @@ pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
-    let db = &state.db;
-    db.update_global_proxy_config(config)
-        .await
-        .map_err(|e| e.to_string())
+    state.proxy_service.update_global_proxy_config(config).await
 }
 
 /// 获取指定应用的代理配置
@@ -114,10 +111,10 @@ pub async fn update_proxy_config_for_app(
     state: tauri::State<'_, AppState>,
     config: AppProxyConfig,
 ) -> Result<(), String> {
-    let db = &state.db;
-    db.update_proxy_config_for_app(config)
+    state
+        .proxy_service
+        .update_proxy_config_for_app(config)
         .await
-        .map_err(|e| e.to_string())
 }
 
 async fn get_default_cost_multiplier_internal(
@@ -152,8 +149,11 @@ async fn set_default_cost_multiplier_internal(
     app_type: &str,
     value: &str,
 ) -> Result<(), AppError> {
-    let db = &state.db;
-    db.set_default_cost_multiplier(app_type, value).await
+    state
+        .proxy_service
+        .set_default_cost_multiplier(app_type, value)
+        .await
+        .map_err(AppError::Config)
 }
 
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
@@ -209,8 +209,11 @@ async fn set_pricing_model_source_internal(
     app_type: &str,
     value: &str,
 ) -> Result<(), AppError> {
-    let db = &state.db;
-    db.set_pricing_model_source(app_type, value).await
+    state
+        .proxy_service
+        .set_pricing_model_source(app_type, value)
+        .await
+        .map_err(AppError::Config)
 }
 
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
