@@ -233,7 +233,9 @@ export function FailoverQueueManager({
               disabled={disabled}
               onRemove={handleRemoveProvider}
               isRemoving={removeFromQueue.isPending}
-            />
+            >
+              {/* {item.providerName} */}
+            </QueueItem>
           ))}
         </div>
       )}
@@ -283,6 +285,11 @@ function QueueItem({
       <div className="flex-1 min-w-0">
         <span className="text-sm font-medium truncate block">
           {item.providerName}
+          {item.providerNotes && (
+            <span className="ml-1 text-xs text-muted-foreground">
+              ({item.providerNotes})
+            </span>
+          )}
         </span>
       </div>
 
