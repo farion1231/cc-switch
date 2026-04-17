@@ -14,6 +14,7 @@ pub struct FailoverQueueItem {
     pub provider_id: String,
     pub provider_name: String,
     pub sort_index: Option<usize>,
+    pub provider_notes: Option<String>,
 }
 
 impl Database {
@@ -23,7 +24,7 @@ impl Database {
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, sort_index
+                "SELECT id, name, sort_index, notes
                  FROM providers
                  WHERE app_type = ?1 AND in_failover_queue = 1
                  ORDER BY COALESCE(sort_index, 999999), id ASC",
@@ -36,6 +37,7 @@ impl Database {
                     provider_id: row.get(0)?,
                     provider_name: row.get(1)?,
                     sort_index: row.get(2)?,
+                    provider_notes: row.get(3)?, // 这里暂时不查询备注信息，后续可以根据需要添加
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?
