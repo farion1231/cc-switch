@@ -525,6 +525,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "step-3.5-flash": { name: "Step 3.5 Flash" },
+        "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603" },
       },
     },
     category: "cn_official",
@@ -557,6 +558,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "step-3.5-flash": { name: "Step 3.5 Flash" },
+        "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603" },
       },
     },
     category: "cn_official",

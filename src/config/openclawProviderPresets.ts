@@ -353,6 +353,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "Step 3.5 Flash",
           contextWindow: 262144,
         },
+        {
+          id: "step-3.5-flash-2603",
+          name: "Step 3.5 Flash 2603",
+          contextWindow: 262144,
+        },
       ],
     },
     category: "cn_official",
@@ -373,7 +378,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: { primary: "stepfun/step-3.5-flash" },
-      modelCatalog: { "stepfun/step-3.5-flash": { alias: "StepFun" } },
+      modelCatalog: {
+        "stepfun/step-3.5-flash": { alias: "StepFun" },
+        "stepfun/step-3.5-flash-2603": { alias: "StepFun 2603" },
+      },
     },
   },
   {
@@ -388,6 +396,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "step-3.5-flash",
           name: "Step 3.5 Flash",
+          contextWindow: 262144,
+        },
+        {
+          id: "step-3.5-flash-2603",
+          name: "Step 3.5 Flash 2603",
           contextWindow: 262144,
         },
       ],
@@ -410,7 +423,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: { primary: "stepfun-en/step-3.5-flash" },
-      modelCatalog: { "stepfun-en/step-3.5-flash": { alias: "StepFun" } },
+      modelCatalog: {
+        "stepfun-en/step-3.5-flash": { alias: "StepFun" },
+        "stepfun-en/step-3.5-flash-2603": { alias: "StepFun 2603" },
+      },
     },
   },
   {
