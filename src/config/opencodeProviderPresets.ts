@@ -639,13 +639,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "StepFun",
-    websiteUrl: "https://platform.stepfun.ai",
-    apiKeyUrl: "https://platform.stepfun.ai/interface-key",
+    websiteUrl: "https://platform.stepfun.com/step-plan",
+    apiKeyUrl: "https://platform.stepfun.com/interface-key",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "StepFun",
       options: {
-        baseURL: "https://api.stepfun.ai/v1",
+        baseURL: "https://api.stepfun.com/step_plan/v1",
         apiKey: "",
       },
       models: {
@@ -654,12 +654,44 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     category: "cn_official",
     icon: "stepfun",
-    iconColor: "#005AFF",
+    iconColor: "#16D6D2",
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://api.stepfun.ai/v1",
-        defaultValue: "https://api.stepfun.ai/v1",
+        placeholder: "https://api.stepfun.com/step_plan/v1",
+        defaultValue: "https://api.stepfun.com/step_plan/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "step-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "StepFun en",
+    websiteUrl: "https://platform.stepfun.ai/step-plan",
+    apiKeyUrl: "https://platform.stepfun.ai/interface-key",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StepFun en",
+      options: {
+        baseURL: "https://api.stepfun.ai/step_plan/v1",
+        apiKey: "",
+      },
+      models: {
+        "step-3.5-flash": { name: "Step 3.5 Flash" },
+      },
+    },
+    category: "cn_official",
+    icon: "stepfun",
+    iconColor: "#16D6D2",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.stepfun.ai/step_plan/v1",
+        defaultValue: "https://api.stepfun.ai/step_plan/v1",
         editorValue: "",
       },
       apiKey: {
