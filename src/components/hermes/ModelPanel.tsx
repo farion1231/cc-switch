@@ -110,12 +110,12 @@ const ModelPanel: React.FC = () => {
               id="hermes-model-default"
               value={defaultModel}
               onChange={(e) => setDefaultModel(e.target.value)}
-              placeholder="anthropic/claude-opus-4-6"
+              placeholder="anthropic/claude-opus-4-7"
             />
             <p className="text-xs text-muted-foreground">
               {t("hermes.model.defaultHint", {
                 defaultValue:
-                  "The default model to use, e.g. anthropic/claude-opus-4-6",
+                  "The default model to use, e.g. anthropic/claude-opus-4-7",
               })}
             </p>
           </div>

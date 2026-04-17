@@ -1646,7 +1646,7 @@
       "title": "Model Config",
       "description": "Configure the default model settings in config.yaml's model section.",
       "default": "Default Model",
-      "defaultHint": "The default model to use, e.g. anthropic/claude-opus-4-6",
+      "defaultHint": "The default model to use, e.g. anthropic/claude-opus-4-7",
       "provider": "Provider",
       "providerHint": "Provider name for model routing (e.g. openrouter, anthropic)",
       "baseUrl": "Base URL",
@@ -2448,7 +2448,7 @@
       "artistry": "Highly creative and artistic task category that inspires novel ideas and creative solutions. Defaults to Gemini 3 Pro max variant.",
       "quick": "Lightweight task category for single-file modifications, typo fixes, and simple adjustments. Defaults to Claude Haiku 4.5 fast model.",
       "unspecifiedLow": "Uncategorized low-effort task category for tasks that don't fit other categories with small workload. Defaults to Claude Sonnet 4.5.",
-      "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 4.6 max variant.",
+      "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 4.7 max variant.",
       "writing": "Writing category for documentation, prose and technical writing. Defaults to Gemini 3 Flash fast generation model."
     },
     "slimAgentDesc": {

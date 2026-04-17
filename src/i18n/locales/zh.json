@@ -1647,7 +1647,7 @@
       "title": "模型配置",
       "description": "配置 config.yaml 中 model 节的默认模型设置。",
       "default": "默认模型",
-      "defaultHint": "使用的默认模型，如 anthropic/claude-opus-4-6",
+      "defaultHint": "使用的默认模型，如 anthropic/claude-opus-4-7",
       "provider": "供应商",
       "providerHint": "模型路由的供应商名称（如 openrouter、anthropic）",
       "baseUrl": "Base URL",
@@ -2449,7 +2449,7 @@
       "artistry": "高度创意与艺术性任务类别，激发新颖想法和创造性解决方案，默认使用 Gemini 3 Pro 的最大变体。",
       "quick": "轻量任务类别，用于单文件修改、错别字修复、简单调整等琐碎工作，默认使用 Claude Haiku 4.5 快速模型。",
       "unspecifiedLow": "未归类低工作量任务类别，适用于不适合其他类别且工作量较小的任务，默认使用 Claude Sonnet 4.5。",
-      "unspecifiedHigh": "未归类高工作量任务类别，适用于不适合其他类别且工作量较大的任务，默认使用 Claude Opus 4.6 的最大变体。",
+      "unspecifiedHigh": "未归类高工作量任务类别，适用于不适合其他类别且工作量较大的任务，默认使用 Claude Opus 4.7 的最大变体。",
       "writing": "写作类别，专注于文档、散文和技术写作，默认使用 Gemini 3 Flash 快速生成模型。"
     },
     "slimAgentDesc": {

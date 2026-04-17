@@ -7,7 +7,7 @@
 //!
 //! ```yaml
 //! model:
-//!   default: "anthropic/claude-opus-4-6"
+//!   default: "anthropic/claude-opus-4-7"
 //!   provider: "openrouter"
 //!   base_url: "https://openrouter.ai/api/v1"
 //!
@@ -214,7 +214,7 @@ fn find_yaml_section_range(raw: &str, section_key: &str) -> Option<(usize, usize
 ///
 /// ```yaml
 /// model:
-///   default: "anthropic/claude-opus-4-6"
+///   default: "anthropic/claude-opus-4-7"
 ///   provider: "openrouter"
 /// ```
 fn serialize_yaml_section(key: &str, value: &serde_yaml::Value) -> Result<String, AppError> {
@@ -902,7 +902,7 @@ agent:
             let mut m = serde_yaml::Mapping::new();
             m.insert(
                 serde_yaml::Value::String("default".to_string()),
-                serde_yaml::Value::String("claude-opus-4-6".to_string()),
+                serde_yaml::Value::String("claude-opus-4-7".to_string()),
             );
             m.insert(
                 serde_yaml::Value::String("provider".to_string()),
@@ -916,7 +916,7 @@ agent:
         assert!(result.contains("agent:"));
         assert!(result.contains("max_turns"));
         // And the model section should be updated
-        assert!(result.contains("claude-opus-4-6"));
+        assert!(result.contains("claude-opus-4-7"));
         assert!(result.contains("anthropic"));
         assert!(!result.contains("gpt-4"));
         assert!(!result.contains("openai"));
@@ -1115,7 +1115,7 @@ model:
             assert!(get_model_config().unwrap().is_none());
 
             let model = HermesModelConfig {
-                default: Some("anthropic/claude-opus-4-6".to_string()),
+                default: Some("anthropic/claude-opus-4-7".to_string()),
                 provider: Some("openrouter".to_string()),
                 base_url: Some("https://openrouter.ai/api/v1".to_string()),
                 context_length: Some(200000),
@@ -1127,7 +1127,7 @@ model:
             let read_model = get_model_config().unwrap().unwrap();
             assert_eq!(
                 read_model.default.as_deref(),
-                Some("anthropic/claude-opus-4-6")
+                Some("anthropic/claude-opus-4-7")
             );
             assert_eq!(read_model.provider.as_deref(), Some("openrouter"));
             assert_eq!(read_model.context_length, Some(200000));

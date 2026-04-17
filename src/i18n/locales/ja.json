@@ -1646,7 +1646,7 @@
       "title": "モデル設定",
       "description": "config.yaml の model セクションのデフォルトモデル設定を構成します。",
       "default": "デフォルトモデル",
-      "defaultHint": "使用するデフォルトモデル（例: anthropic/claude-opus-4-6）",
+      "defaultHint": "使用するデフォルトモデル（例: anthropic/claude-opus-4-7）",
       "provider": "プロバイダー",
       "providerHint": "モデルルーティングのプロバイダー名（例: openrouter、anthropic）",
       "baseUrl": "Base URL",
@@ -2448,7 +2448,7 @@
       "artistry": "高度にクリエイティブで芸術的なタスクカテゴリ。斬新なアイデアとクリエイティブなソリューションを促進。デフォルトで Gemini 3 Pro の max バリアントを使用。",
       "quick": "軽量タスクカテゴリ。単一ファイルの修正、タイポ修正、簡単な調整などの些細な作業に使用。デフォルトで Claude Haiku 4.5 高速モデルを使用。",
       "unspecifiedLow": "未分類の低作業量タスクカテゴリ。他のカテゴリに該当せず作業量が小さいタスクに適用。デフォルトで Claude Sonnet 4.5 を使用。",
-      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.6 の max バリアントを使用。",
+      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.7 の max バリアントを使用。",
       "writing": "ライティングカテゴリ。ドキュメント、散文、技術文書に特化。デフォルトで Gemini 3 Flash 高速生成モデルを使用。"
     },
     "slimAgentDesc": {

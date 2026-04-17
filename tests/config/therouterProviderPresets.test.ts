@@ -25,7 +25,7 @@ describe("TheRouter provider presets", () => {
       "anthropic/claude-sonnet-4.6",
     );
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe(
-      "anthropic/claude-opus-4.6",
+      "anthropic/claude-opus-4.7",
     );
   });
 
