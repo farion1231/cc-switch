@@ -273,7 +273,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "Hermes",
     category: "ai-provider",
     keywords: ["hermes", "agent", "nous", "nousresearch"],
-    defaultColor: "#7C3AED",
+    defaultColor: "#000000",
   },
   packycode: {
     name: "packycode",
