@@ -1604,6 +1604,7 @@ export function ProviderForm({
               }
               autoSelect={endpointAutoSelect}
               onAutoSelectChange={setEndpointAutoSelect}
+              shouldShowModelSelector={category !== "official"}
               claudeModel={claudeModel}
               reasoningModel={reasoningModel}
               defaultHaikuModel={defaultHaikuModel}

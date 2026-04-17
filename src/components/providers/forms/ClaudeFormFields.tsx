@@ -95,6 +95,7 @@ interface ClaudeFormFieldsProps {
   onAutoSelectChange: (checked: boolean) => void;
 
   // Model Selector
+  shouldShowModelSelector: boolean;
   claudeModel: string;
   reasoningModel: string;
   defaultHaikuModel: string;
@@ -160,6 +161,7 @@ export function ClaudeFormFields({
   onCustomEndpointsChange,
   autoSelect,
   onAutoSelectChange,
+  shouldShowModelSelector,
   claudeModel,
   reasoningModel,
   defaultHaikuModel,
@@ -186,7 +188,9 @@ export function ClaudeFormFields({
     defaultSonnetModel ||
     defaultOpusModel ||
     apiFormat !== "anthropic" ||
-    apiKeyField !== "ANTHROPIC_AUTH_TOKEN"
+    apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
+    activationMode !== "legacy" ||
+    profileDir
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
@@ -468,7 +472,7 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* 高级选项（API 格式 + 认证字段 + 模型映射） */}
+      {/* 高级选项（Claude 切换 + API 格式/认证字段 + 模型映射） */}
       <Collapsible open={advancedExpanded} onOpenChange={setAdvancedExpanded}>
         <CollapsibleTrigger asChild>
           <Button
@@ -492,7 +496,7 @@ export function ClaudeFormFields({
         )}
         <CollapsibleContent className="space-y-4 pt-2">
           {/* API 格式选择（仅非云服务商显示） */}
-          {category !== "cloud_provider" && (
+          {shouldShowModelSelector && category !== "cloud_provider" && (
             <div className="space-y-2">
               <FormLabel htmlFor="apiFormat">
                 {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
@@ -528,36 +532,40 @@ export function ClaudeFormFields({
           )}
 
           {/* 认证字段选择器 */}
-          <div className="space-y-2">
-            <FormLabel>
-              {t("providerForm.authField", { defaultValue: "认证字段" })}
-            </FormLabel>
-            <Select
-              value={apiKeyField}
-              onValueChange={(v) => onApiKeyFieldChange(v as ClaudeApiKeyField)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ANTHROPIC_AUTH_TOKEN">
-                  {t("providerForm.authFieldAuthToken", {
-                    defaultValue: "ANTHROPIC_AUTH_TOKEN（默认）",
-                  })}
-                </SelectItem>
-                <SelectItem value="ANTHROPIC_API_KEY">
-                  {t("providerForm.authFieldApiKey", {
-                    defaultValue: "ANTHROPIC_API_KEY",
-                  })}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              {t("providerForm.authFieldHint", {
-                defaultValue: "选择写入配置的认证环境变量名",
-              })}
-            </p>
-          </div>
+          {shouldShowModelSelector && (
+            <div className="space-y-2">
+              <FormLabel>
+                {t("providerForm.authField", { defaultValue: "认证字段" })}
+              </FormLabel>
+              <Select
+                value={apiKeyField}
+                onValueChange={(v) =>
+                  onApiKeyFieldChange(v as ClaudeApiKeyField)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ANTHROPIC_AUTH_TOKEN">
+                    {t("providerForm.authFieldAuthToken", {
+                      defaultValue: "ANTHROPIC_AUTH_TOKEN（默认）",
+                    })}
+                  </SelectItem>
+                  <SelectItem value="ANTHROPIC_API_KEY">
+                    {t("providerForm.authFieldApiKey", {
+                      defaultValue: "ANTHROPIC_API_KEY",
+                    })}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.authFieldHint", {
+                  defaultValue: "选择写入配置的认证环境变量名",
+                })}
+              </p>
+            </div>
+          )}
 
           {/* 模型映射 */}
           <div className="space-y-2 border-t pt-4">
@@ -626,104 +634,110 @@ export function ClaudeFormFields({
             </p>
           </div>
 
-          <div className="space-y-1 pt-2 border-t">
-            <div className="flex items-center justify-between">
-              <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
-              {!isCopilotPreset && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleFetchModels}
-                  disabled={isFetchingModels}
-                  className="h-7 gap-1"
-                >
-                  {isFetchingModels ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Download className="h-3.5 w-3.5" />
+          {shouldShowModelSelector && (
+            <>
+              <div className="space-y-1 pt-2 border-t">
+                <div className="flex items-center justify-between">
+                  <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
+                  {!isCopilotPreset && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleFetchModels}
+                      disabled={isFetchingModels}
+                      className="h-7 gap-1"
+                    >
+                      {isFetchingModels ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5" />
+                      )}
+                      {t("providerForm.fetchModels")}
+                    </Button>
                   )}
-                  {t("providerForm.fetchModels")}
-                </Button>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {t("providerForm.modelMappingHint")}
-            </p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* 主模型 */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="claudeModel">
-                {t("providerForm.anthropicModel", {
-                  defaultValue: "主模型",
-                })}
-              </FormLabel>
-              {renderModelInput(
-                "claudeModel",
-                claudeModel,
-                "ANTHROPIC_MODEL",
-                t("providerForm.modelPlaceholder", { defaultValue: "" }),
-              )}
-            </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t("providerForm.modelMappingHint")}
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 主模型 */}
+                <div className="space-y-2">
+                  <FormLabel htmlFor="claudeModel">
+                    {t("providerForm.anthropicModel", {
+                      defaultValue: "主模型",
+                    })}
+                  </FormLabel>
+                  {renderModelInput(
+                    "claudeModel",
+                    claudeModel,
+                    "ANTHROPIC_MODEL",
+                    t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                  )}
+                </div>
 
-            {/* 推理模型 */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="reasoningModel">
-                {t("providerForm.anthropicReasoningModel")}
-              </FormLabel>
-              {renderModelInput(
-                "reasoningModel",
-                reasoningModel,
-                "ANTHROPIC_REASONING_MODEL",
-              )}
-            </div>
+                {/* 推理模型 */}
+                <div className="space-y-2">
+                  <FormLabel htmlFor="reasoningModel">
+                    {t("providerForm.anthropicReasoningModel")}
+                  </FormLabel>
+                  {renderModelInput(
+                    "reasoningModel",
+                    reasoningModel,
+                    "ANTHROPIC_REASONING_MODEL",
+                  )}
+                </div>
 
-            {/* 默认 Haiku */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="claudeDefaultHaikuModel">
-                {t("providerForm.anthropicDefaultHaikuModel", {
-                  defaultValue: "Haiku 默认模型",
-                })}
-              </FormLabel>
-              {renderModelInput(
-                "claudeDefaultHaikuModel",
-                defaultHaikuModel,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                t("providerForm.haikuModelPlaceholder", { defaultValue: "" }),
-              )}
-            </div>
+                {/* 默认 Haiku */}
+                <div className="space-y-2">
+                  <FormLabel htmlFor="claudeDefaultHaikuModel">
+                    {t("providerForm.anthropicDefaultHaikuModel", {
+                      defaultValue: "Haiku 默认模型",
+                    })}
+                  </FormLabel>
+                  {renderModelInput(
+                    "claudeDefaultHaikuModel",
+                    defaultHaikuModel,
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                    t("providerForm.haikuModelPlaceholder", {
+                      defaultValue: "",
+                    }),
+                  )}
+                </div>
 
-            {/* 默认 Sonnet */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="claudeDefaultSonnetModel">
-                {t("providerForm.anthropicDefaultSonnetModel", {
-                  defaultValue: "Sonnet 默认模型",
-                })}
-              </FormLabel>
-              {renderModelInput(
-                "claudeDefaultSonnetModel",
-                defaultSonnetModel,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                t("providerForm.modelPlaceholder", { defaultValue: "" }),
-              )}
-            </div>
+                {/* 默认 Sonnet */}
+                <div className="space-y-2">
+                  <FormLabel htmlFor="claudeDefaultSonnetModel">
+                    {t("providerForm.anthropicDefaultSonnetModel", {
+                      defaultValue: "Sonnet 默认模型",
+                    })}
+                  </FormLabel>
+                  {renderModelInput(
+                    "claudeDefaultSonnetModel",
+                    defaultSonnetModel,
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                    t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                  )}
+                </div>
 
-            {/* 默认 Opus */}
-            <div className="space-y-2">
-              <FormLabel htmlFor="claudeDefaultOpusModel">
-                {t("providerForm.anthropicDefaultOpusModel", {
-                  defaultValue: "Opus 默认模型",
-                })}
-              </FormLabel>
-              {renderModelInput(
-                "claudeDefaultOpusModel",
-                defaultOpusModel,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                t("providerForm.modelPlaceholder", { defaultValue: "" }),
-              )}
-            </div>
-          </div>
+                {/* 默认 Opus */}
+                <div className="space-y-2">
+                  <FormLabel htmlFor="claudeDefaultOpusModel">
+                    {t("providerForm.anthropicDefaultOpusModel", {
+                      defaultValue: "Opus 默认模型",
+                    })}
+                  </FormLabel>
+                  {renderModelInput(
+                    "claudeDefaultOpusModel",
+                    defaultOpusModel,
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                    t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </CollapsibleContent>
       </Collapsible>
     </>
