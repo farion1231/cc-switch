@@ -37,7 +37,7 @@ impl Database {
                     provider_id: row.get(0)?,
                     provider_name: row.get(1)?,
                     sort_index: row.get(2)?,
-                    provider_notes: row.get(3)?, // 这里暂时不查询备注信息，后续可以根据需要添加
+                    provider_notes: row.get(3)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?

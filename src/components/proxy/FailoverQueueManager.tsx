@@ -183,7 +183,7 @@ export function FailoverQueueManager({
               <SelectItem key={provider.id} value={provider.id}>
                 {provider.name}
                 {provider.notes && (
-                  <span className="text-xs text-muted-foreground">
+                  <span className="ml-1 text-xs text-muted-foreground">
                     ({provider.notes})
                   </span>
                 )}
@@ -233,9 +233,7 @@ export function FailoverQueueManager({
               disabled={disabled}
               onRemove={handleRemoveProvider}
               isRemoving={removeFromQueue.isPending}
-            >
-              {/* {item.providerName} */}
-            </QueueItem>
+            />
           ))}
         </div>
       )}
