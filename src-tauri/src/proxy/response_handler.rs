@@ -5,7 +5,7 @@
 use super::session::ProxySession;
 use super::usage::parser::TokenUsage;
 use super::ProxyError;
-use crate::proxy::sse::strip_sse_field;
+use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
@@ -86,10 +86,7 @@ impl StreamHandler {
                         crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                         // 提取完整事件
-                        while let Some(pos) = buffer.find("\n\n") {
-                            let event_text = buffer[..pos].to_string();
-                            buffer = buffer[pos + 2..].to_string();
-
+                        while let Some(event_text) = take_sse_block(&mut buffer) {
                             for line in event_text.lines() {
                                 if let Some(data) = strip_sse_field(line, "data") {
                                     if data.trim() != "[DONE]" {

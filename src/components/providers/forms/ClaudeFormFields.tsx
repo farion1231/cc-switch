@@ -521,6 +521,11 @@ export function ClaudeFormFields({
                       defaultValue: "OpenAI Responses API (需转换)",
                     })}
                   </SelectItem>
+                  <SelectItem value="gemini_native">
+                    {t("providerForm.apiFormatGeminiNative", {
+                      defaultValue: "Gemini Native generateContent (converted)",
+                    })}
+                  </SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">

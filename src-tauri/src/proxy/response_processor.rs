@@ -7,7 +7,7 @@ use super::{
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::ProxyResponse,
     server::ProxyState,
-    sse::strip_sse_field,
+    sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -662,10 +662,7 @@ pub fn create_logged_passthrough_stream(
                     crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                     // 尝试解析并记录完整的 SSE 事件
-                    while let Some(pos) = buffer.find("\n\n") {
-                        let event_text = buffer[..pos].to_string();
-                        buffer = buffer[pos + 2..].to_string();
-
+                    while let Some(event_text) = take_sse_block(&mut buffer) {
                         if !event_text.trim().is_empty() {
                             // 提取 data 部分并尝试解析为 JSON
                             for line in event_text.lines() {
@@ -726,6 +723,7 @@ mod tests {
     use crate::provider::ProviderMeta;
     use crate::proxy::failover_switch::FailoverSwitchManager;
     use crate::proxy::provider_router::ProviderRouter;
+    use crate::proxy::providers::gemini_shadow::GeminiShadowStore;
     use crate::proxy::types::{ProxyConfig, ProxyStatus};
     use rust_decimal::Decimal;
     use std::collections::HashMap;
@@ -846,6 +844,7 @@ mod tests {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(HashMap::new())),
             provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
         }
