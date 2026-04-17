@@ -91,7 +91,7 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 
 <tr>
 <td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
-<td>SSSAiCode のご支援に感謝します！SSSAiCode は安定性と信頼性に優れた API 中継サービスで、安定的で信頼性が高く、手頃な価格の Claude・Codex モデルサービスを提供しています。<strong>高コストパフォーマンスの公式 Claude サービスを 0.5￥/$ 換算で提供</strong>、月額制・Paygo など多様な課金方式に対応し、当日の迅速な請求書発行をサポート。CC Switch ユーザー向けの特別特典：<a href="https://www.sssaicode.com/register?ref=DCP0SM">こちらのリンク</a>から登録すると、毎回のチャージで $10 の追加ボーナスを受けられます！</td>
+<td>SSSAiCode のご支援に感謝します！SSSAiCode は安定性と信頼性に優れた API 中継サービスで、安定的で信頼性が高く、手頃な価格の Claude・Codex モデルサービスを提供しています。当日の迅速な請求書発行をサポート。CC Switch ユーザー向けの特別特典：<a href="https://www.sssaicode.com/register?ref=DCP0SM">こちらのリンク</a>から登録すると、毎回のチャージで $10 の追加ボーナスを受けられます！</td>
 </tr>
 
 <tr>
@@ -102,7 +102,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <td width="180"><a href="https://lemondata.cc/r/FFX1ZDUP"><img src="assets/partners/logos/lemondata.png" alt="LemonData" width="150"></a></td>
 <td>LemonData のご支援に感謝します！LemonData は高性能 AI API アグリゲーションプラットフォームで、GPT、Claude、Gemini、DeepSeek など 300 以上のモデルに 1 つの API キーでアクセス可能。全モデルが公式価格の 30〜70% オフで自動フェイルオーバー、スマートルーティング、無制限同時接続に対応。新規ユーザーは登録だけで即座に $1 の無料クレジットを獲得 — <a href="https://lemondata.cc/r/FFX1ZDUP">こちらのリンク</a>から登録してボーナスを獲得し、すぐに開発を始めましょう！</td>
 </tr>
-
 
 <tr>
 <td width="180"><a href="https://ctok.ai"><img src="assets/partners/logos/ctok.png" alt="CTok" width="150"></a></td>
