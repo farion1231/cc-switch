@@ -1898,6 +1898,10 @@ export function ProviderForm({
               websiteUrl={hermesWebsiteUrl}
               isPartner={isHermesPartner}
               partnerPromotionKey={hermesPartnerPromotionKey}
+              apiMode={hermesForm.hermesApiMode}
+              onApiModeChange={hermesForm.handleHermesApiModeChange}
+              models={hermesForm.hermesModels}
+              onModelsChange={hermesForm.handleHermesModelsChange}
             />
           )}
 
