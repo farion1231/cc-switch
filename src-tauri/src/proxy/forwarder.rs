@@ -17,13 +17,19 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{
+        CopilotOptimizerConfig, OptimizerConfig, ProviderRetryState, ProxyStatus,
+        RectifierConfig,
+    },
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
-use crate::{app_config::AppType, provider::Provider};
+use crate::{
+    app_config::AppType,
+    provider::{FailoverRetryMode, Provider},
+};
 use http::Extensions;
 use serde_json::Value;
 use std::sync::Arc;
@@ -116,7 +122,6 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
-        // 获取适配器
         let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
 
@@ -130,19 +135,12 @@ impl RequestForwarder {
         let mut last_error = None;
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
-
-        // 整流器重试标记：确保整流最多触发一次
         let mut rectifier_retried = false;
         let mut budget_rectifier_retried = false;
-
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
 
-        // 依次尝试每个供应商
         for provider in providers.iter() {
-            // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
-            // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
-            let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
+            let (allowed, mut used_half_open_permit) = if bypass_circuit_breaker {
                 (true, false)
             } else {
                 let permit = self
@@ -156,567 +154,189 @@ impl RequestForwarder {
                 continue;
             }
 
-            // PRE-SEND 优化器：每个 provider 独立决定是否优化
-            // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
-            let mut provider_body =
-                if self.optimizer_config.enabled && is_bedrock_provider(provider) {
-                    let mut b = body.clone();
-                    if self.optimizer_config.thinking_optimizer {
-                        super::thinking_optimizer::optimize(&mut b, &self.optimizer_config);
-                    }
-                    if self.optimizer_config.cache_injection {
-                        super::cache_injector::inject(&mut b, &self.optimizer_config);
-                    }
-                    b
-                } else {
-                    body.clone()
-                };
-
             attempted_providers += 1;
 
-            // 更新状态中的当前Provider信息
-            {
-                let mut status = self.status.write().await;
-                status.current_provider = Some(provider.name.clone());
-                status.current_provider_id = Some(provider.id.clone());
-                status.total_requests += 1;
-                status.last_request_at = Some(chrono::Utc::now().to_rfc3339());
-            }
+            let retry_policy = effective_failover_retry_policy(provider);
+            let mut retries_used = 0u32;
+            let mut next_delay_seconds = retry_policy.base_delay_seconds;
+            let mut active_retry_decision: Option<ProviderRetryDecision> = None;
 
-            // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
-            match self
-                .forward(
-                    provider,
-                    endpoint,
-                    &provider_body,
-                    &headers,
-                    &extensions,
-                    adapter.as_ref(),
-                )
-                .await
-            {
-                Ok((response, claude_api_format)) => {
-                    // 成功：记录成功并更新熔断器
-                    let _ = self
-                        .router
-                        .record_result(
-                            &provider.id,
-                            app_type_str,
-                            used_half_open_permit,
-                            true,
-                            None,
-                        )
-                        .await;
+            loop {
+                self.mark_provider_attempt_started(provider).await;
 
-                    // 更新当前应用类型使用的 provider
-                    {
-                        let mut current_providers = self.current_providers.write().await;
-                        current_providers.insert(
-                            app_type_str.to_string(),
-                            (provider.id.clone(), provider.name.clone()),
-                        );
-                    }
-
-                    // 更新成功统计
-                    {
-                        let mut status = self.status.write().await;
-                        status.success_requests += 1;
-                        status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
-                        if should_switch {
-                            status.failover_count += 1;
-
-                            // 异步触发供应商切换，更新 UI/托盘，并把“当前供应商”同步为实际使用的 provider
-                            let fm = self.failover_manager.clone();
-                            let ah = self.app_handle.clone();
-                            let pid = provider.id.clone();
-                            let pname = provider.name.clone();
-                            let at = app_type_str.to_string();
-
-                            tokio::spawn(async move {
-                                let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
-                            });
-                        }
-                        // 重新计算成功率
-                        if status.total_requests > 0 {
-                            status.success_rate = (status.success_requests as f32
-                                / status.total_requests as f32)
-                                * 100.0;
-                        }
-                    }
-
-                    return Ok(ForwardResult {
-                        response,
-                        provider: provider.clone(),
-                        claude_api_format,
-                    });
+                if let Some(retry_decision) = active_retry_decision.as_ref() {
+                    self.set_provider_retry_state(
+                        app_type_str,
+                        provider,
+                        &retry_policy,
+                        retry_decision.current_retry,
+                        retry_decision.delay_seconds,
+                        false,
+                    )
+                    .await;
                 }
-                Err(e) => {
-                    // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
-                    let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
-                    let is_anthropic_provider = matches!(
-                        provider_type,
-                        ProviderType::Claude | ProviderType::ClaudeAuth
-                    );
-                    let mut signature_rectifier_non_retryable_client_error = false;
 
-                    if is_anthropic_provider {
-                        let error_message = extract_error_message(&e);
-                        if should_rectify_thinking_signature(
-                            error_message.as_deref(),
-                            &self.rectifier_config,
-                        ) {
-                            // 已经重试过：直接返回错误（不可重试客户端错误）
-                            if rectifier_retried {
-                                log::warn!("[{app_type_str}] [RECT-005] 整流器已触发过，不再重试");
-                                // 释放 HalfOpen permit（不记录熔断器，这是客户端兼容性问题）
-                                self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                                return Err(ForwardError {
-                                    error: e,
-                                    provider: Some(provider.clone()),
-                                });
-                            }
-
-                            // 首次触发：整流请求体
-                            let rectified = rectify_anthropic_request(&mut provider_body);
-
-                            // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
-                            if !rectified.applied {
-                                log::warn!(
-                                    "[{app_type_str}] [RECT-006] thinking 签名整流器触发但无可整流内容，继续检查 budget；若 budget 也未命中则按客户端错误返回"
-                                );
-                                signature_rectifier_non_retryable_client_error = true;
-                            } else {
-                                log::info!(
-                                    "[{}] [RECT-001] thinking 签名整流器触发, 移除 {} thinking blocks, {} redacted_thinking blocks, {} signature fields",
-                                    app_type_str,
-                                    rectified.removed_thinking_blocks,
-                                    rectified.removed_redacted_thinking_blocks,
-                                    rectified.removed_signature_fields
-                                );
-
-                                // 标记已重试（当前逻辑下重试后必定 return，保留标记以备将来扩展）
-                                let _ = std::mem::replace(&mut rectifier_retried, true);
-
-                                // 使用同一供应商重试（不计入熔断器）
-                                match self
-                                    .forward(
-                                        provider,
-                                        endpoint,
-                                        &provider_body,
-                                        &headers,
-                                        &extensions,
-                                        adapter.as_ref(),
-                                    )
-                                    .await
-                                {
-                                    Ok((response, claude_api_format)) => {
-                                        log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
-                                        // 记录成功
-                                        let _ = self
-                                            .router
-                                            .record_result(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                                true,
-                                                None,
-                                            )
-                                            .await;
-
-                                        // 更新当前应用类型使用的 provider
-                                        {
-                                            let mut current_providers =
-                                                self.current_providers.write().await;
-                                            current_providers.insert(
-                                                app_type_str.to_string(),
-                                                (provider.id.clone(), provider.name.clone()),
-                                            );
-                                        }
-
-                                        // 更新成功统计
-                                        {
-                                            let mut status = self.status.write().await;
-                                            status.success_requests += 1;
-                                            status.last_error = None;
-                                            let should_switch =
-                                                self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
-                                            if should_switch {
-                                                status.failover_count += 1;
-
-                                                // 异步触发供应商切换，更新 UI/托盘
-                                                let fm = self.failover_manager.clone();
-                                                let ah = self.app_handle.clone();
-                                                let pid = provider.id.clone();
-                                                let pname = provider.name.clone();
-                                                let at = app_type_str.to_string();
-
-                                                tokio::spawn(async move {
-                                                    let _ = fm
-                                                        .try_switch(ah.as_ref(), &at, &pid, &pname)
-                                                        .await;
-                                                });
-                                            }
-                                            if status.total_requests > 0 {
-                                                status.success_rate = (status.success_requests
-                                                    as f32
-                                                    / status.total_requests as f32)
-                                                    * 100.0;
-                                            }
-                                        }
-
-                                        return Ok(ForwardResult {
-                                            response,
-                                            provider: provider.clone(),
-                                            claude_api_format,
-                                        });
-                                    }
-                                    Err(retry_err) => {
-                                        // 整流重试仍失败：区分错误类型决定是否记录熔断器
-                                        log::warn!(
-                                            "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
-                                        );
-
-                                        // 区分错误类型：Provider 问题记录失败，客户端问题仅释放 permit
-                                        let is_provider_error = match &retry_err {
-                                            ProxyError::Timeout(_)
-                                            | ProxyError::ForwardFailed(_) => true,
-                                            ProxyError::UpstreamError { status, .. } => {
-                                                *status >= 500
-                                            }
-                                            _ => false,
-                                        };
-
-                                        if is_provider_error {
-                                            // Provider 问题：记录失败到熔断器
-                                            let _ = self
-                                                .router
-                                                .record_result(
-                                                    &provider.id,
-                                                    app_type_str,
-                                                    used_half_open_permit,
-                                                    false,
-                                                    Some(retry_err.to_string()),
-                                                )
-                                                .await;
-                                        } else {
-                                            // 客户端问题：仅释放 permit，不记录熔断器
-                                            self.router
-                                                .release_permit_neutral(
-                                                    &provider.id,
-                                                    app_type_str,
-                                                    used_half_open_permit,
-                                                )
-                                                .await;
-                                        }
-
-                                        let mut status = self.status.write().await;
-                                        status.failed_requests += 1;
-                                        status.last_error = Some(retry_err.to_string());
-                                        if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests as f32
-                                                / status.total_requests as f32)
-                                                * 100.0;
-                                        }
-                                        return Err(ForwardError {
-                                            error: retry_err,
-                                            provider: Some(provider.clone()),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 检测是否需要触发 budget 整流器（仅 Claude/ClaudeAuth 供应商）
-                    if is_anthropic_provider {
-                        let error_message = extract_error_message(&e);
-                        if should_rectify_thinking_budget(
-                            error_message.as_deref(),
-                            &self.rectifier_config,
-                        ) {
-                            // 已经重试过：直接返回错误（不可重试客户端错误）
-                            if budget_rectifier_retried {
-                                log::warn!(
-                                    "[{app_type_str}] [RECT-013] budget 整流器已触发过，不再重试"
-                                );
-                                self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                                return Err(ForwardError {
-                                    error: e,
-                                    provider: Some(provider.clone()),
-                                });
-                            }
-
-                            let budget_rectified = rectify_thinking_budget(&mut provider_body);
-                            if !budget_rectified.applied {
-                                log::warn!(
-                                    "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
-                                );
-                                self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                                return Err(ForwardError {
-                                    error: e,
-                                    provider: Some(provider.clone()),
-                                });
-                            }
-
-                            log::info!(
-                                "[{}] [RECT-010] thinking budget 整流器触发, before={:?}, after={:?}",
-                                app_type_str,
-                                budget_rectified.before,
-                                budget_rectified.after
-                            );
-
-                            let _ = std::mem::replace(&mut budget_rectifier_retried, true);
-
-                            // 使用同一供应商重试（不计入熔断器）
-                            match self
-                                .forward(
-                                    provider,
-                                    endpoint,
-                                    &provider_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
-                                )
-                                .await
-                            {
-                                Ok((response, claude_api_format)) => {
-                                    log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
-                                    let _ = self
-                                        .router
-                                        .record_result(
-                                            &provider.id,
-                                            app_type_str,
-                                            used_half_open_permit,
-                                            true,
-                                            None,
-                                        )
-                                        .await;
-
-                                    {
-                                        let mut current_providers =
-                                            self.current_providers.write().await;
-                                        current_providers.insert(
-                                            app_type_str.to_string(),
-                                            (provider.id.clone(), provider.name.clone()),
-                                        );
-                                    }
-
-                                    {
-                                        let mut status = self.status.write().await;
-                                        status.success_requests += 1;
-                                        status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
-                                        if should_switch {
-                                            status.failover_count += 1;
-                                            let fm = self.failover_manager.clone();
-                                            let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
-                                            let at = app_type_str.to_string();
-                                            tokio::spawn(async move {
-                                                let _ = fm
-                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
-                                                    .await;
-                                            });
-                                        }
-                                        if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests as f32
-                                                / status.total_requests as f32)
-                                                * 100.0;
-                                        }
-                                    }
-
-                                    return Ok(ForwardResult {
-                                        response,
-                                        provider: provider.clone(),
-                                        claude_api_format,
-                                    });
-                                }
-                                Err(retry_err) => {
-                                    log::warn!(
-                                        "[{app_type_str}] [RECT-012] budget 整流重试仍失败: {retry_err}"
-                                    );
-
-                                    let is_provider_error = match &retry_err {
-                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => {
-                                            true
-                                        }
-                                        ProxyError::UpstreamError { status, .. } => *status >= 500,
-                                        _ => false,
-                                    };
-
-                                    if is_provider_error {
-                                        let _ = self
-                                            .router
-                                            .record_result(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                                false,
-                                                Some(retry_err.to_string()),
-                                            )
-                                            .await;
-                                    } else {
-                                        self.router
-                                            .release_permit_neutral(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                            )
-                                            .await;
-                                    }
-
-                                    let mut status = self.status.write().await;
-                                    status.failed_requests += 1;
-                                    status.last_error = Some(retry_err.to_string());
-                                    if status.total_requests > 0 {
-                                        status.success_rate = (status.success_requests as f32
-                                            / status.total_requests as f32)
-                                            * 100.0;
-                                    }
-                                    return Err(ForwardError {
-                                        error: retry_err,
-                                        provider: Some(provider.clone()),
-                                    });
-                                }
-                            }
-                        }
-                    }
-
-                    if signature_rectifier_non_retryable_client_error {
-                        self.router
-                            .release_permit_neutral(
+                match self
+                    .attempt_provider_once(
+                        app_type,
+                        app_type_str,
+                        provider,
+                        endpoint,
+                        &body,
+                        &headers,
+                        &extensions,
+                        adapter.as_ref(),
+                        &mut used_half_open_permit,
+                        &mut rectifier_retried,
+                        &mut budget_rectifier_retried,
+                    )
+                    .await
+                {
+                    ProviderAttemptOutcome::Success {
+                        response,
+                        claude_api_format,
+                    } => {
+                        let _ = self
+                            .router
+                            .record_result(
                                 &provider.id,
                                 app_type_str,
                                 used_half_open_permit,
+                                true,
+                                None,
                             )
                             .await;
-                        let mut status = self.status.write().await;
-                        status.failed_requests += 1;
-                        status.last_error = Some(e.to_string());
-                        if status.total_requests > 0 {
-                            status.success_rate = (status.success_requests as f32
-                                / status.total_requests as f32)
-                                * 100.0;
-                        }
-                        return Err(ForwardError {
-                            error: e,
-                            provider: Some(provider.clone()),
+                        self.clear_provider_retry_state(app_type_str, &provider.id)
+                            .await;
+                        self.record_success_status(provider, app_type_str).await;
+
+                        return Ok(ForwardResult {
+                            response,
+                            provider: provider.clone(),
+                            claude_api_format,
                         });
                     }
-
-                    // 失败：记录失败并更新熔断器
-                    let _ = self
-                        .router
-                        .record_result(
-                            &provider.id,
-                            app_type_str,
-                            used_half_open_permit,
-                            false,
-                            Some(e.to_string()),
-                        )
+                    ProviderAttemptOutcome::Retryable(error) => {
+                        self.set_last_error(format!(
+                            "Provider {} failed: {}",
+                            provider.name, error
+                        ))
                         .await;
 
-                    // 分类错误
-                    let category = self.categorize_proxy_error(&e);
+                        if let Some(retry_decision) = next_provider_retry_decision(
+                            &retry_policy,
+                            retries_used,
+                            next_delay_seconds,
+                        ) {
+                            retries_used = retry_decision.current_retry;
+                            next_delay_seconds = retry_decision.next_delay_seconds;
+                            active_retry_decision = Some(retry_decision.clone());
 
-                    match category {
-                        ErrorCategory::Retryable => {
-                            // 可重试：更新错误信息，继续尝试下一个供应商
-                            {
-                                let mut status = self.status.write().await;
-                                status.last_error =
-                                    Some(format!("Provider {} 失败: {}", provider.name, e));
-                            }
+                            self.set_provider_retry_state(
+                                app_type_str,
+                                provider,
+                                &retry_policy,
+                                retry_decision.current_retry,
+                                retry_decision.delay_seconds,
+                                true,
+                            )
+                            .await;
 
-                            let (log_code, log_message) = build_retryable_failure_log(
-                                &provider.name,
-                                attempted_providers,
-                                providers.len(),
-                                &e,
-                            );
-                            log::warn!("[{app_type_str}] [{log_code}] {log_message}");
-
-                            last_error = Some(e);
-                            last_provider = Some(provider.clone());
-                            // 继续尝试下一个供应商
-                            continue;
-                        }
-                        ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
-                            // 不可重试：直接返回错误
-                            {
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
+                            let error_summary = summarize_proxy_error(&error);
+                            match retry_policy.mode {
+                                FailoverRetryMode::Infinite => {
+                                    log::warn!(
+                                        "[{app_type_str}] [{}] Provider {} failed, retrying the same provider indefinitely (attempt #{}) after {}s: {}",
+                                        log_fwd::PROVIDER_FAILED_RETRY,
+                                        provider.name,
+                                        retry_decision.current_retry,
+                                        retry_decision.delay_seconds,
+                                        error_summary,
+                                    );
+                                }
+                                FailoverRetryMode::Finite => {
+                                    log::warn!(
+                                        "[{app_type_str}] [{}] Provider {} failed, retrying the same provider ({}/{}) after {}s: {}",
+                                        log_fwd::PROVIDER_FAILED_RETRY,
+                                        provider.name,
+                                        retry_decision.current_retry,
+                                        retry_policy.max_retries,
+                                        retry_decision.delay_seconds,
+                                        error_summary,
+                                    );
                                 }
                             }
-                            return Err(ForwardError {
-                                error: e,
-                                provider: Some(provider.clone()),
-                            });
+
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                retry_decision.delay_seconds,
+                            ))
+                            .await;
+                            continue;
                         }
+
+                        let _ = self
+                            .router
+                            .record_result(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                                false,
+                                Some(error.to_string()),
+                            )
+                            .await;
+                        self.clear_provider_retry_state(app_type_str, &provider.id)
+                            .await;
+
+                        let (log_code, log_message) = build_retryable_failure_log(
+                            &provider.name,
+                            attempted_providers,
+                            providers.len(),
+                            &error,
+                        );
+                        log::warn!("[{app_type_str}] [{log_code}] {log_message}");
+
+                        last_error = Some(error);
+                        last_provider = Some(provider.clone());
+                        break;
+                    }
+                    ProviderAttemptOutcome::Terminal {
+                        error,
+                        count_as_provider_failure,
+                    } => {
+                        if count_as_provider_failure {
+                            let _ = self
+                                .router
+                                .record_result(
+                                    &provider.id,
+                                    app_type_str,
+                                    used_half_open_permit,
+                                    false,
+                                    Some(error.to_string()),
+                                )
+                                .await;
+                        }
+
+                        self.clear_provider_retry_state(app_type_str, &provider.id)
+                            .await;
+                        self.record_request_failure_status(&error).await;
+
+                        return Err(ForwardError {
+                            error,
+                            provider: Some(provider.clone()),
+                        });
                     }
                 }
             }
         }
 
         if attempted_providers == 0 {
-            // providers 列表非空，但全部被熔断器拒绝（典型：HalfOpen 探测名额被占用）
             {
                 let mut status = self.status.write().await;
                 status.failed_requests += 1;
-                status.last_error = Some("所有供应商暂时不可用（熔断器限制）".to_string());
+                status.last_error = Some(
+                    "All providers are temporarily unavailable (circuit breaker limit)"
+                        .to_string(),
+                );
                 if status.total_requests > 0 {
                     status.success_rate =
                         (status.success_requests as f32 / status.total_requests as f32) * 100.0;
@@ -728,11 +348,10 @@ impl RequestForwarder {
             });
         }
 
-        // 所有供应商都失败了
         {
             let mut status = self.status.write().await;
             status.failed_requests += 1;
-            status.last_error = Some("所有供应商都失败".to_string());
+            status.last_error = Some("All providers failed".to_string());
             if status.total_requests > 0 {
                 status.success_rate =
                     (status.success_requests as f32 / status.total_requests as f32) * 100.0;
@@ -751,7 +370,385 @@ impl RequestForwarder {
         })
     }
 
-    /// 转发单个请求（使用适配器）
+    async fn attempt_provider_once(
+        &self,
+        app_type: &AppType,
+        app_type_str: &str,
+        provider: &Provider,
+        endpoint: &str,
+        body: &Value,
+        headers: &axum::http::HeaderMap,
+        extensions: &Extensions,
+        adapter: &dyn ProviderAdapter,
+        used_half_open_permit: &mut bool,
+        rectifier_retried: &mut bool,
+        budget_rectifier_retried: &mut bool,
+    ) -> ProviderAttemptOutcome {
+        let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
+        let is_anthropic_provider = matches!(
+            provider_type,
+            ProviderType::Claude | ProviderType::ClaudeAuth
+        );
+        let mut signature_rectifier_non_retryable_client_error = false;
+
+        let mut provider_body = if self.optimizer_config.enabled && is_bedrock_provider(provider) {
+            let mut b = body.clone();
+            if self.optimizer_config.thinking_optimizer {
+                super::thinking_optimizer::optimize(&mut b, &self.optimizer_config);
+            }
+            if self.optimizer_config.cache_injection {
+                super::cache_injector::inject(&mut b, &self.optimizer_config);
+            }
+            b
+        } else {
+            body.clone()
+        };
+
+        match self
+            .forward(
+                provider,
+                endpoint,
+                &provider_body,
+                headers,
+                extensions,
+                adapter,
+            )
+            .await
+        {
+            Ok((response, claude_api_format)) => ProviderAttemptOutcome::Success {
+                response,
+                claude_api_format,
+            },
+            Err(error) => {
+                if is_anthropic_provider {
+                    let error_message = extract_error_message(&error);
+                    if should_rectify_thinking_signature(
+                        error_message.as_deref(),
+                        &self.rectifier_config,
+                    ) {
+                        if *rectifier_retried {
+                            log::warn!("[{app_type_str}] [RECT-005] signature rectifier already retried once");
+                            self.release_permit_neutral_once(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                            )
+                            .await;
+                            return ProviderAttemptOutcome::Terminal {
+                                error,
+                                count_as_provider_failure: false,
+                            };
+                        }
+
+                        let rectified = rectify_anthropic_request(&mut provider_body);
+                        if !rectified.applied {
+                            log::warn!(
+                                "[{app_type_str}] [RECT-006] signature rectifier triggered but did not change the request"
+                            );
+                            signature_rectifier_non_retryable_client_error = true;
+                        } else {
+                            log::info!(
+                                "[{}] [RECT-001] signature rectifier applied: removed {} thinking blocks, {} redacted_thinking blocks, {} signature fields",
+                                app_type_str,
+                                rectified.removed_thinking_blocks,
+                                rectified.removed_redacted_thinking_blocks,
+                                rectified.removed_signature_fields
+                            );
+                            *rectifier_retried = true;
+
+                            match self
+                                .forward(
+                                    provider,
+                                    endpoint,
+                                    &provider_body,
+                                    headers,
+                                    extensions,
+                                    adapter,
+                                )
+                                .await
+                            {
+                                Ok((response, claude_api_format)) => {
+                                    log::info!(
+                                        "[{app_type_str}] [RECT-002] signature rectifier retry succeeded"
+                                    );
+                                    return ProviderAttemptOutcome::Success {
+                                        response,
+                                        claude_api_format,
+                                    };
+                                }
+                                Err(retry_error) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [RECT-003] signature rectifier retry failed: {retry_error}"
+                                    );
+
+                                    let is_provider_error = match &retry_error {
+                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => true,
+                                        ProxyError::UpstreamError { status, .. } => *status >= 500,
+                                        _ => false,
+                                    };
+
+                                    return if is_provider_error {
+                                        ProviderAttemptOutcome::Retryable(retry_error)
+                                    } else {
+                                        self.release_permit_neutral_once(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await;
+                                        ProviderAttemptOutcome::Terminal {
+                                            error: retry_error,
+                                            count_as_provider_failure: false,
+                                        }
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if is_anthropic_provider {
+                    let error_message = extract_error_message(&error);
+                    if should_rectify_thinking_budget(
+                        error_message.as_deref(),
+                        &self.rectifier_config,
+                    ) {
+                        if *budget_rectifier_retried {
+                            log::warn!(
+                                "[{app_type_str}] [RECT-013] budget rectifier already retried once"
+                            );
+                            self.release_permit_neutral_once(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                            )
+                            .await;
+                            return ProviderAttemptOutcome::Terminal {
+                                error,
+                                count_as_provider_failure: false,
+                            };
+                        }
+
+                        let budget_rectified = rectify_thinking_budget(&mut provider_body);
+                        if !budget_rectified.applied {
+                            log::warn!(
+                                "[{app_type_str}] [RECT-014] budget rectifier triggered but did not change the request"
+                            );
+                            self.release_permit_neutral_once(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                            )
+                            .await;
+                            return ProviderAttemptOutcome::Terminal {
+                                error,
+                                count_as_provider_failure: false,
+                            };
+                        }
+
+                        log::info!(
+                            "[{}] [RECT-010] budget rectifier applied: before={:?}, after={:?}",
+                            app_type_str,
+                            budget_rectified.before,
+                            budget_rectified.after
+                        );
+                        *budget_rectifier_retried = true;
+
+                        match self
+                            .forward(
+                                provider,
+                                endpoint,
+                                &provider_body,
+                                headers,
+                                extensions,
+                                adapter,
+                            )
+                            .await
+                        {
+                            Ok((response, claude_api_format)) => {
+                                log::info!(
+                                    "[{app_type_str}] [RECT-011] budget rectifier retry succeeded"
+                                );
+                                return ProviderAttemptOutcome::Success {
+                                    response,
+                                    claude_api_format,
+                                };
+                            }
+                            Err(retry_error) => {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-012] budget rectifier retry failed: {retry_error}"
+                                );
+
+                                let is_provider_error = match &retry_error {
+                                    ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => true,
+                                    ProxyError::UpstreamError { status, .. } => *status >= 500,
+                                    _ => false,
+                                };
+
+                                return if is_provider_error {
+                                    ProviderAttemptOutcome::Retryable(retry_error)
+                                } else {
+                                    self.release_permit_neutral_once(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                    ProviderAttemptOutcome::Terminal {
+                                        error: retry_error,
+                                        count_as_provider_failure: false,
+                                    }
+                                };
+                            }
+                        }
+                    }
+                }
+
+                if signature_rectifier_non_retryable_client_error {
+                    self.release_permit_neutral_once(
+                        &provider.id,
+                        app_type_str,
+                        used_half_open_permit,
+                    )
+                    .await;
+                    return ProviderAttemptOutcome::Terminal {
+                        error,
+                        count_as_provider_failure: false,
+                    };
+                }
+
+                match self.categorize_proxy_error(&error) {
+                    ErrorCategory::Retryable => ProviderAttemptOutcome::Retryable(error),
+                    ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
+                        ProviderAttemptOutcome::Terminal {
+                            error,
+                            count_as_provider_failure: true,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn mark_provider_attempt_started(&self, provider: &Provider) {
+        let mut status = self.status.write().await;
+        status.current_provider = Some(provider.name.clone());
+        status.current_provider_id = Some(provider.id.clone());
+        status.total_requests += 1;
+        status.last_request_at = Some(chrono::Utc::now().to_rfc3339());
+    }
+
+    async fn set_provider_retry_state(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+        policy: &EffectiveFailoverRetryPolicy,
+        current_retry: u32,
+        current_delay_seconds: u64,
+        waiting: bool,
+    ) {
+        let retry_state = ProviderRetryState {
+            app_type: app_type.to_string(),
+            provider_id: provider.id.clone(),
+            provider_name: provider.name.clone(),
+            mode: policy.mode.clone(),
+            current_retry,
+            max_retry: match policy.mode {
+                FailoverRetryMode::Finite => Some(policy.max_retries),
+                FailoverRetryMode::Infinite => None,
+            },
+            current_delay_seconds,
+            active: true,
+            waiting,
+            sticky_infinite: matches!(policy.mode, FailoverRetryMode::Infinite),
+        };
+
+        let mut status = self.status.write().await;
+        if let Some(existing) = status.provider_retry_states.iter_mut().find(|state| {
+            state.app_type == retry_state.app_type && state.provider_id == retry_state.provider_id
+        }) {
+            *existing = retry_state;
+        } else {
+            status.provider_retry_states.push(retry_state);
+        }
+    }
+
+    async fn clear_provider_retry_state(&self, app_type: &str, provider_id: &str) {
+        let mut status = self.status.write().await;
+        status
+            .provider_retry_states
+            .retain(|state| !(state.app_type == app_type && state.provider_id == provider_id));
+    }
+
+    async fn record_success_status(&self, provider: &Provider, app_type_str: &str) {
+        {
+            let mut current_providers = self.current_providers.write().await;
+            current_providers.insert(
+                app_type_str.to_string(),
+                (provider.id.clone(), provider.name.clone()),
+            );
+        }
+
+        let should_switch = self.current_provider_id_at_start.as_str() != provider.id.as_str();
+
+        {
+            let mut status = self.status.write().await;
+            status.success_requests += 1;
+            status.last_error = None;
+            if should_switch {
+                status.failover_count += 1;
+            }
+            if status.total_requests > 0 {
+                status.success_rate =
+                    (status.success_requests as f32 / status.total_requests as f32) * 100.0;
+            }
+        }
+
+        if should_switch {
+            let fm = self.failover_manager.clone();
+            let ah = self.app_handle.clone();
+            let pid = provider.id.clone();
+            let pname = provider.name.clone();
+            let at = app_type_str.to_string();
+
+            tokio::spawn(async move {
+                let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
+            });
+        }
+    }
+
+    async fn record_request_failure_status(&self, error: &ProxyError) {
+        let mut status = self.status.write().await;
+        status.failed_requests += 1;
+        status.last_error = Some(error.to_string());
+        if status.total_requests > 0 {
+            status.success_rate =
+                (status.success_requests as f32 / status.total_requests as f32) * 100.0;
+        }
+    }
+
+    async fn set_last_error(&self, error: String) {
+        let mut status = self.status.write().await;
+        status.last_error = Some(error);
+    }
+
+    async fn release_permit_neutral_once(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        used_half_open_permit: &mut bool,
+    ) {
+        let used = *used_half_open_permit;
+        if !used {
+            return;
+        }
+
+        self.router
+            .release_permit_neutral(provider_id, app_type, used)
+            .await;
+        *used_half_open_permit = false;
+    }
+
     async fn forward(
         &self,
         provider: &Provider,
@@ -1522,6 +1519,84 @@ impl RequestForwarder {
 }
 
 /// 从 ProxyError 中提取错误消息
+enum ProviderAttemptOutcome {
+    Success {
+        response: ProxyResponse,
+        claude_api_format: Option<String>,
+    },
+    Retryable(ProxyError),
+    Terminal {
+        error: ProxyError,
+        count_as_provider_failure: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct EffectiveFailoverRetryPolicy {
+    mode: FailoverRetryMode,
+    max_retries: u32,
+    base_delay_seconds: u64,
+    max_delay_seconds: u64,
+    backoff_multiplier: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ProviderRetryDecision {
+    current_retry: u32,
+    delay_seconds: u64,
+    next_delay_seconds: u64,
+}
+
+fn effective_failover_retry_policy(provider: &Provider) -> EffectiveFailoverRetryPolicy {
+    let policy = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.failover_retry.clone())
+        .unwrap_or_default();
+
+    let base_delay_seconds = policy.base_delay_seconds.unwrap_or(3).max(1);
+    let max_delay_seconds = policy.max_delay_seconds.unwrap_or(30).max(base_delay_seconds);
+
+    EffectiveFailoverRetryPolicy {
+        mode: policy.mode,
+        max_retries: policy.max_retries.unwrap_or(1).max(1),
+        base_delay_seconds,
+        max_delay_seconds,
+        backoff_multiplier: policy.backoff_multiplier.unwrap_or(2.0).max(1.0),
+    }
+}
+
+fn next_provider_retry_decision(
+    policy: &EffectiveFailoverRetryPolicy,
+    retries_used: u32,
+    current_delay_seconds: u64,
+) -> Option<ProviderRetryDecision> {
+    if matches!(policy.mode, FailoverRetryMode::Finite) && retries_used >= policy.max_retries {
+        return None;
+    }
+
+    let delay_seconds = current_delay_seconds.max(1);
+
+    Some(ProviderRetryDecision {
+        current_retry: retries_used + 1,
+        delay_seconds,
+        next_delay_seconds: compute_next_retry_delay(
+            delay_seconds,
+            policy.max_delay_seconds,
+            policy.backoff_multiplier,
+        ),
+    })
+}
+
+fn compute_next_retry_delay(
+    current_delay_seconds: u64,
+    max_delay_seconds: u64,
+    backoff_multiplier: f64,
+) -> u64 {
+    let scaled = (current_delay_seconds as f64 * backoff_multiplier.max(1.0)).ceil();
+    scaled.max(1.0).min(max_delay_seconds as f64) as u64
+}
+
 fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
         ProxyError::UpstreamError { body, .. } => body.clone(),
@@ -2163,7 +2238,76 @@ mod tests {
 
         for (is_copilot, is_full_url, should_replace, desc) in test_cases {
             let will_replace = is_copilot && !is_full_url;
-            assert_eq!(will_replace, should_replace, "{desc}");
+        assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    #[test]
+    fn effective_failover_retry_policy_uses_product_defaults() {
+        let provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider 1".to_string(),
+            json!({}),
+            None,
+        );
+
+        let policy = effective_failover_retry_policy(&provider);
+
+        assert_eq!(policy.mode, FailoverRetryMode::Finite);
+        assert_eq!(policy.max_retries, 1);
+        assert_eq!(policy.base_delay_seconds, 3);
+        assert_eq!(policy.max_delay_seconds, 30);
+        assert_eq!(policy.backoff_multiplier, 2.0);
+    }
+
+    #[test]
+    fn next_provider_retry_decision_stops_after_finite_limit() {
+        let policy = EffectiveFailoverRetryPolicy {
+            mode: FailoverRetryMode::Finite,
+            max_retries: 2,
+            base_delay_seconds: 3,
+            max_delay_seconds: 30,
+            backoff_multiplier: 2.0,
+        };
+
+        let first = next_provider_retry_decision(&policy, 0, policy.base_delay_seconds)
+            .expect("first retry decision");
+        let second = next_provider_retry_decision(&policy, 1, first.next_delay_seconds)
+            .expect("second retry decision");
+        let exhausted = next_provider_retry_decision(&policy, 2, second.next_delay_seconds);
+
+        assert_eq!(first.current_retry, 1);
+        assert_eq!(first.delay_seconds, 3);
+        assert_eq!(first.next_delay_seconds, 6);
+        assert_eq!(second.current_retry, 2);
+        assert_eq!(second.delay_seconds, 6);
+        assert_eq!(second.next_delay_seconds, 12);
+        assert!(exhausted.is_none());
+    }
+
+    #[test]
+    fn next_provider_retry_decision_caps_infinite_backoff() {
+        let policy = EffectiveFailoverRetryPolicy {
+            mode: FailoverRetryMode::Infinite,
+            max_retries: 1,
+            base_delay_seconds: 3,
+            max_delay_seconds: 30,
+            backoff_multiplier: 2.0,
+        };
+
+        let first = next_provider_retry_decision(&policy, 0, policy.base_delay_seconds)
+            .expect("first retry decision");
+        let second = next_provider_retry_decision(&policy, 1, first.next_delay_seconds)
+            .expect("second retry decision");
+        let third = next_provider_retry_decision(&policy, 2, second.next_delay_seconds)
+            .expect("third retry decision");
+        let fourth = next_provider_retry_decision(&policy, 3, third.next_delay_seconds)
+            .expect("fourth retry decision");
+
+        assert_eq!(first.delay_seconds, 3);
+        assert_eq!(second.delay_seconds, 6);
+        assert_eq!(third.delay_seconds, 12);
+        assert_eq!(fourth.delay_seconds, 24);
+        assert_eq!(fourth.next_delay_seconds, 30);
     }
 }

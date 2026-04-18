@@ -172,6 +172,41 @@ pub struct ProviderTestConfig {
     pub max_retries: Option<u32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FailoverRetryMode {
+    #[default]
+    Finite,
+    Infinite,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FailoverRetryPolicy {
+    #[serde(default)]
+    pub mode: FailoverRetryMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_delay_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_delay_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backoff_multiplier: Option<f64>,
+}
+
+impl Default for FailoverRetryPolicy {
+    fn default() -> Self {
+        Self {
+            mode: FailoverRetryMode::Finite,
+            max_retries: Some(1),
+            base_delay_seconds: Some(3),
+            max_delay_seconds: Some(30),
+            backoff_multiplier: Some(2.0),
+        }
+    }
+}
+
 /// 认证绑定来源
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -239,6 +274,9 @@ pub struct ProviderMeta {
     /// 供应商单独的模型测试配置
     #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
     pub test_config: Option<ProviderTestConfig>,
+    /// provider 级故障转移重试策略
+    #[serde(rename = "failoverRetry", skip_serializing_if = "Option::is_none")]
+    pub failover_retry: Option<FailoverRetryPolicy>,
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
@@ -692,8 +730,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
-        ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeModelConfig, CodexModelConfig, FailoverRetryMode, FailoverRetryPolicy,
+        GeminiModelConfig, OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta,
+        UniversalProvider,
     };
     use serde_json::json;
 
@@ -719,6 +758,64 @@ mod tests {
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
         assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_failover_retry_in_camel_case() {
+        let mut meta = ProviderMeta::default();
+        meta.failover_retry = Some(FailoverRetryPolicy {
+            mode: FailoverRetryMode::Infinite,
+            max_retries: Some(9),
+            base_delay_seconds: Some(5),
+            max_delay_seconds: Some(30),
+            backoff_multiplier: Some(2.5),
+        });
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+        let failover_retry = value
+            .get("failoverRetry")
+            .and_then(|item| item.as_object())
+            .expect("failoverRetry object");
+
+        assert_eq!(
+            failover_retry.get("mode").and_then(|item| item.as_str()),
+            Some("infinite")
+        );
+        assert_eq!(
+            failover_retry
+                .get("maxRetries")
+                .and_then(|item| item.as_u64()),
+            Some(9)
+        );
+        assert_eq!(
+            failover_retry
+                .get("baseDelaySeconds")
+                .and_then(|item| item.as_u64()),
+            Some(5)
+        );
+        assert_eq!(
+            failover_retry
+                .get("maxDelaySeconds")
+                .and_then(|item| item.as_u64()),
+            Some(30)
+        );
+        assert_eq!(
+            failover_retry
+                .get("backoffMultiplier")
+                .and_then(|item| item.as_f64()),
+            Some(2.5)
+        );
+    }
+
+    #[test]
+    fn failover_retry_policy_defaults_match_product_requirements() {
+        let policy = FailoverRetryPolicy::default();
+
+        assert_eq!(policy.mode, FailoverRetryMode::Finite);
+        assert_eq!(policy.max_retries, Some(1));
+        assert_eq!(policy.base_delay_seconds, Some(3));
+        assert_eq!(policy.max_delay_seconds, Some(30));
+        assert_eq!(policy.backoff_multiplier, Some(2.0));
     }
 
     #[test]

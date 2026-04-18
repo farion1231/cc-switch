@@ -2449,5 +2449,26 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "providerRetry": {
+    "title": "フェイルオーバー再試行ポリシー",
+    "summary": "プロバイダー単位の再試行戦略",
+    "description": "フェイルオーバー先を次のプロバイダーに切り替える前に、各プロバイダーでの再試行回数を設定します。このポリシーは、プロキシ側の最大再試行回数とは独立しています。",
+    "mode": "再試行モード",
+    "modeFinite": "有限回再試行",
+    "modeInfinite": "無限再試行",
+    "maxRetries": "再試行回数",
+    "baseDelaySeconds": "初期待機時間（秒）",
+    "maxDelaySeconds": "待機時間上限（秒）",
+    "backoffMultiplier": "バックオフ倍率",
+    "backoffHint": "再試行するたびに待機時間が長くなり、上限に達するまで増加します。",
+    "infiniteWarning": "無限再試行では成功するまでこのプロバイダーで試行し続けます。次のプロバイダーへ自動フォールバックしません。",
+    "infiniteBadge": "無限再試行",
+    "infiniteStaticHint": "無限再試行が有効です。自動フェイルオーバーはこのプロバイダーに留まります。",
+    "stickyRuntimeBadge": "ここで待機中 · {{delay}}秒",
+    "stickyRuntimeHint": "現在このプロバイダーに固定されており、自動フォールバックしません。",
+    "runtimeInfinite": "再試行中 · {{delay}}秒",
+    "runtimeFinite": "再試行 {{current}}/{{max}} · {{delay}}秒",
+    "runtimeHint": "フェイルオーバー前のプロバイダー単位の再試行"
   }
 }

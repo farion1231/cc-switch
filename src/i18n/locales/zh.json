@@ -2450,5 +2450,26 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "providerRetry": {
+    "title": "故障转移重试策略",
+    "summary": "供应商级重试策略",
+    "description": "在切换到下一个故障转移供应商之前，配置每个供应商的重试次数。此策略与代理的最大重试次数相互独立。",
+    "mode": "重试模式",
+    "modeFinite": "有限次重试",
+    "modeInfinite": "无限重试",
+    "maxRetries": "重试次数",
+    "baseDelaySeconds": "初始延迟（秒）",
+    "maxDelaySeconds": "延迟上限（秒）",
+    "backoffMultiplier": "退避倍率",
+    "backoffHint": "每次重试的等待时间都会比上一次更长，直到达到延迟上限。",
+    "infiniteWarning": "无限重试会一直停留在当前供应商上，直到成功为止，不会自动回退到下一个供应商。",
+    "infiniteBadge": "无限重试",
+    "infiniteStaticHint": "已启用无限重试。自动故障转移会停留在当前供应商上。",
+    "stickyRuntimeBadge": "卡在这里 · {{delay}}秒",
+    "stickyRuntimeHint": "当前卡在此供应商上，不会自动回退。",
+    "runtimeInfinite": "正在重试 · {{delay}}秒",
+    "runtimeFinite": "重试 {{current}}/{{max}} · {{delay}}秒",
+    "runtimeHint": "故障转移前的供应商级重试"
   }
 }

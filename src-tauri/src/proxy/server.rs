@@ -277,6 +277,13 @@ impl ProxyServer {
         );
     }
 
+    pub async fn clear_provider_retry_states_for_app(&self, app_type: &str) {
+        let mut status = self.state.status.write().await;
+        status
+            .provider_retry_states
+            .retain(|state| state.app_type != app_type);
+    }
+
     fn build_router(&self) -> Router {
         Router::new()
             // 健康检查

@@ -2449,5 +2449,26 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "providerRetry": {
+    "title": "Failover Retry Policy",
+    "summary": "Provider-level retry strategy",
+    "description": "Configure provider-level retries before moving to the next failover provider. This policy is independent from proxy max retries.",
+    "mode": "Retry mode",
+    "modeFinite": "Finite retries",
+    "modeInfinite": "Infinite retries",
+    "maxRetries": "Retry count",
+    "baseDelaySeconds": "Initial delay (seconds)",
+    "maxDelaySeconds": "Delay cap (seconds)",
+    "backoffMultiplier": "Backoff multiplier",
+    "backoffHint": "Each retry waits longer than the last one until the delay cap is reached.",
+    "infiniteWarning": "Infinite retry will stay on this provider until success. It will not auto-fallback to the next provider.",
+    "infiniteBadge": "Infinite retry",
+    "infiniteStaticHint": "Infinite retry is enabled. Automatic failover will stay on this provider.",
+    "stickyRuntimeBadge": "Stuck here ? {{delay}}s",
+    "stickyRuntimeHint": "Currently stuck on this provider and will not auto-fallback.",
+    "runtimeInfinite": "Retrying ? {{delay}}s",
+    "runtimeFinite": "Retry {{current}}/{{max}} ? {{delay}}s",
+    "runtimeHint": "Provider-level retries before failover"
   }
 }

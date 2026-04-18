@@ -6,6 +6,7 @@ import type {
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { Provider } from "@/types";
+import type { ProviderRetryState } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
@@ -17,6 +18,7 @@ import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
+import { ProviderRetryStatusBadges } from "@/components/providers/ProviderRetryStatusBadges";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
@@ -54,6 +56,7 @@ interface ProviderCardProps {
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  retryState?: ProviderRetryState;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -142,6 +145,7 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
+  retryState,
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
@@ -322,6 +326,11 @@ export function ProviderCard({
                 failoverPriority && (
                   <FailoverPriorityBadge priority={failoverPriority} />
                 )}
+
+              <ProviderRetryStatusBadges
+                policy={provider.meta?.failoverRetry}
+                retryState={retryState}
+              />
 
               {provider.category === "third_party" &&
                 provider.meta?.isPartner && (

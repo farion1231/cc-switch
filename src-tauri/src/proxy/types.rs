@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::provider::FailoverRetryMode;
 
 /// 代理服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +90,9 @@ pub struct ProxyStatus {
     /// 当前活跃的代理目标列表
     #[serde(default)]
     pub active_targets: Vec<ActiveTarget>,
+    /// provider 级重试运行时状态
+    #[serde(default)]
+    pub provider_retry_states: Vec<ProviderRetryState>,
 }
 
 /// 活跃的代理目标信息
@@ -97,6 +101,20 @@ pub struct ActiveTarget {
     pub app_type: String, // "Claude" | "Codex" | "Gemini"
     pub provider_name: String,
     pub provider_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderRetryState {
+    pub app_type: String,
+    pub provider_id: String,
+    pub provider_name: String,
+    pub mode: FailoverRetryMode,
+    pub current_retry: u32,
+    pub max_retry: Option<u32>,
+    pub current_delay_seconds: u64,
+    pub active: bool,
+    pub waiting: bool,
+    pub sticky_infinite: bool,
 }
 
 /// 代理服务器信息
@@ -379,6 +397,12 @@ mod tests {
             config.request_thinking_budget,
             "thinking budget 整流器默认应为 true"
         );
+    }
+
+    #[test]
+    fn proxy_status_defaults_provider_retry_states_to_empty() {
+        let status = ProxyStatus::default();
+        assert!(status.provider_retry_states.is_empty());
     }
 
     #[test]

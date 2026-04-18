@@ -239,6 +239,15 @@ function App() {
     );
     return target?.provider_id;
   }, [proxyStatus?.active_targets, activeApp]);
+  const providerRetryStates = useMemo(
+    () =>
+      Object.fromEntries(
+        (proxyStatus?.provider_retry_states ?? [])
+          .filter((state) => state.app_type === activeApp)
+          .map((state) => [state.provider_id, state]),
+      ),
+    [proxyStatus?.provider_retry_states, activeApp],
+  );
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning,
@@ -943,6 +952,7 @@ function App() {
                         isProxyRunning && isCurrentAppTakeoverActive
                       }
                       activeProviderId={activeProviderId}
+                      providerRetryStates={providerRetryStates}
                       onSwitch={switchProvider}
                       onEdit={(provider) => {
                         setEditingProvider(provider);

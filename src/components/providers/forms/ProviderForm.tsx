@@ -62,6 +62,7 @@ import {
   ProviderAdvancedConfig,
   type PricingModelSourceOption,
 } from "./ProviderAdvancedConfig";
+import { ProviderFailoverRetrySection } from "./ProviderFailoverRetrySection";
 import {
   useProviderCategory,
   useApiKeyState,
@@ -95,6 +96,10 @@ import {
 } from "./helpers/opencodeFormUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
+import {
+  DEFAULT_FAILOVER_RETRY_POLICY,
+  normalizeFailoverRetryPolicy,
+} from "@/lib/failoverRetry";
 
 type PresetEntry = {
   id: string;
@@ -191,6 +196,9 @@ export function ProviderForm({
   const [testConfig, setTestConfig] = useState<ProviderTestConfig>(
     () => initialData?.meta?.testConfig ?? { enabled: false },
   );
+  const [failoverRetryPolicy, setFailoverRetryPolicy] = useState(() =>
+    normalizeFailoverRetryPolicy(initialData?.meta?.failoverRetry),
+  );
   const [pricingConfig, setPricingConfig] = useState<{
     enabled: boolean;
     costMultiplier?: string;
@@ -227,6 +235,9 @@ export function ProviderForm({
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
     );
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
+    setFailoverRetryPolicy(
+      normalizeFailoverRetryPolicy(initialData?.meta?.failoverRetry),
+    );
     setPricingConfig({
       enabled:
         initialData?.meta?.costMultiplier !== undefined ||
@@ -1069,6 +1080,7 @@ export function ProviderForm({
         isCopilotProvider && selectedGitHubAccountId
           ? selectedGitHubAccountId
           : undefined,
+      failoverRetry: failoverRetryPolicy ?? DEFAULT_FAILOVER_RETRY_POLICY,
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
@@ -1837,15 +1849,22 @@ export function ProviderForm({
           )}
 
           {!isAnyOmoCategory &&
-            appId !== "opencode" &&
-            appId !== "openclaw" && (
-              <ProviderAdvancedConfig
-                testConfig={testConfig}
-                pricingConfig={pricingConfig}
-                onTestConfigChange={setTestConfig}
-                onPricingConfigChange={setPricingConfig}
-              />
-            )}
+       appId !== "opencode" &&
+        appId !== "openclaw" && (
+          <ProviderAdvancedConfig
+            testConfig={testConfig}
+            pricingConfig={pricingConfig}
+            onTestConfigChange={setTestConfig}
+            onPricingConfigChange={setPricingConfig}
+          />
+        )}
+
+          <ProviderFailoverRetrySection
+            value={failoverRetryPolicy}
+            onChange={(nextValue) =>
+              setFailoverRetryPolicy(normalizeFailoverRetryPolicy(nextValue))
+            }
+          />
 
           {showButtons && (
             <div className="flex justify-end gap-2">

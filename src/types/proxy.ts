@@ -1,3 +1,5 @@
+import type { FailoverRetryMode } from "@/types";
+
 export interface ProxyConfig {
   listen_address: string;
   listen_port: number;
@@ -27,12 +29,26 @@ export interface ProxyStatus {
   last_error: string | null;
   failover_count: number;
   active_targets?: ActiveTarget[];
+  provider_retry_states?: ProviderRetryState[];
 }
 
 export interface ActiveTarget {
   app_type: string;
   provider_name: string;
   provider_id: string;
+}
+
+export interface ProviderRetryState {
+  app_type: string;
+  provider_id: string;
+  provider_name: string;
+  mode: FailoverRetryMode;
+  current_retry: number;
+  max_retry: number | null;
+  current_delay_seconds: number;
+  active: boolean;
+  waiting: boolean;
+  sticky_infinite: boolean;
 }
 
 export interface ProxyServerInfo {

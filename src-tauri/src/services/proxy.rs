@@ -1613,6 +1613,9 @@ impl ProxyService {
 
         if let Some(server) = self.server.read().await.as_ref() {
             server
+                .clear_provider_retry_states_for_app(app_type_enum.as_str())
+                .await;
+            server
                 .set_active_target(app_type_enum.as_str(), &provider.id, &provider.name)
                 .await;
         }
