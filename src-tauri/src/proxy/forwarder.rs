@@ -1559,7 +1559,7 @@ fn effective_failover_retry_policy(provider: &Provider) -> EffectiveFailoverRetr
 
     EffectiveFailoverRetryPolicy {
         mode: policy.mode,
-        max_retries: policy.max_retries.unwrap_or(1).max(1),
+        max_retries: policy.max_retries.unwrap_or(0),
         base_delay_seconds,
         max_delay_seconds,
         backoff_multiplier: policy.backoff_multiplier.unwrap_or(2.0).max(1.0),
@@ -2254,10 +2254,25 @@ mod tests {
         let policy = effective_failover_retry_policy(&provider);
 
         assert_eq!(policy.mode, FailoverRetryMode::Finite);
-        assert_eq!(policy.max_retries, 1);
+        assert_eq!(policy.max_retries, 0);
         assert_eq!(policy.base_delay_seconds, 3);
         assert_eq!(policy.max_delay_seconds, 30);
         assert_eq!(policy.backoff_multiplier, 2.0);
+    }
+
+    #[test]
+    fn next_provider_retry_decision_returns_none_when_finite_retries_are_zero() {
+        let policy = EffectiveFailoverRetryPolicy {
+            mode: FailoverRetryMode::Finite,
+            max_retries: 0,
+            base_delay_seconds: 3,
+            max_delay_seconds: 30,
+            backoff_multiplier: 2.0,
+        };
+
+        let decision = next_provider_retry_decision(&policy, 0, policy.base_delay_seconds);
+
+        assert!(decision.is_none());
     }
 
     #[test]

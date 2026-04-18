@@ -199,7 +199,7 @@ impl Default for FailoverRetryPolicy {
     fn default() -> Self {
         Self {
             mode: FailoverRetryMode::Finite,
-            max_retries: Some(1),
+            max_retries: Some(0),
             base_delay_seconds: Some(3),
             max_delay_seconds: Some(30),
             backoff_multiplier: Some(2.0),
@@ -812,7 +812,7 @@ mod tests {
         let policy = FailoverRetryPolicy::default();
 
         assert_eq!(policy.mode, FailoverRetryMode::Finite);
-        assert_eq!(policy.max_retries, Some(1));
+        assert_eq!(policy.max_retries, Some(0));
         assert_eq!(policy.base_delay_seconds, Some(3));
         assert_eq!(policy.max_delay_seconds, Some(30));
         assert_eq!(policy.backoff_multiplier, Some(2.0));

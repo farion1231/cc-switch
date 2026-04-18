@@ -17,6 +17,8 @@ export function ProviderRetryStatusBadges({
   const { t } = useTranslation();
   const normalizedPolicy = normalizeFailoverRetryPolicy(policy);
   const isInfinite = normalizedPolicy.mode === "infinite";
+  const shouldShowConfigFiniteBadge =
+    !retryState && !isInfinite && normalizedPolicy.maxRetries > 0;
 
   return (
     <>
@@ -39,8 +41,8 @@ export function ProviderRetryStatusBadges({
         (retryState.sticky_infinite ? (
           <Badge
             variant="destructive"
-          className="gap-1 border-transparent"
-          title={t("providerRetry.stickyRuntimeHint", {
+            className="gap-1 border-transparent"
+            title={t("providerRetry.stickyRuntimeHint", {
               defaultValue:
                 "Currently stuck on this provider and will not auto-fallback.",
             })}
@@ -75,6 +77,25 @@ export function ProviderRetryStatusBadges({
                 })}
           </Badge>
         ))}
+
+      {shouldShowConfigFiniteBadge && (
+        <Badge
+          variant="secondary"
+          className="border border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-500/30 dark:bg-slate-500/10 dark:text-slate-200"
+          title={t("providerRetry.configFiniteHint", {
+            max: normalizedPolicy.maxRetries,
+            defaultValue:
+              "Configured to allow {{max}} provider-level retries before failover.",
+          })}
+        >
+          {t("providerRetry.configFiniteBadge", {
+            current: 0,
+            max: normalizedPolicy.maxRetries,
+            defaultValue: "Retry {{current}}/{{max}}",
+          })}
+        </Badge>
+      )}
     </>
   );
 }
+

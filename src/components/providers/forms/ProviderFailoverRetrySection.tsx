@@ -46,11 +46,25 @@ export function ProviderFailoverRetrySection({
     onChange(normalizeFailoverRetryPolicy({ ...current, ...nextPatch }));
   };
 
+  const summaryText =
+    normalizedValue.mode === "infinite"
+      ? t("providerRetry.summaryInfinite", {
+          defaultValue: "Infinite retry · stays on the current provider",
+        })
+      : normalizedValue.maxRetries === 0
+        ? t("providerRetry.summaryDirectFailover", {
+            defaultValue: "Direct failover · no retry on the current provider",
+          })
+        : t("providerRetry.summaryFinite", {
+            max: normalizedValue.maxRetries,
+            defaultValue: "Retry {{max}} time(s) before failover",
+          });
+
   return (
     <div className="rounded-lg border border-border/50 bg-muted/20">
       <button
         type="button"
-        className="flex w-full items-center justify-between p-4 hover:bg-muted/30 transition-colors"
+        className="flex w-full items-center justify-between p-4 transition-colors hover:bg-muted/30"
         onClick={() => setIsOpen((open) => !open)}
       >
         <div className="flex items-center gap-3">
@@ -61,14 +75,7 @@ export function ProviderFailoverRetrySection({
                 defaultValue: "Failover Retry Policy",
               })}
             </div>
-            <div className="text-xs text-muted-foreground">
-              {t("providerRetry.summary", {
-                defaultValue:
-                  normalizedValue.mode === "infinite"
-                    ? "Infinite retry · stays on the current provider"
-                    : `Retry ${normalizedValue.maxRetries} time(s) before failover`,
-              })}
-            </div>
+            <div className="text-xs text-muted-foreground">{summaryText}</div>
           </div>
         </div>
         {isOpen ? (
@@ -84,15 +91,15 @@ export function ProviderFailoverRetrySection({
           isOpen ? "max-h-[640px] opacity-100" : "max-h-0 opacity-0",
         )}
       >
-        <div className="border-t border-border/50 p-4 space-y-4">
+        <div className="space-y-4 border-t border-border/50 p-4">
           <p className="text-sm text-muted-foreground">
             {t("providerRetry.description", {
               defaultValue:
-                "Configure provider-level retries before moving to the next failover provider. This policy is independent from proxy max retries.",
+                "Configure provider-level retries before moving to the next failover provider. Set retry count to 0 to fail over immediately without retrying the current provider. This policy is independent from proxy max retries.",
             })}
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="provider-retry-mode">
                 {t("providerRetry.mode", {
@@ -135,18 +142,24 @@ export function ProviderFailoverRetrySection({
                 <Input
                   id="provider-retry-max"
                   type="number"
-                  min={1}
+                  min={0}
                   value={normalizedValue.maxRetries}
                   onChange={(event) =>
                     updatePolicy({
                       maxRetries: parseNumber(
                         event.target.value,
                         normalizedValue.maxRetries,
-                        1,
+                        0,
                       ),
                     })
                   }
                 />
+                <p className="text-xs text-muted-foreground">
+                  {t("providerRetry.maxRetriesHint", {
+                    defaultValue:
+                      "Set to 0 to fail over immediately without retrying the current provider.",
+                  })}
+                </p>
               </div>
             ) : (
               <div className="rounded-md border border-amber-200 bg-amber-50/80 p-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">

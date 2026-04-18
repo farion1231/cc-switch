@@ -2453,7 +2453,7 @@
   "providerRetry": {
     "title": "Failover Retry Policy",
     "summary": "Provider-level retry strategy",
-    "description": "Configure provider-level retries before moving to the next failover provider. This policy is independent from proxy max retries.",
+    "description": "Configure provider-level retries before moving to the next failover provider. Set retry count to 0 to fail over immediately without retrying the current provider. This policy is independent from proxy max retries.",
     "mode": "Retry mode",
     "modeFinite": "Finite retries",
     "modeInfinite": "Infinite retries",
@@ -2469,6 +2469,13 @@
     "stickyRuntimeHint": "Currently stuck on this provider and will not auto-fallback.",
     "runtimeInfinite": "Retrying ? {{delay}}s",
     "runtimeFinite": "Retry {{current}}/{{max}} ? {{delay}}s",
-    "runtimeHint": "Provider-level retries before failover"
+    "runtimeHint": "Provider-level retries before failover",
+    "summaryInfinite": "Infinite retry · stays on the current provider",
+    "summaryFinite": "Retry {{max}} time(s) before failover",
+    "summaryDirectFailover": "Direct failover · no retry on the current provider",
+    "maxRetriesHint": "Set to 0 to fail over immediately without retrying the current provider.",
+    "configFiniteBadge": "Retry {{current}}/{{max}}",
+    "configFiniteHint": "Configured to allow {{max}} provider-level retries before failover."
   }
 }
+

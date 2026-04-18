@@ -2454,7 +2454,7 @@
   "providerRetry": {
     "title": "故障转移重试策略",
     "summary": "供应商级重试策略",
-    "description": "在切换到下一个故障转移供应商之前，配置每个供应商的重试次数。此策略与代理的最大重试次数相互独立。",
+    "description": "在切换到下一个故障转移供应商之前，配置供应商级重试。将重试次数设为 0 表示不在当前供应商上重试，而是立即故障转移。此策略与代理的最大重试次数相互独立。",
     "mode": "重试模式",
     "modeFinite": "有限次重试",
     "modeInfinite": "无限重试",
@@ -2470,6 +2470,12 @@
     "stickyRuntimeHint": "当前卡在此供应商上，不会自动回退。",
     "runtimeInfinite": "正在重试 · {{delay}}秒",
     "runtimeFinite": "重试 {{current}}/{{max}} · {{delay}}秒",
-    "runtimeHint": "故障转移前的供应商级重试"
+    "runtimeHint": "故障转移前的供应商级重试",
+    "summaryInfinite": "无限重试 · 停留在当前供应商",
+    "summaryFinite": "故障转移前最多重试 {{max}} 次",
+    "summaryDirectFailover": "直接故障转移 · 不在当前供应商上重试",
+    "maxRetriesHint": "设为 0 表示不在当前供应商上重试，而是立即故障转移。",
+    "configFiniteBadge": "重试 {{current}}/{{max}}",
+    "configFiniteHint": "已配置在故障转移前最多进行 {{max}} 次供应商级重试。"
   }
 }

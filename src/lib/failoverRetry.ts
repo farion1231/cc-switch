@@ -10,7 +10,7 @@ export interface NormalizedFailoverRetryPolicy {
 
 export const DEFAULT_FAILOVER_RETRY_POLICY: NormalizedFailoverRetryPolicy = {
   mode: "finite",
-  maxRetries: 1,
+  maxRetries: 0,
   baseDelaySeconds: 3,
   maxDelaySeconds: 30,
   backoffMultiplier: 2,
@@ -23,7 +23,7 @@ export function normalizeFailoverRetryPolicy(
   const maxRetries = clampInteger(
     policy?.maxRetries,
     DEFAULT_FAILOVER_RETRY_POLICY.maxRetries,
-    1,
+    0,
   );
   const baseDelaySeconds = clampInteger(
     policy?.baseDelaySeconds,
