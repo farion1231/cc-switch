@@ -1523,6 +1523,25 @@ impl ProviderService {
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
         write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
 
+        // Hermes is additive, so "switching" doesn't overwrite a live config file
+        // — we instead update the top-level `model:` section to point at this
+        // provider's first declared model. Without this, clicking "switch" would
+        // only shuffle entries in custom_providers[] while Hermes keeps using
+        // whatever `model.provider` was set before.
+        if matches!(app_type, AppType::Hermes) {
+            if let Err(e) =
+                crate::hermes_config::apply_switch_defaults(&provider.id, &provider.settings_config)
+            {
+                log::warn!(
+                    "Failed to update Hermes model defaults after switching to '{}': {e}",
+                    provider.id
+                );
+                result
+                    .warnings
+                    .push(format!("hermes_model_defaults_failed:{}", provider.id));
+            }
+        }
+
         // For additive-mode providers that were DB-only (live_config_managed == Some(false)),
         // flip the flag to true now that the provider has been successfully written to the live
         // file. This ensures sync_all_providers_to_live() will include it on future syncs.

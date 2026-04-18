@@ -89,7 +89,7 @@ pub struct HermesWriteOutcome {
 }
 
 /// Hermes model section config
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HermesModelConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
@@ -376,10 +376,100 @@ fn write_yaml_section_to_config_locked(
 // Provider Functions
 // ============================================================================
 
+/// Convert a provider's `models` field from a UI-friendly array to the YAML
+/// dict shape that Hermes expects.
+///
+/// Input (from CC Switch UI / database):
+/// ```json
+/// "models": [{ "id": "foo", "context_length": 200000 }, { "id": "bar" }]
+/// ```
+///
+/// Output (what we write to YAML):
+/// ```json
+/// "models": { "foo": { "context_length": 200000 }, "bar": {} }
+/// ```
+///
+/// Entries with a missing or empty `id` are dropped. The top-level `id` key
+/// is stripped from each value since it now lives on the parent as the map
+/// key. Insertion order is preserved (serde_json uses IndexMap under the
+/// `preserve_order` feature).
+fn models_array_to_dict(array: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for item in array {
+        let serde_json::Value::Object(mut obj) = item else {
+            continue;
+        };
+        let Some(id) = obj
+            .remove("id")
+            .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        map.insert(id, serde_json::Value::Object(obj));
+    }
+    serde_json::Value::Object(map)
+}
+
+/// Inverse of [`models_array_to_dict`]. Converts the YAML dict shape back to
+/// the UI-friendly ordered array, re-injecting `id` as an object field.
+fn models_dict_to_array(dict: serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+    let mut out = Vec::with_capacity(dict.len());
+    for (id, value) in dict {
+        let mut obj = match value {
+            serde_json::Value::Object(obj) => obj,
+            serde_json::Value::Null => serde_json::Map::new(),
+            other => {
+                log::warn!("Unexpected Hermes model entry for '{id}': {other:?}, skipping");
+                continue;
+            }
+        };
+        obj.insert("id".to_string(), serde_json::Value::String(id));
+        out.push(serde_json::Value::Object(obj));
+    }
+    serde_json::Value::Array(out)
+}
+
+/// If `config.models` is a JSON array, convert it in-place to the dict shape.
+/// No-op when `models` is absent or already a dict.
+fn normalize_provider_models_for_write(config: &mut serde_json::Value) {
+    let Some(obj) = config.as_object_mut() else {
+        return;
+    };
+    let Some(models_val) = obj.get_mut("models") else {
+        return;
+    };
+    if models_val.is_array() {
+        let taken = std::mem::take(models_val);
+        if let serde_json::Value::Array(arr) = taken {
+            *models_val = models_array_to_dict(arr);
+        }
+    }
+}
+
+/// If `config.models` is a JSON dict, convert it in-place to the ordered array
+/// shape. No-op when `models` is absent or already an array.
+fn denormalize_provider_models_for_read(config: &mut serde_json::Value) {
+    let Some(obj) = config.as_object_mut() else {
+        return;
+    };
+    let Some(models_val) = obj.get_mut("models") else {
+        return;
+    };
+    if models_val.is_object() {
+        let taken = std::mem::take(models_val);
+        if let serde_json::Value::Object(map) = taken {
+            *models_val = models_dict_to_array(map);
+        }
+    }
+}
+
 /// Get all custom providers as a JSON map keyed by provider name.
 ///
 /// The `custom_providers` section is a YAML sequence where each item has a
-/// `name` field. This function converts it to a map for CC Switch consumption.
+/// `name` field. This function converts it to a map for CC Switch consumption,
+/// and additionally transforms each entry's `models` field from the
+/// YAML dict shape to the UI-friendly ordered array shape.
 pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, AppError> {
     let config = read_hermes_config()?;
     let providers = config
@@ -390,7 +480,8 @@ pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, App
             for item in seq {
                 if let Some(name) = item.get("name").and_then(|n| n.as_str()) {
                     match yaml_to_json(item) {
-                        Ok(json_val) => {
+                        Ok(mut json_val) => {
+                            denormalize_provider_models_for_read(&mut json_val);
                             map.insert(name.to_string(), json_val);
                         }
                         Err(e) => {
@@ -428,7 +519,11 @@ pub fn set_provider(
         .cloned()
         .unwrap_or_default();
 
-    let mut yaml_val: serde_yaml::Value = json_to_yaml(&provider_config)?;
+    // Normalize `models` from UI array to Hermes YAML dict before serializing.
+    let mut normalized = provider_config;
+    normalize_provider_models_for_write(&mut normalized);
+
+    let mut yaml_val: serde_yaml::Value = json_to_yaml(&normalized)?;
     if let serde_yaml::Value::Mapping(ref mut m) = yaml_val {
         m.insert(
             serde_yaml::Value::String("name".to_string()),
@@ -496,6 +591,38 @@ pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome,
         serde_json::to_value(model).map_err(|e| AppError::JsonSerialize { source: e })?;
     let yaml_val = json_to_yaml(&json_val)?;
     write_yaml_section_to_config("model", &yaml_val)
+}
+
+/// Apply the top-level `model:` defaults when switching to a Hermes provider.
+///
+/// Derives `model.default` from the first entry in `settings_config.models`
+/// (if present) and sets `model.provider` to the provider's name. Existing
+/// fields in `model:` are preserved via struct-update — users who customized
+/// `context_length` / `max_tokens` / `base_url` in the Model panel don't get
+/// clobbered. No-op when the provider declares no models.
+pub fn apply_switch_defaults(
+    provider_id: &str,
+    settings_config: &serde_json::Value,
+) -> Result<Option<HermesWriteOutcome>, AppError> {
+    let Some(first_model_id) = settings_config
+        .get("models")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|m| m.get("id"))
+        .and_then(|id| id.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let current = get_model_config()?.unwrap_or_default();
+    let merged = HermesModelConfig {
+        default: Some(first_model_id),
+        provider: Some(provider_id.to_string()),
+        ..current
+    };
+    Ok(Some(set_model_config(&merged)?))
 }
 
 // ============================================================================
@@ -1207,5 +1334,222 @@ custom_providers:
         let yaml = json_to_yaml(&json).unwrap();
         let back = yaml_to_json(&yaml).unwrap();
         assert_eq!(json, back);
+    }
+
+    // ---- models array ↔ dict transforms ----
+
+    #[test]
+    fn models_array_to_dict_strips_id_and_preserves_order() {
+        let arr = vec![
+            serde_json::json!({ "id": "foo", "context_length": 100 }),
+            serde_json::json!({ "id": "bar", "max_tokens": 2000 }),
+            serde_json::json!({ "id": "baz" }),
+        ];
+        let dict = models_array_to_dict(arr);
+        let obj = dict.as_object().unwrap();
+        let keys: Vec<&String> = obj.keys().collect();
+        assert_eq!(keys, vec!["foo", "bar", "baz"]);
+        assert_eq!(obj["foo"]["context_length"], 100);
+        assert_eq!(obj["bar"]["max_tokens"], 2000);
+        assert!(obj["baz"].as_object().unwrap().is_empty());
+        // id must not leak into values
+        assert!(obj["foo"].get("id").is_none());
+    }
+
+    #[test]
+    fn models_array_to_dict_drops_empty_and_missing_ids() {
+        let arr = vec![
+            serde_json::json!({ "id": "", "context_length": 1 }),
+            serde_json::json!({ "id": "   ", "context_length": 2 }),
+            serde_json::json!({ "context_length": 3 }),
+            serde_json::json!({ "id": "kept" }),
+        ];
+        let dict = models_array_to_dict(arr);
+        let obj = dict.as_object().unwrap();
+        assert_eq!(obj.len(), 1);
+        assert!(obj.contains_key("kept"));
+    }
+
+    #[test]
+    fn models_dict_to_array_reinjects_id_and_preserves_order() {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "alpha".to_string(),
+            serde_json::json!({ "context_length": 10 }),
+        );
+        map.insert("beta".to_string(), serde_json::json!({ "max_tokens": 20 }));
+        map.insert("gamma".to_string(), serde_json::Value::Null);
+        let arr = models_dict_to_array(map);
+        let list = arr.as_array().unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0]["id"], "alpha");
+        assert_eq!(list[0]["context_length"], 10);
+        assert_eq!(list[1]["id"], "beta");
+        assert_eq!(list[2]["id"], "gamma");
+    }
+
+    #[test]
+    #[serial]
+    fn provider_with_models_array_writes_dict_to_yaml() {
+        with_test_home(|| {
+            let config = serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "api_key": "sk-test",
+                "api_mode": "chat_completions",
+                "models": [
+                    { "id": "model-a", "context_length": 200000, "max_tokens": 32000 },
+                    { "id": "model-b", "context_length": 100000 },
+                ]
+            });
+            set_provider("demo", config).unwrap();
+
+            // Read raw YAML to verify the on-disk shape is a dict.
+            let raw = fs::read_to_string(get_hermes_config_path()).unwrap();
+            let yaml: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
+            let providers = yaml
+                .get("custom_providers")
+                .and_then(|v| v.as_sequence())
+                .unwrap();
+            let provider = &providers[0];
+            let models = provider.get("models").and_then(|v| v.as_mapping()).unwrap();
+            assert_eq!(models.len(), 2);
+            assert!(models.contains_key(serde_yaml::Value::String("model-a".into())));
+            assert!(models.contains_key(serde_yaml::Value::String("model-b".into())));
+            let model_a = models
+                .get(serde_yaml::Value::String("model-a".into()))
+                .unwrap();
+            assert_eq!(
+                model_a
+                    .get("context_length")
+                    .and_then(|v| v.as_u64())
+                    .unwrap(),
+                200000
+            );
+            // id should not leak into each model value
+            assert!(model_a.get("id").is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn provider_models_roundtrip_array_dict_array_preserves_order() {
+        with_test_home(|| {
+            let input = serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "api_key": "sk-test",
+                "models": [
+                    { "id": "first", "context_length": 1 },
+                    { "id": "second", "context_length": 2 },
+                    { "id": "third", "context_length": 3 },
+                ]
+            });
+            set_provider("order", input).unwrap();
+
+            let providers = get_providers().unwrap();
+            let provider = providers.get("order").unwrap();
+            let models = provider.get("models").and_then(|v| v.as_array()).unwrap();
+            let ids: Vec<&str> = models
+                .iter()
+                .map(|m| m.get("id").and_then(|v| v.as_str()).unwrap())
+                .collect();
+            assert_eq!(ids, vec!["first", "second", "third"]);
+            assert_eq!(models[0].get("context_length").unwrap(), 1);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn provider_without_models_is_unaffected() {
+        with_test_home(|| {
+            let input = serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "api_key": "sk-test"
+            });
+            set_provider("simple", input).unwrap();
+            let providers = get_providers().unwrap();
+            let provider = providers.get("simple").unwrap();
+            assert!(provider.get("models").is_none());
+        });
+    }
+
+    // ---- apply_switch_defaults ----
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_sets_default_and_provider() {
+        with_test_home(|| {
+            let settings = serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "models": [
+                    { "id": "primary-model", "context_length": 200000 },
+                    { "id": "fallback", "context_length": 100000 },
+                ]
+            });
+            let outcome = apply_switch_defaults("demo", &settings).unwrap();
+            assert!(outcome.is_some());
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.default.as_deref(), Some("primary-model"));
+            assert_eq!(model.provider.as_deref(), Some("demo"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_preserves_user_context_length() {
+        with_test_home(|| {
+            // User previously set a custom context_length via the Model panel.
+            let initial = HermesModelConfig {
+                default: Some("old-model".to_string()),
+                provider: Some("old-provider".to_string()),
+                base_url: Some("https://user-override.example.com".to_string()),
+                context_length: Some(131072),
+                max_tokens: Some(16384),
+                extra: HashMap::new(),
+            };
+            set_model_config(&initial).unwrap();
+
+            let settings = serde_json::json!({
+                "models": [{ "id": "new-model" }]
+            });
+            apply_switch_defaults("new-provider", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.default.as_deref(), Some("new-model"));
+            assert_eq!(model.provider.as_deref(), Some("new-provider"));
+            // User-customized fields must survive the switch.
+            assert_eq!(
+                model.base_url.as_deref(),
+                Some("https://user-override.example.com")
+            );
+            assert_eq!(model.context_length, Some(131072));
+            assert_eq!(model.max_tokens, Some(16384));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_noop_when_no_models_declared() {
+        with_test_home(|| {
+            let settings = serde_json::json!({
+                "base_url": "https://api.example.com/v1"
+            });
+            let outcome = apply_switch_defaults("bare", &settings).unwrap();
+            assert!(outcome.is_none());
+            assert!(get_model_config().unwrap().is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_noop_on_empty_model_id() {
+        with_test_home(|| {
+            let settings = serde_json::json!({
+                "models": [{ "id": "   " }, { "id": "real" }]
+            });
+            let outcome = apply_switch_defaults("edge", &settings).unwrap();
+            // First entry has whitespace-only id → treated as missing, no-op.
+            assert!(outcome.is_none());
+        });
     }
 }
