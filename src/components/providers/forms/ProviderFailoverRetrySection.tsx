@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -13,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { FailoverRetryPolicy } from "@/types";
 import {
+  DEFAULT_FAILOVER_RETRY_POLICY,
   normalizeFailoverRetryPolicy,
   type NormalizedFailoverRetryPolicy,
 } from "@/lib/failoverRetry";
@@ -27,7 +36,10 @@ export function ProviderFailoverRetrySection({
   onChange,
 }: ProviderFailoverRetrySectionProps) {
   const { t } = useTranslation();
-  const normalizedValue = normalizeFailoverRetryPolicy(value);
+  const currentPolicy = value ?? DEFAULT_FAILOVER_RETRY_POLICY;
+  const normalizedValue = normalizeFailoverRetryPolicy(currentPolicy);
+  const keywordValues =
+    currentPolicy.nonRetryableKeywords ?? normalizedValue.nonRetryableKeywords;
   const [isOpen, setIsOpen] = useState(Boolean(value));
 
   useEffect(() => {
@@ -38,12 +50,12 @@ export function ProviderFailoverRetrySection({
 
   const updatePolicy = (
     patch:
-      | Partial<NormalizedFailoverRetryPolicy>
-      | ((current: NormalizedFailoverRetryPolicy) => Partial<NormalizedFailoverRetryPolicy>),
+      | Partial<FailoverRetryPolicy>
+      | ((current: FailoverRetryPolicy) => Partial<FailoverRetryPolicy>),
   ) => {
-    const current = normalizeFailoverRetryPolicy(value);
+    const current = value ?? DEFAULT_FAILOVER_RETRY_POLICY;
     const nextPatch = typeof patch === "function" ? patch(current) : patch;
-    onChange(normalizeFailoverRetryPolicy({ ...current, ...nextPatch }));
+    onChange({ ...current, ...nextPatch });
   };
 
   const summaryText =
@@ -190,14 +202,16 @@ export function ProviderFailoverRetrySection({
                   updatePolicy((current) => {
                     const baseDelaySeconds = parseNumber(
                       event.target.value,
-                      current.baseDelaySeconds,
+                      current.baseDelaySeconds ??
+                        normalizedValue.baseDelaySeconds,
                       1,
                     );
 
                     return {
                       baseDelaySeconds,
                       maxDelaySeconds: Math.max(
-                        current.maxDelaySeconds,
+                        current.maxDelaySeconds ??
+                          normalizedValue.maxDelaySeconds,
                         baseDelaySeconds,
                       ),
                     };
@@ -258,6 +272,98 @@ export function ProviderFailoverRetrySection({
                     "Each retry waits longer than the last one until the delay cap is reached.",
                 })}
               </p>
+            </div>
+
+            <div className="space-y-3 md:col-span-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+              <div className="space-y-1">
+                <Label htmlFor="provider-retry-non-retryable-0">
+                  {t("providerRetry.nonRetryableKeywords", {
+                    defaultValue: "Non-retryable keywords",
+                  })}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t("providerRetry.nonRetryableKeywordsHint", {
+                    defaultValue:
+                      "Matches error message, type, code, and status after case-insensitive normalization. If a keyword matches, this provider is skipped and failover moves to the next one. Each provider keeps its own list.",
+                  })}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {keywordValues.map((keyword, index) => (
+                  <div
+                    key={`${index}-${keyword}`}
+                    className="flex items-center gap-2"
+                  >
+                    <Input
+                      id={`provider-retry-non-retryable-${index}`}
+                      aria-label={t("providerRetry.nonRetryableKeyword", {
+                        index: index + 1,
+                        defaultValue: "Non-retryable keyword {{index}}",
+                      })}
+                      value={keyword}
+                      placeholder={t(
+                        "providerRetry.nonRetryableKeywordPlaceholder",
+                        {
+                          defaultValue: "invalid_api_key",
+                        },
+                      )}
+                      onChange={(event) =>
+                        updatePolicy({
+                          nonRetryableKeywords: keywordValues.map(
+                            (item, itemIndex) =>
+                              itemIndex === index ? event.target.value : item,
+                          ),
+                        })
+                      }
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() =>
+                        updatePolicy({
+                          nonRetryableKeywords: keywordValues.filter(
+                            (_, itemIndex) => itemIndex !== index,
+                          ),
+                        })
+                      }
+                      aria-label={t("providerRetry.removeNonRetryableKeyword", {
+                        index: index + 1,
+                        defaultValue: "Remove keyword {{index}}",
+                      })}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+
+                {keywordValues.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {t("providerRetry.nonRetryableKeywordsEmpty", {
+                      defaultValue:
+                        "No keywords yet. Add one to skip this provider when a matching error appears.",
+                    })}
+                  </p>
+                )}
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-fit"
+                  onClick={() =>
+                    updatePolicy({
+                      nonRetryableKeywords: [...keywordValues, ""],
+                    })
+                  }
+                >
+                  <Plus className="h-4 w-4" />
+                  {t("providerRetry.addNonRetryableKeyword", {
+                    defaultValue: "Add keyword",
+                  })}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

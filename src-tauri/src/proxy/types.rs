@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::provider::FailoverRetryMode;
+use serde::{Deserialize, Serialize};
 
 /// 代理服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +115,10 @@ pub struct ProviderRetryState {
     pub active: bool,
     pub waiting: bool,
     pub sticky_infinite: bool,
+    #[serde(default)]
+    pub non_retryable_filter_hit: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub non_retryable_keyword: Option<String>,
 }
 
 /// 代理服务器信息

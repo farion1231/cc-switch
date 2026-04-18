@@ -6,7 +6,14 @@ export interface NormalizedFailoverRetryPolicy {
   baseDelaySeconds: number;
   maxDelaySeconds: number;
   backoffMultiplier: number;
+  nonRetryableKeywords: string[];
 }
+
+export const DEFAULT_FAILOVER_RETRY_NON_RETRYABLE_KEYWORDS = [
+  "invalid_api_key",
+  "invalid_request",
+  "context_length_exceeded",
+] as const;
 
 export const DEFAULT_FAILOVER_RETRY_POLICY: NormalizedFailoverRetryPolicy = {
   mode: "finite",
@@ -14,6 +21,7 @@ export const DEFAULT_FAILOVER_RETRY_POLICY: NormalizedFailoverRetryPolicy = {
   baseDelaySeconds: 3,
   maxDelaySeconds: 30,
   backoffMultiplier: 2,
+  nonRetryableKeywords: [...DEFAULT_FAILOVER_RETRY_NON_RETRYABLE_KEYWORDS],
 };
 
 export function normalizeFailoverRetryPolicy(
@@ -43,6 +51,10 @@ export function normalizeFailoverRetryPolicy(
     DEFAULT_FAILOVER_RETRY_POLICY.backoffMultiplier,
     1,
   );
+  const nonRetryableKeywords = normalizeFailoverRetryKeywords(
+    policy?.nonRetryableKeywords,
+    DEFAULT_FAILOVER_RETRY_NON_RETRYABLE_KEYWORDS,
+  );
 
   return {
     mode,
@@ -50,6 +62,7 @@ export function normalizeFailoverRetryPolicy(
     baseDelaySeconds,
     maxDelaySeconds,
     backoffMultiplier,
+    nonRetryableKeywords,
   };
 }
 
@@ -57,6 +70,39 @@ export function isInfiniteFailoverRetry(
   policy?: FailoverRetryPolicy | null,
 ): boolean {
   return normalizeFailoverRetryPolicy(policy).mode === "infinite";
+}
+
+export function normalizeFailoverRetryKeyword(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+}
+
+export function normalizeFailoverRetryKeywords(
+  keywords?: string[] | null,
+  fallback: readonly string[] = DEFAULT_FAILOVER_RETRY_NON_RETRYABLE_KEYWORDS,
+): string[] {
+  if (keywords === undefined || keywords === null) {
+    return [...fallback];
+  }
+
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const keyword of keywords) {
+    if (typeof keyword !== "string") continue;
+    const trimmed = keyword.trim();
+    if (!trimmed) continue;
+
+    const normalized = normalizeFailoverRetryKeyword(trimmed);
+    if (!normalized || seen.has(normalized)) continue;
+
+    seen.add(normalized);
+    result.push(trimmed);
+  }
+
+  return result;
 }
 
 function clampInteger(

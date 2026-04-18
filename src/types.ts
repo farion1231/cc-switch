@@ -117,6 +117,7 @@ export interface FailoverRetryPolicy {
   baseDelaySeconds?: number;
   maxDelaySeconds?: number;
   backoffMultiplier?: number;
+  nonRetryableKeywords?: string[];
 }
 
 export type AuthBindingSource = "provider_config" | "managed_account";

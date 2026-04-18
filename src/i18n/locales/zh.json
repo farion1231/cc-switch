@@ -2475,6 +2475,17 @@
     "summaryFinite": "故障转移前最多重试 {{max}} 次",
     "summaryDirectFailover": "直接故障转移 · 不在当前供应商上重试",
     "maxRetriesHint": "设为 0 表示不在当前供应商上重试，而是立即故障转移。",
+    "nonRetryableKeywords": "不可重试关键词",
+    "nonRetryableKeywordsHint": "会对错误信息、类型、代码和状态做大小写不敏感的归一化包含匹配。命中任一关键词后，会跳过当前供应商并立刻切换到下一个。每个供应商各自维护一份列表。",
+    "nonRetryableKeywordsEmpty": "还没有关键词。添加一个后，匹配到对应错误时会跳过当前供应商。",
+    "nonRetryableKeyword": "不可重试关键词 {{index}}",
+    "nonRetryableKeywordPlaceholder": "invalid_api_key",
+    "addNonRetryableKeyword": "添加关键词",
+    "removeNonRetryableKeyword": "移除第 {{index}} 个关键词",
+    "nonRetryableRuntimeBadge": "命中 {{keyword}}",
+    "nonRetryableRuntimeBadgeFallback": "命中不可重试关键词",
+    "nonRetryableRuntimeHint": "该错误命中了不可重试关键词。当前供应商会被跳过，并立即切换到下一个。",
+    "nonRetryableRuntimeNote": "已立即跳过并切换到下一个供应商。",
     "configFiniteBadge": "重试 {{current}}/{{max}}",
     "configFiniteHint": "已配置在故障转移前最多进行 {{max}} 次供应商级重试。"
   }

@@ -18,8 +18,7 @@ use super::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
     types::{
-        CopilotOptimizerConfig, OptimizerConfig, ProviderRetryState, ProxyStatus,
-        RectifierConfig,
+        CopilotOptimizerConfig, OptimizerConfig, ProviderRetryState, ProxyStatus, RectifierConfig,
     },
     ProxyError,
 };
@@ -181,6 +180,7 @@ impl RequestForwarder {
                         app_type,
                         app_type_str,
                         provider,
+                        &retry_policy,
                         endpoint,
                         &body,
                         &headers,
@@ -299,6 +299,50 @@ impl RequestForwarder {
                         last_provider = Some(provider.clone());
                         break;
                     }
+                    ProviderAttemptOutcome::SkipProvider {
+                        error,
+                        non_retryable_keyword,
+                    } => {
+                        let _ = self
+                            .router
+                            .record_result(
+                                &provider.id,
+                                app_type_str,
+                                used_half_open_permit,
+                                false,
+                                Some(error.to_string()),
+                            )
+                            .await;
+
+                        self.set_provider_non_retryable_state(
+                            app_type_str,
+                            provider,
+                            &retry_policy,
+                            non_retryable_keyword.clone(),
+                        )
+                        .await;
+
+                        self.set_last_error(format!(
+                            "Provider {} hit non-retryable error filter: {}",
+                            provider.name, error
+                        ))
+                        .await;
+
+                        let error_summary = summarize_proxy_error(&error);
+                        let keyword_summary = non_retryable_keyword
+                            .as_deref()
+                            .map(|keyword| format!(" keyword={keyword}"))
+                            .unwrap_or_default();
+                        log::warn!(
+                            "[{app_type_str}] [PROVIDER_NON_RETRYABLE] Provider {} hit non-retryable filter{keyword_summary}, skipping to next provider: {}",
+                            provider.name,
+                            error_summary
+                        );
+
+                        last_error = Some(error);
+                        last_provider = Some(provider.clone());
+                        break;
+                    }
                     ProviderAttemptOutcome::Terminal {
                         error,
                         count_as_provider_failure,
@@ -334,8 +378,7 @@ impl RequestForwarder {
                 let mut status = self.status.write().await;
                 status.failed_requests += 1;
                 status.last_error = Some(
-                    "All providers are temporarily unavailable (circuit breaker limit)"
-                        .to_string(),
+                    "All providers are temporarily unavailable (circuit breaker limit)".to_string(),
                 );
                 if status.total_requests > 0 {
                     status.success_rate =
@@ -375,6 +418,7 @@ impl RequestForwarder {
         app_type: &AppType,
         app_type_str: &str,
         provider: &Provider,
+        retry_policy: &EffectiveFailoverRetryPolicy,
         endpoint: &str,
         body: &Value,
         headers: &axum::http::HeaderMap,
@@ -481,8 +525,19 @@ impl RequestForwarder {
                                         "[{app_type_str}] [RECT-003] signature rectifier retry failed: {retry_error}"
                                     );
 
+                                    if let Some(keyword) =
+                                        match_non_retryable_keyword(retry_policy, &retry_error)
+                                    {
+                                        return ProviderAttemptOutcome::SkipProvider {
+                                            error: retry_error,
+                                            non_retryable_keyword: Some(keyword),
+                                        };
+                                    }
+
                                     let is_provider_error = match &retry_error {
-                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => true,
+                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => {
+                                            true
+                                        }
                                         ProxyError::UpstreamError { status, .. } => *status >= 500,
                                         _ => false,
                                     };
@@ -576,8 +631,17 @@ impl RequestForwarder {
                             }
                             Err(retry_error) => {
                                 log::warn!(
-                                    "[{app_type_str}] [RECT-012] budget rectifier retry failed: {retry_error}"
-                                );
+                                        "[{app_type_str}] [RECT-012] budget rectifier retry failed: {retry_error}"
+                                    );
+
+                                if let Some(keyword) =
+                                    match_non_retryable_keyword(retry_policy, &retry_error)
+                                {
+                                    return ProviderAttemptOutcome::SkipProvider {
+                                        error: retry_error,
+                                        non_retryable_keyword: Some(keyword),
+                                    };
+                                }
 
                                 let is_provider_error = match &retry_error {
                                     ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => true,
@@ -614,6 +678,13 @@ impl RequestForwarder {
                     return ProviderAttemptOutcome::Terminal {
                         error,
                         count_as_provider_failure: false,
+                    };
+                }
+
+                if let Some(keyword) = match_non_retryable_keyword(retry_policy, &error) {
+                    return ProviderAttemptOutcome::SkipProvider {
+                        error,
+                        non_retryable_keyword: Some(keyword),
                     };
                 }
 
@@ -661,6 +732,43 @@ impl RequestForwarder {
             active: true,
             waiting,
             sticky_infinite: matches!(policy.mode, FailoverRetryMode::Infinite),
+            non_retryable_filter_hit: false,
+            non_retryable_keyword: None,
+        };
+
+        let mut status = self.status.write().await;
+        if let Some(existing) = status.provider_retry_states.iter_mut().find(|state| {
+            state.app_type == retry_state.app_type && state.provider_id == retry_state.provider_id
+        }) {
+            *existing = retry_state;
+        } else {
+            status.provider_retry_states.push(retry_state);
+        }
+    }
+
+    async fn set_provider_non_retryable_state(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+        policy: &EffectiveFailoverRetryPolicy,
+        matched_keyword: Option<String>,
+    ) {
+        let retry_state = ProviderRetryState {
+            app_type: app_type.to_string(),
+            provider_id: provider.id.clone(),
+            provider_name: provider.name.clone(),
+            mode: policy.mode.clone(),
+            current_retry: 0,
+            max_retry: match policy.mode {
+                FailoverRetryMode::Finite => Some(policy.max_retries),
+                FailoverRetryMode::Infinite => None,
+            },
+            current_delay_seconds: 0,
+            active: false,
+            waiting: false,
+            sticky_infinite: false,
+            non_retryable_filter_hit: matched_keyword.is_some(),
+            non_retryable_keyword: matched_keyword,
         };
 
         let mut status = self.status.write().await;
@@ -1525,6 +1633,10 @@ enum ProviderAttemptOutcome {
         claude_api_format: Option<String>,
     },
     Retryable(ProxyError),
+    SkipProvider {
+        error: ProxyError,
+        non_retryable_keyword: Option<String>,
+    },
     Terminal {
         error: ProxyError,
         count_as_provider_failure: bool,
@@ -1538,6 +1650,7 @@ struct EffectiveFailoverRetryPolicy {
     base_delay_seconds: u64,
     max_delay_seconds: u64,
     backoff_multiplier: f64,
+    non_retryable_keywords: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1555,7 +1668,10 @@ fn effective_failover_retry_policy(provider: &Provider) -> EffectiveFailoverRetr
         .unwrap_or_default();
 
     let base_delay_seconds = policy.base_delay_seconds.unwrap_or(3).max(1);
-    let max_delay_seconds = policy.max_delay_seconds.unwrap_or(30).max(base_delay_seconds);
+    let max_delay_seconds = policy
+        .max_delay_seconds
+        .unwrap_or(30)
+        .max(base_delay_seconds);
 
     EffectiveFailoverRetryPolicy {
         mode: policy.mode,
@@ -1563,6 +1679,7 @@ fn effective_failover_retry_policy(provider: &Provider) -> EffectiveFailoverRetr
         base_delay_seconds,
         max_delay_seconds,
         backoff_multiplier: policy.backoff_multiplier.unwrap_or(2.0).max(1.0),
+        non_retryable_keywords: policy.non_retryable_keywords,
     }
 }
 
@@ -1595,6 +1712,88 @@ fn compute_next_retry_delay(
 ) -> u64 {
     let scaled = (current_delay_seconds as f64 * backoff_multiplier.max(1.0)).ceil();
     scaled.max(1.0).min(max_delay_seconds as f64) as u64
+}
+
+fn normalize_non_retryable_text(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+
+    for ch in text.chars() {
+        if ch.is_whitespace() || matches!(ch, '_' | '-') {
+            continue;
+        }
+
+        for lower in ch.to_lowercase() {
+            normalized.push(lower);
+        }
+    }
+
+    normalized
+}
+
+fn collect_error_filter_texts(error: &ProxyError) -> Vec<String> {
+    let mut texts = Vec::new();
+
+    match error {
+        ProxyError::UpstreamError { status, body } => {
+            texts.push(status.to_string());
+
+            if let Some(body) = body {
+                texts.push(body.clone());
+
+                if let Ok(json_body) = serde_json::from_str::<Value>(body) {
+                    collect_json_text_candidates(&json_body, &mut texts);
+                }
+            }
+        }
+        _ => {
+            texts.push(error.to_string());
+        }
+    }
+
+    texts
+}
+
+fn collect_json_text_candidates(value: &Value, texts: &mut Vec<String>) {
+    match value {
+        Value::String(text) => texts.push(text.clone()),
+        Value::Number(number) => texts.push(number.to_string()),
+        Value::Bool(boolean) => texts.push(boolean.to_string()),
+        Value::Array(values) => {
+            for value in values {
+                collect_json_text_candidates(value, texts);
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values() {
+                collect_json_text_candidates(value, texts);
+            }
+        }
+        Value::Null => {}
+    }
+}
+
+fn match_non_retryable_keyword(
+    policy: &EffectiveFailoverRetryPolicy,
+    error: &ProxyError,
+) -> Option<String> {
+    let candidates = collect_error_filter_texts(error);
+    let normalized_candidates = candidates
+        .iter()
+        .map(|text| normalize_non_retryable_text(text))
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>();
+
+    policy.non_retryable_keywords.iter().find_map(|keyword| {
+        let normalized_keyword = normalize_non_retryable_text(keyword);
+        if normalized_keyword.is_empty() {
+            return None;
+        }
+
+        normalized_candidates
+            .iter()
+            .any(|candidate| candidate.contains(&normalized_keyword))
+            .then(|| keyword.clone())
+    })
 }
 
 fn extract_error_message(error: &ProxyError) -> Option<String> {
@@ -1945,6 +2144,55 @@ mod tests {
     }
 
     #[test]
+    fn non_retryable_keyword_filter_matches_structured_json_fields() {
+        let policy = EffectiveFailoverRetryPolicy {
+            mode: FailoverRetryMode::Finite,
+            max_retries: 1,
+            base_delay_seconds: 3,
+            max_delay_seconds: 30,
+            backoff_multiplier: 2.0,
+            non_retryable_keywords: vec!["invalid_api_key".to_string()],
+        };
+        let error = ProxyError::UpstreamError {
+            status: 401,
+            body: Some(
+                json!({
+                    "error": {
+                        "type": "invalid_api_key_error",
+                        "code": "invalid-api-key",
+                        "message": "The provided API key is invalid"
+                    }
+                })
+                .to_string(),
+            ),
+        };
+
+        let matched = match_non_retryable_keyword(&policy, &error);
+
+        assert_eq!(matched.as_deref(), Some("invalid_api_key"));
+    }
+
+    #[test]
+    fn non_retryable_keyword_filter_normalizes_separators_and_case() {
+        let policy = EffectiveFailoverRetryPolicy {
+            mode: FailoverRetryMode::Finite,
+            max_retries: 1,
+            base_delay_seconds: 3,
+            max_delay_seconds: 30,
+            backoff_multiplier: 2.0,
+            non_retryable_keywords: vec!["context_length_exceeded".to_string()],
+        };
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some("Context-Length-Exceeded: prompt too long".to_string()),
+        };
+
+        let matched = match_non_retryable_keyword(&policy, &error);
+
+        assert_eq!(matched.as_deref(), Some("context_length_exceeded"));
+    }
+
+    #[test]
     fn summarize_text_for_log_collapses_whitespace_and_truncates() {
         let summary = summarize_text_for_log("line1\n\n line2   line3", 12);
 
@@ -2238,7 +2486,7 @@ mod tests {
 
         for (is_copilot, is_full_url, should_replace, desc) in test_cases {
             let will_replace = is_copilot && !is_full_url;
-        assert_eq!(will_replace, should_replace, "{desc}");
+            assert_eq!(will_replace, should_replace, "{desc}");
         }
     }
 
@@ -2258,6 +2506,10 @@ mod tests {
         assert_eq!(policy.base_delay_seconds, 3);
         assert_eq!(policy.max_delay_seconds, 30);
         assert_eq!(policy.backoff_multiplier, 2.0);
+        assert_eq!(
+            policy.non_retryable_keywords,
+            crate::provider::default_failover_non_retryable_keywords()
+        );
     }
 
     #[test]
@@ -2268,6 +2520,7 @@ mod tests {
             base_delay_seconds: 3,
             max_delay_seconds: 30,
             backoff_multiplier: 2.0,
+            non_retryable_keywords: crate::provider::default_failover_non_retryable_keywords(),
         };
 
         let decision = next_provider_retry_decision(&policy, 0, policy.base_delay_seconds);
@@ -2283,6 +2536,7 @@ mod tests {
             base_delay_seconds: 3,
             max_delay_seconds: 30,
             backoff_multiplier: 2.0,
+            non_retryable_keywords: crate::provider::default_failover_non_retryable_keywords(),
         };
 
         let first = next_provider_retry_decision(&policy, 0, policy.base_delay_seconds)
@@ -2308,6 +2562,7 @@ mod tests {
             base_delay_seconds: 3,
             max_delay_seconds: 30,
             backoff_multiplier: 2.0,
+            non_retryable_keywords: crate::provider::default_failover_non_retryable_keywords(),
         };
 
         let first = next_provider_retry_decision(&policy, 0, policy.base_delay_seconds)

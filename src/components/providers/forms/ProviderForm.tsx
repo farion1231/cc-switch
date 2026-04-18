@@ -11,6 +11,7 @@ import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import type {
   ProviderCategory,
+  FailoverRetryPolicy,
   ProviderMeta,
   ProviderTestConfig,
   ClaudeApiFormat,
@@ -196,9 +197,10 @@ export function ProviderForm({
   const [testConfig, setTestConfig] = useState<ProviderTestConfig>(
     () => initialData?.meta?.testConfig ?? { enabled: false },
   );
-  const [failoverRetryPolicy, setFailoverRetryPolicy] = useState(() =>
-    normalizeFailoverRetryPolicy(initialData?.meta?.failoverRetry),
-  );
+  const [failoverRetryPolicy, setFailoverRetryPolicy] =
+    useState<FailoverRetryPolicy>(() =>
+      normalizeFailoverRetryPolicy(initialData?.meta?.failoverRetry),
+    );
   const [pricingConfig, setPricingConfig] = useState<{
     enabled: boolean;
     costMultiplier?: string;
@@ -1080,7 +1082,9 @@ export function ProviderForm({
         isCopilotProvider && selectedGitHubAccountId
           ? selectedGitHubAccountId
           : undefined,
-      failoverRetry: failoverRetryPolicy ?? DEFAULT_FAILOVER_RETRY_POLICY,
+      failoverRetry: normalizeFailoverRetryPolicy(
+        failoverRetryPolicy ?? DEFAULT_FAILOVER_RETRY_POLICY,
+      ),
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
@@ -1849,21 +1853,19 @@ export function ProviderForm({
           )}
 
           {!isAnyOmoCategory &&
-       appId !== "opencode" &&
-        appId !== "openclaw" && (
-          <ProviderAdvancedConfig
-            testConfig={testConfig}
-            pricingConfig={pricingConfig}
-            onTestConfigChange={setTestConfig}
-            onPricingConfigChange={setPricingConfig}
-          />
-        )}
+            appId !== "opencode" &&
+            appId !== "openclaw" && (
+              <ProviderAdvancedConfig
+                testConfig={testConfig}
+                pricingConfig={pricingConfig}
+                onTestConfigChange={setTestConfig}
+                onPricingConfigChange={setPricingConfig}
+              />
+            )}
 
           <ProviderFailoverRetrySection
             value={failoverRetryPolicy}
-            onChange={(nextValue) =>
-              setFailoverRetryPolicy(normalizeFailoverRetryPolicy(nextValue))
-            }
+            onChange={setFailoverRetryPolicy}
           />
 
           {showButtons && (

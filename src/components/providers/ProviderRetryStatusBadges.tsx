@@ -17,6 +17,9 @@ export function ProviderRetryStatusBadges({
   const { t } = useTranslation();
   const normalizedPolicy = normalizeFailoverRetryPolicy(policy);
   const isInfinite = normalizedPolicy.mode === "infinite";
+  const nonRetryableRuntimeHit = Boolean(retryState?.non_retryable_filter_hit);
+  const matchedNonRetryableKeyword =
+    retryState?.non_retryable_keyword?.trim() ?? "";
   const shouldShowConfigFiniteBadge =
     !retryState && !isInfinite && normalizedPolicy.maxRetries > 0;
 
@@ -37,8 +40,35 @@ export function ProviderRetryStatusBadges({
         </Badge>
       )}
 
-      {retryState &&
-        (retryState.sticky_infinite ? (
+      {nonRetryableRuntimeHit ? (
+        <div className="flex flex-col gap-0.5">
+          <Badge
+            variant="destructive"
+            className="gap-1 border-transparent"
+            title={t("providerRetry.nonRetryableRuntimeHint", {
+              defaultValue:
+                "A non-retryable keyword matched this error. The current provider is skipped and failover moves to the next one immediately.",
+            })}
+          >
+            <AlertTriangle className="h-3 w-3" />
+            {matchedNonRetryableKeyword
+              ? t("providerRetry.nonRetryableRuntimeBadge", {
+                  keyword: matchedNonRetryableKeyword,
+                  defaultValue: "Blocked by {{keyword}}",
+                })
+              : t("providerRetry.nonRetryableRuntimeBadgeFallback", {
+                  defaultValue: "Blocked by non-retryable keyword",
+                })}
+          </Badge>
+          <span className="text-[11px] leading-tight text-red-600/80 dark:text-red-300/80">
+            {t("providerRetry.nonRetryableRuntimeNote", {
+              defaultValue:
+                "Skipped immediately and moved to the next provider.",
+            })}
+          </span>
+        </div>
+      ) : retryState ? (
+        retryState.sticky_infinite ? (
           <Badge
             variant="destructive"
             className="gap-1 border-transparent"
@@ -76,7 +106,8 @@ export function ProviderRetryStatusBadges({
                   defaultValue: "Retry {{current}}/{{max}} · {{delay}}s",
                 })}
           </Badge>
-        ))}
+        )
+      ) : null}
 
       {shouldShowConfigFiniteBadge && (
         <Badge
@@ -98,4 +129,3 @@ export function ProviderRetryStatusBadges({
     </>
   );
 }
-

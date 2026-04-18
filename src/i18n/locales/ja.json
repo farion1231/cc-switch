@@ -2474,6 +2474,17 @@
     "summaryFinite": "フェイルオーバー前に {{max}} 回まで再試行",
     "summaryDirectFailover": "即時フェイルオーバー · 現在のプロバイダーでは再試行しません",
     "maxRetriesHint": "0 を指定すると、現在のプロバイダーでは再試行せずに即座にフェイルオーバーします。",
+    "nonRetryableKeywords": "再試行不可キーワード",
+    "nonRetryableKeywordsHint": "エラーメッセージ、種類、コード、ステータスを大文字小文字を区別しない正規化済みの部分一致で判定します。いずれかのキーワードに一致すると、このプロバイダーをスキップして次へ即座にフェイルオーバーします。各プロバイダーごとに個別の一覧を持ちます。",
+    "nonRetryableKeywordsEmpty": "まだキーワードはありません。一致するエラーでこのプロバイダーをスキップしたい場合は追加してください。",
+    "nonRetryableKeyword": "再試行不可キーワード {{index}}",
+    "nonRetryableKeywordPlaceholder": "invalid_api_key",
+    "addNonRetryableKeyword": "キーワードを追加",
+    "removeNonRetryableKeyword": "{{index}} 個目のキーワードを削除",
+    "nonRetryableRuntimeBadge": "{{keyword}} でブロック",
+    "nonRetryableRuntimeBadgeFallback": "再試行不可キーワードでブロック",
+    "nonRetryableRuntimeHint": "このエラーは再試行不可キーワードに一致しました。現在のプロバイダーはスキップされ、次のプロバイダーへ即座に切り替わります。",
+    "nonRetryableRuntimeNote": "すぐにスキップされ、次のプロバイダーへ移動します。",
     "configFiniteBadge": "再試行 {{current}}/{{max}}",
     "configFiniteHint": "フェイルオーバー前に最大 {{max}} 回のプロバイダー単位再試行が設定されています。"
   }

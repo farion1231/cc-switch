@@ -49,6 +49,8 @@ export interface ProviderRetryState {
   active: boolean;
   waiting: boolean;
   sticky_infinite: boolean;
+  non_retryable_filter_hit?: boolean;
+  non_retryable_keyword?: string | null;
 }
 
 export interface ProxyServerInfo {

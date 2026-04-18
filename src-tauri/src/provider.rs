@@ -172,6 +172,19 @@ pub struct ProviderTestConfig {
     pub max_retries: Option<u32>,
 }
 
+pub const DEFAULT_FAILOVER_NON_RETRYABLE_KEYWORDS: [&str; 3] = [
+    "invalid_api_key",
+    "invalid_request",
+    "context_length_exceeded",
+];
+
+pub fn default_failover_non_retryable_keywords() -> Vec<String> {
+    DEFAULT_FAILOVER_NON_RETRYABLE_KEYWORDS
+        .iter()
+        .map(|keyword| keyword.to_string())
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FailoverRetryMode {
@@ -193,6 +206,8 @@ pub struct FailoverRetryPolicy {
     pub max_delay_seconds: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backoff_multiplier: Option<f64>,
+    #[serde(default = "default_failover_non_retryable_keywords")]
+    pub non_retryable_keywords: Vec<String>,
 }
 
 impl Default for FailoverRetryPolicy {
@@ -203,6 +218,7 @@ impl Default for FailoverRetryPolicy {
             base_delay_seconds: Some(3),
             max_delay_seconds: Some(30),
             backoff_multiplier: Some(2.0),
+            non_retryable_keywords: default_failover_non_retryable_keywords(),
         }
     }
 }
@@ -730,9 +746,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, FailoverRetryMode, FailoverRetryPolicy,
-        GeminiModelConfig, OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta,
-        UniversalProvider,
+        default_failover_non_retryable_keywords, ClaudeModelConfig, CodexModelConfig,
+        FailoverRetryMode, FailoverRetryPolicy, GeminiModelConfig, OpenCodeProviderConfig,
+        Provider, ProviderManager, ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
 
@@ -769,6 +785,10 @@ mod tests {
             base_delay_seconds: Some(5),
             max_delay_seconds: Some(30),
             backoff_multiplier: Some(2.5),
+            non_retryable_keywords: vec![
+                "invalid_api_key".to_string(),
+                "context_length_exceeded".to_string(),
+            ],
         });
 
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
@@ -805,6 +825,21 @@ mod tests {
                 .and_then(|item| item.as_f64()),
             Some(2.5)
         );
+        assert_eq!(
+            failover_retry
+                .get("nonRetryableKeywords")
+                .and_then(|item| item.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(ToString::to_string))
+                        .collect::<Vec<_>>()
+                }),
+            Some(vec![
+                "invalid_api_key".to_string(),
+                "context_length_exceeded".to_string()
+            ])
+        );
     }
 
     #[test]
@@ -816,6 +851,10 @@ mod tests {
         assert_eq!(policy.base_delay_seconds, Some(3));
         assert_eq!(policy.max_delay_seconds, Some(30));
         assert_eq!(policy.backoff_multiplier, Some(2.0));
+        assert_eq!(
+            policy.non_retryable_keywords,
+            default_failover_non_retryable_keywords()
+        );
     }
 
     #[test]
