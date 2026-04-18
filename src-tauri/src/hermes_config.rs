@@ -19,6 +19,10 @@
 //!   - name: openrouter
 //!     base_url: https://openrouter.ai/api/v1
 //!     api_key: sk-or-...
+//!     model: anthropic/claude-opus-4-7
+//!     models:
+//!       anthropic/claude-opus-4-7:
+//!         context_length: 200000
 //!
 //! mcp_servers:
 //!   filesystem:
@@ -466,10 +470,19 @@ fn denormalize_provider_models_for_read(config: &mut serde_json::Value) {
 
 /// Get all custom providers as a JSON map keyed by provider name.
 ///
-/// The `custom_providers` section is a YAML sequence where each item has a
-/// `name` field. This function converts it to a map for CC Switch consumption,
-/// and additionally transforms each entry's `models` field from the
-/// YAML dict shape to the UI-friendly ordered array shape.
+/// Reads the `custom_providers:` YAML sequence where each item has a `name`
+/// field, and converts it to a map for CC Switch consumption. Each entry's
+/// `models` field is converted from the YAML dict shape back to the
+/// UI-friendly ordered array shape.
+///
+/// We intentionally use the legacy `custom_providers:` list (not the v12+
+/// `providers:` dict) because Hermes's runtime_provider.py
+/// `_get_named_custom_provider` has a bug in its `providers:` branch: the
+/// returned entry dict drops `api_mode` / `transport` / `models` /
+/// singular `model:`. That leaves `_resolve_named_custom_runtime` to fall
+/// back to `chat_completions`, breaking every anthropic_messages provider.
+/// The legacy `custom_providers:` branch goes through
+/// `_normalize_custom_provider_entry` and preserves all fields correctly.
 pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, AppError> {
     let config = read_hermes_config()?;
     let providers = config
@@ -503,9 +516,17 @@ pub fn get_provider(name: &str) -> Result<Option<serde_json::Value>, AppError> {
 
 /// Set (upsert) a custom provider by name.
 ///
-/// If a provider with the same name exists, it is replaced; otherwise a new
-/// entry is appended. The entire read-modify-write is done under the write
-/// lock to prevent TOCTOU races.
+/// Upserts into the `custom_providers:` YAML sequence (matched by `name`).
+/// The entry includes:
+///   - `name:` field matching the provider id
+///   - singular `model:` field set to the first model id from the `models:`
+///     dict — the Hermes runtime and `/model` picker both read this field
+///     (runtime_provider.py reads it via `_normalize_custom_provider_entry`;
+///     main.py:1436/1450 uses it for picker hints)
+///   - plural `models:` dict carrying per-model `context_length` etc.
+///
+/// The entire read-modify-write is done under the write lock to prevent
+/// TOCTOU races.
 pub fn set_provider(
     name: &str,
     provider_config: serde_json::Value,
@@ -523,12 +544,28 @@ pub fn set_provider(
     let mut normalized = provider_config;
     normalize_provider_models_for_write(&mut normalized);
 
+    // Extract the first model id (now a key in the normalized dict) so we can
+    // propagate it to the singular `model:` field Hermes reads.
+    let first_model_id = normalized
+        .get("models")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| obj.keys().next())
+        .cloned();
+
     let mut yaml_val: serde_yaml::Value = json_to_yaml(&normalized)?;
     if let serde_yaml::Value::Mapping(ref mut m) = yaml_val {
         m.insert(
             serde_yaml::Value::String("name".to_string()),
             serde_yaml::Value::String(name.to_string()),
         );
+        if let Some(model_id) = first_model_id {
+            m.insert(
+                serde_yaml::Value::String("model".to_string()),
+                serde_yaml::Value::String(model_id),
+            );
+        } else {
+            m.remove(serde_yaml::Value::String("model".to_string()));
+        }
     }
 
     if let Some(existing) = providers
@@ -546,8 +583,9 @@ pub fn set_provider(
 
 /// Remove a custom provider by name.
 ///
-/// The entire read-modify-write is done under the write lock to prevent
-/// TOCTOU races.
+/// Filters out the matching entry from the `custom_providers:` sequence.
+/// No-op if the section is missing or no entry matches. The entire
+/// read-modify-write is done under the write lock to prevent TOCTOU races.
 pub fn remove_provider(name: &str) -> Result<HermesWriteOutcome, AppError> {
     let _guard = hermes_write_lock().lock()?;
 
@@ -595,34 +633,37 @@ pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome,
 
 /// Apply the top-level `model:` defaults when switching to a Hermes provider.
 ///
-/// Derives `model.default` from the first entry in `settings_config.models`
-/// (if present) and sets `model.provider` to the provider's name. Existing
-/// fields in `model:` are preserved via struct-update — users who customized
-/// `context_length` / `max_tokens` / `base_url` in the Model panel don't get
-/// clobbered. No-op when the provider declares no models.
+/// `model.provider` is **always** updated to the new provider id — without
+/// this, switching to a provider whose settings lack a `models` list would
+/// leave the runtime routing requests to the previously active provider.
+///
+/// `model.default` is only overwritten when the new provider declares at
+/// least one model; otherwise the previous default is preserved so users
+/// still have a runnable configuration (Hermes will surface a clear error
+/// if the default no longer belongs to the active provider).
+///
+/// Existing fields in `model:` (`context_length` / `max_tokens` / `base_url`
+/// / `extra`) are preserved via struct-update.
 pub fn apply_switch_defaults(
     provider_id: &str,
     settings_config: &serde_json::Value,
-) -> Result<Option<HermesWriteOutcome>, AppError> {
-    let Some(first_model_id) = settings_config
+) -> Result<HermesWriteOutcome, AppError> {
+    let first_model_id = settings_config
         .get("models")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|m| m.get("id"))
         .and_then(|id| id.as_str())
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(None);
-    };
+        .filter(|s| !s.is_empty());
 
     let current = get_model_config()?.unwrap_or_default();
     let merged = HermesModelConfig {
-        default: Some(first_model_id),
+        default: first_model_id.or(current.default.clone()),
         provider: Some(provider_id.to_string()),
         ..current
     };
-    Ok(Some(set_model_config(&merged)?))
+    set_model_config(&merged)
 }
 
 // ============================================================================
@@ -1311,7 +1352,7 @@ model:
         let yaml = "\
 model:
   default: gpt-4
-  provider: openai
+  provider: openrouter
 custom_providers:
   - name: openrouter
     base_url: https://openrouter.ai/api/v1
@@ -1403,7 +1444,7 @@ custom_providers:
             });
             set_provider("demo", config).unwrap();
 
-            // Read raw YAML to verify the on-disk shape is a dict.
+            // Read raw YAML to verify the on-disk shape is a sequence under `custom_providers:`.
             let raw = fs::read_to_string(get_hermes_config_path()).unwrap();
             let yaml: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
             let providers = yaml
@@ -1411,6 +1452,17 @@ custom_providers:
                 .and_then(|v| v.as_sequence())
                 .unwrap();
             let provider = &providers[0];
+            assert_eq!(
+                provider.get("name").and_then(|v| v.as_str()),
+                Some("demo"),
+                "entry should carry a name field"
+            );
+            assert_eq!(
+                provider.get("model").and_then(|v| v.as_str()),
+                Some("model-a"),
+                "entry should carry a singular `model:` field set to the first model id \
+                 so Hermes runtime/picker reads it"
+            );
             let models = provider.get("models").and_then(|v| v.as_mapping()).unwrap();
             assert_eq!(models.len(), 2);
             assert!(models.contains_key(serde_yaml::Value::String("model-a".into())));
@@ -1469,6 +1521,10 @@ custom_providers:
             let providers = get_providers().unwrap();
             let provider = providers.get("simple").unwrap();
             assert!(provider.get("models").is_none());
+            assert!(
+                provider.get("model").is_none(),
+                "singular `model:` should not appear when no models are declared"
+            );
         });
     }
 
@@ -1485,8 +1541,7 @@ custom_providers:
                     { "id": "fallback", "context_length": 100000 },
                 ]
             });
-            let outcome = apply_switch_defaults("demo", &settings).unwrap();
-            assert!(outcome.is_some());
+            apply_switch_defaults("demo", &settings).unwrap();
 
             let model = get_model_config().unwrap().unwrap();
             assert_eq!(model.default.as_deref(), Some("primary-model"));
@@ -1529,27 +1584,53 @@ custom_providers:
 
     #[test]
     #[serial]
-    fn apply_switch_defaults_noop_when_no_models_declared() {
+    fn apply_switch_defaults_updates_provider_even_without_models() {
         with_test_home(|| {
+            // Seed an existing `model:` section — the user was already running
+            // some provider before this switch.
+            let initial = HermesModelConfig {
+                default: Some("legacy-default".to_string()),
+                provider: Some("legacy-provider".to_string()),
+                ..Default::default()
+            };
+            set_model_config(&initial).unwrap();
+
+            // New provider has no `models` list — previously this would no-op
+            // and leave `model.provider` pointing at the legacy provider,
+            // causing "switch succeeds but has no effect" bug.
             let settings = serde_json::json!({
                 "base_url": "https://api.example.com/v1"
             });
-            let outcome = apply_switch_defaults("bare", &settings).unwrap();
-            assert!(outcome.is_none());
-            assert!(get_model_config().unwrap().is_none());
+            apply_switch_defaults("bare", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.provider.as_deref(), Some("bare"));
+            assert_eq!(model.default.as_deref(), Some("legacy-default"));
         });
     }
 
     #[test]
     #[serial]
-    fn apply_switch_defaults_noop_on_empty_model_id() {
+    fn apply_switch_defaults_keeps_old_default_when_first_model_id_is_blank() {
         with_test_home(|| {
+            let initial = HermesModelConfig {
+                default: Some("prev-default".to_string()),
+                provider: Some("prev-provider".to_string()),
+                ..Default::default()
+            };
+            set_model_config(&initial).unwrap();
+
             let settings = serde_json::json!({
                 "models": [{ "id": "   " }, { "id": "real" }]
             });
-            let outcome = apply_switch_defaults("edge", &settings).unwrap();
-            // First entry has whitespace-only id → treated as missing, no-op.
-            assert!(outcome.is_none());
+            apply_switch_defaults("edge", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            // Provider always updates.
+            assert_eq!(model.provider.as_deref(), Some("edge"));
+            // First entry's id is whitespace-only → blank → fall back to old default
+            // (we intentionally don't scan past the first entry for a default).
+            assert_eq!(model.default.as_deref(), Some("prev-default"));
         });
     }
 }
