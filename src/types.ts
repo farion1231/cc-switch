@@ -597,3 +597,12 @@ export interface HermesWriteOutcome {
   backupPath?: string;
   warnings: HermesHealthWarning[];
 }
+
+export type HermesMemoryKind = "memory" | "user";
+
+export interface HermesMemoryLimits {
+  memory: number;
+  user: number;
+  memoryEnabled: boolean;
+  userEnabled: boolean;
+}

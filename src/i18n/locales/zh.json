@@ -1675,6 +1675,19 @@
       "parseFailed": "config.yaml 无法解析为有效 YAML。请先修复文件再在此编辑。",
       "configNotFound": "未找到 Hermes config.yaml。请在 ~/.hermes/config.yaml 创建或在设置中配置路径。",
       "envParseFailed": ".env 文件无法解析。"
+    },
+    "memory": {
+      "title": "记忆管理",
+      "agentTab": "Agent 记忆 (MEMORY.md)",
+      "userTab": "用户画像 (USER.md)",
+      "usage": "已用 {{current}} / {{limit}} 字符",
+      "overLimit": "已超过上限，Hermes 下次加载时会截断",
+      "disabled": "Memory 在 config.yaml 中已禁用，编辑后需在 Hermes 配置启用才会生效。",
+      "saveSuccess": "记忆已保存",
+      "saveFailed": "保存记忆失败",
+      "loadFailed": "读取记忆文件失败",
+      "openConfig": "在 Hermes Web UI 调整上限",
+      "runtimeNote": "更改将在 Hermes 下次启动或新建会话时生效。"
     }
   },
   "env": {

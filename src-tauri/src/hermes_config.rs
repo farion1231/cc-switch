@@ -764,6 +764,111 @@ pub(crate) fn json_to_yaml(json: &serde_json::Value) -> Result<serde_yaml::Value
 }
 
 // ============================================================================
+// Memory Files (~/.hermes/memories/{MEMORY,USER}.md)
+// ============================================================================
+//
+// Hermes Agent persists two memory blobs on disk:
+//   - `MEMORY.md` — agent's personal notes, snapshotted into the system prompt
+//   - `USER.md`   — user profile, same treatment
+// Entries are separated by a `§` on its own line. Hermes' own Web UI only
+// exposes on/off toggles and character budgets — it has no content editor.
+// CC Switch fills that gap by reading/writing the whole file as a markdown
+// blob. Character budgets (`memory_char_limit`, `user_char_limit`) and enable
+// flags (`memory_enabled`, `user_profile_enabled`) live at the top level of
+// `config.yaml`; Hermes truncates over-budget content at load time.
+
+/// Which of Hermes' two memory files to operate on. Tauri deserializes this
+/// directly from the `"memory"` / `"user"` strings the frontend sends, so an
+/// unknown value is rejected at the IPC boundary instead of deep in the stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryKind {
+    Memory,
+    User,
+}
+
+impl MemoryKind {
+    fn filename(self) -> &'static str {
+        match self {
+            Self::Memory => "MEMORY.md",
+            Self::User => "USER.md",
+        }
+    }
+}
+
+fn memories_dir() -> PathBuf {
+    get_hermes_dir().join("memories")
+}
+
+/// Read a Hermes memory file as a markdown blob. Returns an empty string
+/// when the file doesn't exist yet (first-run case).
+pub fn read_memory(kind: MemoryKind) -> Result<String, AppError> {
+    let path = memories_dir().join(kind.filename());
+    match fs::read_to_string(&path) {
+        Ok(content) => Ok(content),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(AppError::io(&path, e)),
+    }
+}
+
+/// Atomically replace a Hermes memory file. `atomic_write` creates parent
+/// directories as needed, so `~/.hermes/memories/` is materialized on first
+/// write without a separate `create_dir_all` call.
+pub fn write_memory(kind: MemoryKind, content: &str) -> Result<(), AppError> {
+    let path = memories_dir().join(kind.filename());
+    atomic_write(&path, content.as_bytes())
+}
+
+/// Character budget + enable flags for the two memory blobs, as configured
+/// in Hermes' `config.yaml`. Defaults mirror `~/.hermes`'s own defaults so
+/// callers get a usable budget bar even before the user edits config.yaml.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HermesMemoryLimits {
+    pub memory: usize,
+    pub user: usize,
+    pub memory_enabled: bool,
+    pub user_enabled: bool,
+}
+
+impl Default for HermesMemoryLimits {
+    fn default() -> Self {
+        Self {
+            memory: 2200,
+            user: 1375,
+            memory_enabled: true,
+            user_enabled: true,
+        }
+    }
+}
+
+/// Read memory budgets + toggles from `config.yaml`. Missing/unparsable
+/// fields fall back to `HermesMemoryLimits::default()` rather than erroring,
+/// so an empty or partially-populated config still yields a usable UI.
+pub fn read_memory_limits() -> Result<HermesMemoryLimits, AppError> {
+    let mut out = HermesMemoryLimits::default();
+    let config = read_hermes_config()?;
+    let Some(memory) = config.get("memory") else {
+        return Ok(out);
+    };
+
+    if let Some(v) = memory.get("memory_char_limit").and_then(|v| v.as_u64()) {
+        out.memory = v as usize;
+    }
+    if let Some(v) = memory.get("user_char_limit").and_then(|v| v.as_u64()) {
+        out.user = v as usize;
+    }
+    if let Some(v) = memory.get("memory_enabled").and_then(|v| v.as_bool()) {
+        out.memory_enabled = v;
+    }
+    if let Some(v) = memory.get("user_profile_enabled").and_then(|v| v.as_bool()) {
+        out.user_enabled = v;
+    }
+
+    Ok(out)
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1348,5 +1453,104 @@ custom_providers:
             // (we intentionally don't scan past the first entry for a default).
             assert_eq!(model.default.as_deref(), Some("prev-default"));
         });
+    }
+
+    // ---- memory file tests ----
+
+    #[test]
+    #[serial]
+    fn read_memory_returns_empty_when_file_missing() {
+        with_test_home(|| {
+            let memory = read_memory(MemoryKind::Memory).unwrap();
+            let user = read_memory(MemoryKind::User).unwrap();
+            assert!(memory.is_empty());
+            assert!(user.is_empty());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn write_then_read_memory_round_trip() {
+        with_test_home(|| {
+            let blob = "> note\n§\nfirst entry\n§\nsecond entry\n";
+            write_memory(MemoryKind::Memory, blob).unwrap();
+            assert_eq!(read_memory(MemoryKind::Memory).unwrap(), blob);
+
+            // Writing USER.md doesn't clobber MEMORY.md.
+            write_memory(MemoryKind::User, "user profile").unwrap();
+            assert_eq!(read_memory(MemoryKind::Memory).unwrap(), blob);
+            assert_eq!(read_memory(MemoryKind::User).unwrap(), "user profile");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn memory_limits_fall_back_to_defaults_when_config_missing() {
+        with_test_home(|| {
+            let limits = read_memory_limits().unwrap();
+            let defaults = HermesMemoryLimits::default();
+            assert_eq!(limits.memory, defaults.memory);
+            assert_eq!(limits.user, defaults.user);
+            assert_eq!(limits.memory_enabled, defaults.memory_enabled);
+            assert_eq!(limits.user_enabled, defaults.user_enabled);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn memory_limits_read_from_config_yaml() {
+        with_test_home(|| {
+            let yaml = "\
+memory:
+  memory_char_limit: 4096
+  user_char_limit: 2048
+  memory_enabled: false
+  user_profile_enabled: true
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let limits = read_memory_limits().unwrap();
+            assert_eq!(limits.memory, 4096);
+            assert_eq!(limits.user, 2048);
+            assert!(!limits.memory_enabled);
+            assert!(limits.user_enabled);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn memory_limits_ignore_top_level_keys() {
+        // Regression guard: Hermes nests memory settings under `memory:`, so
+        // identically-named keys at the top level must be ignored rather than
+        // silently consumed.
+        with_test_home(|| {
+            let yaml = "\
+memory_char_limit: 9999
+user_char_limit: 9999
+memory_enabled: false
+user_profile_enabled: false
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let limits = read_memory_limits().unwrap();
+            let defaults = HermesMemoryLimits::default();
+            assert_eq!(limits.memory, defaults.memory);
+            assert_eq!(limits.user, defaults.user);
+            assert_eq!(limits.memory_enabled, defaults.memory_enabled);
+            assert_eq!(limits.user_enabled, defaults.user_enabled);
+        });
+    }
+
+    #[test]
+    fn memory_kind_deserializes_from_lowercase_strings() {
+        let memory: MemoryKind = serde_json::from_str("\"memory\"").unwrap();
+        let user: MemoryKind = serde_json::from_str("\"user\"").unwrap();
+        assert_eq!(memory, MemoryKind::Memory);
+        assert_eq!(user, MemoryKind::User);
+        assert!(serde_json::from_str::<MemoryKind>("\"bogus\"").is_err());
     }
 }

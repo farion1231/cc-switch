@@ -1675,6 +1675,19 @@
       "parseFailed": "config.yaml could not be parsed as valid YAML. Fix the file before editing it here.",
       "configNotFound": "Hermes config.yaml not found. Create it at ~/.hermes/config.yaml or configure the path in settings.",
       "envParseFailed": "The .env file could not be parsed."
+    },
+    "memory": {
+      "title": "Memory",
+      "agentTab": "Agent Memory (MEMORY.md)",
+      "userTab": "User Profile (USER.md)",
+      "usage": "{{current}} / {{limit}} characters",
+      "overLimit": "Over budget — Hermes will truncate on next load",
+      "disabled": "Memory is disabled in config.yaml. Enable it in Hermes config for edits to take effect.",
+      "saveSuccess": "Memory saved",
+      "saveFailed": "Failed to save memory",
+      "loadFailed": "Failed to read memory file",
+      "openConfig": "Adjust limits in Hermes Web UI",
+      "runtimeNote": "Changes apply on Hermes restart or new session."
     }
   },
   "env": {

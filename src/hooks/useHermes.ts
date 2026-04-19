@@ -1,9 +1,15 @@
 import { useCallback } from "react";
-import { useQuery, type QueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { hermesApi } from "@/lib/api/hermes";
 import { providersApi } from "@/lib/api/providers";
+import type { HermesMemoryKind } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 /**
@@ -22,6 +28,8 @@ export const hermesKeys = {
   liveProviderIds: ["hermes", "liveProviderIds"] as const,
   modelConfig: ["hermes", "modelConfig"] as const,
   health: ["hermes", "health"] as const,
+  memory: (kind: HermesMemoryKind) => ["hermes", "memory", kind] as const,
+  memoryLimits: ["hermes", "memoryLimits"] as const,
 };
 
 /**
@@ -66,9 +74,56 @@ export function useHermesHealth(enabled: boolean) {
   });
 }
 
+export function useHermesMemory(kind: HermesMemoryKind, enabled: boolean) {
+  return useQuery({
+    queryKey: hermesKeys.memory(kind),
+    queryFn: () => hermesApi.getMemory(kind),
+    enabled,
+  });
+}
+
+export function useHermesMemoryLimits(enabled: boolean) {
+  return useQuery({
+    queryKey: hermesKeys.memoryLimits,
+    queryFn: () => hermesApi.getMemoryLimits(),
+    staleTime: 60_000,
+    enabled,
+  });
+}
+
 // ============================================================
 // Mutation hooks
 // ============================================================
+
+/**
+ * Save a Hermes memory file atomically and refresh the corresponding query.
+ * Error toasts are emitted here so caller components don't need their own
+ * try/catch; success toasts are intentionally left to the caller (to pick
+ * the right localized message per tab).
+ */
+export function useSaveHermesMemory() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  return useMutation({
+    mutationFn: ({
+      kind,
+      content,
+    }: {
+      kind: HermesMemoryKind;
+      content: string;
+    }) => hermesApi.setMemory(kind, content),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({
+        queryKey: hermesKeys.memory(variables.kind),
+      });
+    },
+    onError: (error) => {
+      toast.error(t("hermes.memory.saveFailed"), {
+        description: extractErrorMessage(error) || undefined,
+      });
+    },
+  });
+}
 
 /**
  * Returns a handler that probes the local Hermes Web UI, opens it in the

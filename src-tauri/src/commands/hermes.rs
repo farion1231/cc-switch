@@ -58,6 +58,25 @@ pub fn get_hermes_model_config() -> Result<Option<hermes_config::HermesModelConf
 }
 
 // ============================================================================
+// Memory Files Commands
+// ============================================================================
+
+#[tauri::command]
+pub fn get_hermes_memory(kind: hermes_config::MemoryKind) -> Result<String, String> {
+    hermes_config::read_memory(kind).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_hermes_memory(kind: hermes_config::MemoryKind, content: String) -> Result<(), String> {
+    hermes_config::write_memory(kind, &content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_hermes_memory_limits() -> Result<hermes_config::HermesMemoryLimits, String> {
+    hermes_config::read_memory_limits().map_err(|e| e.to_string())
+}
+
+// ============================================================================
 // Hermes Web UI launcher
 // ============================================================================
 

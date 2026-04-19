@@ -14,6 +14,7 @@ import {
   Minimize2,
   X,
   Book,
+  Brain,
   Wrench,
   RefreshCw,
   History,
@@ -89,6 +90,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesHealthBanner from "@/components/hermes/HermesHealthBanner";
+import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 
 type View =
   | "providers"
@@ -103,7 +105,8 @@ type View =
   | "workspace"
   | "openclawEnv"
   | "openclawTools"
-  | "openclawAgents";
+  | "openclawAgents"
+  | "hermesMemory";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -147,6 +150,7 @@ const VALID_VIEWS: View[] = [
   "openclawEnv",
   "openclawTools",
   "openclawAgents",
+  "hermesMemory",
 ];
 
 const getInitialView = (): View => {
@@ -909,6 +913,8 @@ function App() {
               appId={activeApp}
             />
           );
+        case "hermesMemory":
+          return <HermesMemoryPanel />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1171,6 +1177,7 @@ function App() {
                   {currentView === "openclawTools" && t("openclaw.tools.title")}
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
+                  {currentView === "hermesMemory" && t("hermes.memory.title")}
                 </h1>
               </div>
             ) : (
@@ -1384,11 +1391,11 @@ function App() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => setCurrentView("prompts")}
+                                onClick={() => setCurrentView("hermesMemory")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                                title={t("prompts.manage")}
+                                title={t("hermes.memory.title")}
                               >
-                                <Book className="w-4 h-4" />
+                                <Brain className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"

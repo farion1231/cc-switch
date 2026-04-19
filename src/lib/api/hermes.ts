@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { HermesModelConfig, HermesHealthWarning } from "@/types";
+import type {
+  HermesHealthWarning,
+  HermesMemoryKind,
+  HermesMemoryLimits,
+  HermesModelConfig,
+} from "@/types";
 
 /**
  * Hermes Agent configuration API (CC Switch side).
@@ -26,5 +31,26 @@ export const hermesApi = {
    */
   async openWebUI(path?: string): Promise<void> {
     await invoke("open_hermes_web_ui", { path: path ?? null });
+  },
+
+  /**
+   * Read one of Hermes' memory blobs (`MEMORY.md` or `USER.md`). Returns an
+   * empty string when the file hasn't been created yet.
+   */
+  async getMemory(kind: HermesMemoryKind): Promise<string> {
+    return await invoke("get_hermes_memory", { kind });
+  },
+
+  /** Atomically overwrite a Hermes memory file. */
+  async setMemory(kind: HermesMemoryKind, content: string): Promise<void> {
+    await invoke("set_hermes_memory", { kind, content });
+  },
+
+  /**
+   * Character budgets + enable flags for both memory blobs, read from
+   * config.yaml with Hermes defaults as fallback.
+   */
+  async getMemoryLimits(): Promise<HermesMemoryLimits> {
+    return await invoke("get_hermes_memory_limits");
   },
 };

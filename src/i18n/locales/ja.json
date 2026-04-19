@@ -1675,6 +1675,19 @@
       "parseFailed": "config.yaml を有効な YAML として解析できません。ここで編集する前にファイルを修正してください。",
       "configNotFound": "Hermes config.yaml が見つかりません。~/.hermes/config.yaml に作成するか、設定でパスを構成してください。",
       "envParseFailed": ".env ファイルを解析できません。"
+    },
+    "memory": {
+      "title": "メモリ",
+      "agentTab": "エージェント記憶 (MEMORY.md)",
+      "userTab": "ユーザープロファイル (USER.md)",
+      "usage": "{{current}} / {{limit}} 文字",
+      "overLimit": "上限を超えました。Hermes は次回読み込み時に切り詰めます",
+      "disabled": "Memory が config.yaml で無効化されています。Hermes 設定で有効化すると編集内容が反映されます。",
+      "saveSuccess": "記憶を保存しました",
+      "saveFailed": "記憶の保存に失敗しました",
+      "loadFailed": "記憶ファイルの読み込みに失敗しました",
+      "openConfig": "Hermes Web UI で上限を調整",
+      "runtimeNote": "変更は Hermes の再起動または新規セッション時に反映されます。"
     }
   },
   "env": {
