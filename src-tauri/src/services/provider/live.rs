@@ -332,7 +332,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
 
             toml_item_is_subset(target_doc.as_item(), source_doc.as_item())
         }
-        AppType::Gemini => match serde_json::from_str::<Value>(trimmed) {
+        AppType::Gemini | AppType::Hermes => match serde_json::from_str::<Value>(trimmed) {
             Ok(Value::Object(source_map)) => {
                 let Some(target_map) = settings.get("env").and_then(Value::as_object) else {
                     return false;
@@ -406,9 +406,17 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::Gemini => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
+        AppType::Gemini | AppType::Hermes => {
+            let source = serde_json::from_str::<Value>(trimmed).map_err(|e| {
+                AppError::Message(format!(
+                    "Invalid {} common config: {e}",
+                    if matches!(app_type, AppType::Gemini) {
+                        "Gemini"
+                    } else {
+                        "Hermes"
+                    }
+                ))
+            })?;
             let mut result = settings.clone();
             if let Some(env) = result.get_mut("env") {
                 json_deep_remove(env, &source);
@@ -459,9 +467,17 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::Gemini => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
+        AppType::Gemini | AppType::Hermes => {
+            let source = serde_json::from_str::<Value>(trimmed).map_err(|e| {
+                AppError::Message(format!(
+                    "Invalid {} common config: {e}",
+                    if matches!(app_type, AppType::Gemini) {
+                        "Gemini"
+                    } else {
+                        "Hermes"
+                    }
+                ))
+            })?;
             let mut result = settings.clone();
             if let Some(env) = result.get_mut("env") {
                 json_deep_merge(env, &source);
@@ -603,6 +619,10 @@ pub(crate) enum LiveSnapshot {
         env: Option<HashMap<String, String>>,
         config: Option<Value>,
     },
+    Hermes {
+        config: Option<serde_yaml::Value>,
+        env: Option<HashMap<String, String>>,
+    },
 }
 
 impl LiveSnapshot {
@@ -654,6 +674,25 @@ impl LiveSnapshot {
                         delete_file(&settings_path)?;
                     }
                     _ => {}
+                }
+            }
+            LiveSnapshot::Hermes { config, env } => {
+                use crate::hermes_config::{
+                    get_hermes_config_path, get_hermes_env_path, write_hermes_config_atomic,
+                    write_hermes_env_atomic,
+                };
+                let config_path = get_hermes_config_path();
+                if let Some(yaml) = config {
+                    write_hermes_config_atomic(yaml)?;
+                } else if config_path.exists() {
+                    delete_file(&config_path)?;
+                }
+
+                let env_path = get_hermes_env_path();
+                if let Some(env_map) = env {
+                    write_hermes_env_atomic(env_map)?;
+                } else if env_path.exists() {
+                    delete_file(&env_path)?;
                 }
             }
         }
@@ -789,6 +828,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                     }
                 }
             }
+        }
+        AppType::Hermes => {
+            log::info!(
+                "write_live_snapshot: writing Hermes provider '{}'",
+                provider.id
+            );
+            crate::hermes_config::write_hermes_live(provider)?;
         }
     }
     Ok(())
@@ -985,6 +1031,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_openclaw_config()?;
             Ok(config)
         }
+        AppType::Hermes => crate::hermes_config::read_hermes_live_settings(),
     }
 }
 
@@ -1071,14 +1118,99 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         AppType::OpenCode | AppType::OpenClaw => {
             unreachable!("additive mode apps are handled by early return")
         }
+        AppType::Hermes => {
+            use crate::hermes_config::{get_hermes_config_path, read_hermes_config};
+
+            // Check if config.yaml exists
+            let config_path = get_hermes_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "hermes.live.missing",
+                    "Hermes 配置文件不存在",
+                    "Hermes configuration file is missing",
+                ));
+            }
+
+            // Read config.yaml
+            let yaml_config = read_hermes_config()?;
+
+            // Get current provider name from model.provider
+            let current_provider_name = yaml_config
+                .get("model")
+                .and_then(|m| m.get("provider"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            // Get current model from model.default
+            let model_default = yaml_config
+                .get("model")
+                .and_then(|m| m.get("default"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            // Find the current provider in custom_providers list
+            let custom_providers = yaml_config
+                .get("custom_providers")
+                .and_then(|p| p.as_sequence());
+
+            let (base_url, api_key, provider_model) = if let Some(providers) = custom_providers {
+                let mut found_base_url = String::new();
+                let mut found_api_key = String::new();
+                let mut found_model = String::new();
+
+                for provider in providers {
+                    if let Some(name) = provider.get("name").and_then(|n| n.as_str()) {
+                        if name == current_provider_name {
+                            found_base_url = provider
+                                .get("base_url")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            found_api_key = provider
+                                .get("api_key")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            found_model = provider
+                                .get("model")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            break;
+                        }
+                    }
+                }
+
+                (found_base_url, found_api_key, found_model)
+            } else {
+                (String::new(), String::new(), String::new())
+            };
+
+            // Build settings_config using snake_case to match write_hermes_live format
+            json!({
+                "name": current_provider_name,
+                "model": if !provider_model.is_empty() { provider_model } else { model_default.to_string() },
+                "base_url": base_url,
+                "api_key": api_key,
+                "transport": "openai_chat"
+            })
+        }
     };
 
-    let mut provider = Provider::with_id(
-        "default".to_string(),
-        "default".to_string(),
-        settings_config,
-        None,
-    );
+    // For Hermes, extract provider name from settings_config
+    let provider_name = if matches!(app_type, AppType::Hermes) {
+        settings_config
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("default")
+            .to_string()
+    } else {
+        "default".to_string()
+    };
+
+    let mut provider =
+        Provider::with_id("default".to_string(), provider_name, settings_config, None);
     provider.category = Some("custom".to_string());
 
     state.db.save_provider(app_type.as_str(), &provider)?;
@@ -1187,6 +1319,16 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
     opencode_config::remove_provider(provider_id)?;
     log::info!("OpenCode provider '{provider_id}' removed from live config");
 
+    Ok(())
+}
+
+/// Remove a Hermes provider from the live configuration
+///
+/// Removes the provider from custom_providers list in ~/.hermes/config.yaml.
+/// Note: provider_name (display name) is used as the key, not provider_id.
+pub(crate) fn remove_hermes_provider_from_live(provider_name: &str) -> Result<(), AppError> {
+    crate::hermes_config::remove_hermes_provider_from_live(provider_name)?;
+    log::info!("Hermes provider '{provider_name}' removed from live config");
     Ok(())
 }
 

@@ -33,7 +33,7 @@ import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
 
-const PRICING_APPS = ["claude", "codex", "gemini"] as const;
+const PRICING_APPS = ["claude", "codex", "gemini", "hermes"] as const;
 type PricingApp = (typeof PRICING_APPS)[number];
 type PricingModelSource = "request" | "response";
 
@@ -52,11 +52,12 @@ export function PricingConfigPanel() {
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
-  // 三个应用的配置状态
+  // 应用的配置状态
   const [appConfigs, setAppConfigs] = useState<AppConfigState>({
     claude: { multiplier: "1", source: "response" },
     codex: { multiplier: "1", source: "response" },
     gemini: { multiplier: "1", source: "response" },
+    hermes: { multiplier: "1", source: "response" },
   });
   const [originalConfigs, setOriginalConfigs] = useState<AppConfigState | null>(
     null,
@@ -102,6 +103,7 @@ export function PricingConfigPanel() {
           claude: { multiplier: "1", source: "response" },
           codex: { multiplier: "1", source: "response" },
           gemini: { multiplier: "1", source: "response" },
+          hermes: { multiplier: "1", source: "response" },
         };
         for (const result of results) {
           newState[result.app] = {

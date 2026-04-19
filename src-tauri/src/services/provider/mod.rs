@@ -35,7 +35,8 @@ pub(crate) use live::{
 
 // Internal re-exports
 use live::{
-    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
+    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
+    remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -1299,6 +1300,13 @@ impl ProviderService {
             ));
         }
 
+        // For Hermes: remove from custom_providers in live config
+        if matches!(app_type, AppType::Hermes) {
+            if let Some(provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
+                remove_hermes_provider_from_live(&provider.name)?;
+            }
+        }
+
         state.db.delete_provider(app_type.as_str(), id)
     }
 
@@ -1708,6 +1716,7 @@ impl ProviderService {
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
+            AppType::Hermes => Self::extract_hermes_common_config(&provider.settings_config),
         }
     }
 
@@ -1722,6 +1731,7 @@ impl ProviderService {
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
+            AppType::Hermes => Self::extract_hermes_common_config(settings_config),
         }
     }
 
@@ -1896,6 +1906,41 @@ impl ProviderService {
         }
 
         serde_json::to_string_pretty(&config)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// Extract common config for Hermes (env-style, same pattern as Gemini)
+    fn extract_hermes_common_config(settings: &Value) -> Result<String, AppError> {
+        let env = settings.get("env").and_then(|v| v.as_object());
+
+        let mut snippet = serde_json::Map::new();
+        if let Some(env) = env {
+            // Exclude provider-specific API key env vars
+            const HERMES_API_KEY_VARS: &[&str] = &[
+                "ANTHROPIC_API_KEY",
+                "OPENROUTER_API_KEY",
+                "OPENAI_API_KEY",
+                "HERMES_API_KEY",
+            ];
+            for (key, value) in env {
+                if HERMES_API_KEY_VARS.contains(&key.as_str()) {
+                    continue;
+                }
+                let Value::String(v) = value else {
+                    continue;
+                };
+                let trimmed = v.trim();
+                if !trimmed.is_empty() {
+                    snippet.insert(key.to_string(), Value::String(trimmed.to_string()));
+                }
+            }
+        }
+
+        if snippet.is_empty() {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&Value::Object(snippet))
             .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
     }
 
@@ -2084,6 +2129,16 @@ impl ProviderService {
                         "provider.openclaw.settings.not_object",
                         "OpenClaw 配置必须是 JSON 对象",
                         "OpenClaw configuration must be a JSON object",
+                    ));
+                }
+            }
+            AppType::Hermes => {
+                // Hermes validation not yet implemented
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.hermes.settings.not_object",
+                        "Hermes 配置必须是 JSON 对象",
+                        "Hermes configuration must be a JSON object",
                     ));
                 }
             }
@@ -2279,6 +2334,42 @@ impl ProviderService {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Hermes => {
+                // Hermes uses env-style config (like Gemini)
+                // Extract env map from settings_config
+                let env_map = if let Some(env_obj) = provider
+                    .settings_config
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                {
+                    env_obj
+                        .iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect::<std::collections::HashMap<_, _>>()
+                } else {
+                    std::collections::HashMap::new()
+                };
+
+                // Try multiple possible API key env vars (in priority order)
+                let api_key = env_map
+                    .get("ANTHROPIC_API_KEY")
+                    .or_else(|| env_map.get("OPENROUTER_API_KEY"))
+                    .or_else(|| env_map.get("HERMES_API_KEY"))
+                    .or_else(|| env_map.get("OPENAI_API_KEY"))
+                    .cloned()
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "hermes.missing_api_key",
+                            "缺少 API Key（需要 ANTHROPIC_API_KEY、OPENROUTER_API_KEY 或 HERMES_API_KEY）",
+                            "Missing API Key (need ANTHROPIC_API_KEY, OPENROUTER_API_KEY, or HERMES_API_KEY)",
+                        )
+                    })?;
+
+                // Base URL is optional for Hermes
+                let base_url = env_map.get("HERMES_BASE_URL").cloned().unwrap_or_default();
 
                 Ok((api_key, base_url))
             }

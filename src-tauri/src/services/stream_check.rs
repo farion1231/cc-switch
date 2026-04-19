@@ -270,9 +270,9 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
                 // Already handled via early dispatch above
-                unreachable!("OpenCode/OpenClaw 已通过 check_once_without_adapter 处理")
+                unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
             }
         };
 
@@ -700,7 +700,17 @@ impl StreamCheckService {
                 )
                 .await
             }
-            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw"),
+            AppType::Hermes => {
+                Self::check_hermes_stream(
+                    &client,
+                    provider,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                )
+                .await
+            }
+            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes"),
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -1073,6 +1083,88 @@ impl StreamCheckService {
         }
     }
 
+    /// Hermes 流式检查
+    ///
+    /// Hermes 使用 snake_case 配置格式：
+    /// - `base_url`: API 端点
+    /// - `api_key`: API 密钥
+    /// - `transport`: 传输类型（默认 "openai_chat"）
+    ///
+    /// 目前仅支持 `openai_chat` 传输类型，使用 OpenAI Chat Completions API 格式。
+    async fn check_hermes_stream(
+        client: &Client,
+        provider: &Provider,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(u16, String), AppError> {
+        let base_url = Self::extract_hermes_base_url(provider)?;
+        let api_key = Self::extract_hermes_api_key(provider)?;
+        let transport = Self::extract_hermes_transport(provider);
+
+        match transport.as_deref() {
+            Some("openai_chat") | None => {
+                // 默认使用 OpenAI Chat Completions API 格式
+                let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
+                Self::check_claude_stream(
+                    client,
+                    &base_url,
+                    &auth,
+                    model,
+                    test_prompt,
+                    timeout,
+                    provider,
+                    Some("openai_chat"),
+                    None,
+                )
+                .await
+            }
+            Some(other) => Err(AppError::localized(
+                "hermes_transport_not_supported",
+                format!("Hermes 暂不支持传输类型: {other}"),
+                format!("Hermes transport type not supported: {other}"),
+            )),
+        }
+    }
+
+    fn extract_hermes_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "hermes_base_url_missing",
+                    "Hermes 供应商缺少 base_url 字段",
+                    "Hermes provider is missing the `base_url` field",
+                )
+            })
+    }
+
+    fn extract_hermes_api_key(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "hermes_api_key_missing",
+                    "Hermes 供应商缺少 api_key 字段",
+                    "Hermes provider is missing the `api_key` field",
+                )
+            })
+    }
+
+    fn extract_hermes_transport(provider: &Provider) -> Option<String> {
+        provider
+            .settings_config
+            .get("transport")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
     /// 按 OpenCode 的实际 SDK 包特性确定 baseURL：
     /// - 用户显式填写的 `options.baseURL` 总是优先
     /// - 否则根据 `npm` 返回 AI SDK 包自带的默认端点
@@ -1246,7 +1338,21 @@ impl StreamCheckService {
                 // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
+            AppType::Hermes => {
+                // Hermes uses model field directly in settings_config (snake_case)
+                Self::extract_hermes_model(provider)
+                    .unwrap_or_else(|| "claude-sonnet-4-6".to_string())
+            }
         }
+    }
+
+    fn extract_hermes_model(provider: &Provider) -> Option<String> {
+        // Hermes settings_config: { name, base_url, api_key, model, transport }
+        provider
+            .settings_config
+            .get("model")
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string())
     }
 
     fn extract_opencode_model(provider: &Provider) -> Option<String> {

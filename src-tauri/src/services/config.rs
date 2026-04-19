@@ -130,6 +130,7 @@ impl ConfigService {
                 // OpenClaw uses additive mode, no live sync needed
                 // OpenClaw providers are managed directly in the config file
             }
+            AppType::Hermes => Self::sync_hermes_live(config, &current_id, &provider)?,
         }
 
         Ok(())
@@ -221,6 +222,24 @@ impl ConfigService {
         }
 
         if let Some(manager) = config.get_manager_mut(&AppType::Gemini) {
+            if let Some(target) = manager.providers.get_mut(provider_id) {
+                target.settings_config = live_after;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn sync_hermes_live(
+        config: &mut MultiAppConfig,
+        provider_id: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        crate::hermes_config::write_hermes_live(provider)?;
+
+        // 读回实际写入的内容并更新到配置中
+        let live_after = crate::hermes_config::read_hermes_live_settings()?;
+        if let Some(manager) = config.get_manager_mut(&AppType::Hermes) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
                 target.settings_config = live_after;
             }

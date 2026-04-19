@@ -101,6 +101,12 @@ pub async fn get_config_status(app: String) -> Result<ConfigStatus, String> {
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Hermes => {
+            let hermes_dir = crate::config::get_home_dir().join(".hermes");
+            let exists = hermes_dir.exists();
+            let path = hermes_dir.to_string_lossy().to_string();
+            Ok(ConfigStatus { exists, path })
+        }
     }
 }
 
@@ -117,6 +123,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
+        AppType::Hermes => crate::config::get_home_dir().join(".hermes"),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -130,6 +137,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
+        AppType::Hermes => crate::config::get_home_dir().join(".hermes"),
     };
 
     if !config_dir.exists() {
