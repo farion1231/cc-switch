@@ -1549,6 +1549,20 @@ impl SkillService {
 
             // 保存到数据库
             db.save_skill(&skill)?;
+
+            // 同步到已启用的应用目录（创建 symlink 或复制文件）
+            for app in AppType::all() {
+                if skill.apps.is_enabled_for(&app) {
+                    if let Err(e) = Self::sync_to_app_dir(&skill.directory, &app) {
+                        log::warn!(
+                            "导入后同步 Skill '{}' 到 {:?} 失败: {e:#}",
+                            skill.directory,
+                            app
+                        );
+                    }
+                }
+            }
+
             imported.push(skill);
         }
 

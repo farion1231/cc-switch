@@ -182,6 +182,11 @@ export function FailoverQueueManager({
             {availableProviders?.map((provider) => (
               <SelectItem key={provider.id} value={provider.id}>
                 {provider.name}
+                {provider.notes && (
+                  <span className="ml-1 text-xs text-muted-foreground">
+                    ({provider.notes})
+                  </span>
+                )}
               </SelectItem>
             ))}
             {(!availableProviders || availableProviders.length === 0) && (
@@ -278,6 +283,11 @@ function QueueItem({
       <div className="flex-1 min-w-0">
         <span className="text-sm font-medium truncate block">
           {item.providerName}
+          {item.providerNotes && (
+            <span className="ml-1 text-xs text-muted-foreground">
+              ({item.providerNotes})
+            </span>
+          )}
         </span>
       </div>
 
