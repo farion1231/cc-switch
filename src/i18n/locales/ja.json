@@ -889,7 +889,11 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "migrationFailed": "旧認証データの移行に失敗しました: {{error}}",
-    "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました"
+    "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました",
+    "deploymentType": "GitHub デプロイメントタイプ",
+    "deploymentGitHubCom": "GitHub.com",
+    "deploymentEnterprise": "GitHub Enterprise Server",
+    "enterpriseDomainPlaceholder": "例: company.ghe.com"
   },
   "codexOauth": {
     "authStatus": "認証状態",
