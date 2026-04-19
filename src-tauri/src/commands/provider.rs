@@ -159,13 +159,28 @@ pub async fn queryProviderUsage(
     app: String,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let result =
+        query_provider_usage_inner(&state, &copilot_state, app_type.clone(), &providerId).await?;
+    if result.success {
+        state
+            .usage_cache
+            .put_script(app_type, providerId, result.clone());
+    }
+    Ok(result)
+}
 
+async fn query_provider_usage_inner(
+    state: &AppState,
+    copilot_state: &CopilotAuthState,
+    app_type: AppType,
+    #[allow(non_snake_case)] providerId: &str,
+) -> Result<crate::provider::UsageResult, String> {
     // 从数据库读取供应商信息，检查特殊模板类型
     let providers = state
         .db
         .get_all_providers(app_type.as_str())
         .map_err(|e| format!("Failed to get providers: {e}"))?;
-    let provider = providers.get(&providerId);
+    let provider = providers.get(providerId);
     let usage_script = provider
         .and_then(|p| p.meta.as_ref())
         .and_then(|m| m.usage_script.as_ref());
@@ -294,7 +309,7 @@ pub async fn queryProviderUsage(
     }
 
     // ── 通用 JS 脚本路径 ──
-    ProviderService::query_usage(state.inner(), app_type, &providerId)
+    ProviderService::query_usage(state, app_type, providerId)
         .await
         .map_err(|e| e.to_string())
 }
