@@ -798,9 +798,6 @@
       "ucloud": "Compshare",
       "shengsuanyun": "Shengsuanyun",
       "openrouter": "OpenRouter",
-      "anthropic": "Anthropic",
-      "openai": "OpenAI",
-      "googleai": "Google AI",
       "deepseek": "DeepSeek",
       "together": "Together AI"
     },

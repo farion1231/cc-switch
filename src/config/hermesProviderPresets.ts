@@ -161,110 +161,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "Anthropic",
-    nameKey: "providerForm.presets.anthropic",
-    websiteUrl: "https://console.anthropic.com",
-    apiKeyUrl: "https://console.anthropic.com/settings/keys",
-    settingsConfig: {
-      name: "anthropic",
-      base_url: "https://api.anthropic.com",
-      api_key: "",
-      api_mode: "anthropic_messages",
-      models: [
-        {
-          id: "claude-opus-4-7",
-          name: "Claude Opus 4.7",
-          context_length: 200000,
-          max_tokens: 32000,
-        },
-        {
-          id: "claude-sonnet-4-6",
-          name: "Claude Sonnet 4.6",
-          context_length: 200000,
-          max_tokens: 32000,
-        },
-        {
-          id: "claude-haiku-4-5-20251001",
-          name: "Claude Haiku 4.5",
-          context_length: 200000,
-          max_tokens: 16000,
-        },
-      ],
-    },
-    isOfficial: true,
-    category: "official",
-    icon: "anthropic",
-    iconColor: "#D4915D",
-    suggestedDefaults: {
-      model: { default: "claude-opus-4-7", provider: "anthropic" },
-    },
-  },
-  {
-    name: "OpenAI",
-    nameKey: "providerForm.presets.openai",
-    websiteUrl: "https://platform.openai.com",
-    apiKeyUrl: "https://platform.openai.com/api-keys",
-    settingsConfig: {
-      name: "openai",
-      base_url: "https://api.openai.com/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [
-        {
-          id: "gpt-5",
-          name: "GPT-5",
-          context_length: 400000,
-        },
-        {
-          id: "gpt-5-codex",
-          name: "GPT-5 Codex",
-          context_length: 400000,
-        },
-        {
-          id: "o3-mini",
-          name: "o3-mini",
-          context_length: 200000,
-        },
-      ],
-    },
-    isOfficial: true,
-    category: "official",
-    icon: "openai",
-    iconColor: "#000000",
-    suggestedDefaults: {
-      model: { default: "gpt-5", provider: "openai" },
-    },
-  },
-  {
-    name: "Google AI",
-    nameKey: "providerForm.presets.googleai",
-    websiteUrl: "https://ai.google.dev",
-    apiKeyUrl: "https://aistudio.google.com/apikey",
-    settingsConfig: {
-      name: "google",
-      api_key: "",
-      models: [
-        {
-          id: "gemini-3-pro",
-          name: "Gemini 3 Pro",
-          context_length: 1000000,
-        },
-        {
-          id: "gemini-3-flash",
-          name: "Gemini 3 Flash",
-          context_length: 1000000,
-        },
-      ],
-    },
-    isOfficial: true,
-    category: "official",
-    icon: "gemini",
-    iconColor: "#4285F4",
-    suggestedDefaults: {
-      model: { default: "gemini-3-pro", provider: "google" },
-    },
-  },
-  {
     name: "DeepSeek",
     nameKey: "providerForm.presets.deepseek",
     websiteUrl: "https://platform.deepseek.com",
@@ -337,9 +233,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "Nous Research",
     websiteUrl: "https://nousresearch.com",
+    apiKeyUrl: "https://portal.nousresearch.com/",
     settingsConfig: {
       name: "nous",
-      base_url: "https://inference.nous.hermes.dev/v1",
+      base_url: "https://inference-api.nousresearch.com/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
