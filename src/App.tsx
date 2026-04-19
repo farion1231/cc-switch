@@ -1021,7 +1021,11 @@ function App() {
                       }
                       onCreate={() => setIsAddOpen(true)}
                       onSetAsDefault={
-                        activeApp === "openclaw" ? setAsDefaultModel : undefined
+                        activeApp === "openclaw"
+                          ? setAsDefaultModel
+                          : activeApp === "hermes"
+                            ? switchProvider
+                            : undefined
                       }
                     />
                   </motion.div>

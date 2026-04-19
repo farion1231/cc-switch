@@ -8,7 +8,7 @@ import type { Provider, SessionMeta, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
-import { hermesKeys } from "@/hooks/useHermes";
+import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -77,9 +77,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       }
 
       if (appId === "hermes") {
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.health,
-        });
+        await invalidateHermesProviderCaches(queryClient);
       }
 
       try {
@@ -135,9 +133,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
         });
       }
       if (appId === "hermes") {
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.health,
-        });
+        await invalidateHermesProviderCaches(queryClient);
       }
       toast.success(
         t("notifications.updateSuccess", {
@@ -193,9 +189,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       }
 
       if (appId === "hermes") {
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.health,
-        });
+        await invalidateHermesProviderCaches(queryClient);
       }
 
       try {
@@ -263,12 +257,7 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         });
       }
       if (appId === "hermes") {
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.liveProviderIds,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.health,
-        });
+        await invalidateHermesProviderCaches(queryClient);
       }
 
       try {

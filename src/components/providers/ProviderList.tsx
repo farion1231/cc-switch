@@ -25,7 +25,10 @@ import {
   useOpenClawLiveProviderIds,
   useOpenClawDefaultModel,
 } from "@/hooks/useOpenClaw";
-import { useHermesLiveProviderIds } from "@/hooks/useHermes";
+import {
+  useHermesLiveProviderIds,
+  useHermesModelConfig,
+} from "@/hooks/useHermes";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -108,6 +111,10 @@ export function ProviderList({
 
   // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
+
+  // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
+  const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
+  const hermesCurrentProviderId = hermesModelConfig?.provider;
 
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
   const isProviderInConfig = useCallback(
@@ -334,6 +341,8 @@ export function ProviderList({
             const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
             const isOmoSlimCurrent =
               isOmoSlim && provider.id === (currentOmoSlimId || "");
+            const isHermesCurrent =
+              appId === "hermes" && hermesCurrentProviderId === provider.id;
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -343,7 +352,9 @@ export function ProviderList({
                     ? isOmoCurrent
                     : isOmoSlim
                       ? isOmoSlimCurrent
-                      : provider.id === currentProviderId
+                      : appId === "hermes"
+                        ? isHermesCurrent
+                        : provider.id === currentProviderId
                 }
                 appId={appId}
                 isInConfig={isProviderInConfig(provider.id)}
@@ -370,8 +381,12 @@ export function ProviderList({
                   handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
-                // OpenClaw: default model
-                isDefaultModel={isProviderDefaultModel(provider.id)}
+                // OpenClaw: default model / Hermes: model.provider === provider.id
+                isDefaultModel={
+                  appId === "hermes"
+                    ? isHermesCurrent
+                    : isProviderDefaultModel(provider.id)
+                }
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
                 }

@@ -184,9 +184,11 @@ export function ProviderCard({
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
 
   // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw）：使用 isInConfig 代替 isCurrent
+  // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" ? isInConfig : isCurrent;
+    appId === "opencode" || appId === "openclaw" || appId === "hermes"
+      ? isInConfig
+      : isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;

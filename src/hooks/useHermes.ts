@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { hermesApi } from "@/lib/api/hermes";
 import { providersApi } from "@/lib/api/providers";
 import type {
@@ -19,6 +24,19 @@ export const hermesKeys = {
   env: ["hermes", "env"] as const,
   health: ["hermes", "health"] as const,
 };
+
+/**
+ * Invalidate all Hermes caches that may change when a provider is
+ * added/updated/deleted/switched. Runs invalidations in parallel so the
+ * caller doesn't await three sequential refetches.
+ */
+export function invalidateHermesProviderCaches(queryClient: QueryClient) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
+    queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
+    queryClient.invalidateQueries({ queryKey: hermesKeys.health }),
+  ]);
+}
 
 // ============================================================
 // Query hooks
