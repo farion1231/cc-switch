@@ -236,6 +236,66 @@ pub fn clear_has_completed_onboarding() -> Result<bool, AppError> {
     Ok(true)
 }
 
+/// 在 ~/.claude/settings.json 设置 cleanupPeriodDays=99999（防止 Claude Code 自动删除对话记录）
+/// 仅增量写入该字段，其他字段保持不变
+pub fn set_cleanup_period_days() -> Result<bool, AppError> {
+    let path = crate::config::get_claude_settings_path();
+    let mut root = if path.exists() {
+        read_json_value(&path)?
+    } else {
+        serde_json::json!({})
+    };
+
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| AppError::Config("~/.claude/settings.json 根必须是对象".into()))?;
+
+    let already = obj
+        .get("cleanupPeriodDays")
+        .and_then(|v| v.as_u64())
+        .map_or(false, |d| d == 99999);
+    if already {
+        return Ok(false);
+    }
+
+    obj.insert("cleanupPeriodDays".into(), Value::Number(99999.into()));
+    write_json_value(&path, &root)?;
+    Ok(true)
+}
+
+/// 删除 ~/.claude/settings.json 的 cleanupPeriodDays 字段（恢复 Claude Code 默认清理行为）
+/// 仅增量删除该字段，其他字段保持不变
+pub fn clear_cleanup_period_days() -> Result<bool, AppError> {
+    let path = crate::config::get_claude_settings_path();
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let mut root = read_json_value(&path)?;
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| AppError::Config("~/.claude/settings.json 根必须是对象".into()))?;
+
+    let existed = obj.remove("cleanupPeriodDays").is_some();
+    if !existed {
+        return Ok(false);
+    }
+
+    write_json_value(&path, &root)?;
+    Ok(true)
+}
+
+/// 读取 ~/.claude/settings.json 中的 cleanupPeriodDays 值
+pub fn get_cleanup_period_days() -> Result<Option<u64>, AppError> {
+    let path = crate::config::get_claude_settings_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let root = read_json_value(&path)?;
+    Ok(root.get("cleanupPeriodDays").and_then(|v| v.as_u64()))
+}
+
 pub fn upsert_mcp_server(id: &str, spec: Value) -> Result<bool, AppError> {
     if id.trim().is_empty() {
         return Err(AppError::InvalidInput("MCP 服务器 ID 不能为空".into()));

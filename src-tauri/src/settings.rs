@@ -183,6 +183,9 @@ pub struct AppSettings {
     /// 是否跳过 Claude Code 初次安装确认
     #[serde(default)]
     pub skip_claude_onboarding: bool,
+    /// 是否保留 Claude Code 对话历史（防止自动删除）
+    #[serde(default)]
+    pub keep_conversation_history: bool,
     /// 是否开机自启
     #[serde(default)]
     pub launch_on_startup: bool,
@@ -298,6 +301,7 @@ impl Default for AppSettings {
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
+            keep_conversation_history: false,
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,

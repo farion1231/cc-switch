@@ -188,6 +188,7 @@
     "syncClaudePluginFailed": "Sync Claude plugin failed",
     "skipClaudeOnboardingFailed": "Failed to skip Claude Code first-run confirmation",
     "clearClaudeOnboardingSkipFailed": "Failed to restore Claude Code first-run confirmation",
+    "keepConversationHistoryFailed": "Failed to update conversation history protection",
     "updateSuccess": "Provider updated successfully",
     "updateFailed": "Failed to update provider: {{error}}",
     "deleteSuccess": "Provider deleted",
@@ -508,6 +509,8 @@
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "When enabled, Claude Code will skip the first-run confirmation",
+    "keepConversationHistory": "Keep conversation history",
+    "keepConversationHistoryDescription": "Prevent Claude Code from auto-deleting conversation transcripts (default: 30 days)",
     "appVisibility": {
       "title": "Homepage Display",
       "description": "Choose which apps to show on the homepage",
