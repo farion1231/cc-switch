@@ -24,7 +24,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ChevronDown, ChevronRight, Download, Loader2, Wand2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Loader2,
+  Wand2,
+} from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
@@ -578,23 +584,38 @@ export function ClaudeFormFields({
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const value = claudeModel || reasoningModel || defaultHaikuModel || defaultSonnetModel || defaultOpusModel;
+                      const value =
+                        claudeModel ||
+                        reasoningModel ||
+                        defaultHaikuModel ||
+                        defaultSonnetModel ||
+                        defaultOpusModel;
                       if (value) {
                         onModelChange("ANTHROPIC_MODEL", value);
                         onModelChange("ANTHROPIC_REASONING_MODEL", value);
                         onModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", value);
                         onModelChange("ANTHROPIC_DEFAULT_SONNET_MODEL", value);
                         onModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", value);
-                        toast.success(t("providerForm.quickSetSuccess", {
-                          defaultValue: "已将模型名称应用到所有字段",
-                        }));
+                        toast.success(
+                          t("providerForm.quickSetSuccess", {
+                            defaultValue: "已将模型名称应用到所有字段",
+                          }),
+                        );
                       }
                     }}
-                    disabled={!claudeModel && !reasoningModel && !defaultHaikuModel && !defaultSonnetModel && !defaultOpusModel}
+                    disabled={
+                      !claudeModel &&
+                      !reasoningModel &&
+                      !defaultHaikuModel &&
+                      !defaultSonnetModel &&
+                      !defaultOpusModel
+                    }
                     className="h-7 gap-1"
                   >
                     <Wand2 className="h-3.5 w-3.5" />
-                    {t("providerForm.quickSetModels", { defaultValue: "一键设置" })}
+                    {t("providerForm.quickSetModels", {
+                      defaultValue: "一键设置",
+                    })}
                   </Button>
                   {!isCopilotPreset && (
                     <Button
