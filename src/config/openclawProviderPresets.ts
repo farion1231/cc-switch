@@ -117,13 +117,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "deepseek-chat",
           name: "DeepSeek V3.2",
-          contextWindow: 64000,
+          contextWindow: 128000,
           cost: { input: 0.0005, output: 0.002 },
         },
         {
           id: "deepseek-reasoner",
           name: "DeepSeek R1",
-          contextWindow: 64000,
+          contextWindow: 128000,
           cost: { input: 0.0005, output: 0.002 },
         },
       ],

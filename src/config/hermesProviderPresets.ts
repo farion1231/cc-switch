@@ -136,13 +136,13 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "anthropic/claude-opus-4-7",
           name: "Claude Opus 4.7",
-          context_length: 200000,
+          context_length: 1000000,
           max_tokens: 32000,
         },
         {
           id: "anthropic/claude-sonnet-4-6",
           name: "Claude Sonnet 4.6",
-          context_length: 200000,
+          context_length: 1000000,
           max_tokens: 32000,
         },
         {
@@ -184,14 +184,14 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "deepseek-chat",
           name: "DeepSeek V3.2",
-          context_length: 64000,
+          context_length: 128000,
           max_tokens: 8000,
         },
         {
           id: "deepseek-reasoner",
           name: "DeepSeek R1",
-          context_length: 64000,
-          max_tokens: 8000,
+          context_length: 128000,
+          max_tokens: 64000,
         },
       ],
     },
