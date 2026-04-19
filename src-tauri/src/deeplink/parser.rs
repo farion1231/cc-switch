@@ -120,6 +120,7 @@ fn parse_provider_deeplink(
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
     let opus_model = params.get("opusModel").cloned();
+    let npm = params.get("npm").cloned();
     let icon = params
         .get("icon")
         .map(|v| v.trim().to_lowercase())
@@ -157,6 +158,7 @@ fn parse_provider_deeplink(
         haiku_model,
         sonnet_model,
         opus_model,
+        npm,
         content: None,
         description: None,
         apps: None,
@@ -229,6 +231,7 @@ fn parse_prompt_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        npm: None,
         apps: None,
         repo: None,
         directory: None,
@@ -295,6 +298,7 @@ fn parse_mcp_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        npm: None,
         content: None,
         description: None,
         repo: None,
@@ -350,6 +354,7 @@ fn parse_skill_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        npm: None,
         content: None,
         description: None,
         apps: None,
