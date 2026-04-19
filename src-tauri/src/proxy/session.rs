@@ -242,6 +242,12 @@ pub fn extract_session_id(
     body: &serde_json::Value,
     client_format: &str,
 ) -> SessionIdResult {
+    if client_format == "claude" {
+        if let Some(result) = extract_claude_session(headers, body) {
+            return result;
+        }
+    }
+
     // Codex 请求特殊处理
     if client_format == "codex" || client_format == "openai" {
         if let Some(result) = extract_codex_session(headers, body) {
@@ -256,6 +262,28 @@ pub fn extract_session_id(
 
     // 兜底：生成新 Session ID
     generate_new_session_id()
+}
+
+/// 提取 Claude Session ID
+fn extract_claude_session(
+    headers: &HeaderMap,
+    body: &serde_json::Value,
+) -> Option<SessionIdResult> {
+    for header_name in &["x-claude-code-session-id", "claude-code-session-id"] {
+        if let Some(value) = headers.get(*header_name) {
+            if let Ok(session_id) = value.to_str() {
+                if !session_id.is_empty() {
+                    return Some(SessionIdResult {
+                        session_id: session_id.to_string(),
+                        source: SessionIdSource::Header,
+                        client_provided: true,
+                    });
+                }
+            }
+        }
+    }
+
+    extract_from_metadata(body)
 }
 
 /// 提取 Codex Session ID
@@ -512,6 +540,47 @@ mod tests {
 
         assert_eq!(result.session_id, "my-session-123");
         assert_eq!(result.source, SessionIdSource::MetadataSessionId);
+        assert!(result.client_provided);
+    }
+
+    #[test]
+    fn test_extract_session_from_claude_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-claude-code-session-id",
+            "d937243f-2702-4f20-97b6-c9682235ab81".parse().unwrap(),
+        );
+        let body = json!({
+            "model": "claude-3-5-sonnet",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = extract_session_id(&headers, &body, "claude");
+
+        assert_eq!(result.session_id, "d937243f-2702-4f20-97b6-c9682235ab81");
+        assert_eq!(result.source, SessionIdSource::Header);
+        assert!(result.client_provided);
+    }
+
+    #[test]
+    fn test_extract_session_from_claude_header_precedes_metadata() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-claude-code-session-id",
+            "header-session-123".parse().unwrap(),
+        );
+        let body = json!({
+            "model": "claude-3-5-sonnet",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "metadata": {
+                "session_id": "my-session-123"
+            }
+        });
+
+        let result = extract_session_id(&headers, &body, "claude");
+
+        assert_eq!(result.session_id, "header-session-123");
+        assert_eq!(result.source, SessionIdSource::Header);
         assert!(result.client_provided);
     }
 

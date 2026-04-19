@@ -1,12 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UsageSummaryCards } from "./UsageSummaryCards";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
-import type { AppTypeFilter, TimeRange } from "@/types/usage";
+import type { AppTypeFilter, UsageRangeSelection } from "@/types/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
@@ -26,6 +25,10 @@ import {
 } from "@/components/ui/accordion";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
 import { cn } from "@/lib/utils";
+import { getLocaleFromLanguage } from "./format";
+import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
+import { UsageDateRangePicker } from "./UsageDateRangePicker";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = [
   "all",
@@ -35,9 +38,9 @@ const APP_FILTER_OPTIONS: AppTypeFilter[] = [
 ];
 
 export function UsageDashboard() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [timeRange, setTimeRange] = useState<TimeRange>("1d");
+  const [range, setRange] = useState<UsageRangeSelection>({ preset: "today" });
   const [appType, setAppType] = useState<AppTypeFilter>("all");
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
 
@@ -46,14 +49,25 @@ export function UsageDashboard() {
     const currentIndex = refreshIntervalOptionsMs.indexOf(
       refreshIntervalMs as (typeof refreshIntervalOptionsMs)[number],
     );
-    const safeIndex = currentIndex >= 0 ? currentIndex : 3; // default 30s
+    const safeIndex = currentIndex >= 0 ? currentIndex : 3;
     const nextIndex = (safeIndex + 1) % refreshIntervalOptionsMs.length;
     const next = refreshIntervalOptionsMs[nextIndex];
     setRefreshIntervalMs(next);
     queryClient.invalidateQueries({ queryKey: usageKeys.all });
   };
 
-  const days = timeRange === "1d" ? 1 : timeRange === "7d" ? 7 : 30;
+  const language = i18n.resolvedLanguage || i18n.language || "en";
+  const locale = getLocaleFromLanguage(language);
+  const resolvedRange = useMemo(() => resolveUsageRange(range), [range]);
+  const rangeLabel = useMemo(() => {
+    if (range.preset !== "custom") {
+      return getUsageRangePresetLabel(range.preset, t);
+    }
+
+    return `${new Date(resolvedRange.startDate * 1000).toLocaleString(locale)} - ${new Date(
+      resolvedRange.endDate * 1000,
+    ).toLocaleString(locale)}`;
+  }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
   return (
     <motion.div
@@ -62,82 +76,66 @@ export function UsageDashboard() {
       transition={{ duration: 0.4 }}
       className="space-y-8 pb-8"
     >
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-2xl font-bold">{t("usage.title")}</h2>
-          <p className="text-sm text-muted-foreground">{t("usage.subtitle")}</p>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-2xl font-bold">{t("usage.title")}</h2>
+            <p className="text-sm text-muted-foreground">
+              {t("usage.subtitle")}
+            </p>
+          </div>
         </div>
 
-        <Tabs
-          value={timeRange}
-          onValueChange={(v) => setTimeRange(v as TimeRange)}
-          className="w-full sm:w-auto"
-        >
-          <div className="flex w-full sm:w-auto items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-10 px-2 text-xs text-muted-foreground"
-              title={t("common.refresh", "刷新")}
-              onClick={changeRefreshInterval}
-            >
-              <RefreshCw className="mr-1 h-3.5 w-3.5" />
-              {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
-            </Button>
-            <TabsList className="flex w-full sm:w-auto bg-card/60 border border-border/50 backdrop-blur-sm shadow-sm h-10 p-1">
-              <TabsTrigger
-                value="1d"
-                className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
+        <div className="rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-4">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {APP_FILTER_OPTIONS.map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setAppType(type)}
+                className={cn(
+                  "px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                  appType === type
+                    ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
+                    : "text-muted-foreground hover:text-primary hover:bg-muted/50 border border-transparent",
+                )}
               >
-                {t("usage.today")}
-              </TabsTrigger>
-              <TabsTrigger
-                value="7d"
-                className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
-              >
-                {t("usage.last7days")}
-              </TabsTrigger>
-              <TabsTrigger
-                value="30d"
-                className="flex-1 sm:flex-none sm:px-6 data-[state=active]:bg-primary/10 data-[state=active]:text-primary hover:text-primary transition-colors"
-              >
-                {t("usage.last30days")}
-              </TabsTrigger>
-            </TabsList>
-          </div>
-        </Tabs>
-      </div>
+                {t(`usage.appFilter.${type}`)}
+              </button>
+            ))}
 
-      {/* App type filter bar (replaces DataSourceBar) */}
-      <div className="rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-4 space-y-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {APP_FILTER_OPTIONS.map((type) => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => setAppType(type)}
-              className={cn(
-                "px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
-                appType === type
-                  ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
-                  : "text-muted-foreground hover:text-primary hover:bg-muted/50 border border-transparent",
-              )}
-            >
-              {t(`usage.appFilter.${type}`)}
-            </button>
-          ))}
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs text-muted-foreground"
+                title={t("common.refresh", "刷新")}
+                onClick={changeRefreshInterval}
+              >
+                <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
+              </Button>
+
+              <UsageDateRangePicker
+                selection={range}
+                triggerLabel={rangeLabel}
+                onApply={(nextRange) => setRange(nextRange)}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
       <UsageSummaryCards
-        days={days}
+        range={range}
         appType={appType}
         refreshIntervalMs={refreshIntervalMs}
       />
 
       <UsageTrendChart
-        days={days}
+        range={range}
+        rangeLabel={rangeLabel}
         appType={appType}
         refreshIntervalMs={refreshIntervalMs}
       />
@@ -168,14 +166,17 @@ export function UsageDashboard() {
           >
             <TabsContent value="logs" className="mt-0">
               <RequestLogTable
+                range={range}
+                rangeLabel={rangeLabel}
                 appType={appType}
                 refreshIntervalMs={refreshIntervalMs}
-                timeRange={timeRange}
+                onRangeChange={setRange}
               />
             </TabsContent>
 
             <TabsContent value="providers" className="mt-0">
               <ProviderStatsTable
+                range={range}
                 appType={appType}
                 refreshIntervalMs={refreshIntervalMs}
               />
@@ -183,6 +184,7 @@ export function UsageDashboard() {
 
             <TabsContent value="models" className="mt-0">
               <ModelStatsTable
+                range={range}
                 appType={appType}
                 refreshIntervalMs={refreshIntervalMs}
               />
@@ -191,7 +193,6 @@ export function UsageDashboard() {
         </Tabs>
       </div>
 
-      {/* Pricing Configuration */}
       <Accordion type="multiple" defaultValue={[]} className="w-full space-y-4">
         <AccordionItem
           value="pricing"
