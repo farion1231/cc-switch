@@ -109,14 +109,18 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     settingsConfig: {
       name: "shengsuanyun",
-      base_url: "https://router.shengsuanyun.com/api",
+      base_url: "https://router.shengsuanyun.com/api/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
+      models: [{ id: "openai/gpt-5.4", name: "GPT-5.4" }],
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "shengsuanyun",
     icon: "shengsuanyun",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-5.4", provider: "shengsuanyun" },
+    },
   },
   {
     name: "OpenRouter",
@@ -142,8 +146,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           max_tokens: 32000,
         },
         {
-          id: "openai/gpt-5",
-          name: "GPT-5",
+          id: "openai/gpt-5.4",
+          name: "GPT-5.4",
           context_length: 400000,
         },
         {
@@ -266,16 +270,15 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   // apiFormat "anthropic"(默认) → api_mode "anthropic_messages"；
   // apiFormat "openai_chat" → api_mode "chat_completions"；
   // ANTHROPIC_MODEL / DEFAULT_HAIKU / SONNET / OPUS_MODEL 去重后塞进 models[]。
-  // 注：Shengsuanyun 也属同步而来，但作为合作伙伴置顶展示，已上移到数组开头。
   {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
     settingsConfig: {
       name: "zhipu_glm",
-      base_url: "https://open.bigmodel.cn/api/anthropic",
+      base_url: "https://open.bigmodel.cn/api/paas/v4",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [{ id: "glm-5", name: "GLM-5" }],
     },
     category: "cn_official",
@@ -291,9 +294,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     settingsConfig: {
       name: "zhipu_glm_en",
-      base_url: "https://api.z.ai/api/anthropic",
+      base_url: "https://api.z.ai/api/paas/v4",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [{ id: "glm-5", name: "GLM-5" }],
     },
     category: "cn_official",
@@ -308,13 +311,20 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     websiteUrl: "https://bailian.console.aliyun.com",
     settingsConfig: {
       name: "bailian",
-      base_url: "https://dashscope.aliyuncs.com/apps/anthropic",
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
+      models: [
+        { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
+        { id: "qwen3-max", name: "Qwen3 Max" },
+      ],
     },
     category: "cn_official",
     icon: "bailian",
     iconColor: "#624AFF",
+    suggestedDefaults: {
+      model: { default: "qwen3-coder-plus", provider: "bailian" },
+    },
   },
   {
     name: "Bailian For Coding",
@@ -334,16 +344,16 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     websiteUrl: "https://platform.moonshot.cn/console",
     settingsConfig: {
       name: "kimi",
-      base_url: "https://api.moonshot.cn/anthropic",
+      base_url: "https://api.moonshot.cn/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
-      models: [{ id: "kimi-k2.5", name: "Kimi K2.5" }],
+      api_mode: "chat_completions",
+      models: [{ id: "kimi-k2.5-preview", name: "Kimi K2.5" }],
     },
     category: "cn_official",
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
-      model: { default: "kimi-k2.5", provider: "kimi" },
+      model: { default: "kimi-k2.5-preview", provider: "kimi" },
     },
   },
   {
@@ -382,9 +392,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     websiteUrl: "https://modelscope.cn",
     settingsConfig: {
       name: "modelscope",
-      base_url: "https://api-inference.modelscope.cn",
+      base_url: "https://api-inference.modelscope.cn/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [{ id: "ZhipuAI/GLM-5", name: "ZhipuAI / GLM-5" }],
     },
     category: "aggregator",
@@ -429,9 +439,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://longcat.chat/platform/api_keys",
     settingsConfig: {
       name: "longcat",
-      base_url: "https://api.longcat.chat/anthropic",
+      base_url: "https://api.longcat.chat/openai/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [{ id: "LongCat-Flash-Chat", name: "LongCat Flash Chat" }],
     },
     category: "cn_official",
@@ -447,9 +457,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
     settingsConfig: {
       name: "minimax",
-      base_url: "https://api.minimaxi.com/anthropic",
+      base_url: "https://api.minimaxi.com/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
     },
     category: "cn_official",
@@ -468,9 +478,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
     settingsConfig: {
       name: "minimax_en",
-      base_url: "https://api.minimax.io/anthropic",
+      base_url: "https://api.minimax.io/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
     },
     category: "cn_official",
@@ -530,13 +540,17 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://aihubmix.com",
     settingsConfig: {
       name: "aihubmix",
-      base_url: "https://aihubmix.com",
+      base_url: "https://aihubmix.com/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
     },
     category: "aggregator",
     icon: "aihubmix",
     iconColor: "#006FFB",
+    suggestedDefaults: {
+      model: { default: "gpt-5.4", provider: "aihubmix" },
+    },
   },
   {
     name: "SiliconFlow",
@@ -544,9 +558,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",
     settingsConfig: {
       name: "siliconflow",
-      base_url: "https://api.siliconflow.cn",
+      base_url: "https://api.siliconflow.cn/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [
         {
           id: "Pro/MiniMaxAI/MiniMax-M2.7",
@@ -572,9 +586,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",
     settingsConfig: {
       name: "siliconflow_en",
-      base_url: "https://api.siliconflow.com",
+      base_url: "https://api.siliconflow.com/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [{ id: "MiniMaxAI/MiniMax-M2.7", name: "MiniMax M2.7" }],
     },
     category: "aggregator",
@@ -595,13 +609,17 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://www.dmxapi.cn",
     settingsConfig: {
       name: "dmxapi",
-      base_url: "https://www.dmxapi.cn",
+      base_url: "https://www.dmxapi.cn/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "dmxapi",
+    suggestedDefaults: {
+      model: { default: "gpt-5.4", provider: "dmxapi" },
+    },
   },
   {
     name: "PackyCode",
@@ -738,15 +756,19 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
     settingsConfig: {
       name: "compshare",
-      base_url: "https://api.modelverse.cn",
+      base_url: "https://api.modelverse.cn/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "ucloud",
     icon: "ucloud",
     iconColor: "#000000",
+    suggestedDefaults: {
+      model: { default: "gpt-5.4", provider: "compshare" },
+    },
   },
   {
     name: "Micu",
@@ -830,28 +852,19 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://dashboard.therouter.ai",
     settingsConfig: {
       name: "therouter",
-      base_url: "https://api.therouter.ai",
+      base_url: "https://api.therouter.ai/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [
-        {
-          id: "anthropic/claude-sonnet-4.6",
-          name: "Claude Sonnet 4.6",
-        },
-        {
-          id: "anthropic/claude-haiku-4.5",
-          name: "Claude Haiku 4.5",
-        },
-        {
-          id: "anthropic/claude-opus-4.7",
-          name: "Claude Opus 4.7",
-        },
+        { id: "openai/gpt-5.4", name: "GPT-5.4" },
+        { id: "openai/gpt-5.4-mini", name: "GPT-5.4 mini" },
+        { id: "openai/gpt-5.4-nano", name: "GPT-5.4 nano" },
       ],
     },
     category: "aggregator",
     suggestedDefaults: {
       model: {
-        default: "anthropic/claude-sonnet-4.6",
+        default: "openai/gpt-5.4",
         provider: "therouter",
       },
     },
@@ -862,9 +875,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://novita.ai",
     settingsConfig: {
       name: "novita",
-      base_url: "https://api.novita.ai/anthropic",
+      base_url: "https://api.novita.ai/v3/openai",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [{ id: "zai-org/glm-5", name: "Zai-Org / GLM-5" }],
     },
     category: "aggregator",
@@ -922,9 +935,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
     settingsConfig: {
       name: "xiaomi_mimo",
-      base_url: "https://api.xiaomimimo.com/anthropic",
+      base_url: "https://api.xiaomimimo.com/v1",
       api_key: "",
-      api_mode: "anthropic_messages",
+      api_mode: "chat_completions",
       models: [{ id: "mimo-v2-pro", name: "MiMo v2 Pro" }],
     },
     category: "cn_official",
