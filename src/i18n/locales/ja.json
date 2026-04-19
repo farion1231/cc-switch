@@ -795,7 +795,14 @@
       "shengsuanyun": "胜算云はCC Switchユーザーに特別特典を提供しています。このリンクから登録すると、10元分の無料クレジットと初回チャージ10%ボーナスがもらえます！"
     },
     "presets": {
-      "ucloud": "Compshare"
+      "ucloud": "Compshare",
+      "shengsuanyun": "Shengsuanyun",
+      "openrouter": "OpenRouter",
+      "anthropic": "Anthropic",
+      "openai": "OpenAI",
+      "googleai": "Google AI",
+      "deepseek": "DeepSeek",
+      "together": "Together AI"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",

@@ -795,7 +795,14 @@
       "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!"
     },
     "presets": {
-      "ucloud": "Compshare"
+      "ucloud": "Compshare",
+      "shengsuanyun": "Shengsuanyun",
+      "openrouter": "OpenRouter",
+      "anthropic": "Anthropic",
+      "openai": "OpenAI",
+      "googleai": "Google AI",
+      "deepseek": "DeepSeek",
+      "together": "Together AI"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",

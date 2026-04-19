@@ -796,7 +796,13 @@
     },
     "presets": {
       "ucloud": "优云智算",
-      "shengsuanyun": "胜算云"
+      "shengsuanyun": "胜算云",
+      "openrouter": "OpenRouter",
+      "anthropic": "Anthropic",
+      "openai": "OpenAI",
+      "googleai": "Google AI",
+      "deepseek": "DeepSeek",
+      "together": "Together AI"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
