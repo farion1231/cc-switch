@@ -33,13 +33,12 @@ impl ProviderRouter {
         }
     }
 
-    /// 设置自动回切管理器
-    pub fn set_failover_switch_manager(&self, mgr: Arc<FailoverSwitchManager>) {
-        // fire-and-forget，settle 后才正式启用
-        let mgr_ref = self.failover_switch_manager.clone();
-        tokio::spawn(async move {
-            *mgr_ref.write().await = Some(mgr);
-        });
+    /// 异步设置自动回切管理器
+    ///
+    /// 等写入完成后返回，消除 fire-and-forget 竞态。
+    /// caller 必须 await 此方法后再让 proxy 处理请求。
+    pub async fn set_failover_switch_manager(&self, mgr: Arc<FailoverSwitchManager>) {
+        *self.failover_switch_manager.write().await = Some(mgr);
     }
 
     /// 选择可用的供应商（支持故障转移）
@@ -158,48 +157,7 @@ impl ProviderRouter {
             breaker.record_success(used_half_open_permit).await;
 
             // [FO-BACK] 自动回切：当前用的是 P2+，且 P1 已从熔断恢复
-            'failback: {
-                if let Some(ref mgr) = *self.failover_switch_manager.read().await {
-                    let ordered_ids: Vec<String> = match self.db.get_failover_queue(app_type) {
-                        Ok(ids) => ids.into_iter().map(|item| item.provider_id).collect(),
-                        Err(_) => Vec::new(),
-                    };
-
-                    if let Some(p1_id) = ordered_ids.first() {
-                        if provider_id != *p1_id {
-                            // 当前不在 P1，检查 P1 是否已恢复为 Closed
-                            let p1_circuit_key = format!("{app_type}:{}", p1_id);
-                            let p1_breaker = self.get_or_create_circuit_breaker(&p1_circuit_key).await;
-                            if p1_breaker.get_state().await == CircuitState::Closed {
-                                let all = match self.db.get_all_providers(app_type) {
-                                    Ok(p) => p,
-                                    Err(e) => {
-                                        log::warn!(
-                                            "[FO-BACK] get_all_providers 失败，跳过本次回切: {}",
-                                            e
-                                        );
-                                        break 'failback;
-                                    }
-                                };
-                                if let Some(p1) = all.get(p1_id) {
-                                    log::info!(
-                                        "[FO-BACK] P1 {} 恢复为 Closed（当前: {}），触发自动回切",
-                                        p1.name,
-                                        provider_id
-                                    );
-                                    let fm = mgr.clone();
-                                    let pid = p1.id.clone();
-                                    let pname = p1.name.clone();
-                                    let at = app_type.to_string();
-                                    tokio::spawn(async move {
-                                        let _ = fm.try_switch(&at, &pid, &pname).await;
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            self.trigger_failback_if_needed(provider_id, app_type).await;
         } else {
             breaker.record_failure(used_half_open_permit).await;
         }
@@ -273,6 +231,66 @@ impl ProviderRouter {
         } else {
             None
         }
+    }
+
+    /// 检查是否需要触发自动回切并在后台执行
+    ///
+    /// 当当前使用 P2+，且 P1 熔断器已恢复为 Closed 时，
+    /// 异步触发切换到 P1。Failback 失败仅记录日志，不向上传播。
+    async fn trigger_failback_if_needed(&self, provider_id: &str, app_type: &str) {
+        let Some(ref mgr) = *self.failover_switch_manager.read().await else {
+            return;
+        };
+
+        let Ok(ordered_ids) = self.db.get_failover_queue(app_type) else {
+            log::warn!("[FO-BACK] 读取 failover_queue 失败，跳过本次回切");
+            return;
+        };
+        let Some(p1_id) = ordered_ids.first().map(|item| &item.provider_id) else {
+            return;
+        };
+
+        // 已在 P1，无需回切
+        if provider_id == p1_id {
+            return;
+        }
+
+        // 检查 P1 熔断器状态
+        let p1_circuit_key = format!("{app_type}:{p1_id}");
+        let p1_breaker = self.get_or_create_circuit_breaker(&p1_circuit_key).await;
+        if p1_breaker.get_state().await != CircuitState::Closed {
+            return;
+        }
+
+        let Ok(all) = self.db.get_all_providers(app_type) else {
+            log::warn!("[FO-BACK] 读取 providers 失败，跳过本次回切");
+            return;
+        };
+        let Some(p1) = all.get(p1_id) else {
+            return;
+        };
+
+        log::info!(
+            "[FO-BACK] P1 {} 恢复为 Closed（当前: {}），触发自动回切",
+            p1.name,
+            provider_id
+        );
+
+        let fm = mgr.clone();
+        let at = app_type.to_string();
+        let pid = p1.id.clone();
+        let pname = p1.name.clone();
+        tokio::spawn(async move {
+            match fm.try_switch(&at, &pid, &pname).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    log::debug!("[FO-BACK] 切换已跳过（可能在进行中或已就绪）");
+                }
+                Err(e) => {
+                    log::error!("[FO-BACK] try_switch 失败: {}", e);
+                }
+            }
+        });
     }
 
     /// 获取或创建熔断器
