@@ -192,7 +192,7 @@ impl ProviderRouter {
                                     let pname = p1.name.clone();
                                     let at = app_type.to_string();
                                     tokio::spawn(async move {
-                                        let _ = fm.try_switch(None, &at, &pid, &pname).await;
+                                        let _ = fm.try_switch(&at, &pid, &pname).await;
                                     });
                                 }
                             }
