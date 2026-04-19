@@ -843,6 +843,8 @@
     "modelHelper": "Optional: Specify default Claude model to use, leave blank to use system default.",
     "modelMappingLabel": "Model Mapping",
     "modelMappingHint": "Usually not needed if the provider natively serves Claude models. Only configure when you need to map requests to different model names.",
+    "quickSetModels": "Quick Set",
+    "quickSetSuccess": "Model name applied to all fields",
     "advancedOptionsToggle": "Advanced Options",
     "advancedOptionsHint": "Includes API format, auth field, and model mapping. Defaults work for most use cases.",
     "categoryOfficial": "Official",
