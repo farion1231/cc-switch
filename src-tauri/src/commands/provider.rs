@@ -153,6 +153,7 @@ pub fn import_default_config(state: State<'_, AppState>, app: String) -> Result<
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn queryProviderUsage(
+    app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
     #[allow(non_snake_case)] providerId: String, // 使用 camelCase 匹配前端
@@ -165,6 +166,7 @@ pub async fn queryProviderUsage(
         state
             .usage_cache
             .put_script(app_type, providerId, result.clone());
+        crate::tray::schedule_tray_refresh(&app_handle);
     }
     Ok(result)
 }
@@ -173,14 +175,14 @@ async fn query_provider_usage_inner(
     state: &AppState,
     copilot_state: &CopilotAuthState,
     app_type: AppType,
-    #[allow(non_snake_case)] providerId: &str,
+    provider_id: &str,
 ) -> Result<crate::provider::UsageResult, String> {
     // 从数据库读取供应商信息，检查特殊模板类型
     let providers = state
         .db
         .get_all_providers(app_type.as_str())
         .map_err(|e| format!("Failed to get providers: {e}"))?;
-    let provider = providers.get(providerId);
+    let provider = providers.get(provider_id);
     let usage_script = provider
         .and_then(|p| p.meta.as_ref())
         .and_then(|m| m.usage_script.as_ref());
@@ -309,7 +311,7 @@ async fn query_provider_usage_inner(
     }
 
     // ── 通用 JS 脚本路径 ──
-    ProviderService::query_usage(state, app_type, providerId)
+    ProviderService::query_usage(state, app_type, provider_id)
         .await
         .map_err(|e| e.to_string())
 }

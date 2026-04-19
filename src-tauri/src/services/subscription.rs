@@ -291,12 +291,17 @@ struct ApiExtraUsage {
     currency: Option<String>,
 }
 
-/// 已知的 Claude 用量窗口名称
+/// 已知的 Claude 用量窗口名称。`QuotaTier::name` 会是其中之一。
+pub const TIER_FIVE_HOUR: &str = "five_hour";
+pub const TIER_SEVEN_DAY: &str = "seven_day";
+pub const TIER_SEVEN_DAY_OPUS: &str = "seven_day_opus";
+pub const TIER_SEVEN_DAY_SONNET: &str = "seven_day_sonnet";
+
 const KNOWN_TIERS: &[&str] = &[
-    "five_hour",
-    "seven_day",
-    "seven_day_opus",
-    "seven_day_sonnet",
+    TIER_FIVE_HOUR,
+    TIER_SEVEN_DAY,
+    TIER_SEVEN_DAY_OPUS,
+    TIER_SEVEN_DAY_SONNET,
 ];
 
 /// 查询 Claude 官方订阅额度
