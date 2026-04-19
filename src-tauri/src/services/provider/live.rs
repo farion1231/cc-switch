@@ -996,8 +996,29 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             })?;
 
             for_each_codex_live_path(|_, auth_path, config_path| {
+                // Backup existing auth.json content if it exists
+                let backup_auth = if auth_path.exists() {
+                    Some(std::fs::read_to_string(auth_path).map_err(|e| AppError::io(auth_path, e))?)
+                } else {
+                    None
+                };
+
+                // Try to write auth.json
                 write_json_file(auth_path, auth)?;
-                std::fs::write(config_path, config_str).map_err(|e| AppError::io(config_path, e))
+
+                // Try to write config.toml
+                match std::fs::write(config_path, config_str) {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        // Rollback auth.json on failure
+                        if let Some(content) = backup_auth {
+                            let _ = std::fs::write(auth_path, content);
+                        } else {
+                            let _ = std::fs::remove_file(auth_path);
+                        }
+                        Err(AppError::io(config_path, e))
+                    }
+                }
             })?;
         }
         AppType::Gemini => {
@@ -1402,7 +1423,9 @@ fn write_gemini_live_partial(provider: &Provider) -> Result<(), AppError> {
             GeminiAuthType::GoogleOfficial => {
                 // OAuth mode does not require GEMINI_API_KEY, but other env vars
                 // such as GEMINI_MODEL should remain in the live .env file.
-                write_gemini_env_at(env_path, &env_map)?;
+                let mut env_map_oauth = env_map.clone();
+                env_map_oauth.remove("GEMINI_API_KEY");
+                write_gemini_env_at(env_path, &env_map_oauth)?;
             }
             GeminiAuthType::Packycode | GeminiAuthType::Generic => {
                 crate::gemini_config::validate_gemini_settings_strict(&provider.settings_config)?;
@@ -1889,8 +1912,10 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
 
         match auth_type {
             GeminiAuthType::GoogleOfficial => {
-                // OAuth mode still preserves non-secret env vars like GEMINI_MODEL.
-                write_gemini_env_at(env_path, &local_env_map)?;
+                // OAuth mode does not require GEMINI_API_KEY, but other env vars like GEMINI_MODEL should remain.
+                let mut env_map_oauth = local_env_map.clone();
+                env_map_oauth.remove("GEMINI_API_KEY");
+                write_gemini_env_at(env_path, &env_map_oauth)?;
             }
             GeminiAuthType::Packycode | GeminiAuthType::Generic => {
                 validate_gemini_settings_strict(&provider.settings_config)?;

@@ -242,14 +242,29 @@ pub(crate) fn expand_wsl_dirs(primary_dir: &Path, default_subdir: &[&str]) -> Ve
 
     #[cfg(target_os = "windows")]
     {
-        if let Some((current_distro, _suffix)) = parse_wsl_unc_path(primary_dir) {
+        if let Some((current_distro, suffix)) = parse_wsl_unc_path(primary_dir) {
             if let Some(distros) = crate::settings::get_wsl_distros() {
-                dirs.extend(expand_secondary_wsl_dirs_from_homes(
-                    Some(&current_distro),
-                    &distros,
-                    default_subdir,
-                    resolve_wsl_home_dir_unc,
-                ));
+                if suffix.is_empty() {
+                    dirs.extend(expand_secondary_wsl_dirs_from_homes(
+                        Some(&current_distro),
+                        &distros,
+                        default_subdir,
+                        resolve_wsl_home_dir_unc,
+                    ));
+                } else {
+                    // For custom UNC overrides, swap out the distro but keep the exact suffix
+                    for distro in &distros {
+                        let distro = distro.trim();
+                        if distro.is_empty() || distro.eq_ignore_ascii_case(&current_distro) {
+                            continue;
+                        }
+                        // Construct exactly `\\wsl$\<distro>\<suffix>`
+                        let mut secondary_path = PathBuf::from(r"\\wsl$");
+                        secondary_path.push(distro);
+                        secondary_path.push(suffix.trim_start_matches('\\'));
+                        dirs.push(secondary_path);
+                    }
+                }
             }
         } else if let Some(distros) = crate::settings::get_wsl_distros() {
             dirs.extend(expand_secondary_wsl_dirs_from_homes(
