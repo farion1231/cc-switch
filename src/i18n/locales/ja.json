@@ -1664,44 +1664,11 @@
       "primaryModel": "デフォルト",
       "fallbackModel": "予備"
     },
-    "model": {
-      "title": "モデル設定",
-      "description": "config.yaml の model セクションのデフォルトモデル設定を構成します。",
-      "default": "デフォルトモデル",
-      "defaultHint": "使用するデフォルトモデル（例: anthropic/claude-opus-4-7）",
-      "provider": "プロバイダー",
-      "providerHint": "モデルルーティングのプロバイダー名（例: openrouter、anthropic）",
-      "baseUrl": "Base URL",
-      "baseUrlHint": "このモデルの API エンドポイント URL を上書き",
-      "contextLength": "コンテキスト長",
-      "maxTokens": "最大トークン数",
-      "saveSuccess": "モデル設定を保存しました",
-      "saveFailed": "モデル設定の保存に失敗しました"
-    },
-    "agent": {
-      "title": "エージェント設定",
-      "description": "config.yaml の agent セクションの動作設定を構成します。",
-      "maxTurns": "最大ターン数",
-      "maxTurnsHint": "セッションごとの最大エージェントターン数",
-      "reasoningEffort": "推論レベル",
-      "reasoningEffortHint": "推論の深さを制御: none、minimal、low、medium、high、xhigh",
-      "toolUseEnforcement": "ツール使用ポリシー",
-      "toolUseHint": "値: \"auto\"、true、false、またはツール名の JSON 配列",
-      "approvalsMode": "承認モード",
-      "approvalsModeHint": "ツール呼び出しの承認を制御: manual（常に確認）、smart（安全な操作を自動承認）、off（確認なし）",
-      "notSet": "未設定",
-      "saveSuccess": "エージェント設定を保存しました",
-      "saveFailed": "エージェント設定の保存に失敗しました"
-    },
-    "env": {
-      "title": "環境変数",
-      "description": "Hermes .env ファイルの環境変数を編集します。",
-      "editorHint": "Hermes .env ファイルを JSON キー・バリュー形式で編集します。キーが環境変数名になります。",
-      "saveSuccess": "環境変数を保存しました",
-      "saveFailed": "環境変数の保存に失敗しました",
-      "empty": "Hermes 環境変数は空にできません。空のオブジェクトには {} を使用してください。",
-      "invalidJson": "Hermes 環境変数は有効な JSON である必要があります。",
-      "objectRequired": "Hermes 環境変数は JSON オブジェクトである必要があります。"
+    "webui": {
+      "open": "Hermes Web UI を開く",
+      "offline": "Hermes Web UI が起動していません。まず `hermes web` を実行してください。",
+      "openFailed": "Hermes Web UI を開けませんでした",
+      "fixInWebUI": "Hermes Web UI で修正"
     },
     "health": {
       "title": "Hermes 設定の警告を検出",

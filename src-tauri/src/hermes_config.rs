@@ -35,7 +35,7 @@ use crate::error::AppError;
 use crate::settings::{effective_backup_retain_count, get_hermes_override_dir};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -108,27 +108,6 @@ pub struct HermesModelConfig {
     /// Preserve unknown fields for forward compatibility
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
-}
-
-/// Hermes agent section config (agent + approvals)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HermesAgentConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_turns: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_use_enforcement: Option<serde_json::Value>,
-    /// Preserve unknown fields for forward compatibility
-    #[serde(flatten)]
-    pub extra: HashMap<String, serde_json::Value>,
-}
-
-/// Hermes env config (from .env file, not config.yaml)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HermesEnvConfig {
-    #[serde(flatten)]
-    pub vars: HashMap<String, serde_json::Value>,
 }
 
 // ============================================================================
@@ -667,148 +646,6 @@ pub fn apply_switch_defaults(
 }
 
 // ============================================================================
-// Agent Config Functions
-// ============================================================================
-
-/// Get the `agent` section as a typed config.
-pub fn get_agent_config() -> Result<Option<HermesAgentConfig>, AppError> {
-    let config = read_hermes_config()?;
-    let Some(agent_value) = config.get("agent") else {
-        return Ok(None);
-    };
-    let json_val = yaml_to_json(agent_value)?;
-    let agent = serde_json::from_value(json_val)
-        .map_err(|e| AppError::Config(format!("Failed to parse Hermes agent config: {e}")))?;
-    Ok(Some(agent))
-}
-
-/// Set the `agent` section.
-pub fn set_agent_config(agent: &HermesAgentConfig) -> Result<HermesWriteOutcome, AppError> {
-    let json_val =
-        serde_json::to_value(agent).map_err(|e| AppError::JsonSerialize { source: e })?;
-    let yaml_val = json_to_yaml(&json_val)?;
-    write_yaml_section_to_config("agent", &yaml_val)
-}
-
-// ============================================================================
-// .env Functions
-// ============================================================================
-
-/// Read the Hermes `.env` file (`~/.hermes/.env`).
-///
-/// Parses dotenv format (KEY=VALUE, `#` comments, blank lines).
-pub fn read_env() -> Result<HermesEnvConfig, AppError> {
-    let path = get_hermes_dir().join(".env");
-    if !path.exists() {
-        return Ok(HermesEnvConfig {
-            vars: HashMap::new(),
-        });
-    }
-    let content = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
-    let mut vars = HashMap::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim().to_string();
-            let value = value
-                .trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_string();
-            vars.insert(key, serde_json::Value::String(value));
-        }
-    }
-    Ok(HermesEnvConfig { vars })
-}
-
-/// Write the Hermes `.env` file (`~/.hermes/.env`).
-///
-/// Preserves comment lines and ordering. Keys not present in the new env are
-/// removed; new keys are appended.
-pub fn write_env(env: &HermesEnvConfig) -> Result<HermesWriteOutcome, AppError> {
-    let path = get_hermes_dir().join(".env");
-    let _guard = hermes_write_lock().lock()?;
-
-    // Read existing file to preserve comments and ordering
-    let existing_content = if path.exists() {
-        fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?
-    } else {
-        String::new()
-    };
-
-    // Build new content: preserve comment lines, update/add key-value pairs
-    let mut remaining_keys: HashSet<String> = env.vars.keys().cloned().collect();
-    let mut lines: Vec<String> = Vec::new();
-
-    for line in existing_content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            lines.push(line.to_string());
-            continue;
-        }
-        if let Some((key, _)) = trimmed.split_once('=') {
-            let key = key.trim();
-            if let Some(new_value) = env.vars.get(key) {
-                // Update existing key
-                let value_str = json_value_as_env_str(new_value);
-                lines.push(format!("{key}={value_str}"));
-                remaining_keys.remove(key);
-            }
-            // If key is not in new env, it's deleted (don't add it)
-        } else {
-            lines.push(line.to_string());
-        }
-    }
-
-    // Add new keys that weren't in the original file (sorted for determinism)
-    let mut new_keys: Vec<String> = remaining_keys.into_iter().collect();
-    new_keys.sort();
-    for key in new_keys {
-        if let Some(value) = env.vars.get(&key) {
-            let value_str = json_value_as_env_str(value);
-            lines.push(format!("{key}={value_str}"));
-        }
-    }
-
-    let mut new_content = lines.join("\n");
-    if !new_content.is_empty() && !new_content.ends_with('\n') {
-        new_content.push('\n');
-    }
-
-    if new_content == existing_content {
-        return Ok(HermesWriteOutcome::default());
-    }
-
-    // Backup if file existed with content
-    let backup_path = if !existing_content.is_empty() {
-        Some(create_hermes_backup(&existing_content)?)
-    } else {
-        None
-    };
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-    }
-    atomic_write(&path, new_content.as_bytes())?;
-
-    Ok(HermesWriteOutcome {
-        backup_path: backup_path.map(|p| p.display().to_string()),
-        warnings: Vec::new(),
-    })
-}
-
-/// Convert a serde_json::Value to a string suitable for .env files.
-fn json_value_as_env_str(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
-// ============================================================================
 // Health Check
 // ============================================================================
 
@@ -1172,108 +1009,7 @@ model:
         });
     }
 
-    // ---- .env read/write tests ----
-
-    #[test]
-    #[serial]
-    fn env_read_write_roundtrip() {
-        with_test_home(|| {
-            // Write initial env
-            let env = HermesEnvConfig {
-                vars: {
-                    let mut m = HashMap::new();
-                    m.insert(
-                        "API_KEY".to_string(),
-                        serde_json::Value::String("sk-test-123".to_string()),
-                    );
-                    m.insert(
-                        "DEBUG".to_string(),
-                        serde_json::Value::String("true".to_string()),
-                    );
-                    m
-                },
-            };
-            write_env(&env).unwrap();
-
-            // Read back
-            let env_read = read_env().unwrap();
-            assert_eq!(
-                env_read.vars.get("API_KEY").unwrap().as_str().unwrap(),
-                "sk-test-123"
-            );
-            assert_eq!(
-                env_read.vars.get("DEBUG").unwrap().as_str().unwrap(),
-                "true"
-            );
-
-            // Update: remove DEBUG, add NEW_VAR
-            let env2 = HermesEnvConfig {
-                vars: {
-                    let mut m = HashMap::new();
-                    m.insert(
-                        "API_KEY".to_string(),
-                        serde_json::Value::String("sk-test-456".to_string()),
-                    );
-                    m.insert(
-                        "NEW_VAR".to_string(),
-                        serde_json::Value::String("hello".to_string()),
-                    );
-                    m
-                },
-            };
-            write_env(&env2).unwrap();
-
-            let env_read2 = read_env().unwrap();
-            assert_eq!(
-                env_read2.vars.get("API_KEY").unwrap().as_str().unwrap(),
-                "sk-test-456"
-            );
-            assert!(env_read2.vars.get("DEBUG").is_none());
-            assert_eq!(
-                env_read2.vars.get("NEW_VAR").unwrap().as_str().unwrap(),
-                "hello"
-            );
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn env_preserves_comments() {
-        with_test_home(|| {
-            let hermes_dir = get_hermes_dir();
-            fs::create_dir_all(&hermes_dir).unwrap();
-            let env_path = hermes_dir.join(".env");
-            fs::write(
-                &env_path,
-                "# Hermes environment config\nAPI_KEY=old-key\n# Keep this comment\nDEBUG=true\n",
-            )
-            .unwrap();
-
-            let env = HermesEnvConfig {
-                vars: {
-                    let mut m = HashMap::new();
-                    m.insert(
-                        "API_KEY".to_string(),
-                        serde_json::Value::String("new-key".to_string()),
-                    );
-                    m.insert(
-                        "DEBUG".to_string(),
-                        serde_json::Value::String("false".to_string()),
-                    );
-                    m
-                },
-            };
-            write_env(&env).unwrap();
-
-            let content = fs::read_to_string(&env_path).unwrap();
-            assert!(content.contains("# Hermes environment config"));
-            assert!(content.contains("# Keep this comment"));
-            assert!(content.contains("API_KEY=new-key"));
-            assert!(content.contains("DEBUG=false"));
-        });
-    }
-
-    // ---- Model/Agent config tests ----
+    // ---- Model config tests ----
 
     #[test]
     #[serial]
@@ -1299,26 +1035,6 @@ model:
             );
             assert_eq!(read_model.provider.as_deref(), Some("openrouter"));
             assert_eq!(read_model.context_length, Some(200000));
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn agent_config_roundtrip() {
-        with_test_home(|| {
-            assert!(get_agent_config().unwrap().is_none());
-
-            let agent = HermesAgentConfig {
-                max_turns: Some(50),
-                reasoning_effort: Some("high".to_string()),
-                tool_use_enforcement: None,
-                extra: HashMap::new(),
-            };
-            set_agent_config(&agent).unwrap();
-
-            let read_agent = get_agent_config().unwrap().unwrap();
-            assert_eq!(read_agent.max_turns, Some(50));
-            assert_eq!(read_agent.reasoning_effort.as_deref(), Some("high"));
         });
     }
 

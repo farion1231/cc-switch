@@ -25,8 +25,7 @@ import {
   KeyRound,
   Shield,
   Cpu,
-  Brain,
-  Bot,
+  ExternalLink,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -41,7 +40,11 @@ import {
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
-import { hermesKeys, useHermesHealth } from "@/hooks/useHermes";
+import {
+  hermesKeys,
+  useHermesHealth,
+  useOpenHermesWebUI,
+} from "@/hooks/useHermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
@@ -85,9 +88,6 @@ import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
-import HermesModelPanel from "@/components/hermes/ModelPanel";
-import HermesAgentPanel from "@/components/hermes/AgentPanel";
-import HermesEnvPanel from "@/components/hermes/EnvPanel";
 import HermesHealthBanner from "@/components/hermes/HermesHealthBanner";
 
 type View =
@@ -103,10 +103,7 @@ type View =
   | "workspace"
   | "openclawEnv"
   | "openclawTools"
-  | "openclawAgents"
-  | "hermesModel"
-  | "hermesAgent"
-  | "hermesEnv";
+  | "openclawAgents";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -150,9 +147,6 @@ const VALID_VIEWS: View[] = [
   "openclawEnv",
   "openclawTools",
   "openclawAgents",
-  "hermesModel",
-  "hermesAgent",
-  "hermesEnv",
 ];
 
 const getInitialView = (): View => {
@@ -272,12 +266,7 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const isHermesView =
-    activeApp === "hermes" &&
-    (currentView === "providers" ||
-      currentView === "hermesModel" ||
-      currentView === "hermesAgent" ||
-      currentView === "hermesEnv");
+  const isHermesView = activeApp === "hermes" && currentView === "providers";
   const { data: hermesHealthWarnings = [] } = useHermesHealth(isHermesView);
   const hasSkillsSupport = true;
   const hasSessionSupport =
@@ -635,6 +624,8 @@ function App() {
     };
   }, []);
 
+  const openHermesWebUI = useOpenHermesWebUI();
+
   const handleOpenWebsite = async (url: string) => {
     try {
       await settingsApi.openExternal(url);
@@ -961,12 +952,6 @@ function App() {
           return <ToolsPanel />;
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
-        case "hermesModel":
-          return <HermesModelPanel />;
-        case "hermesAgent":
-          return <HermesAgentPanel />;
-        case "hermesEnv":
-          return <HermesEnvPanel />;
         default:
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -1186,9 +1171,6 @@ function App() {
                   {currentView === "openclawTools" && t("openclaw.tools.title")}
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
-                  {currentView === "hermesModel" && t("hermes.model.title")}
-                  {currentView === "hermesAgent" && t("hermes.agent.title")}
-                  {currentView === "hermesEnv" && t("hermes.env.title")}
                 </h1>
               </div>
             ) : (
@@ -1402,33 +1384,6 @@ function App() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => setCurrentView("hermesModel")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                                title={t("hermes.model.title")}
-                              >
-                                <Brain className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("hermesAgent")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                                title={t("hermes.agent.title")}
-                              >
-                                <Bot className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("hermesEnv")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                                title={t("hermes.env.title")}
-                              >
-                                <KeyRound className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
                                 onClick={() => setCurrentView("prompts")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
                                 title={t("prompts.manage")}
@@ -1443,6 +1398,15 @@ function App() {
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={16} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => void openHermesWebUI()}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                title={t("hermes.webui.open")}
+                              >
+                                <ExternalLink className="w-4 h-4" />
                               </Button>
                             </>
                           ) : activeApp === "openclaw" ? (

@@ -1257,11 +1257,7 @@ pub fn run() {
             commands::get_hermes_live_provider,
             commands::scan_hermes_config_health,
             commands::get_hermes_model_config,
-            commands::set_hermes_model_config,
-            commands::get_hermes_agent_config,
-            commands::set_hermes_agent_config,
-            commands::get_hermes_env,
-            commands::set_hermes_env,
+            commands::open_hermes_web_ui,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,

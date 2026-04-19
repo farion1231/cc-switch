@@ -1,16 +1,17 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type QueryClient,
-} from "@tanstack/react-query";
+import { useCallback } from "react";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { hermesApi } from "@/lib/api/hermes";
 import { providersApi } from "@/lib/api/providers";
-import type {
-  HermesEnvConfig,
-  HermesAgentConfig,
-  HermesModelConfig,
-} from "@/types";
+import { extractErrorMessage } from "@/utils/errorUtils";
+
+/**
+ * Error code returned by the Rust `open_hermes_web_ui` command when probing
+ * `/api/status` fails. Must match the string constant in
+ * `src-tauri/src/commands/hermes.rs`.
+ */
+export const HERMES_WEB_OFFLINE_ERROR = "hermes_web_offline";
 
 /**
  * Centralized query keys for all Hermes-related queries.
@@ -20,8 +21,6 @@ export const hermesKeys = {
   all: ["hermes"] as const,
   liveProviderIds: ["hermes", "liveProviderIds"] as const,
   modelConfig: ["hermes", "modelConfig"] as const,
-  agentConfig: ["hermes", "agentConfig"] as const,
-  env: ["hermes", "env"] as const,
   health: ["hermes", "health"] as const,
 };
 
@@ -42,10 +41,6 @@ export function invalidateHermesProviderCaches(queryClient: QueryClient) {
 // Query hooks
 // ============================================================
 
-/**
- * Query live provider IDs from Hermes config.
- * Used by ProviderList to show "In Config" badge.
- */
 export function useHermesLiveProviderIds(enabled: boolean) {
   return useQuery({
     queryKey: hermesKeys.liveProviderIds,
@@ -54,9 +49,6 @@ export function useHermesLiveProviderIds(enabled: boolean) {
   });
 }
 
-/**
- * Query model configuration.
- */
 export function useHermesModelConfig(enabled: boolean) {
   return useQuery({
     queryKey: hermesKeys.modelConfig,
@@ -65,33 +57,6 @@ export function useHermesModelConfig(enabled: boolean) {
   });
 }
 
-/**
- * Query agent configuration.
- */
-export function useHermesAgentConfig(enabled = true) {
-  return useQuery({
-    queryKey: hermesKeys.agentConfig,
-    queryFn: () => hermesApi.getAgentConfig(),
-    staleTime: 30_000,
-    enabled,
-  });
-}
-
-/**
- * Query env configuration.
- */
-export function useHermesEnv(enabled = true) {
-  return useQuery({
-    queryKey: hermesKeys.env,
-    queryFn: () => hermesApi.getEnv(),
-    staleTime: 30_000,
-    enabled,
-  });
-}
-
-/**
- * Query config health warnings.
- */
 export function useHermesHealth(enabled: boolean) {
   return useQuery({
     queryKey: hermesKeys.health,
@@ -106,46 +71,27 @@ export function useHermesHealth(enabled: boolean) {
 // ============================================================
 
 /**
- * Save model config. Invalidates modelConfig and health queries on success.
- * Toast notifications are handled by the component.
+ * Returns a handler that probes the local Hermes Web UI, opens it in the
+ * system browser, and surfaces a localized toast on failure. Callers only
+ * need to wire the returned function to a click handler.
  */
-export function useSaveHermesModelConfig() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (config: HermesModelConfig) => hermesApi.setModelConfig(config),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig });
-      queryClient.invalidateQueries({ queryKey: hermesKeys.health });
+export function useOpenHermesWebUI() {
+  const { t } = useTranslation();
+  return useCallback(
+    async (path?: string) => {
+      try {
+        await hermesApi.openWebUI(path);
+      } catch (error) {
+        const detail = extractErrorMessage(error);
+        if (detail === HERMES_WEB_OFFLINE_ERROR) {
+          toast.error(t("hermes.webui.offline"));
+        } else {
+          toast.error(t("hermes.webui.openFailed"), {
+            description: detail || undefined,
+          });
+        }
+      }
     },
-  });
-}
-
-/**
- * Save agent config. Invalidates agentConfig and health queries on success.
- * Toast notifications are handled by the component.
- */
-export function useSaveHermesAgentConfig() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (config: HermesAgentConfig) => hermesApi.setAgentConfig(config),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: hermesKeys.agentConfig });
-      queryClient.invalidateQueries({ queryKey: hermesKeys.health });
-    },
-  });
-}
-
-/**
- * Save env config. Invalidates env and health queries on success.
- * Toast notifications are handled by the component.
- */
-export function useSaveHermesEnv() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (env: HermesEnvConfig) => hermesApi.setEnv(env),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: hermesKeys.env });
-      queryClient.invalidateQueries({ queryKey: hermesKeys.health });
-    },
-  });
+    [t],
+  );
 }

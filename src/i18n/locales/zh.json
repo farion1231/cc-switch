@@ -1664,44 +1664,11 @@
       "primaryModel": "默认模型",
       "fallbackModel": "备选模型"
     },
-    "model": {
-      "title": "模型配置",
-      "description": "配置 config.yaml 中 model 节的默认模型设置。",
-      "default": "默认模型",
-      "defaultHint": "使用的默认模型，如 anthropic/claude-opus-4-7",
-      "provider": "供应商",
-      "providerHint": "模型路由的供应商名称（如 openrouter、anthropic）",
-      "baseUrl": "Base URL",
-      "baseUrlHint": "覆盖此模型的 API 端点 URL",
-      "contextLength": "上下文长度",
-      "maxTokens": "最大 Tokens",
-      "saveSuccess": "模型配置已保存",
-      "saveFailed": "保存模型配置失败"
-    },
-    "agent": {
-      "title": "Agent 配置",
-      "description": "配置 config.yaml 中 agent 节的行为设置。",
-      "maxTurns": "最大轮次",
-      "maxTurnsHint": "每个会话的最大 Agent 轮次",
-      "reasoningEffort": "推理深度",
-      "reasoningEffortHint": "控制推理深度：none、minimal、low、medium、high、xhigh",
-      "toolUseEnforcement": "工具使用策略",
-      "toolUseHint": "值：\"auto\"、true、false 或工具名称的 JSON 数组",
-      "approvalsMode": "审批模式",
-      "approvalsModeHint": "控制工具调用审批：manual（始终询问）、smart（自动审批安全操作）、off（从不询问）",
-      "notSet": "未设置",
-      "saveSuccess": "Agent 配置已保存",
-      "saveFailed": "保存 Agent 配置失败"
-    },
-    "env": {
-      "title": "环境变量",
-      "description": "编辑 Hermes .env 文件中的环境变量。",
-      "editorHint": "以 JSON 键值对格式编辑 Hermes .env 文件。键名将作为环境变量名。",
-      "saveSuccess": "环境变量已保存",
-      "saveFailed": "保存环境变量失败",
-      "empty": "Hermes 环境变量不能为空。使用 {} 表示空对象。",
-      "invalidJson": "Hermes 环境变量必须是有效的 JSON。",
-      "objectRequired": "Hermes 环境变量必须是 JSON 对象。"
+    "webui": {
+      "open": "打开 Hermes Web UI",
+      "offline": "Hermes Web UI 未启动，请先运行 `hermes web` 启动服务。",
+      "openFailed": "打开 Hermes Web UI 失败",
+      "fixInWebUI": "在 Hermes Web UI 修复"
     },
     "health": {
       "title": "检测到 Hermes 配置警告",

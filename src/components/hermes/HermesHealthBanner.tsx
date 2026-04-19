@@ -1,7 +1,9 @@
 import React, { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { TriangleAlert } from "lucide-react";
+import { ExternalLink, TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { useOpenHermesWebUI } from "@/hooks/useHermes";
 import type { HermesHealthWarning } from "@/types";
 
 interface HermesHealthBannerProps {
@@ -37,6 +39,7 @@ const HermesHealthBanner: React.FC<HermesHealthBannerProps> = ({
   warnings,
 }) => {
   const { t } = useTranslation();
+  const openHermesWebUI = useOpenHermesWebUI();
 
   const items = useMemo(
     () =>
@@ -55,10 +58,21 @@ const HermesHealthBanner: React.FC<HermesHealthBannerProps> = ({
     <div className="px-6 pt-4">
       <Alert className="border-amber-500/30 bg-amber-500/5">
         <TriangleAlert className="h-4 w-4" />
-        <AlertTitle>
-          {t("hermes.health.title", {
-            defaultValue: "Hermes config warnings detected",
-          })}
+        <AlertTitle className="flex items-center justify-between gap-2">
+          <span>
+            {t("hermes.health.title", {
+              defaultValue: "Hermes config warnings detected",
+            })}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void openHermesWebUI("/config")}
+            className="shrink-0"
+          >
+            <ExternalLink className="w-3.5 h-3.5 mr-1" />
+            {t("hermes.webui.fixInWebUI")}
+          </Button>
         </AlertTitle>
         <AlertDescription>
           <ul className="list-disc space-y-1 pl-5">
