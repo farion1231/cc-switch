@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
@@ -165,8 +165,17 @@ pub async fn queryProviderUsage(
     if result.success {
         state
             .usage_cache
-            .put_script(app_type, providerId, result.clone());
+            .put_script(app_type.clone(), providerId.clone(), result.clone());
         crate::tray::schedule_tray_refresh(&app_handle);
+        let payload = serde_json::json!({
+            "kind": "script",
+            "appType": app_type.as_str(),
+            "providerId": providerId,
+            "data": result.clone(),
+        });
+        if let Err(e) = app_handle.emit("usage-cache-updated", payload) {
+            log::error!("emit usage-cache-updated (script) 失败: {e}");
+        }
     }
     Ok(result)
 }
@@ -423,7 +432,7 @@ pub fn update_providers_sort_order(
 
 use crate::provider::UniversalProvider;
 use std::collections::HashMap;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 #[derive(Clone, serde::Serialize)]
 pub struct UniversalProviderSyncedEvent {
