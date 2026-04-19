@@ -18,6 +18,7 @@ pub struct ManagedAuthAccount {
     pub avatar_url: Option<String>,
     pub authenticated_at: i64,
     pub is_default: bool,
+    pub github_domain: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -59,6 +60,7 @@ fn map_account(
         login: account.login,
         avatar_url: account.avatar_url,
         authenticated_at: account.authenticated_at,
+        github_domain: account.github_domain,
     }
 }
 
@@ -79,6 +81,7 @@ fn map_device_code_response(
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_start_login(
     auth_provider: String,
+    github_domain: Option<String>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
 ) -> Result<ManagedAuthDeviceCodeResponse, String> {
@@ -87,7 +90,7 @@ pub async fn auth_start_login(
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.read().await;
             let response = auth_manager
-                .start_device_flow()
+                .start_device_flow(github_domain.as_deref())
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(map_device_code_response(auth_provider, response))
@@ -108,6 +111,7 @@ pub async fn auth_start_login(
 pub async fn auth_poll_for_account(
     auth_provider: String,
     device_code: String,
+    github_domain: Option<String>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
 ) -> Result<Option<ManagedAuthAccount>, String> {
@@ -115,7 +119,10 @@ pub async fn auth_poll_for_account(
     match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
-            match auth_manager.poll_for_token(&device_code).await {
+            match auth_manager
+                .poll_for_token(&device_code, github_domain.as_deref())
+                .await
+            {
                 Ok(account) => {
                     let default_account_id = auth_manager.get_status().await.default_account_id;
                     Ok(account.map(|account| {

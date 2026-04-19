@@ -890,7 +890,11 @@
     "retry": "重试",
     "copyCode": "复制代码",
     "migrationFailed": "旧认证数据迁移失败：{{error}}",
-    "loadModelsFailed": "加载 Copilot 模型列表失败"
+    "loadModelsFailed": "加载 Copilot 模型列表失败",
+    "deploymentType": "GitHub 部署类型",
+    "deploymentGitHubCom": "GitHub.com",
+    "deploymentEnterprise": "GitHub Enterprise Server",
+    "enterpriseDomainPlaceholder": "例如：company.ghe.com"
   },
   "codexOauth": {
     "authStatus": "认证状态",
