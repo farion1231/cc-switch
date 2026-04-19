@@ -319,11 +319,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.therouter.ai",
-        GEMINI_MODEL: "gemini-2.5-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://api.therouter.ai",
-    model: "gemini-2.5-pro",
+    model: "gemini-3.1-pro",
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],
