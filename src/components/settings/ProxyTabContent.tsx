@@ -15,9 +15,10 @@ import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPa
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ToggleRow } from "@/components/ui/toggle-row";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import { useProvidersQuery } from "@/lib/query";
 import type { SettingsFormState } from "@/hooks/useSettings";
 
 interface ProxyTabContentProps {
@@ -40,6 +41,11 @@ export function ProxyTabContent({
     isPending: isProxyPending,
   } = useProxyStatus();
 
+  const { data: claudeProvidersData } = useProvidersQuery("claude", {
+    isProxyRunning: isRunning,
+  });
+  const claudeProviders = claudeProvidersData?.providers ?? {};
+
   const handleToggleProxy = async (checked: boolean) => {
     try {
       if (!checked) {
@@ -51,6 +57,25 @@ export function ProxyTabContent({
       }
     } catch (error) {
       console.error("Toggle proxy failed:", error);
+    }
+  };
+
+  const handleIntentRoutingChange = async (checked: boolean) => {
+    try {
+      if (checked && !isRunning) {
+        return;
+      }
+
+      if (!checked) {
+        await onAutoSave({ enableClaudeIntentRouting: false });
+        return;
+      }
+
+      await onAutoSave({
+        enableClaudeIntentRouting: true,
+      });
+    } catch (error) {
+      console.error("Intent routing toggle failed:", error);
     }
   };
 
@@ -126,6 +151,18 @@ export function ProxyTabContent({
               }
               onToggleProxy={handleToggleProxy}
               isProxyPending={isProxyPending}
+              enableClaudeIntentRouting={
+                settings?.enableClaudeIntentRouting ?? false
+              }
+              onEnableClaudeIntentRoutingChange={handleIntentRoutingChange}
+              claudeRouterProviderId={settings.claudeRouterProviderId}
+              claudeProviderOptions={Object.values(claudeProviders).map((p) => ({
+                id: p.id,
+                name: p.name,
+              }))}
+              onClaudeRouterProviderChange={(providerId) =>
+                onAutoSave({ claudeRouterProviderId: providerId })
+              }
             />
           </AccordionContent>
         </AccordionItem>
