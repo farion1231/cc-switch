@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import {
@@ -10,6 +11,7 @@ import {
   useHermesMemoryLimits,
   useOpenHermesWebUI,
   useSaveHermesMemory,
+  useToggleHermesMemoryEnabled,
 } from "@/hooks/useHermes";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { HermesMemoryKind } from "@/types";
@@ -30,6 +32,7 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
   const darkMode = useDarkMode();
   const { data, isLoading } = useHermesMemory(kind, true);
   const saveMutation = useSaveHermesMemory();
+  const toggleMutation = useToggleHermesMemoryEnabled();
   const [content, setContent] = useState("");
   const [loaded, setLoaded] = useState(false);
 
@@ -57,11 +60,34 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
 
   return (
     <div className="flex flex-col gap-3">
-      {!enabled && (
-        <div className="text-sm text-amber-700 dark:text-amber-400 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/30">
-          {t("hermes.memory.disabled")}
+      <div
+        className={cn(
+          "flex items-center justify-between px-3 py-2 rounded-md border",
+          enabled
+            ? "bg-muted/30"
+            : "bg-amber-500/10 border-amber-500/30",
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={enabled}
+            disabled={toggleMutation.isPending}
+            onCheckedChange={(next) =>
+              toggleMutation.mutate({ kind, enabled: next })
+            }
+          />
+          <span className="text-sm">
+            {enabled
+              ? t("hermes.memory.enableOn")
+              : t("hermes.memory.enableOff")}
+          </span>
         </div>
-      )}
+        {!enabled && (
+          <span className="text-xs text-amber-700 dark:text-amber-400">
+            {t("hermes.memory.disabledHint")}
+          </span>
+        )}
+      </div>
 
       {isLoading && !loaded ? (
         <div className="flex items-center justify-center h-64 text-muted-foreground">

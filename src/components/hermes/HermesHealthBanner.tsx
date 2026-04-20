@@ -30,6 +30,41 @@ function getWarningText(
       return t("hermes.health.envParseFailed", {
         defaultValue: "The .env file could not be parsed.",
       });
+    case "model_no_default":
+      return t("hermes.health.modelNoDefault", {
+        defaultValue:
+          "No default model or provider is configured in the 'model' section.",
+      });
+    case "custom_providers_not_list":
+      return t("hermes.health.customProvidersNotList", {
+        defaultValue:
+          "custom_providers should be a YAML list (items prefixed with '-'), not a mapping.",
+      });
+    case "model_provider_unknown":
+      return t("hermes.health.modelProviderUnknown", {
+        defaultValue:
+          "model.provider references a provider that is not configured.",
+      });
+    case "model_default_not_in_provider":
+      return t("hermes.health.modelDefaultNotInProvider", {
+        defaultValue:
+          "model.default is not in the selected provider's models list.",
+      });
+    case "duplicate_provider_name":
+      return t("hermes.health.duplicateProviderName", {
+        defaultValue:
+          "custom_providers contains duplicate provider names — only one entry will be used.",
+      });
+    case "duplicate_provider_base_url":
+      return t("hermes.health.duplicateProviderBaseUrl", {
+        defaultValue:
+          "custom_providers contains duplicate base_urls — possible accidental copy.",
+      });
+    case "schema_migrated_v12":
+      return t("hermes.health.schemaMigratedV12", {
+        defaultValue:
+          "Hermes moved some providers into the 'providers:' dict. CC Switch only manages 'custom_providers:' — edit or remove those entries via Hermes Web UI.",
+      });
     default:
       return fallback;
   }

@@ -53,4 +53,15 @@ export const hermesApi = {
   async getMemoryLimits(): Promise<HermesMemoryLimits> {
     return await invoke("get_hermes_memory_limits");
   },
+
+  /**
+   * Toggle the on/off flag for one memory blob. Other fields in the `memory:`
+   * section (budgets, external provider config) are preserved.
+   */
+  async setMemoryEnabled(
+    kind: HermesMemoryKind,
+    enabled: boolean,
+  ): Promise<void> {
+    await invoke("set_hermes_memory_enabled", { kind, enabled });
+  },
 };

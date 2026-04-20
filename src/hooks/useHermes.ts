@@ -126,6 +126,34 @@ export function useSaveHermesMemory() {
 }
 
 /**
+ * Toggle one memory blob's on/off flag in Hermes' `config.yaml`. Invalidates
+ * the limits query so the switch UI and disabled banner update immediately.
+ */
+export function useToggleHermesMemoryEnabled() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  return useMutation({
+    mutationFn: ({
+      kind,
+      enabled,
+    }: {
+      kind: HermesMemoryKind;
+      enabled: boolean;
+    }) => hermesApi.setMemoryEnabled(kind, enabled),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: hermesKeys.memoryLimits,
+      });
+    },
+    onError: (error) => {
+      toast.error(t("hermes.memory.toggleFailed"), {
+        description: extractErrorMessage(error) || undefined,
+      });
+    },
+  });
+}
+
+/**
  * Returns a handler that probes the local Hermes Web UI, opens it in the
  * system browser, and surfaces a localized toast on failure. Callers only
  * need to wire the returned function to a click handler.
