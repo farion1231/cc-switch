@@ -1,5 +1,12 @@
 import { useTranslation } from "react-i18next";
-import { useState, useRef, useCallback, useMemo } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+  useEffect,
+  type ReactNode,
+} from "react";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -59,6 +66,77 @@ interface HermesFormFieldsProps {
   onApiModeChange: (mode: HermesApiMode) => void;
   models: HermesModel[];
   onModelsChange: (models: HermesModel[]) => void;
+  rateLimitDelay: number | undefined;
+  onRateLimitDelayChange: (delay: number | undefined) => void;
+}
+
+type BaseUrlErrorCode = "empty" | "invalid" | "scheme";
+
+const BASE_URL_ERROR_I18N_KEY: Record<BaseUrlErrorCode, string> = {
+  empty: "hermes.form.baseUrlRequired",
+  scheme: "hermes.form.baseUrlScheme",
+  invalid: "hermes.form.baseUrlInvalid",
+};
+
+const TEMPLATE_TOKEN_RE = /\$\{[^}]+\}/g;
+
+/**
+ * Hermes 0.10.0+ rejects `base_url` entries that don't parse as proper URLs
+ * (commit 2cdae233). Validate client-side so the error surfaces before the
+ * request ever reaches Hermes' startup.
+ */
+function validateBaseUrl(raw: string): BaseUrlErrorCode | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return "empty";
+  // Presets like KAT-Coder embed `${VAR}` tokens — swap them before URL parse.
+  const candidate = trimmed.replace(TEMPLATE_TOKEN_RE, "placeholder");
+  let u: URL;
+  try {
+    u = new URL(candidate);
+  } catch {
+    return "invalid";
+  }
+  if (!u.protocol.startsWith("http")) return "scheme";
+  if (!u.hostname) return "invalid";
+  return null;
+}
+
+interface AdvancedSectionProps {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  labelKey: string;
+  children: ReactNode;
+}
+
+function AdvancedSection({
+  open,
+  onOpenChange,
+  labelKey,
+  children,
+}: AdvancedSectionProps) {
+  const { t } = useTranslation();
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <CollapsibleTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          {open ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
+          )}
+          {t(labelKey)}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-3 pt-2">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 export function HermesFormFields({
@@ -75,6 +153,8 @@ export function HermesFormFields({
   onApiModeChange,
   models,
   onModelsChange,
+  rateLimitDelay,
+  onRateLimitDelayChange,
 }: HermesFormFieldsProps) {
   const { t } = useTranslation();
   const [expandedModels, setExpandedModels] = useState<Record<number, boolean>>(
@@ -82,6 +162,24 @@ export function HermesFormFields({
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [baseUrlTouched, setBaseUrlTouched] = useState(false);
+  const [providerAdvancedOpen, setProviderAdvancedOpen] = useState(
+    rateLimitDelay !== undefined,
+  );
+
+  // Auto-expand when a preset switch brings in a value so the user sees it;
+  // don't force-collapse on clear, to avoid yanking the panel shut mid-edit.
+  useEffect(() => {
+    if (rateLimitDelay !== undefined) {
+      setProviderAdvancedOpen(true);
+    }
+  }, [rateLimitDelay]);
+
+  const baseUrlErrorCode = useMemo(() => validateBaseUrl(baseUrl), [baseUrl]);
+  const showBaseUrlError = baseUrlTouched && baseUrlErrorCode !== null;
+  const baseUrlErrorMessage = baseUrlErrorCode
+    ? t(BASE_URL_ERROR_I18N_KEY[baseUrlErrorCode])
+    : "";
 
   // Stable list keys: a manual ref rather than UUID-in-state so adding/removing
   // rows doesn't re-mount unrelated inputs (would drop focus mid-typing).
@@ -120,7 +218,7 @@ export function HermesFormFields({
     modelKeysRef.current.push(crypto.randomUUID());
     onModelsChange([
       ...models,
-      { id: "", name: "", context_length: undefined, max_tokens: undefined },
+      { id: "", name: "", context_length: undefined },
     ]);
   };
 
@@ -209,13 +307,24 @@ export function HermesFormFields({
           id="hermes-baseurl"
           value={baseUrl}
           onChange={(e) => onBaseUrlChange(e.target.value)}
+          onBlur={() => setBaseUrlTouched(true)}
           placeholder="https://api.example.com/v1"
+          aria-invalid={showBaseUrlError}
+          className={
+            showBaseUrlError
+              ? "border-destructive focus-visible:ring-destructive"
+              : undefined
+          }
         />
-        <p className="text-xs text-muted-foreground">
-          {t("hermes.form.baseUrlHint", {
-            defaultValue: "供应商的 API 端点地址。",
-          })}
-        </p>
+        {showBaseUrlError ? (
+          <p className="text-xs text-destructive">{baseUrlErrorMessage}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {t("hermes.form.baseUrlHint", {
+              defaultValue: "供应商的 API 端点地址。",
+            })}
+          </p>
+        )}
       </div>
 
       <ApiKeySection
@@ -377,74 +486,31 @@ export function HermesFormFields({
                   </Button>
                 </div>
 
-                <Collapsible
+                <AdvancedSection
                   open={expandedModels[index] ?? false}
                   onOpenChange={() => toggleModelAdvanced(index)}
+                  labelKey="hermes.form.advancedOptions"
                 >
-                  <CollapsibleTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      {expandedModels[index] ? (
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      ) : (
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      )}
-                      {t("hermes.form.advancedOptions", {
-                        defaultValue: "高级选项",
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">
+                      {t("hermes.form.contextLength", {
+                        defaultValue: "上下文长度",
                       })}
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-3 pt-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("hermes.form.contextLength", {
-                            defaultValue: "上下文长度",
-                          })}
-                        </label>
-                        <Input
-                          type="number"
-                          value={model.context_length ?? ""}
-                          onChange={(e) =>
-                            handleModelChange(
-                              index,
-                              "context_length",
-                              e.target.value
-                                ? parseInt(e.target.value)
-                                : undefined,
-                            )
-                          }
-                          placeholder="200000"
-                        />
-                      </div>
-                      <div className="flex-1 space-y-1">
-                        <label className="text-xs text-muted-foreground">
-                          {t("hermes.form.maxTokens", {
-                            defaultValue: "最大输出 Tokens",
-                          })}
-                        </label>
-                        <Input
-                          type="number"
-                          value={model.max_tokens ?? ""}
-                          onChange={(e) =>
-                            handleModelChange(
-                              index,
-                              "max_tokens",
-                              e.target.value
-                                ? parseInt(e.target.value)
-                                : undefined,
-                            )
-                          }
-                          placeholder="32000"
-                        />
-                      </div>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
+                    </label>
+                    <Input
+                      type="number"
+                      value={model.context_length ?? ""}
+                      onChange={(e) =>
+                        handleModelChange(
+                          index,
+                          "context_length",
+                          e.target.value ? parseInt(e.target.value) : undefined,
+                        )
+                      }
+                      placeholder="200000"
+                    />
+                  </div>
+                </AdvancedSection>
               </div>
             ))}
           </div>
@@ -457,6 +523,44 @@ export function HermesFormFields({
           })}
         </p>
       </div>
+
+      <AdvancedSection
+        open={providerAdvancedOpen}
+        onOpenChange={setProviderAdvancedOpen}
+        labelKey="hermes.form.providerAdvanced"
+      >
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">
+            {t("hermes.form.rateLimitDelay", {
+              defaultValue: "请求间隔（秒）",
+            })}
+          </label>
+          <Input
+            type="number"
+            step="0.1"
+            min="0"
+            value={rateLimitDelay ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "") {
+                onRateLimitDelayChange(undefined);
+                return;
+              }
+              const n = parseFloat(v);
+              onRateLimitDelayChange(
+                Number.isFinite(n) && n >= 0 ? n : undefined,
+              );
+            }}
+            placeholder="0.5"
+          />
+          <p className="text-xs text-muted-foreground">
+            {t("hermes.form.rateLimitDelayHint", {
+              defaultValue:
+                "连续请求间的最小间隔秒数（可选）。留空表示无限制。",
+            })}
+          </p>
+        </div>
+      </AdvancedSection>
     </>
   );
 }

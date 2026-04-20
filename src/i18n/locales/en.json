@@ -1655,6 +1655,10 @@
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
       "apiModeCodexResponses": "OpenAI Responses",
+      "apiModeBedrockConverse": "AWS Bedrock Converse",
+      "baseUrlRequired": "API endpoint is required",
+      "baseUrlScheme": "Use an http:// or https:// address",
+      "baseUrlInvalid": "API endpoint is not a valid URL",
       "models": "Models",
       "addModel": "Add model",
       "noModels": "No models configured. Switching to this provider won't change the default model.",
@@ -1663,11 +1667,13 @@
       "modelName": "Display name",
       "modelNamePlaceholder": "Claude Opus 4.7",
       "contextLength": "Context length",
-      "maxTokens": "Max output tokens",
       "advancedOptions": "Advanced options",
       "modelsHint": "On switch, the first model is written to top-level model.default.",
       "primaryModel": "Default",
-      "fallbackModel": "Alternate"
+      "fallbackModel": "Alternate",
+      "providerAdvanced": "Provider advanced options",
+      "rateLimitDelay": "Rate limit delay (seconds)",
+      "rateLimitDelayHint": "Minimum delay in seconds between consecutive requests (optional). Leave empty for no limit."
     },
     "webui": {
       "open": "Open Hermes Web UI",

@@ -11,7 +11,7 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
-mod hermes_config;
+pub mod hermes_config;
 mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]

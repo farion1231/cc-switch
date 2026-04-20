@@ -37,11 +37,13 @@ export interface HermesFormState {
   hermesApiKey: string;
   hermesApiMode: HermesApiMode;
   hermesModels: HermesModel[];
+  hermesRateLimitDelay: number | undefined;
   existingHermesKeys: string[];
   handleHermesBaseUrlChange: (baseUrl: string) => void;
   handleHermesApiKeyChange: (apiKey: string) => void;
   handleHermesApiModeChange: (mode: HermesApiMode) => void;
   handleHermesModelsChange: (models: HermesModel[]) => void;
+  handleHermesRateLimitDelayChange: (delay: number | undefined) => void;
   resetHermesState: (config?: Partial<HermesProviderSettingsConfig>) => void;
 }
 
@@ -61,6 +63,12 @@ function parseHermesField<T>(
   } catch {
     return fallback;
   }
+}
+
+function parseRateLimitDelay(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0
+    ? raw
+    : undefined;
 }
 
 export function useHermesFormState({
@@ -106,6 +114,13 @@ export function useHermesFormState({
   const [hermesModels, setHermesModels] = useState<HermesModel[]>(() => {
     if (appId !== "hermes") return [];
     return parseHermesField<HermesModel[]>(initialData, "models", []);
+  });
+
+  const [hermesRateLimitDelay, setHermesRateLimitDelay] = useState<
+    number | undefined
+  >(() => {
+    if (appId !== "hermes") return undefined;
+    return parseRateLimitDelay(initialData?.settingsConfig?.rate_limit_delay);
   });
 
   const updateHermesConfig = useCallback(
@@ -165,6 +180,20 @@ export function useHermesFormState({
     [updateHermesConfig],
   );
 
+  const handleHermesRateLimitDelayChange = useCallback(
+    (delay: number | undefined) => {
+      setHermesRateLimitDelay(delay);
+      updateHermesConfig((config) => {
+        if (delay === undefined) {
+          delete config.rate_limit_delay;
+        } else {
+          config.rate_limit_delay = delay;
+        }
+      });
+    },
+    [updateHermesConfig],
+  );
+
   const resetHermesState = useCallback(
     (config?: Partial<HermesProviderSettingsConfig>) => {
       setHermesProviderKey("");
@@ -172,6 +201,7 @@ export function useHermesFormState({
       setHermesApiKey(config?.api_key || "");
       setHermesApiMode(config?.api_mode ?? HERMES_DEFAULT_API_MODE);
       setHermesModels(config?.models ?? []);
+      setHermesRateLimitDelay(parseRateLimitDelay(config?.rate_limit_delay));
     },
     [],
   );
@@ -183,11 +213,13 @@ export function useHermesFormState({
     hermesApiKey,
     hermesApiMode,
     hermesModels,
+    hermesRateLimitDelay,
     existingHermesKeys,
     handleHermesBaseUrlChange,
     handleHermesApiKeyChange,
     handleHermesApiModeChange,
     handleHermesModelsChange,
+    handleHermesRateLimitDelayChange,
     resetHermesState,
   };
 }

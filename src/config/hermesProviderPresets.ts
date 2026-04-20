@@ -37,8 +37,12 @@ export function isHermesReadOnlyProvider(settingsConfig: unknown): boolean {
  * models:
  *   anthropic/claude-opus-4-7:
  *     context_length: 200000
- *     max_tokens: 32000
  * ```
+ *
+ * Hermes' `_VALID_CUSTOM_PROVIDER_FIELDS` (hermes_cli/config.py) does not include
+ * `max_tokens` at the per-model level — writing it produces an "unknown field"
+ * warning on Hermes startup. Max tokens is a per-request parameter, not a
+ * provider-level config.
  */
 export interface HermesModel {
   /** Model ID — becomes the YAML key and the value written to top-level model.default. */
@@ -47,16 +51,14 @@ export interface HermesModel {
   name?: string;
   /** Override the auto-detected context window. */
   context_length?: number;
-  /** Response-length cap. */
-  max_tokens?: number;
 }
 
 /**
  * Top-level `model:` defaults suggested by a preset.
  *
  * Written to the YAML `model:` section when the user switches to this provider.
- * Per-model `context_length` / `max_tokens` live on the individual `HermesModel`
- * entries and flow through `custom_providers[].models`, not this object.
+ * Per-model `context_length` lives on the individual `HermesModel` entries and
+ * flows through `custom_providers[].models`, not this object.
  */
 export interface HermesSuggestedDefaults {
   model: {
@@ -71,7 +73,8 @@ export interface HermesSuggestedDefaults {
 export type HermesApiMode =
   | "chat_completions"
   | "anthropic_messages"
-  | "codex_responses";
+  | "codex_responses"
+  | "bedrock_converse";
 
 /** Default mode used when a provider has no stored value yet. */
 export const HERMES_DEFAULT_API_MODE: HermesApiMode = "chat_completions";
@@ -87,6 +90,10 @@ export const hermesApiModes: Array<{
     labelKey: "hermes.form.apiModeAnthropicMessages",
   },
   { value: "codex_responses", labelKey: "hermes.form.apiModeCodexResponses" },
+  {
+    value: "bedrock_converse",
+    labelKey: "hermes.form.apiModeBedrockConverse",
+  },
 ];
 
 export interface HermesProviderPreset {
@@ -115,6 +122,8 @@ export interface HermesProviderSettingsConfig {
   api_mode?: HermesApiMode;
   /** UI-side ordered list; serialized to YAML as a dict keyed by id. */
   models?: HermesModel[];
+  /** Delay in seconds between consecutive requests to this provider. */
+  rate_limit_delay?: number;
   [key: string]: unknown;
 }
 
@@ -154,19 +163,16 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "anthropic/claude-opus-4-7",
           name: "Claude Opus 4.7",
           context_length: 1000000,
-          max_tokens: 32000,
         },
         {
           id: "anthropic/claude-sonnet-4-6",
           name: "Claude Sonnet 4.6",
           context_length: 1000000,
-          max_tokens: 32000,
         },
         {
           id: "anthropic/claude-haiku-4-5",
           name: "Claude Haiku 4.5",
           context_length: 200000,
-          max_tokens: 32000,
         },
         {
           id: "openai/gpt-5.4",
@@ -202,13 +208,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "deepseek-chat",
           name: "DeepSeek V3.2",
           context_length: 128000,
-          max_tokens: 8000,
         },
         {
           id: "deepseek-reasoner",
           name: "DeepSeek R1",
           context_length: 128000,
-          max_tokens: 64000,
         },
       ],
     },
