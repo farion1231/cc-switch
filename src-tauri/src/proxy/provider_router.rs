@@ -242,6 +242,18 @@ impl ProviderRouter {
             return;
         };
 
+        // [P1-A] 故障转移总开关关闭时跳过回切
+        let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(config) => config.auto_failover_enabled,
+            Err(_) => {
+                log::warn!("[FO-BACK] 读取 proxy_config 失败，跳过本次回切");
+                return;
+            }
+        };
+        if !auto_failover_enabled {
+            return;
+        }
+
         let Ok(ordered_ids) = self.db.get_failover_queue(app_type) else {
             log::warn!("[FO-BACK] 读取 failover_queue 失败，跳过本次回切");
             return;
@@ -258,7 +270,8 @@ impl ProviderRouter {
         // 检查 P1 熔断器状态
         let p1_circuit_key = format!("{app_type}:{p1_id}");
         let p1_breaker = self.get_or_create_circuit_breaker(&p1_circuit_key).await;
-        if p1_breaker.get_state().await != CircuitState::Closed {
+        // [P1-B] 必须同时满足：P1 从 Open/HalfOpen 恢复到 Closed（而非从未失败过）
+        if p1_breaker.get_state().await != CircuitState::Closed || !p1_breaker.has_been_open() {
             return;
         }
 
