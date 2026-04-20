@@ -106,6 +106,18 @@ fn json_deep_merge(target: &mut Value, source: &Value) {
                 }
             }
         }
+        (Value::Array(target_arr), Value::Array(source_arr)) => {
+            // Set-union: append source items not already present in target.
+            // Uses json_is_subset for matching, consistent with json_remove_array_items.
+            for source_item in source_arr {
+                let already_present = target_arr
+                    .iter()
+                    .any(|target_item| json_is_subset(target_item, source_item));
+                if !already_present {
+                    target_arr.push(source_item.clone());
+                }
+            }
+        }
         (target_value, source_value) => {
             *target_value = source_value.clone();
         }
@@ -232,6 +244,24 @@ fn merge_toml_item(target: &mut Item, source: &Item) {
     if let Some(source_table) = source.as_table_like() {
         if let Some(target_table) = target.as_table_like_mut() {
             merge_toml_table_like(target_table, source_table);
+            return;
+        }
+    }
+
+    // Array set-union: append source items not already present in target.
+    // Mirrors toml_remove_array_items which uses toml_value_is_subset for matching.
+    if let (Some(target_value), Some(source_value)) = (target.as_value_mut(), source.as_value()) {
+        if let (Some(target_arr), Some(source_arr)) =
+            (target_value.as_array_mut(), source_value.as_array())
+        {
+            for source_item in source_arr.iter() {
+                let already_present = target_arr
+                    .iter()
+                    .any(|target_item| toml_value_is_subset(target_item, source_item));
+                if !already_present {
+                    target_arr.push(source_item.clone());
+                }
+            }
             return;
         }
     }
@@ -433,29 +463,31 @@ fn apply_common_config_to_settings(
         AppType::Claude => {
             let source = serde_json::from_str::<Value>(trimmed)
                 .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
-            let mut result = settings.clone();
-            json_deep_merge(&mut result, &source);
+            // Provider settings override common config: merge provider ON TOP of common config
+            // so that per-provider edits to shared fields are preserved.
+            let mut result = source;
+            json_deep_merge(&mut result, settings);
             Ok(result)
         }
         AppType::Codex => {
             let mut result = settings.clone();
             let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
-            let mut target_doc = if config_toml.trim().is_empty() {
-                DocumentMut::new()
-            } else {
-                config_toml.parse::<DocumentMut>().map_err(|e| {
-                    AppError::Message(format!(
-                        "Invalid Codex config.toml while applying common config: {e}"
-                    ))
-                })?
-            };
             let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
                 AppError::Message(format!("Invalid Codex common config snippet: {e}"))
             })?;
 
-            merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+            // Provider config overrides common config: merge provider ON TOP of common config
+            let mut merged_doc = source_doc;
+            if !config_toml.trim().is_empty() {
+                let target_doc = config_toml.parse::<DocumentMut>().map_err(|e| {
+                    AppError::Message(format!(
+                        "Invalid Codex config.toml while applying common config: {e}"
+                    ))
+                })?;
+                merge_toml_table_like(merged_doc.as_table_mut(), target_doc.as_table());
+            }
             if let Some(obj) = result.as_object_mut() {
-                obj.insert("config".to_string(), Value::String(target_doc.to_string()));
+                obj.insert("config".to_string(), Value::String(merged_doc.to_string()));
             }
             Ok(result)
         }
@@ -464,7 +496,10 @@ fn apply_common_config_to_settings(
                 .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
             let mut result = settings.clone();
             if let Some(env) = result.get_mut("env") {
-                json_deep_merge(env, &source);
+                // Provider env overrides common config: merge provider ON TOP of common config
+                let mut merged_env = source;
+                json_deep_merge(&mut merged_env, env);
+                *env = merged_env;
             } else if let Some(obj) = result.as_object_mut() {
                 obj.insert("env".to_string(), source);
             }
@@ -1434,6 +1469,56 @@ mod tests {
     }
 
     #[test]
+    fn claude_provider_override_wins_over_common_config() {
+        // Regression test: when a provider has a value that differs from common config,
+        // the provider's value should take precedence after apply.
+        let settings = json!({
+            "env": {
+                "ENABLE_LSP_TOOLS": "0",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test"
+            }
+        });
+        let snippet = r#"{
+  "env": {
+    "ENABLE_LSP_TOOLS": "1"
+  }
+}"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(
+            applied["env"]["ENABLE_LSP_TOOLS"],
+            json!("0"),
+            "provider-specific value should override common config"
+        );
+        assert_eq!(applied["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-test"));
+    }
+
+    #[test]
+    fn claude_common_config_fills_absent_fields() {
+        // When provider doesn't have a field, common config should fill it in.
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-test"
+            }
+        });
+        let snippet = r#"{
+  "env": {
+    "ENABLE_LSP_TOOLS": "1"
+  }
+}"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(
+            applied["env"]["ENABLE_LSP_TOOLS"],
+            json!("1"),
+            "common config should fill in absent fields"
+        );
+        assert_eq!(applied["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-test"));
+    }
+
+    #[test]
     fn codex_common_config_array_subset_detection_and_strip_preserve_extra_items() {
         let settings = json!({
             "auth": {},
@@ -1461,5 +1546,86 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    #[test]
+    fn claude_common_config_array_roundtrip() {
+        // Provider stored ["tool2"] (after remove), snippet has ["tool1"].
+        // Apply should produce ["tool1", "tool2"]; remove should recover ["tool2"].
+        let stored = json!({ "allowedTools": ["tool2"] });
+        let snippet = r#"{ "allowedTools": ["tool1"] }"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &stored, snippet).unwrap();
+        let tools = applied["allowedTools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(tools.contains(&json!("tool1")));
+        assert!(tools.contains(&json!("tool2")));
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
+        assert_eq!(stripped, stored, "round-trip should recover stored provider settings");
+    }
+
+    #[test]
+    fn claude_common_config_array_deduplicates() {
+        // Both provider and snippet have "tool1". Should not appear twice.
+        let settings = json!({ "allowedTools": ["tool1", "tool2"] });
+        let snippet = r#"{ "allowedTools": ["tool1"] }"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        let tools = applied["allowedTools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2, "tool1 should not be duplicated");
+        assert!(tools.contains(&json!("tool1")));
+        assert!(tools.contains(&json!("tool2")));
+    }
+
+    #[test]
+    fn codex_common_config_array_roundtrip() {
+        let stored = json!({
+            "auth": {},
+            "config": "allowed_tools = [\"tool2\"]\n"
+        });
+        let snippet = "allowed_tools = [\"tool1\"]\n";
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Codex, &stored, snippet).unwrap();
+        let applied_config = applied["config"].as_str().unwrap_or_default();
+        let parsed = applied_config.parse::<DocumentMut>().unwrap();
+        let tools = parsed["allowed_tools"]
+            .as_array()
+            .expect("allowed_tools should be an array");
+        let values: Vec<&str> = tools.iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(values.len(), 2);
+        assert!(values.contains(&"tool1"));
+        assert!(values.contains(&"tool2"));
+
+        let stripped =
+            remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
+        let stripped_config = stripped["config"].as_str().unwrap_or_default();
+        let stripped_parsed = stripped_config.parse::<DocumentMut>().unwrap();
+        let stripped_tools = stripped_parsed["allowed_tools"]
+            .as_array()
+            .expect("allowed_tools should remain");
+        let stripped_values: Vec<&str> = stripped_tools.iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(stripped_values, vec!["tool2"]);
+    }
+
+    #[test]
+    fn claude_common_config_scalar_still_overrides_with_array_union() {
+        // Scalars must still use provider-wins semantics; arrays use set-union.
+        let settings = json!({
+            "model": "claude-opus",
+            "allowedTools": ["tool2"]
+        });
+        let snippet = r#"{ "model": "claude-sonnet", "allowedTools": ["tool1"] }"#;
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
+        assert_eq!(applied["model"], json!("claude-opus"), "provider scalar should override snippet");
+        let tools = applied["allowedTools"].as_array().unwrap();
+        assert!(tools.contains(&json!("tool1")));
+        assert!(tools.contains(&json!("tool2")));
     }
 }
