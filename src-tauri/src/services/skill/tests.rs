@@ -12,6 +12,28 @@ fn extract_repo_source_from_gitlab_doc_url() {
 }
 
 #[test]
+fn extract_repo_source_from_github_doc_url_with_blob_repo_name() {
+    let (repo_url, kind) = SkillService::extract_repo_source_from_doc_url(
+        "https://github.com/acme/blob/blob/main/SKILL.md",
+    )
+    .expect("should extract repo source");
+
+    assert_eq!(repo_url, "https://github.com/acme/blob");
+    assert_eq!(kind, RepoSourceKind::Github);
+}
+
+#[test]
+fn extract_repo_source_from_gitlab_doc_url_with_tree_namespace() {
+    let (repo_url, kind) = SkillService::extract_repo_source_from_doc_url(
+        "https://git.example.com/group/tree/repo/-/blob/main/SKILL.md",
+    )
+    .expect("should extract repo source");
+
+    assert_eq!(repo_url, "https://git.example.com/group/tree/repo");
+    assert_eq!(kind, RepoSourceKind::Gitlab);
+}
+
+#[test]
 fn build_gitlab_urls_from_repo_source() {
     let repo = SkillRepo {
         owner: "gitlab.com/group/subgroup".to_string(),

@@ -503,22 +503,27 @@ impl SkillService {
 
     fn extract_repo_source_from_doc_url(url: &str) -> Option<(String, RepoSourceKind)> {
         let parsed = url::Url::parse(url).ok()?;
-        let path = parsed.path().trim_end_matches('/');
+        let segments: Vec<&str> = parsed.path_segments()?.filter(|segment| !segment.is_empty()).collect();
 
-        let (repo_path, kind) = if let Some((repo_path, _)) = path.split_once("/-/blob/") {
-            (repo_path, RepoSourceKind::Gitlab)
-        } else if let Some((repo_path, _)) = path.split_once("/-/tree/") {
-            (repo_path, RepoSourceKind::Gitlab)
-        } else if let Some((repo_path, _)) = path.split_once("/blob/") {
-            (repo_path, RepoSourceKind::Github)
-        } else if let Some((repo_path, _)) = path.split_once("/tree/") {
-            (repo_path, RepoSourceKind::Github)
+        let (repo_path, kind) = if segments.len() >= 4
+            && matches!(segments.get(2), Some(&"blob") | Some(&"tree"))
+        {
+            (segments[..2].join("/"), RepoSourceKind::Github)
+        } else if let Some(dash_idx) = segments.iter().position(|segment| *segment == "-") {
+            if dash_idx >= 2
+                && dash_idx + 1 < segments.len()
+                && matches!(segments.get(dash_idx + 1), Some(&"blob") | Some(&"tree"))
+            {
+                (segments[..dash_idx].join("/"), RepoSourceKind::Gitlab)
+            } else {
+                return None;
+            }
         } else {
             return None;
         };
 
         let origin = parsed.origin().ascii_serialization();
-        Some((format!("{origin}{repo_path}"), kind))
+        Some((format!("{origin}/{repo_path}"), kind))
     }
 
     fn build_skill_doc_url(
