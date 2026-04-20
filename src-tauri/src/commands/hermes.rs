@@ -76,6 +76,14 @@ pub fn get_hermes_memory_limits() -> Result<hermes_config::HermesMemoryLimits, S
     hermes_config::read_memory_limits().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn set_hermes_memory_enabled(
+    kind: hermes_config::MemoryKind,
+    enabled: bool,
+) -> Result<hermes_config::HermesWriteOutcome, String> {
+    hermes_config::set_memory_enabled(kind, enabled).map_err(|e| e.to_string())
+}
+
 // ============================================================================
 // Hermes Web UI launcher
 // ============================================================================
