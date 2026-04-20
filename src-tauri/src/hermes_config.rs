@@ -414,6 +414,43 @@ fn models_dict_to_array(dict: serde_json::Map<String, serde_json::Value>) -> ser
     serde_json::Value::Array(out)
 }
 
+/// Rewrite historical camelCase keys to Hermes' snake_case schema.
+///
+/// Older DeepLink import paths emitted `baseUrl` / `apiKey` / `apiMode` /
+/// `maxTokens` / `contextLength`, which do not belong to Hermes'
+/// `_VALID_CUSTOM_PROVIDER_FIELDS` set. Writing those raw to YAML silently
+/// poisons `custom_providers:` entries. This sanitiser runs defensively on
+/// every `set_provider` call so stored data heals on the next activation;
+/// unknown keys pass through untouched to keep forward-compat with new
+/// Hermes fields (e.g. `request_timeout_seconds`).
+fn sanitize_hermes_provider_keys(config: &mut serde_json::Value) {
+    const KEY_ALIASES: &[(&str, &str)] = &[
+        ("baseUrl", "base_url"),
+        ("apiKey", "api_key"),
+        ("apiMode", "api_mode"),
+        ("maxTokens", "max_tokens"),
+        ("contextLength", "context_length"),
+    ];
+    // Legacy DeepLink emitted `api: "openai-completions"` which is neither a
+    // Hermes field nor mappable to `api_mode`.
+    const LEGACY_FIELDS_TO_DROP: &[&str] = &["api"];
+
+    let Some(obj) = config.as_object_mut() else {
+        return;
+    };
+
+    for (from, to) in KEY_ALIASES {
+        if let Some(val) = obj.remove(*from) {
+            // snake_case wins when both are present; stale camelCase is dropped.
+            obj.entry((*to).to_string()).or_insert(val);
+        }
+    }
+
+    for field in LEGACY_FIELDS_TO_DROP {
+        obj.remove(*field);
+    }
+}
+
 /// If `config.models` is a JSON array, convert it in-place to the dict shape.
 /// No-op when `models` is absent or already a dict.
 fn normalize_provider_models_for_write(config: &mut serde_json::Value) {
@@ -491,6 +528,10 @@ pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, App
             if let Some(name) = item.get("name").and_then(|n| n.as_str()) {
                 match yaml_to_json(item) {
                     Ok(mut json_val) => {
+                        // Heal legacy camelCase records (from older DeepLink
+                        // imports) before the UI sees them, so editing doesn't
+                        // reveal stale `baseUrl` / `apiKey` fields.
+                        sanitize_hermes_provider_keys(&mut json_val);
                         denormalize_provider_models_for_read(&mut json_val);
                         map.insert(name.to_string(), json_val);
                     }
@@ -536,8 +577,12 @@ pub fn set_provider(
         .cloned()
         .unwrap_or_default();
 
-    // Normalize `models` from UI array to Hermes YAML dict before serializing.
+    // Rewrite any historical camelCase keys (e.g. from older DeepLink imports)
+    // before touching models / YAML — avoids writing non-Hermes fields back.
     let mut normalized = provider_config;
+    sanitize_hermes_provider_keys(&mut normalized);
+
+    // Normalize `models` from UI array to Hermes YAML dict before serializing.
     normalize_provider_models_for_write(&mut normalized);
 
     // Extract the first model id (now a key in the normalized dict) so we can
@@ -819,7 +864,7 @@ fn scan_hermes_health_internal(content: &str) -> Vec<HermesHealthWarning> {
     if version >= 12 && providers_dict_populated {
         warnings.push(hermes_warning(
             "schema_migrated_v12",
-            "Hermes v12 moved some entries into the 'providers:' dict. CC Switch only manages 'custom_providers:' — edit or remove those entries via Hermes Web UI.".to_string(),
+            "Hermes' newer schema moved some entries into the 'providers:' dict. CC Switch only manages 'custom_providers:' — edit or remove those entries via Hermes Web UI.".to_string(),
             "providers",
         ));
     }
@@ -1046,6 +1091,75 @@ mod tests {
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
         result
+    }
+
+    // ---- sanitize_hermes_provider_keys tests ----
+
+    #[test]
+    fn sanitize_rewrites_camel_case_aliases() {
+        let mut v = serde_json::json!({
+            "name": "test",
+            "baseUrl": "https://api.example.com",
+            "apiKey": "sk-123",
+            "apiMode": "chat_completions",
+            "maxTokens": 8192,
+            "contextLength": 200000,
+        });
+        sanitize_hermes_provider_keys(&mut v);
+        let obj = v.as_object().unwrap();
+        assert_eq!(obj.get("base_url").unwrap(), "https://api.example.com");
+        assert_eq!(obj.get("api_key").unwrap(), "sk-123");
+        assert_eq!(obj.get("api_mode").unwrap(), "chat_completions");
+        assert_eq!(obj.get("max_tokens").unwrap(), 8192);
+        assert_eq!(obj.get("context_length").unwrap(), 200000);
+        assert!(obj.get("baseUrl").is_none());
+        assert!(obj.get("apiKey").is_none());
+    }
+
+    #[test]
+    fn sanitize_drops_stale_duplicate_when_snake_case_exists() {
+        let mut v = serde_json::json!({
+            "baseUrl": "https://old.example.com",
+            "base_url": "https://new.example.com",
+        });
+        sanitize_hermes_provider_keys(&mut v);
+        let obj = v.as_object().unwrap();
+        // snake_case wins; stale camelCase is dropped
+        assert_eq!(obj.get("base_url").unwrap(), "https://new.example.com");
+        assert!(obj.get("baseUrl").is_none());
+    }
+
+    #[test]
+    fn sanitize_drops_legacy_api_field() {
+        let mut v = serde_json::json!({
+            "base_url": "https://api.example.com",
+            "api": "openai-completions",
+        });
+        sanitize_hermes_provider_keys(&mut v);
+        let obj = v.as_object().unwrap();
+        assert!(obj.get("api").is_none(), "legacy 'api' key must be removed");
+        assert!(obj.get("base_url").is_some());
+    }
+
+    #[test]
+    fn sanitize_preserves_unknown_fields() {
+        let mut v = serde_json::json!({
+            "base_url": "https://api.example.com",
+            "request_timeout_seconds": 300,
+            "rate_limit_delay": 1.5,
+        });
+        sanitize_hermes_provider_keys(&mut v);
+        let obj = v.as_object().unwrap();
+        // Forward-compat: Hermes' own new fields pass through untouched
+        assert_eq!(obj.get("request_timeout_seconds").unwrap(), 300);
+        assert_eq!(obj.get("rate_limit_delay").unwrap(), 1.5);
+    }
+
+    #[test]
+    fn sanitize_noop_on_non_object() {
+        let mut v = serde_json::json!(["not", "an", "object"]);
+        sanitize_hermes_provider_keys(&mut v);
+        assert!(v.is_array());
     }
 
     // ---- find_yaml_section_range tests ----
@@ -1292,6 +1406,35 @@ custom_providers:
             assert_eq!(provider["api_key"], "sk-new");
             assert_eq!(provider["request_timeout_seconds"], 300);
             assert_eq!(provider["key_env"], "ACME_API_KEY");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_providers_heals_legacy_camel_case_on_read() {
+        // A DB may still hold records from older DeepLink imports that wrote
+        // camelCase fields into `settings_config`. The read path must surface
+        // them in Hermes' native snake_case so UI editors aren't lying to users.
+        with_test_home(|| {
+            let yaml = "\
+custom_providers:
+  - name: legacy
+    baseUrl: https://legacy.example.com
+    apiKey: sk-legacy
+    apiMode: chat_completions
+    api: openai-completions
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let provider = get_provider("legacy").unwrap().unwrap();
+            assert_eq!(provider["base_url"], "https://legacy.example.com");
+            assert_eq!(provider["api_key"], "sk-legacy");
+            assert_eq!(provider["api_mode"], "chat_completions");
+            assert!(provider.get("baseUrl").is_none());
+            assert!(provider.get("apiKey").is_none());
+            assert!(provider.get("api").is_none());
         });
     }
 

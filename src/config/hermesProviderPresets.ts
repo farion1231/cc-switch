@@ -45,7 +45,10 @@ export interface HermesSuggestedDefaults {
 }
 
 /** Hermes custom_provider protocol mode (optional; auto-detected when omitted). */
-export type HermesApiMode = "chat_completions" | "anthropic_messages";
+export type HermesApiMode =
+  | "chat_completions"
+  | "anthropic_messages"
+  | "codex_responses";
 
 /**
  * Form-facing value used by the API Mode dropdown.
@@ -70,6 +73,7 @@ export const hermesApiModes: Array<{
     value: "anthropic_messages",
     labelKey: "hermes.form.apiModeAnthropicMessages",
   },
+  { value: "codex_responses", labelKey: "hermes.form.apiModeCodexResponses" },
 ];
 
 export interface HermesProviderPreset {

@@ -63,7 +63,7 @@ function getWarningText(
     case "schema_migrated_v12":
       return t("hermes.health.schemaMigratedV12", {
         defaultValue:
-          "Hermes moved some providers into the 'providers:' dict. CC Switch only manages 'custom_providers:' — edit or remove those entries via Hermes Web UI.",
+          "Hermes' newer schema moved some providers into the 'providers:' dict. CC Switch only manages 'custom_providers:' — edit or remove those entries via Hermes Web UI.",
       });
     default:
       return fallback;

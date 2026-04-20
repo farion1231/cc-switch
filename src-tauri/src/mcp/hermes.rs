@@ -25,6 +25,10 @@ use super::validation::validate_server_spec;
 
 /// Hermes-specific fields preserved on merge-on-write, stripped on import.
 /// Update this list when Hermes adds new per-server config fields.
+///
+/// `auth` ("oauth" / absent) is an OAuth-type declaration read by Hermes —
+/// CC Switch has no OAuth UI, but losing the field on round-trip downgrades
+/// the server to unauthenticated calls.
 const HERMES_EXTRA_FIELDS: &[&str] = &[
     "enabled",
     "timeout",
@@ -32,6 +36,7 @@ const HERMES_EXTRA_FIELDS: &[&str] = &[
     "tools",
     "sampling",
     "roots",
+    "auth",
 ];
 
 // ============================================================================
@@ -504,6 +509,47 @@ mod tests {
         assert_eq!(merged["tools"]["include"][0], "read_file");
         assert_eq!(merged["sampling"]["enabled"], true);
         assert_eq!(merged["enabled"], true);
+    }
+
+    #[test]
+    fn test_merge_preserves_auth_field() {
+        let existing = json!({
+            "url": "https://mcp.example.com",
+            "auth": "oauth",
+            "enabled": true
+        });
+
+        let new_spec = json!({
+            "url": "https://mcp.example.com/updated",
+            "headers": { "X-Trace": "abc" },
+            "enabled": true
+        });
+
+        let merged = merge_hermes_spec(&existing, &new_spec);
+
+        assert_eq!(merged["url"], "https://mcp.example.com/updated");
+        assert_eq!(merged["headers"]["X-Trace"], "abc");
+        assert_eq!(
+            merged["auth"], "oauth",
+            "auth declaration must survive CC Switch round-trip"
+        );
+    }
+
+    #[test]
+    fn test_convert_hermes_strips_auth_on_import() {
+        let spec = json!({
+            "url": "https://mcp.example.com",
+            "auth": "oauth",
+            "enabled": true
+        });
+
+        let result = convert_from_hermes_format("remote", &spec).unwrap();
+        assert_eq!(result["type"], "sse");
+        assert_eq!(result["url"], "https://mcp.example.com");
+        assert!(
+            result.get("auth").is_none(),
+            "auth stays Hermes-specific; stripped from unified format"
+        );
     }
 
     #[test]

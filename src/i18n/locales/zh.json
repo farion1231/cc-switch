@@ -1653,6 +1653,7 @@
       "apiModeAuto": "自动检测",
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
+      "apiModeCodexResponses": "Codex Responses（Copilot / OpenCode）",
       "models": "模型列表",
       "addModel": "添加模型",
       "noModels": "暂无模型配置。切换到此供应商时将不会更新默认模型。",
@@ -1684,7 +1685,7 @@
       "modelDefaultNotInProvider": "model.default 指向的模型不在所选供应商的模型列表中。",
       "duplicateProviderName": "custom_providers 中存在重复的供应商名，只会有一条生效。",
       "duplicateProviderBaseUrl": "custom_providers 中存在重复的 base_url，可能是意外复制。",
-      "schemaMigratedV12": "Hermes 把部分供应商移到了 'providers:' dict。CC Switch 只管理 'custom_providers:'，请在 Hermes Web UI 编辑或删除这些条目。"
+      "schemaMigratedV12": "Hermes 新版 schema 把部分供应商移到了 'providers:' dict。CC Switch 只管理 'custom_providers:'，请在 Hermes Web UI 编辑或删除这些条目。"
     },
     "memory": {
       "title": "记忆管理",

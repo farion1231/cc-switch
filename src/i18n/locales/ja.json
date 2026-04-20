@@ -1653,6 +1653,7 @@
       "apiModeAuto": "自動検出",
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
+      "apiModeCodexResponses": "Codex Responses（Copilot / OpenCode）",
       "models": "モデル一覧",
       "addModel": "モデルを追加",
       "noModels": "モデル未設定。このプロバイダーに切り替えてもデフォルトモデルは更新されません。",
@@ -1684,7 +1685,7 @@
       "modelDefaultNotInProvider": "model.default は選択中のプロバイダーのモデル一覧に含まれていません。",
       "duplicateProviderName": "custom_providers にプロバイダー名の重複があります。1 件のみ有効になります。",
       "duplicateProviderBaseUrl": "custom_providers に重複した base_url があります。誤ってコピーされた可能性があります。",
-      "schemaMigratedV12": "Hermes は一部のプロバイダーを 'providers:' dict に移しました。CC Switch は 'custom_providers:' のみを管理します。該当する項目は Hermes Web UI で編集・削除してください。"
+      "schemaMigratedV12": "Hermes の新しいスキーマでは一部のプロバイダーが 'providers:' dict に移動しました。CC Switch は 'custom_providers:' のみを管理します。該当する項目は Hermes Web UI で編集・削除してください。"
     },
     "memory": {
       "title": "メモリ",

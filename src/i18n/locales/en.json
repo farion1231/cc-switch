@@ -1653,6 +1653,7 @@
       "apiModeAuto": "Auto-detect",
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
+      "apiModeCodexResponses": "Codex Responses (Copilot / OpenCode)",
       "models": "Models",
       "addModel": "Add model",
       "noModels": "No models configured. Switching to this provider won't change the default model.",
@@ -1684,7 +1685,7 @@
       "modelDefaultNotInProvider": "model.default is not in the selected provider's models list.",
       "duplicateProviderName": "custom_providers contains duplicate provider names — only one entry will be used.",
       "duplicateProviderBaseUrl": "custom_providers contains duplicate base_urls — possible accidental copy.",
-      "schemaMigratedV12": "Hermes moved some providers into the 'providers:' dict. CC Switch only manages 'custom_providers:' — edit or remove those entries via Hermes Web UI."
+      "schemaMigratedV12": "Hermes' newer schema moved some providers into the 'providers:' dict. CC Switch only manages 'custom_providers:' — edit or remove those entries via Hermes Web UI."
     },
     "memory": {
       "title": "Memory",
