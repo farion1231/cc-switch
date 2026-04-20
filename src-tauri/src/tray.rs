@@ -169,14 +169,30 @@ fn format_usage_suffix(
     provider: &crate::provider::Provider,
     provider_id: &str,
 ) -> Option<String> {
-    // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
-    if let Some(Some(s)) =
+    // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
+    // 并顺手 invalidate，防止后续重建继续命中过期数据。
+    let script_enabled = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.usage_script.as_ref())
+        .map(|s| s.enabled)
+        .unwrap_or(false);
+
+    if script_enabled {
+        // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
+        if let Some(Some(s)) =
+            app_state
+                .usage_cache
+                .with_script(app_type, provider_id, format_script_summary)
+        {
+            return Some(format!(" · {s}"));
+        }
+    } else {
         app_state
             .usage_cache
-            .with_script(app_type, provider_id, format_script_summary)
-    {
-        return Some(format!(" · {s}"));
+            .invalidate_script(app_type, provider_id);
     }
+
     if provider.category.as_deref() == Some("official") {
         if let Some(Some(s)) = app_state
             .usage_cache
@@ -683,20 +699,34 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         return;
     };
 
-    let subscription_futures = TRAY_SECTIONS.iter().map(|section| {
-        let app_clone = app.clone();
-        let state = app.state::<AppState>();
-        let tool = section.app_type.as_str().to_string();
-        let log_name = section.log_name;
-        async move {
-            if let Err(e) = crate::commands::get_subscription_quota(app_clone, state, tool).await {
-                log::debug!("[Tray] 刷新{log_name}订阅用量失败（可能未登录）: {e}");
+    // 与 `create_tray_menu` 保持一致：用户隐藏的 app 不参与外部 API 查询，
+    // 避免在未使用的 app 上浪费请求、撞 rate limit 或反复触发鉴权失败日志。
+    let visible_apps = crate::settings::get_settings()
+        .visible_apps
+        .unwrap_or_default();
+
+    let subscription_futures = TRAY_SECTIONS
+        .iter()
+        .filter(|section| visible_apps.is_visible(&section.app_type))
+        .map(|section| {
+            let app_clone = app.clone();
+            let state = app.state::<AppState>();
+            let tool = section.app_type.as_str().to_string();
+            let log_name = section.log_name;
+            async move {
+                if let Err(e) =
+                    crate::commands::get_subscription_quota(app_clone, state, tool).await
+                {
+                    log::debug!("[Tray] 刷新{log_name}订阅用量失败（可能未登录）: {e}");
+                }
             }
-        }
-    });
+        });
 
     let mut script_futures = Vec::new();
     for section in TRAY_SECTIONS.iter() {
+        if !visible_apps.is_visible(&section.app_type) {
+            continue;
+        }
         let app_type_str = section.app_type.as_str();
         let providers = match app_state.db.get_all_providers(app_type_str) {
             Ok(p) => p,

@@ -4,6 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { AppId } from "@/lib/api/types";
 import type { UsageResult } from "@/types";
 import type { SubscriptionQuota } from "@/types/subscription";
+import { usageKeys } from "@/lib/query/usage";
+import { subscriptionKeys } from "@/lib/query/subscription";
 
 type UsageCacheUpdatedPayload =
   | {
@@ -37,12 +39,12 @@ export function useUsageCacheBridge() {
           const payload = event.payload;
           if (payload.kind === "script") {
             queryClient.setQueryData<UsageResult>(
-              ["usage", payload.providerId, payload.appType],
+              usageKeys.script(payload.providerId, payload.appType),
               payload.data,
             );
           } else if (payload.kind === "subscription") {
             queryClient.setQueryData<SubscriptionQuota>(
-              ["subscription", "quota", payload.appType],
+              subscriptionKeys.quota(payload.appType),
               payload.data,
             );
           }

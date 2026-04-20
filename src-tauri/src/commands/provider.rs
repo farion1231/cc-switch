@@ -163,19 +163,19 @@ pub async fn queryProviderUsage(
     let result =
         query_provider_usage_inner(&state, &copilot_state, app_type.clone(), &providerId).await?;
     if result.success {
-        state
-            .usage_cache
-            .put_script(app_type.clone(), providerId.clone(), result.clone());
-        crate::tray::schedule_tray_refresh(&app_handle);
         let payload = serde_json::json!({
             "kind": "script",
             "appType": app_type.as_str(),
-            "providerId": providerId,
-            "data": result.clone(),
+            "providerId": &providerId,
+            "data": &result,
         });
         if let Err(e) = app_handle.emit("usage-cache-updated", payload) {
             log::error!("emit usage-cache-updated (script) 失败: {e}");
         }
+        state
+            .usage_cache
+            .put_script(app_type, providerId, result.clone());
+        crate::tray::schedule_tray_refresh(&app_handle);
     }
     Ok(result)
 }

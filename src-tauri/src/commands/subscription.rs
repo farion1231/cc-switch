@@ -19,19 +19,16 @@ pub async fn get_subscription_quota(
     let quota = crate::services::subscription::get_subscription_quota(&tool).await?;
     if quota.success {
         if let Ok(app_type) = AppType::from_str(&tool) {
-            let app_type_str = app_type.as_str();
-            state
-                .usage_cache
-                .put_subscription(app_type.clone(), quota.clone());
-            crate::tray::schedule_tray_refresh(&app);
             let payload = serde_json::json!({
                 "kind": "subscription",
-                "appType": app_type_str,
-                "data": quota.clone(),
+                "appType": app_type.as_str(),
+                "data": &quota,
             });
             if let Err(e) = app.emit("usage-cache-updated", payload) {
                 log::error!("emit usage-cache-updated (subscription) 失败: {e}");
             }
+            state.usage_cache.put_subscription(app_type, quota.clone());
+            crate::tray::schedule_tray_refresh(&app);
         }
     }
     Ok(quota)
