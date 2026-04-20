@@ -67,30 +67,20 @@ export interface HermesSuggestedDefaults {
   };
 }
 
-/** Hermes custom_provider protocol mode (optional; auto-detected when omitted). */
+/** Hermes custom_provider protocol mode. Always written explicitly. */
 export type HermesApiMode =
   | "chat_completions"
   | "anthropic_messages"
   | "codex_responses";
 
-/**
- * Form-facing value used by the API Mode dropdown.
- *
- * `auto` is the UI-only sentinel for "omit `api_mode` and let Hermes detect the
- * protocol from the endpoint". When serialized to `settings_config`, `auto`
- * becomes `undefined` so the YAML doesn't include `api_mode` at all.
- */
-export type HermesApiModeChoice = "auto" | HermesApiMode;
+/** Default mode used when a provider has no stored value yet. */
+export const HERMES_DEFAULT_API_MODE: HermesApiMode = "chat_completions";
 
-/**
- * Dropdown options for the API Mode selector. `labelKey` is looked up in i18n;
- * `value` of "auto" means "don't write `api_mode` to the config".
- */
+/** Dropdown options for the API Mode selector. `labelKey` is looked up in i18n. */
 export const hermesApiModes: Array<{
-  value: HermesApiModeChoice;
+  value: HermesApiMode;
   labelKey: string;
 }> = [
-  { value: "auto", labelKey: "hermes.form.apiModeAuto" },
   { value: "chat_completions", labelKey: "hermes.form.apiModeChatCompletions" },
   {
     value: "anthropic_messages",

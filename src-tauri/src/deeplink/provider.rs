@@ -428,8 +428,11 @@ fn build_additive_app_settings(request: &DeepLinkImportRequest) -> serde_json::V
 /// Emitting camelCase here — as the OpenClaw path does — would poison the
 /// YAML with unknown root fields the Hermes runtime ignores.
 ///
-/// `api_mode` is deliberately omitted so Hermes auto-detects the protocol
-/// from the endpoint; callers can still override via the UI later.
+/// `api_mode` is always written explicitly. Deeplinks have no field to carry
+/// it, so we default to `chat_completions` (the most widely compatible
+/// protocol) and let the user adjust via the UI after import. We never rely
+/// on Hermes' built-in URL heuristics, which only recognize a handful of
+/// official endpoints.
 fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let endpoint = get_primary_endpoint(request);
 
@@ -446,6 +449,8 @@ fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     if let Some(api_key) = &request.api_key {
         config.insert("api_key".to_string(), json!(api_key));
     }
+
+    config.insert("api_mode".to_string(), json!("chat_completions"));
 
     if let Some(model) = &request.model {
         config.insert(
@@ -784,11 +789,12 @@ mod tests {
     }
 
     #[test]
-    fn build_hermes_settings_omits_api_mode_for_auto_detect() {
+    fn build_hermes_settings_writes_default_api_mode() {
         let settings = build_hermes_settings(&hermes_request());
-        assert!(
-            settings.as_object().unwrap().get("api_mode").is_none(),
-            "api_mode must be omitted so Hermes auto-detects"
+        assert_eq!(
+            settings.as_object().unwrap().get("api_mode").unwrap(),
+            "chat_completions",
+            "api_mode must be written explicitly so Hermes never falls back to URL auto-detection"
         );
     }
 
@@ -810,6 +816,7 @@ mod tests {
         assert!(obj.get("base_url").is_none());
         assert!(obj.get("api_key").is_none());
         assert!(obj.get("models").is_none());
+        assert_eq!(obj.get("api_mode").unwrap(), "chat_completions");
     }
 
     #[test]

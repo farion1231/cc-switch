@@ -40,7 +40,7 @@ import {
 } from "@/lib/api/model-fetch";
 import {
   hermesApiModes,
-  type HermesApiModeChoice,
+  type HermesApiMode,
   type HermesModel,
 } from "@/config/hermesProviderPresets";
 import type { ProviderCategory } from "@/types";
@@ -55,8 +55,8 @@ interface HermesFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
-  apiMode: HermesApiModeChoice;
-  onApiModeChange: (mode: HermesApiModeChoice) => void;
+  apiMode: HermesApiMode;
+  onApiModeChange: (mode: HermesApiMode) => void;
   models: HermesModel[];
   onModelsChange: (models: HermesModel[]) => void;
 }
@@ -181,7 +181,7 @@ export function HermesFormFields({
         </FormLabel>
         <Select
           value={apiMode}
-          onValueChange={(v) => onApiModeChange(v as HermesApiModeChoice)}
+          onValueChange={(v) => onApiModeChange(v as HermesApiMode)}
         >
           <SelectTrigger id="hermes-api-mode">
             <SelectValue />
@@ -196,8 +196,7 @@ export function HermesFormFields({
         </Select>
         <p className="text-xs text-muted-foreground">
           {t("hermes.form.apiModeHint", {
-            defaultValue:
-              "供应商 API 协议。Auto 表示让 Hermes 按端点自动判断。",
+            defaultValue: "供应商 API 协议。请根据端点选择正确的协议。",
           })}
         </p>
       </div>

@@ -1,10 +1,11 @@
 import { useState, useCallback, useMemo } from "react";
 import type { AppId } from "@/lib/api";
 import { useProvidersQuery } from "@/lib/query/queries";
-import type {
-  HermesApiModeChoice,
-  HermesModel,
-  HermesProviderSettingsConfig,
+import {
+  HERMES_DEFAULT_API_MODE,
+  type HermesApiMode,
+  type HermesModel,
+  type HermesProviderSettingsConfig,
 } from "@/config/hermesProviderPresets";
 
 interface UseHermesFormStateParams {
@@ -34,12 +35,12 @@ export interface HermesFormState {
   setHermesProviderKey: (key: string) => void;
   hermesBaseUrl: string;
   hermesApiKey: string;
-  hermesApiMode: HermesApiModeChoice;
+  hermesApiMode: HermesApiMode;
   hermesModels: HermesModel[];
   existingHermesKeys: string[];
   handleHermesBaseUrlChange: (baseUrl: string) => void;
   handleHermesApiKeyChange: (apiKey: string) => void;
-  handleHermesApiModeChange: (mode: HermesApiModeChoice) => void;
+  handleHermesApiModeChange: (mode: HermesApiMode) => void;
   handleHermesModelsChange: (models: HermesModel[]) => void;
   resetHermesState: (config?: Partial<HermesProviderSettingsConfig>) => void;
 }
@@ -92,17 +93,15 @@ export function useHermesFormState({
     return parseHermesField(initialData, "api_key", "");
   });
 
-  const [hermesApiMode, setHermesApiMode] = useState<HermesApiModeChoice>(
-    () => {
-      if (appId !== "hermes") return "auto";
-      const stored = parseHermesField<HermesApiModeChoice | "">(
-        initialData,
-        "api_mode",
-        "",
-      );
-      return stored || "auto";
-    },
-  );
+  const [hermesApiMode, setHermesApiMode] = useState<HermesApiMode>(() => {
+    if (appId !== "hermes") return HERMES_DEFAULT_API_MODE;
+    const stored = parseHermesField<HermesApiMode | "">(
+      initialData,
+      "api_mode",
+      "",
+    );
+    return stored || HERMES_DEFAULT_API_MODE;
+  });
 
   const [hermesModels, setHermesModels] = useState<HermesModel[]>(() => {
     if (appId !== "hermes") return [];
@@ -143,14 +142,10 @@ export function useHermesFormState({
   );
 
   const handleHermesApiModeChange = useCallback(
-    (mode: HermesApiModeChoice) => {
+    (mode: HermesApiMode) => {
       setHermesApiMode(mode);
       updateHermesConfig((config) => {
-        if (mode === "auto") {
-          delete config.api_mode;
-        } else {
-          config.api_mode = mode;
-        }
+        config.api_mode = mode;
       });
     },
     [updateHermesConfig],
@@ -175,7 +170,7 @@ export function useHermesFormState({
       setHermesProviderKey("");
       setHermesBaseUrl(config?.base_url || "");
       setHermesApiKey(config?.api_key || "");
-      setHermesApiMode(config?.api_mode ?? "auto");
+      setHermesApiMode(config?.api_mode ?? HERMES_DEFAULT_API_MODE);
       setHermesModels(config?.models ?? []);
     },
     [],
