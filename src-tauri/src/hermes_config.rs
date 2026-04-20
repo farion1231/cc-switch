@@ -635,6 +635,23 @@ pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, App
     Ok(map)
 }
 
+/// Reject writes that would target a dict-only overlay entry.
+///
+/// `verb` is inlined into the user-facing error so both "edit" and "remove"
+/// callers can share one implementation.
+fn ensure_provider_writable(
+    config: &serde_yaml::Value,
+    name: &str,
+    verb: &str,
+) -> Result<(), AppError> {
+    if is_dict_only_provider(config, name) {
+        return Err(AppError::Config(format!(
+            "Provider '{name}' is managed by Hermes' 'providers:' dict — {verb} via Hermes Web UI"
+        )));
+    }
+    Ok(())
+}
+
 /// True when `name` appears in `providers:` dict but not in `custom_providers:`
 /// list — i.e. it is a read-only overlay CC Switch must not touch.
 fn is_dict_only_provider(config: &serde_yaml::Value, name: &str) -> bool {
@@ -691,11 +708,7 @@ pub fn set_provider(
     let _guard = hermes_write_lock().lock()?;
 
     let config = read_hermes_config()?;
-    if is_dict_only_provider(&config, name) {
-        return Err(AppError::Config(format!(
-            "Provider '{name}' is managed by Hermes' 'providers:' dict — edit via Hermes Web UI"
-        )));
-    }
+    ensure_provider_writable(&config, name, "edit")?;
     let mut providers: Vec<serde_yaml::Value> = config
         .get("custom_providers")
         .and_then(|v| v.as_sequence())
@@ -768,11 +781,7 @@ pub fn remove_provider(name: &str) -> Result<HermesWriteOutcome, AppError> {
     let _guard = hermes_write_lock().lock()?;
     let config = read_hermes_config()?;
 
-    if is_dict_only_provider(&config, name) {
-        return Err(AppError::Config(format!(
-            "Provider '{name}' is managed by Hermes' 'providers:' dict — remove via Hermes Web UI"
-        )));
-    }
+    ensure_provider_writable(&config, name, "remove")?;
 
     let mut providers: Vec<serde_yaml::Value> = config
         .get("custom_providers")

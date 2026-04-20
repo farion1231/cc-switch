@@ -15,6 +15,7 @@ import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import { PROVIDER_TYPES } from "@/config/constants";
+import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
@@ -183,9 +184,7 @@ export function ProviderCard({
   // Hermes v12+ overlay entries live under the `providers:` dict and are
   // read-only here — writes have to go through Hermes Web UI.
   const isHermesReadOnly =
-    appId === "hermes" &&
-    (provider.settingsConfig as Record<string, unknown>)?._cc_source ===
-      "providers_dict";
+    appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
 
