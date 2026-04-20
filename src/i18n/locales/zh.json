@@ -1685,7 +1685,7 @@
       "modelDefaultNotInProvider": "model.default 指向的模型不在所选供应商的模型列表中。",
       "duplicateProviderName": "custom_providers 中存在重复的供应商名，只会有一条生效。",
       "duplicateProviderBaseUrl": "custom_providers 中存在重复的 base_url，可能是意外复制。",
-      "schemaMigratedV12": "Hermes 新版 schema 把部分供应商移到了 'providers:' dict。CC Switch 只管理 'custom_providers:'，请在 Hermes Web UI 编辑或删除这些条目。"
+      "schemaMigratedV12": "Hermes 新版 schema 把部分供应商移到了 'providers:' dict。CC Switch 中以只读方式显示，编辑或删除请通过 Hermes Web UI 操作。"
     },
     "memory": {
       "title": "记忆管理",

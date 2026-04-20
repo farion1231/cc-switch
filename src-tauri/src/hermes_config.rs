@@ -432,8 +432,9 @@ fn sanitize_hermes_provider_keys(config: &mut serde_json::Value) {
         ("contextLength", "context_length"),
     ];
     // Legacy DeepLink emitted `api: "openai-completions"` which is neither a
-    // Hermes field nor mappable to `api_mode`.
-    const LEGACY_FIELDS_TO_DROP: &[&str] = &["api"];
+    // Hermes field nor mappable to `api_mode`. `_cc_source` / `provider_key`
+    // are UI-only markers injected on read — they must never reach YAML.
+    const LEGACY_FIELDS_TO_DROP: &[&str] = &["api", PROVIDER_SOURCE_FIELD, "provider_key"];
 
     let Some(obj) = config.as_object_mut() else {
         return;
@@ -507,18 +508,92 @@ fn hermes_warning(code: &str, message: String, path: &str) -> HermesHealthWarnin
     }
 }
 
-/// Get all custom providers as a JSON map keyed by provider name.
+/// Marker field injected on provider payloads sourced from Hermes v12+
+/// `providers:` dict. CC Switch treats those as read-only — writes have to
+/// go through Hermes' own Web UI to keep its overlay semantics intact.
+pub const PROVIDER_SOURCE_FIELD: &str = "_cc_source";
+pub const PROVIDER_SOURCE_CUSTOM_LIST: &str = "custom_providers";
+pub const PROVIDER_SOURCE_DICT: &str = "providers_dict";
+
+/// Normalize a single entry from the v12+ `providers:` dict into the same
+/// JSON shape that `custom_providers:` list entries take, mirroring upstream
+/// `_normalize_custom_provider_entry` (hermes_cli/config.py).
 ///
-/// Reads the `custom_providers:` YAML sequence where each item has a `name`
-/// field, and converts it to a map for CC Switch consumption. Each entry's
-/// `models` field is converted from the YAML dict shape back to the
-/// UI-friendly ordered array shape.
+/// Returns `None` when the entry is not a mapping or lacks any usable name.
+fn normalize_providers_dict_entry(
+    key: &str,
+    entry: &serde_yaml::Value,
+) -> Result<Option<serde_json::Value>, AppError> {
+    if !entry.is_mapping() {
+        return Ok(None);
+    }
+    let mut json_val = yaml_to_json(entry)?;
+    let Some(obj) = json_val.as_object_mut() else {
+        return Ok(None);
+    };
+    // Upstream prefers an explicit `name` when present, falling back to the
+    // dict key. Always round-trip it to a trimmed non-empty string.
+    let resolved_name = obj
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| key.trim().to_string());
+    if resolved_name.is_empty() {
+        return Ok(None);
+    }
+    obj.insert("name".to_string(), serde_json::json!(resolved_name));
+    obj.insert("provider_key".to_string(), serde_json::json!(key));
+    obj.insert(
+        PROVIDER_SOURCE_FIELD.to_string(),
+        serde_json::json!(PROVIDER_SOURCE_DICT),
+    );
+    Ok(Some(json_val))
+}
+
+/// Collect provider entries living under the v12+ `providers:` dict.
+fn read_providers_dict_entries(
+    config: &serde_yaml::Value,
+) -> Vec<(String, serde_json::Value)> {
+    let Some(mapping) = config.get("providers").and_then(|v| v.as_mapping()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(mapping.len());
+    for (k, v) in mapping {
+        let Some(key_str) = k.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        match normalize_providers_dict_entry(key_str, v) {
+            Ok(Some(entry)) => {
+                let name = entry
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or(key_str)
+                    .to_string();
+                out.push((name, entry));
+            }
+            Ok(None) => {
+                log::debug!("Skipping Hermes providers['{key_str}']: not a mapping");
+            }
+            Err(e) => {
+                log::warn!("Failed to normalize Hermes providers['{key_str}']: {e}");
+            }
+        }
+    }
+    out
+}
+
+/// Get all providers as a JSON map keyed by provider name.
 ///
-/// Entries that live under Hermes' v12+ `providers:` dict are deliberately
-/// not surfaced here — Hermes' own runtime merges both shapes via
-/// `get_compatible_custom_providers`, but CC Switch only manages the legacy
-/// `custom_providers:` list. The `schema_migrated_v12` health warning flags
-/// any non-empty `providers:` dict so the user can reconcile via Hermes Web UI.
+/// Unions two on-disk sources, matching upstream `get_compatible_custom_providers`:
+/// - `custom_providers:` list entries (writable by CC Switch)
+/// - `providers:` dict entries (v12+ schema, surfaced read-only with
+///   `_cc_source = "providers_dict"` so the UI can disable edit/delete)
+///
+/// When a name appears in both, the list entry wins (upstream dedup order),
+/// keeping CC Switch free to edit it. Models are denormalized from the YAML
+/// dict shape to the UI-friendly ordered array.
 pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, AppError> {
     let config = read_hermes_config()?;
     let mut map = serde_json::Map::new();
@@ -533,6 +608,12 @@ pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, App
                         // reveal stale `baseUrl` / `apiKey` fields.
                         sanitize_hermes_provider_keys(&mut json_val);
                         denormalize_provider_models_for_read(&mut json_val);
+                        if let Some(obj) = json_val.as_object_mut() {
+                            obj.insert(
+                                PROVIDER_SOURCE_FIELD.to_string(),
+                                serde_json::json!(PROVIDER_SOURCE_CUSTOM_LIST),
+                            );
+                        }
                         map.insert(name.to_string(), json_val);
                     }
                     Err(e) => {
@@ -543,7 +624,46 @@ pub fn get_providers() -> Result<serde_json::Map<String, serde_json::Value>, App
         }
     }
 
+    for (name, mut entry) in read_providers_dict_entries(&config) {
+        if map.contains_key(&name) {
+            continue; // list wins over dict on duplicate names
+        }
+        denormalize_provider_models_for_read(&mut entry);
+        map.insert(name, entry);
+    }
+
     Ok(map)
+}
+
+/// True when `name` appears in `providers:` dict but not in `custom_providers:`
+/// list — i.e. it is a read-only overlay CC Switch must not touch.
+fn is_dict_only_provider(config: &serde_yaml::Value, name: &str) -> bool {
+    let list_has = config
+        .get("custom_providers")
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .any(|item| item.get("name").and_then(|n| n.as_str()) == Some(name))
+        })
+        .unwrap_or(false);
+    if list_has {
+        return false;
+    }
+    config
+        .get("providers")
+        .and_then(|v| v.as_mapping())
+        .map(|m| {
+            m.iter().any(|(k, v)| {
+                let key_matches = k.as_str() == Some(name);
+                let name_matches = v
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|s| s == name)
+                    .unwrap_or(false);
+                (key_matches || name_matches) && v.is_mapping()
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// Get a single custom provider by name.
@@ -571,6 +691,11 @@ pub fn set_provider(
     let _guard = hermes_write_lock().lock()?;
 
     let config = read_hermes_config()?;
+    if is_dict_only_provider(&config, name) {
+        return Err(AppError::Config(format!(
+            "Provider '{name}' is managed by Hermes' 'providers:' dict — edit via Hermes Web UI"
+        )));
+    }
     let mut providers: Vec<serde_yaml::Value> = config
         .get("custom_providers")
         .and_then(|v| v.as_sequence())
@@ -642,6 +767,12 @@ pub fn set_provider(
 pub fn remove_provider(name: &str) -> Result<HermesWriteOutcome, AppError> {
     let _guard = hermes_write_lock().lock()?;
     let config = read_hermes_config()?;
+
+    if is_dict_only_provider(&config, name) {
+        return Err(AppError::Config(format!(
+            "Provider '{name}' is managed by Hermes' 'providers:' dict — remove via Hermes Web UI"
+        )));
+    }
 
     let mut providers: Vec<serde_yaml::Value> = config
         .get("custom_providers")
@@ -864,7 +995,7 @@ fn scan_hermes_health_internal(content: &str) -> Vec<HermesHealthWarning> {
     if version >= 12 && providers_dict_populated {
         warnings.push(hermes_warning(
             "schema_migrated_v12",
-            "Hermes' newer schema moved some entries into the 'providers:' dict. CC Switch only manages 'custom_providers:' — edit or remove those entries via Hermes Web UI.".to_string(),
+            "Hermes' newer schema moved some entries into the 'providers:' dict. They are shown read-only in CC Switch — edit or remove those entries via Hermes Web UI.".to_string(),
             "providers",
         ));
     }
@@ -1407,6 +1538,128 @@ custom_providers:
             assert_eq!(provider["request_timeout_seconds"], 300);
             assert_eq!(provider["key_env"], "ACME_API_KEY");
         });
+    }
+
+    #[test]
+    #[serial]
+    fn get_providers_surfaces_providers_dict_as_read_only() {
+        with_test_home(|| {
+            let yaml = "\
+_config_version: 19
+custom_providers:
+  - name: mine
+    base_url: https://mine.example.com
+    api_key: sk-mine
+providers:
+  anthropic:
+    base_url: https://api.anthropic.com
+    api_key: sk-ant
+    model: claude-opus-4.6
+  ollama-local:
+    base_url: http://localhost:11434/v1
+    request_timeout_seconds: 300
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let providers = get_providers().unwrap();
+            assert_eq!(providers.len(), 3);
+
+            let mine = providers.get("mine").unwrap();
+            assert_eq!(mine[PROVIDER_SOURCE_FIELD], PROVIDER_SOURCE_CUSTOM_LIST);
+
+            let anthropic = providers.get("anthropic").unwrap();
+            assert_eq!(anthropic[PROVIDER_SOURCE_FIELD], PROVIDER_SOURCE_DICT);
+            assert_eq!(anthropic["provider_key"], "anthropic");
+            assert_eq!(anthropic["base_url"], "https://api.anthropic.com");
+
+            let ollama = providers.get("ollama-local").unwrap();
+            assert_eq!(ollama[PROVIDER_SOURCE_FIELD], PROVIDER_SOURCE_DICT);
+            // Forward-compat fields from the dict pass through untouched
+            assert_eq!(ollama["request_timeout_seconds"], 300);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn get_providers_list_wins_on_name_collision() {
+        with_test_home(|| {
+            let yaml = "\
+_config_version: 19
+custom_providers:
+  - name: shared
+    base_url: https://writable.example.com
+providers:
+  shared:
+    base_url: https://overlay.example.com
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let providers = get_providers().unwrap();
+            assert_eq!(providers.len(), 1);
+            let shared = providers.get("shared").unwrap();
+            assert_eq!(shared["base_url"], "https://writable.example.com");
+            assert_eq!(shared[PROVIDER_SOURCE_FIELD], PROVIDER_SOURCE_CUSTOM_LIST);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn set_provider_rejects_dict_only_entries() {
+        with_test_home(|| {
+            let yaml = "\
+_config_version: 19
+providers:
+  anthropic:
+    base_url: https://api.anthropic.com
+    model: claude-opus-4.6
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            let update = serde_json::json!({ "base_url": "https://hacked.example.com" });
+            let err = set_provider("anthropic", update).unwrap_err();
+            assert!(
+                format!("{err}").contains("providers:"),
+                "error message should point user at providers dict: {err}"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn remove_provider_rejects_dict_only_entries() {
+        with_test_home(|| {
+            let yaml = "\
+_config_version: 19
+providers:
+  anthropic:
+    base_url: https://api.anthropic.com
+";
+            let config_path = get_hermes_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(&config_path, yaml).unwrap();
+
+            assert!(remove_provider("anthropic").is_err());
+        });
+    }
+
+    #[test]
+    fn sanitize_strips_ui_only_markers() {
+        let mut v = serde_json::json!({
+            "base_url": "https://api.example.com",
+            "_cc_source": "providers_dict",
+            "provider_key": "anthropic",
+        });
+        sanitize_hermes_provider_keys(&mut v);
+        let obj = v.as_object().unwrap();
+        assert!(obj.get("_cc_source").is_none());
+        assert!(obj.get("provider_key").is_none());
+        assert!(obj.get("base_url").is_some());
     }
 
     #[test]

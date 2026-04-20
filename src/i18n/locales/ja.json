@@ -1685,7 +1685,7 @@
       "modelDefaultNotInProvider": "model.default は選択中のプロバイダーのモデル一覧に含まれていません。",
       "duplicateProviderName": "custom_providers にプロバイダー名の重複があります。1 件のみ有効になります。",
       "duplicateProviderBaseUrl": "custom_providers に重複した base_url があります。誤ってコピーされた可能性があります。",
-      "schemaMigratedV12": "Hermes の新しいスキーマでは一部のプロバイダーが 'providers:' dict に移動しました。CC Switch は 'custom_providers:' のみを管理します。該当する項目は Hermes Web UI で編集・削除してください。"
+      "schemaMigratedV12": "Hermes の新しいスキーマでは一部のプロバイダーが 'providers:' dict に移動しました。CC Switch では読み取り専用で表示されます。編集・削除は Hermes Web UI から行ってください。"
     },
     "memory": {
       "title": "メモリ",
