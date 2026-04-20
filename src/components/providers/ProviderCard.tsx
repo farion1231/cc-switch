@@ -180,6 +180,12 @@ export function ProviderCard({
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
+  // Hermes v12+ overlay entries live under the `providers:` dict and are
+  // read-only here — writes have to go through Hermes Web UI.
+  const isHermesReadOnly =
+    appId === "hermes" &&
+    (provider.settingsConfig as Record<string, unknown>)?._cc_source ===
+      "providers_dict";
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
 
@@ -336,6 +342,19 @@ export function ProviderCard({
                     ⭐
                   </span>
                 )}
+
+              {isHermesReadOnly && (
+                <span
+                  className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
+                  title={t("provider.managedByHermesHint", {
+                    defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
+                  })}
+                >
+                  {t("provider.managedByHermes", {
+                    defaultValue: "Hermes Managed",
+                  })}
+                </span>
+              )}
             </div>
 
             {displayUrl && (
@@ -429,6 +448,7 @@ export function ProviderCard({
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
               isOfficialBlockedByProxy={isOfficialBlockedByProxy}
+              isReadOnly={isHermesReadOnly}
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}

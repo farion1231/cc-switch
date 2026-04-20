@@ -141,6 +141,8 @@
     "sortUpdateFailed": "排序更新失败",
     "configureUsage": "配置用量查询",
     "officialPartner": "官方合作伙伴",
+    "managedByHermes": "Hermes 托管",
+    "managedByHermesHint": "该条目定义在 Hermes 的 providers: dict，请在 Hermes Web UI 中编辑或删除。",
     "openTerminal": "打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",

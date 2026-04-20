@@ -38,6 +38,8 @@ interface ProviderActionsProps {
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
   isOfficialBlockedByProxy?: boolean;
+  // Hermes v12+ providers: dict overlay — edit/delete must go through Web UI
+  isReadOnly?: boolean;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -63,6 +65,7 @@ export function ProviderActions({
   isInFailoverQueue = false,
   onToggleFailover,
   isOfficialBlockedByProxy = false,
+  isReadOnly = false,
   // OpenClaw: default model
   isDefaultModel = false,
   onSetAsDefault,
@@ -205,7 +208,11 @@ export function ProviderActions({
 
   const buttonState = getMainButtonState();
 
-  const canDelete = isOmo || isAdditiveMode ? true : !isCurrent;
+  const canDelete =
+    !isReadOnly && (isOmo || isAdditiveMode ? true : !isCurrent);
+  const readOnlyHint = t("provider.managedByHermesHint", {
+    defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
+  });
 
   return (
     <div className="flex items-center gap-1.5">
@@ -255,9 +262,13 @@ export function ProviderActions({
         <Button
           size="icon"
           variant="ghost"
-          onClick={onEdit}
-          title={t("common.edit")}
-          className={iconButtonClass}
+          onClick={isReadOnly ? undefined : onEdit}
+          disabled={isReadOnly}
+          title={isReadOnly ? readOnlyHint : t("common.edit")}
+          className={cn(
+            iconButtonClass,
+            isReadOnly && "opacity-40 cursor-not-allowed text-muted-foreground",
+          )}
         >
           <Edit className="h-4 w-4" />
         </Button>
@@ -323,7 +334,7 @@ export function ProviderActions({
           size="icon"
           variant="ghost"
           onClick={canDelete ? onDelete : undefined}
-          title={t("common.delete")}
+          title={isReadOnly ? readOnlyHint : t("common.delete")}
           className={cn(
             iconButtonClass,
             canDelete && "hover:text-red-500 dark:hover:text-red-400",
