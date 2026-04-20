@@ -582,13 +582,11 @@ export function ClaudeFormFields({
                     onClick={() => {
                       const value =
                         claudeModel ||
-                        reasoningModel ||
                         defaultHaikuModel ||
                         defaultSonnetModel ||
                         defaultOpusModel;
                       if (value) {
                         onModelChange("ANTHROPIC_MODEL", value);
-                        onModelChange("ANTHROPIC_REASONING_MODEL", value);
                         onModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", value);
                         onModelChange("ANTHROPIC_DEFAULT_SONNET_MODEL", value);
                         onModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", value);
@@ -601,7 +599,6 @@ export function ClaudeFormFields({
                     }}
                     disabled={
                       !claudeModel &&
-                      !reasoningModel &&
                       !defaultHaikuModel &&
                       !defaultSonnetModel &&
                       !defaultOpusModel
