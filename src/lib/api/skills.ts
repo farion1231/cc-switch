@@ -118,6 +118,7 @@ export interface SkillsShSearchResult {
 export interface SkillRepo {
   owner: string;
   name: string;
+  url?: string;
   branch: string;
   enabled: boolean;
 }
