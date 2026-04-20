@@ -553,9 +553,7 @@ fn normalize_providers_dict_entry(
 }
 
 /// Collect provider entries living under the v12+ `providers:` dict.
-fn read_providers_dict_entries(
-    config: &serde_yaml::Value,
-) -> Vec<(String, serde_json::Value)> {
+fn read_providers_dict_entries(config: &serde_yaml::Value) -> Vec<(String, serde_json::Value)> {
     let Some(mapping) = config.get("providers").and_then(|v| v.as_mapping()) else {
         return Vec::new();
     };

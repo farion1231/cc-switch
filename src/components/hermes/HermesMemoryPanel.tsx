@@ -63,9 +63,7 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
       <div
         className={cn(
           "flex items-center justify-between px-3 py-2 rounded-md border",
-          enabled
-            ? "bg-muted/30"
-            : "bg-amber-500/10 border-amber-500/30",
+          enabled ? "bg-muted/30" : "bg-amber-500/10 border-amber-500/30",
         )}
       >
         <div className="flex items-center gap-2">
