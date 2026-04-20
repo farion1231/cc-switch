@@ -16,6 +16,7 @@ interface DirectorySettingsProps {
   codexDir?: string;
   geminiDir?: string;
   opencodeDir?: string;
+  openclawDir?: string;
   onDirectoryChange: (app: AppId, value?: string) => void;
   onBrowseDirectory: (app: AppId) => Promise<void>;
   onResetDirectory: (app: AppId) => Promise<void>;
@@ -31,6 +32,7 @@ export function DirectorySettings({
   codexDir,
   geminiDir,
   opencodeDir,
+  openclawDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -129,6 +131,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("opencode", val)}
           onBrowse={() => onBrowseDirectory("opencode")}
           onReset={() => onResetDirectory("opencode")}
+        />
+
+        <DirectoryInput
+          label={t("settings.openclawConfigDir")}
+          description={undefined}
+          value={openclawDir}
+          resolvedValue={resolvedDirs.openclaw}
+          placeholder={t("settings.browsePlaceholderOpenclaw")}
+          onChange={(val) => onDirectoryChange("openclaw", val)}
+          onBrowse={() => onBrowseDirectory("openclaw")}
+          onReset={() => onResetDirectory("openclaw")}
         />
       </section>
     </div>
