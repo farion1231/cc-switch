@@ -15,12 +15,14 @@ use super::{
     handler_context::RequestContext,
     providers::{
         get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
+        streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
-        transform_responses,
+        transform_gemini, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
-        strip_entity_headers_for_rebuilt_body, SseUsageCollector,
+        strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
+        SseUsageCollector,
     },
     server::ProxyState,
     types::*,
@@ -144,11 +146,13 @@ async fn handle_claude_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
-    _original_body: &Value,
+    original_body: &Value,
     is_stream: bool,
     api_format: &str,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
+    let tool_schema_hints = transform_gemini::extract_anthropic_tool_schema_hints(original_body);
+    let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
 
     if is_stream {
         // 根据 api_format 选择流式转换器
@@ -157,6 +161,14 @@ async fn handle_claude_transform(
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
             Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
+        } else if api_format == "gemini_native" {
+            Box::new(Box::pin(create_anthropic_sse_stream_from_gemini(
+                stream,
+                Some(state.gemini_shadow.clone()),
+                Some(ctx.provider.id.clone()),
+                Some(ctx.session_id.clone()),
+                tool_schema_hints.clone(),
+            )))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
@@ -216,10 +228,6 @@ async fn handle_claude_transform(
             "Cache-Control",
             axum::http::HeaderValue::from_static("no-cache"),
         );
-        headers.insert(
-            "Connection",
-            axum::http::HeaderValue::from_static("keep-alive"),
-        );
 
         let body = axum::body::Body::from_stream(logged_stream);
         return Ok((headers, body).into_response());
@@ -245,6 +253,14 @@ async fn handle_claude_transform(
     // 根据 api_format 选择非流式转换器
     let anthropic_response = if api_format == "openai_responses" {
         transform_responses::responses_to_anthropic(upstream_response)
+    } else if api_format == "gemini_native" {
+        transform_gemini::gemini_to_anthropic_with_shadow_and_hints(
+            upstream_response,
+            Some(state.gemini_shadow.as_ref()),
+            Some(&ctx.provider.id),
+            Some(&ctx.session_id),
+            tool_schema_hints.as_ref(),
+        )
     } else {
         transform::openai_to_anthropic(upstream_response)
     }
@@ -287,6 +303,7 @@ async fn handle_claude_transform(
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    strip_hop_by_hop_response_headers(&mut response_headers);
 
     for (key, value) in response_headers.iter() {
         builder = builder.header(key, value);

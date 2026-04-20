@@ -49,7 +49,12 @@ export interface ProviderPreset {
   // - "anthropic" (默认): Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
-  apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
+  // - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
+  apiFormat?:
+    | "anthropic"
+    | "openai_chat"
+    | "openai_responses"
+    | "gemini_native";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
@@ -79,6 +84,27 @@ export const providerPresets: ProviderPreset[] = [
     },
     icon: "anthropic",
     iconColor: "#D4915D",
+  },
+  {
+    name: "Gemini Native",
+    websiteUrl: "https://ai.google.dev/gemini-api",
+    apiKeyUrl: "https://aistudio.google.com/app/apikey",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://generativelanguage.googleapis.com",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "gemini-2.5-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gemini-2.5-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gemini-2.5-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gemini-2.5-pro",
+      },
+    },
+    category: "third_party",
+    apiFormat: "gemini_native",
+    endpointCandidates: ["https://generativelanguage.googleapis.com"],
+    icon: "gemini",
+    iconColor: "#4285F4",
   },
   {
     name: "Shengsuanyun",

@@ -10,7 +10,8 @@
 
 use super::{
     failover_switch::FailoverSwitchManager, handlers, log_codes::srv as log_srv,
-    provider_router::ProviderRouter, types::*, ProxyError,
+    provider_router::ProviderRouter, providers::gemini_shadow::GeminiShadowStore, types::*,
+    ProxyError,
 };
 use crate::database::Database;
 use axum::{
@@ -35,6 +36,8 @@ pub struct ProxyState {
     pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     /// 共享的 ProviderRouter（持有熔断器状态，跨请求保持）
     pub provider_router: Arc<ProviderRouter>,
+    /// Gemini Native shadow state，用于 thoughtSignature / tool call 回放
+    pub gemini_shadow: Arc<GeminiShadowStore>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -68,6 +71,7 @@ impl ProxyServer {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             provider_router,
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
             app_handle,
             failover_manager,
         };

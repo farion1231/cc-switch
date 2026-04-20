@@ -5,7 +5,13 @@ import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
-type DirectoryKey = "appConfig" | "claude" | "codex" | "gemini" | "opencode";
+type DirectoryKey =
+  | "appConfig"
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "opencode"
+  | "openclaw";
 
 export interface ResolvedDirectories {
   appConfig: string;
@@ -13,6 +19,7 @@ export interface ResolvedDirectories {
   codex: string;
   gemini: string;
   opencode: string;
+  openclaw: string;
 }
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -46,7 +53,9 @@ const computeDefaultConfigDir = async (
           ? ".codex"
           : app === "gemini"
             ? ".gemini"
-            : ".config/opencode";
+            : app === "opencode"
+              ? ".config/opencode"
+              : ".openclaw";
     return await join(home, folder);
   } catch (error) {
     console.error(
@@ -78,6 +87,7 @@ export interface UseDirectorySettingsResult {
     codexDir?: string,
     geminiDir?: string,
     opencodeDir?: string,
+    openclawDir?: string,
   ) => void;
 }
 
@@ -105,6 +115,7 @@ export function useDirectorySettings({
     codex: "",
     gemini: "",
     opencode: "",
+    openclaw: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -114,6 +125,7 @@ export function useDirectorySettings({
     codex: "",
     gemini: "",
     opencode: "",
+    openclaw: "",
   });
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
 
@@ -130,22 +142,26 @@ export function useDirectorySettings({
           codexDir,
           geminiDir,
           opencodeDir,
+          openclawDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
           defaultGeminiDir,
           defaultOpencodeDir,
+          defaultOpenclawDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
           settingsApi.getConfigDir("codex"),
           settingsApi.getConfigDir("gemini"),
           settingsApi.getConfigDir("opencode"),
+          settingsApi.getConfigDir("openclaw"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
           computeDefaultConfigDir("gemini"),
           computeDefaultConfigDir("opencode"),
+          computeDefaultConfigDir("openclaw"),
         ]);
 
         if (!active) return;
@@ -158,6 +174,7 @@ export function useDirectorySettings({
           codex: defaultCodexDir ?? "",
           gemini: defaultGeminiDir ?? "",
           opencode: defaultOpencodeDir ?? "",
+          openclaw: defaultOpenclawDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -169,6 +186,7 @@ export function useDirectorySettings({
           codex: codexDir || defaultsRef.current.codex,
           gemini: geminiDir || defaultsRef.current.gemini,
           opencode: opencodeDir || defaultsRef.current.opencode,
+          openclaw: openclawDir || defaultsRef.current.openclaw,
         });
       } catch (error) {
         console.error(
@@ -201,7 +219,9 @@ export function useDirectorySettings({
               ? { codexConfigDir: sanitized }
               : key === "gemini"
                 ? { geminiConfigDir: sanitized }
-                : { opencodeConfigDir: sanitized },
+                : key === "opencode"
+                  ? { opencodeConfigDir: sanitized }
+                  : { openclawConfigDir: sanitized },
         );
       }
 
@@ -229,7 +249,9 @@ export function useDirectorySettings({
             ? "codex"
             : app === "gemini"
               ? "gemini"
-              : "opencode",
+              : app === "opencode"
+                ? "opencode"
+                : "openclaw",
         value,
       );
     },
@@ -245,7 +267,9 @@ export function useDirectorySettings({
             ? "codex"
             : app === "gemini"
               ? "gemini"
-              : "opencode";
+              : app === "opencode"
+                ? "opencode"
+                : "openclaw";
       const currentValue =
         key === "claude"
           ? (settings?.claudeConfigDir ?? resolvedDirs.claude)
@@ -253,7 +277,9 @@ export function useDirectorySettings({
             ? (settings?.codexConfigDir ?? resolvedDirs.codex)
             : key === "gemini"
               ? (settings?.geminiConfigDir ?? resolvedDirs.gemini)
-              : (settings?.opencodeConfigDir ?? resolvedDirs.opencode);
+              : key === "opencode"
+                ? (settings?.opencodeConfigDir ?? resolvedDirs.opencode)
+                : (settings?.openclawConfigDir ?? resolvedDirs.openclaw);
 
       try {
         const picked = await settingsApi.selectConfigDirectory(currentValue);
@@ -301,7 +327,9 @@ export function useDirectorySettings({
             ? "codex"
             : app === "gemini"
               ? "gemini"
-              : "opencode";
+              : app === "opencode"
+                ? "opencode"
+                : "openclaw";
       if (!defaultsRef.current[key]) {
         const fallback = await computeDefaultConfigDir(app);
         if (fallback) {
@@ -335,6 +363,7 @@ export function useDirectorySettings({
       codexDir?: string,
       geminiDir?: string,
       opencodeDir?: string,
+      openclawDir?: string,
     ) => {
       setAppConfigDir(initialAppConfigDirRef.current);
       setResolvedDirs({
@@ -344,6 +373,7 @@ export function useDirectorySettings({
         codex: codexDir ?? defaultsRef.current.codex,
         gemini: geminiDir ?? defaultsRef.current.gemini,
         opencode: opencodeDir ?? defaultsRef.current.opencode,
+        openclaw: openclawDir ?? defaultsRef.current.openclaw,
       });
     },
     [],

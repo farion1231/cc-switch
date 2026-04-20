@@ -46,6 +46,22 @@ export function useStreamCheck(appId: AppId) {
 
           // 降级状态也重置熔断器，因为至少能通信
           resetCircuitBreaker.mutate({ providerId, appType: appId });
+        } else if (result.errorCategory === "modelNotFound") {
+          // 专门处理"模型不存在/已下架"：指向配置入口，比通用 404 文案更有指导性
+          toast.error(
+            t("streamCheck.modelNotFound", {
+              providerName: providerName,
+              model: result.modelUsed,
+              defaultValue: `${providerName} 测试模型 ${result.modelUsed} 不存在或已下架`,
+            }),
+            {
+              description: t("streamCheck.modelNotFoundHint", {
+                defaultValue: "",
+              }),
+              duration: 10000,
+              closeButton: true,
+            },
+          );
         } else {
           const httpStatus = result.httpStatus;
           const hintKey = httpStatus
