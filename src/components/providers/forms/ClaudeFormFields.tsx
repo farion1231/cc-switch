@@ -665,10 +665,7 @@ export function ClaudeFormFields({
                         if (value) {
                           onModelChange("ANTHROPIC_MODEL", value);
                           onModelChange("ANTHROPIC_REASONING_MODEL", value);
-                          onModelChange(
-                            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                            value,
-                          );
+                          onModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", value);
                           onModelChange(
                             "ANTHROPIC_DEFAULT_SONNET_MODEL",
                             value,
@@ -676,8 +673,7 @@ export function ClaudeFormFields({
                           onModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", value);
                           toast.success(
                             t("providerForm.quickSetSuccess", {
-                              defaultValue:
-                                "Model name applied to all fields",
+                              defaultValue: "Model name applied to all fields",
                             }),
                           );
                         }
