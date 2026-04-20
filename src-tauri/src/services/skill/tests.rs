@@ -44,3 +44,11 @@ fn build_gitlab_urls_from_repo_source() {
             && url.contains("sha=feature%2Ftest")
     }));
 }
+
+#[test]
+fn infer_repo_source_kind_prefers_host_over_path_words() {
+    let kind = SkillService::infer_repo_source_kind("https://git.example.com/tree/team/repo")
+        .expect("should infer repo source");
+
+    assert_eq!(kind, RepoSourceKind::Gitlab);
+}

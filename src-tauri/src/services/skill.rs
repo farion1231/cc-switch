@@ -488,15 +488,17 @@ impl SkillService {
     fn infer_repo_source_kind(url: &str) -> Option<RepoSourceKind> {
         let parsed = url::Url::parse(url).ok()?;
         let path = parsed.path();
+        let host = parsed.host_str()?.to_ascii_lowercase();
+
+        if host == "github.com" {
+            return Some(RepoSourceKind::Github);
+        }
+
         if path.contains("/-/blob/") || path.contains("/-/tree/") || path.contains("/-/archive/") {
             return Some(RepoSourceKind::Gitlab);
         }
-        let host = parsed.host_str()?.to_ascii_lowercase();
-        if host == "github.com" || path.contains("/blob/") || path.contains("/tree/") {
-            Some(RepoSourceKind::Github)
-        } else {
-            Some(RepoSourceKind::Gitlab)
-        }
+
+        Some(RepoSourceKind::Gitlab)
     }
 
     fn extract_repo_source_from_doc_url(url: &str) -> Option<(String, RepoSourceKind)> {

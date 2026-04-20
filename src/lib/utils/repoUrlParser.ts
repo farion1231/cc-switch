@@ -8,6 +8,10 @@ export interface ParsedRepoUrl {
   url: string;
 }
 
+function stripDotGit(value: string): string {
+  return value.replace(/\.git$/i, "");
+}
+
 export function parseRepoUrl(url: string): ParsedRepoUrl | null {
   const cleaned = url.trim();
   if (!cleaned) {
@@ -19,10 +23,15 @@ export function parseRepoUrl(url: string): ParsedRepoUrl | null {
     if (parts.length !== 2 || parts.some((part) => !part)) {
       return null;
     }
+    const owner = parts[0];
+    const name = stripDotGit(parts[1]);
+    if (!name) {
+      return null;
+    }
     return {
-      owner: parts[0],
-      name: parts[1],
-      url: `https://github.com/${parts[0]}/${parts[1]}`,
+      owner,
+      name,
+      url: `https://github.com/${owner}/${name}`,
     };
   }
 
@@ -46,7 +55,8 @@ export function parseRepoUrl(url: string): ParsedRepoUrl | null {
       if (pathParts.length !== 2) {
         return null;
       }
-      const [owner, name] = pathParts;
+      const owner = pathParts[0];
+      const name = stripDotGit(pathParts[1]);
       if (!owner || !name) {
         return null;
       }
@@ -61,16 +71,17 @@ export function parseRepoUrl(url: string): ParsedRepoUrl | null {
       return null;
     }
 
-    const name = pathParts[pathParts.length - 1];
+    const name = stripDotGit(pathParts[pathParts.length - 1]);
     const namespaces = pathParts.slice(0, -1);
     if (!name || namespaces.length === 0) {
       return null;
     }
+    const normalizedPath = [...namespaces, name].join("/");
 
     return {
       owner: `${parsed.host}/${namespaces.join("/")}`,
       name,
-      url: `${parsed.origin}/${pathParts.join("/")}`,
+      url: `${parsed.origin}/${normalizedPath}`,
     };
   } catch {
     return null;

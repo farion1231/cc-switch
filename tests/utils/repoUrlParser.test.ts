@@ -18,6 +18,20 @@ describe("parseRepoUrl", () => {
     });
   });
 
+  it("normalizes trailing .git in GitHub inputs", () => {
+    expect(parseRepoUrl("owner/repo.git")).toEqual({
+      owner: "owner",
+      name: "repo",
+      url: "https://github.com/owner/repo",
+    });
+
+    expect(parseRepoUrl("https://github.com/owner/repo.git")).toEqual({
+      owner: "owner",
+      name: "repo",
+      url: "https://github.com/owner/repo",
+    });
+  });
+
   it("supports GitLab root repository URL", () => {
     expect(parseRepoUrl("https://git.example.com/group/project")).toEqual({
       owner: "git.example.com/group",
@@ -29,6 +43,16 @@ describe("parseRepoUrl", () => {
   it("supports GitLab root repository URL with subgroup", () => {
     expect(
       parseRepoUrl("https://git.example.com/group/subgroup/project"),
+    ).toEqual({
+      owner: "git.example.com/group/subgroup",
+      name: "project",
+      url: "https://git.example.com/group/subgroup/project",
+    });
+  });
+
+  it("normalizes trailing .git in GitLab inputs", () => {
+    expect(
+      parseRepoUrl("https://git.example.com/group/subgroup/project.git"),
     ).toEqual({
       owner: "git.example.com/group/subgroup",
       name: "project",
