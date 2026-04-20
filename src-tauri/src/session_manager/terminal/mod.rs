@@ -246,7 +246,7 @@ fn launch_custom(
 
     let final_cmd_line = template
         .replace("{command}", cmd_str)
-        .replace("{cwd}", dir_str);
+        .replace("{cwd}", &shell_escape(dir_str));
 
     // Execute via sh -c
     let status = Command::new("sh")
@@ -272,8 +272,10 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
 }
 
 fn shell_escape(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    // POSIX single-quote escaping: wrap in single quotes and replace any embedded
+    // single quote with '\''. This prevents all shell metacharacter expansion
+    // ($(), ``, $var, ;, &&, || etc.) regardless of shell implementation.
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn escape_osascript(value: &str) -> String {
@@ -333,6 +335,6 @@ mod tests {
         );
 
         // Verify shell_escape works correctly for paths with spaces
-        assert_eq!(shell_escape(cwd), "\"/tmp/project dir\"");
+        assert_eq!(shell_escape(cwd), "'/tmp/project dir'");
     }
 }
