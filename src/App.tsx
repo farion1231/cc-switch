@@ -26,7 +26,7 @@ import {
   KeyRound,
   Shield,
   Cpu,
-  ExternalLink,
+  LayoutDashboard,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -1413,20 +1413,20 @@ function App() {
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                onClick={() => void openHermesWebUI()}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("hermes.webui.open")}
+                              >
+                                <LayoutDashboard className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => setCurrentView("mcp")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={16} />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => void openHermesWebUI()}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("hermes.webui.open")}
-                              >
-                                <ExternalLink className="w-4 h-4" />
                               </Button>
                             </>
                           ) : activeApp === "openclaw" ? (
