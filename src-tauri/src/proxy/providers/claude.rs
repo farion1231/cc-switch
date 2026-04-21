@@ -151,10 +151,16 @@ pub fn transform_claude_request_for_api_format(
         "openai_responses" => {
             // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
             // + include: ["reasoning.encrypted_content"]，由 transform 层统一处理。
+            let codex_fast_mode = provider
+                .meta
+                .as_ref()
+                .map(|m| m.codex_fast_mode_enabled())
+                .unwrap_or(true);
             super::transform_responses::anthropic_to_responses(
                 body,
                 Some(cache_key),
                 is_codex_oauth,
+                codex_fast_mode,
             )
         }
         "openai_chat" => {
@@ -1328,6 +1334,43 @@ mod tests {
         .unwrap();
 
         assert_eq!(transformed["prompt_cache_key"], "explicit-cache-key");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_codex_oauth_fast_mode_off() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("codex_oauth".to_string()),
+                codex_fast_mode: Some(false),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["store"], json!(false));
+        assert!(transformed.get("service_tier").is_none());
+        assert_eq!(
+            transformed["include"],
+            json!(["reasoning.encrypted_content"])
+        );
     }
 
     #[test]

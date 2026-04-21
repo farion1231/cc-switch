@@ -929,7 +929,9 @@
     "addAnotherAccount": "Add another account",
     "logoutAll": "Logout all accounts",
     "retry": "Retry",
-    "copyCode": "Copy code"
+    "copyCode": "Copy code",
+    "fastMode": "FAST mode",
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Turn it off if the ChatGPT Codex backend rejects the parameter."
   },
   "endpointTest": {
     "title": "API Endpoint Management",

@@ -929,7 +929,9 @@
     "addAnotherAccount": "別のアカウントを追加",
     "logoutAll": "すべてのアカウントをログアウト",
     "retry": "再試行",
-    "copyCode": "コードをコピー"
+    "copyCode": "コードをコピー",
+    "fastMode": "FAST モード",
+    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。ChatGPT Codex バックエンドがこのパラメータを拒否する場合はオフにしてください。"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",

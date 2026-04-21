@@ -262,6 +262,9 @@ pub struct ProviderMeta {
     /// conversions fall back to provider ID.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
+    #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
+    pub codex_fast_mode: Option<bool>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -277,6 +280,11 @@ pub struct ProviderMeta {
 }
 
 impl ProviderMeta {
+    /// Codex OAuth FAST mode 是否启用，未设置时默认 true（与 OpenAI 官方 codex-rs 一致）。
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.codex_fast_mode.unwrap_or(true)
+    }
+
     /// 解析指定托管认证供应商绑定的账号 ID。
     ///
     /// 新版优先读取 authBinding，旧版继续兼容 githubAccountId。

@@ -82,6 +82,8 @@ interface ClaudeFormFieldsProps {
   isCodexOauthAuthenticated?: boolean;
   selectedCodexAccountId?: string | null;
   onCodexAccountSelect?: (accountId: string | null) => void;
+  codexFastMode?: boolean;
+  onCodexFastModeChange?: (enabled: boolean) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -148,6 +150,8 @@ export function ClaudeFormFields({
   isCodexOauthPreset,
   selectedCodexAccountId,
   onCodexAccountSelect,
+  codexFastMode,
+  onCodexFastModeChange,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -374,6 +378,8 @@ export function ClaudeFormFields({
         <CodexOAuthSection
           selectedAccountId={selectedCodexAccountId}
           onAccountSelect={onCodexAccountSelect}
+          fastModeEnabled={codexFastMode}
+          onFastModeChange={onCodexFastModeChange}
         />
       )}
 

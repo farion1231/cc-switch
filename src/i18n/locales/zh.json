@@ -929,7 +929,9 @@
     "addAnotherAccount": "添加其他账号",
     "logoutAll": "注销所有账号",
     "retry": "重试",
-    "copyCode": "复制代码"
+    "copyCode": "复制代码",
+    "fastMode": "FAST 模式",
+    "fastModeDescription": "为更低延迟发送 service_tier=\"priority\"。如果 ChatGPT Codex 后端拒绝这个参数，可以将其关闭。"
   },
   "endpointTest": {
     "title": "请求地址管理",
