@@ -447,6 +447,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       {importDialogOpen && unmanagedSkills && (
         <ImportSkillsDialog
           skills={unmanagedSkills}
+          isImporting={importMutation.isPending}
           onImport={handleImport}
           onClose={() => setImportDialogOpen(false)}
         />
@@ -593,6 +594,7 @@ interface ImportSkillsDialogProps {
     foundIn: string[];
     path: string;
   }>;
+  isImporting: boolean;
   onImport: (imports: ImportSkillSelection[]) => void;
   onClose: () => void;
 }
@@ -717,6 +719,7 @@ const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
 
 const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   skills,
+  isImporting,
   onImport,
   onClose,
 }) => {
@@ -835,10 +838,13 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           </div>
 
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={onClose}>
+            <Button variant="outline" onClick={onClose} disabled={isImporting}>
               {t("common.cancel")}
             </Button>
-            <Button onClick={handleImport} disabled={selected.size === 0}>
+            <Button
+              onClick={handleImport}
+              disabled={selected.size === 0 || isImporting}
+            >
               {t("skills.importSelected", { count: selected.size })}
             </Button>
           </div>
