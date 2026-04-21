@@ -704,7 +704,7 @@ impl StreamCheckService {
                 .await
             }
             AppType::Hermes => {
-                Self::check_additive_app_stream(
+                Self::check_hermes_stream(
                     &client,
                     provider,
                     &model_to_test,
@@ -980,6 +980,112 @@ impl StreamCheckService {
             .and_then(|v| v.as_str())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
+    }
+
+    // Hermes 的 settings_config 用 snake_case（base_url / api_key / api_mode），
+    // 与 OpenClaw 的 camelCase（baseUrl / apiKey / api）是两套独立命名。
+    // 见 src/config/hermesProviderPresets.ts 的 HermesProviderSettingsConfig。
+    fn extract_hermes_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "hermes_base_url_missing",
+                    "Hermes 供应商缺少 base_url",
+                    "Hermes provider is missing `base_url`",
+                )
+            })
+    }
+
+    fn extract_hermes_api_key(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "hermes_api_key_missing",
+                    "Hermes 供应商缺少 api_key",
+                    "Hermes provider is missing `api_key`",
+                )
+            })
+    }
+
+    fn extract_hermes_api_mode(provider: &Provider) -> Option<String> {
+        provider
+            .settings_config
+            .get("api_mode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Hermes 流式检查分发器
+    ///
+    /// Hermes 以 `api_mode` 字段显式指定协议，取值来自
+    /// `HermesApiMode`（hermesProviderPresets.ts）：
+    /// - `chat_completions`   → check_claude_stream + api_format="openai_chat"（Bearer）
+    /// - `anthropic_messages` → check_claude_stream + api_format="anthropic"（ClaudeAuth，与 OpenClaw 的 anthropic-messages 同策略）
+    /// - `codex_responses`    → check_claude_stream + api_format="openai_responses"（Bearer）
+    /// - `bedrock_converse`   → 不支持（需要 AWS SigV4 签名）
+    async fn check_hermes_stream(
+        client: &Client,
+        provider: &Provider,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(u16, String), AppError> {
+        // 先把 api_mode 路由出协议格式与认证策略。
+        // 纯错误路径（bedrock / 未知 / 缺失）直接 return，避免在用户
+        // 选了 bedrock_converse 时被"缺 base_url"的二级错误盖住真正原因。
+        let (api_format, auth_strategy) = match Self::extract_hermes_api_mode(provider).as_deref() {
+            Some("chat_completions") => ("openai_chat", AuthStrategy::Bearer),
+            Some("anthropic_messages") => ("anthropic", AuthStrategy::ClaudeAuth),
+            Some("codex_responses") => ("openai_responses", AuthStrategy::Bearer),
+            Some("bedrock_converse") => {
+                return Err(AppError::localized(
+                    "hermes_bedrock_not_supported",
+                    "AWS Bedrock 需要 SigV4 签名，当前不支持健康检查。",
+                    "AWS Bedrock requires SigV4 signing and is not supported by stream health check.",
+                ));
+            }
+            Some(other) => {
+                return Err(AppError::localized(
+                    "hermes_protocol_not_yet_supported",
+                    format!("Hermes 暂不支持协议: {other}"),
+                    format!("Hermes protocol not yet supported: {other}"),
+                ));
+            }
+            None => {
+                return Err(AppError::localized(
+                    "hermes_api_mode_missing",
+                    "Hermes 供应商缺少 api_mode 字段",
+                    "Hermes provider is missing the `api_mode` field",
+                ));
+            }
+        };
+
+        let base_url = Self::extract_hermes_base_url(provider)?;
+        let api_key = Self::extract_hermes_api_key(provider)?;
+        let auth = AuthInfo::new(api_key, auth_strategy);
+        Self::check_claude_stream(
+            client,
+            &base_url,
+            &auth,
+            model,
+            test_prompt,
+            timeout,
+            provider,
+            Some(api_format),
+            None,
+        )
+        .await
     }
 
     /// OpenCode 流式检查分发器
