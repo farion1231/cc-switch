@@ -161,6 +161,10 @@
     "usageSaveFailed": "利用状況設定の保存に失敗しました",
     "geminiConfig": "Gemini 設定",
     "geminiConfigHint": ".env 形式で Gemini を設定してください",
+    "exportAliases": "エイリアスを出力",
+    "exportAliasesTitle": "シェルエイリアス",
+    "exportAliasesDesc": "異なるプロバイダーでClaudeを起動するには、~/.zshrcまたは~/.bashrcに以下を追加してください：",
+    "exportAliasesCopied": "クリップボードにコピーしました",
     "form": {
       "gemini": {
         "model": "モデル",

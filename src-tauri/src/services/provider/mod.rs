@@ -4,6 +4,7 @@
 
 mod endpoints;
 mod gemini_auth;
+pub(crate) mod instance;
 mod live;
 mod usage;
 
@@ -30,6 +31,7 @@ pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
+    sync_all_claude_instance_dirs,
     sync_current_provider_for_app_to_live, write_live_with_common_config,
 };
 
@@ -1010,6 +1012,13 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
+        // Sync all Claude instance directories (create missing ones with symlinks too)
+        if matches!(app_type, AppType::Claude) {
+            if let Err(e) = sync_all_claude_instance_dirs(state) {
+                log::warn!("Failed to sync Claude instance dirs after add: {e}");
+            }
+        }
+
         // Additive mode apps (OpenCode, OpenClaw): optionally write to live config.
         if app_type.is_additive_mode() {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
@@ -1057,6 +1066,13 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+
+        // Sync all Claude instance directories (create missing ones with symlinks too)
+        if matches!(app_type, AppType::Claude) {
+            if let Err(e) = sync_all_claude_instance_dirs(state) {
+                log::warn!("Failed to sync Claude instance dirs after update: {e}");
+            }
+        }
 
         if provider_id_changed {
             if !app_type.is_additive_mode() {
@@ -1299,7 +1315,16 @@ impl ProviderService {
             ));
         }
 
-        state.db.delete_provider(app_type.as_str(), id)
+        state.db.delete_provider(app_type.as_str(), id)?;
+
+        // Remove instance directory for multi-instance support (Claude only)
+        if matches!(app_type, AppType::Claude) {
+            if let Err(e) = instance::remove_instance_dir(id) {
+                log::warn!("Failed to remove instance dir for '{id}': {e}");
+            }
+        }
+
+        Ok(())
     }
 
     /// Remove provider from live config only (for additive mode apps like OpenCode, OpenClaw)
