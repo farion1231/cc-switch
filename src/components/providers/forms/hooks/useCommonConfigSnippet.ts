@@ -129,7 +129,8 @@ export function useCommonConfigSnippet({
 
       // 优先级：显式设置的 initialEnabled > 从配置推断的值
       // 如果 initialEnabled 为 undefined，使用推断值
-      const hasCommon = initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
+      const hasCommon =
+        initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
       setUseCommonConfig(hasCommon);
 
       // 如果应该启用通用配置但配置中还没有，则自动添加
