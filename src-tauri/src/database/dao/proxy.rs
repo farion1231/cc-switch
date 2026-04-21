@@ -197,7 +197,7 @@ impl Database {
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
-                "SELECT app_type, enabled, auto_failover_enabled,
+                "SELECT app_type, enabled, auto_failover_enabled, usage_stats_source,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                         circuit_error_rate_threshold, circuit_min_requests
@@ -208,15 +208,18 @@ impl Database {
                         app_type: row.get(0)?,
                         enabled: row.get::<_, i32>(1)? != 0,
                         auto_failover_enabled: row.get::<_, i32>(2)? != 0,
-                        max_retries: row.get::<_, i32>(3)? as u32,
-                        streaming_first_byte_timeout: row.get::<_, i32>(4)? as u32,
-                        streaming_idle_timeout: row.get::<_, i32>(5)? as u32,
-                        non_streaming_timeout: row.get::<_, i32>(6)? as u32,
-                        circuit_failure_threshold: row.get::<_, i32>(7)? as u32,
-                        circuit_success_threshold: row.get::<_, i32>(8)? as u32,
-                        circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
-                        circuit_error_rate_threshold: row.get(10)?,
-                        circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                        usage_stats_source: UsageStatsSource::from_db_value(
+                            &row.get::<_, String>(3)?,
+                        ),
+                        max_retries: row.get::<_, i32>(4)? as u32,
+                        streaming_first_byte_timeout: row.get::<_, i32>(5)? as u32,
+                        streaming_idle_timeout: row.get::<_, i32>(6)? as u32,
+                        non_streaming_timeout: row.get::<_, i32>(7)? as u32,
+                        circuit_failure_threshold: row.get::<_, i32>(8)? as u32,
+                        circuit_success_threshold: row.get::<_, i32>(9)? as u32,
+                        circuit_timeout_seconds: row.get::<_, i32>(10)? as u32,
+                        circuit_error_rate_threshold: row.get(11)?,
+                        circuit_min_requests: row.get::<_, i32>(12)? as u32,
                     })
                 },
             )
@@ -232,6 +235,7 @@ impl Database {
                     app_type: app_type_owned,
                     enabled: false,
                     auto_failover_enabled: false,
+                    usage_stats_source: UsageStatsSource::Proxy,
                     max_retries: 3,
                     streaming_first_byte_timeout: 60,
                     streaming_idle_timeout: 120,
@@ -258,21 +262,23 @@ impl Database {
             "UPDATE proxy_config SET
                 enabled = ?2,
                 auto_failover_enabled = ?3,
-                max_retries = ?4,
-                streaming_first_byte_timeout = ?5,
-                streaming_idle_timeout = ?6,
-                non_streaming_timeout = ?7,
-                circuit_failure_threshold = ?8,
-                circuit_success_threshold = ?9,
-                circuit_timeout_seconds = ?10,
-                circuit_error_rate_threshold = ?11,
-                circuit_min_requests = ?12,
+                usage_stats_source = ?4,
+                max_retries = ?5,
+                streaming_first_byte_timeout = ?6,
+                streaming_idle_timeout = ?7,
+                non_streaming_timeout = ?8,
+                circuit_failure_threshold = ?9,
+                circuit_success_threshold = ?10,
+                circuit_timeout_seconds = ?11,
+                circuit_error_rate_threshold = ?12,
+                circuit_min_requests = ?13,
                 updated_at = datetime('now')
              WHERE app_type = ?1",
             rusqlite::params![
                 config.app_type,
                 if config.enabled { 1 } else { 0 },
                 if config.auto_failover_enabled { 1 } else { 0 },
+                config.usage_stats_source.as_db_value(),
                 config.max_retries as i32,
                 config.streaming_first_byte_timeout as i32,
                 config.streaming_idle_timeout as i32,
@@ -820,6 +826,22 @@ impl Database {
         .unwrap_or((false, false))
     }
 
+    /// 同步获取应用的用量统计来源
+    pub fn get_usage_stats_source_sync(&self, app_type: &str) -> UsageStatsSource {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return UsageStatsSource::Proxy,
+        };
+
+        conn.query_row(
+            "SELECT usage_stats_source FROM proxy_config WHERE app_type = ?1",
+            [app_type],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|value| UsageStatsSource::from_db_value(&value))
+        .unwrap_or(UsageStatsSource::Proxy)
+    }
+
     /// 同步设置应用的 proxy 启用状态和自动故障转移状态
     ///
     /// 用于托盘菜单点击等同步场景
@@ -852,6 +874,7 @@ impl Database {
 mod tests {
     use crate::database::Database;
     use crate::error::AppError;
+    use crate::proxy::types::UsageStatsSource;
 
     #[tokio::test]
     async fn test_default_cost_multiplier_round_trip() -> Result<(), AppError> {
@@ -910,6 +933,27 @@ mod tests {
                 ..
             }
         ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usage_stats_source_round_trip() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        let default = db.get_proxy_config_for_app("claude").await?;
+        assert_eq!(default.usage_stats_source, UsageStatsSource::Proxy);
+
+        let mut updated = default.clone();
+        updated.usage_stats_source = UsageStatsSource::Session;
+        db.update_proxy_config_for_app(updated).await?;
+
+        let saved = db.get_proxy_config_for_app("claude").await?;
+        assert_eq!(saved.usage_stats_source, UsageStatsSource::Session);
+        assert_eq!(
+            db.get_usage_stats_source_sync("claude"),
+            UsageStatsSource::Session
+        );
 
         Ok(())
     }

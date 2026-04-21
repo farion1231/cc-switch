@@ -2065,6 +2065,14 @@
         "inactive": "路由 {{appLabel}} 的请求，让该应用请求走本地路由"
       }
     },
+    "usageStatsSource": {
+      "title": "用量统计来源",
+      "description": "仅在该应用启用代理接管时生效。",
+      "label": "接管期间的统计来源",
+      "proxy": "以上游返回为主",
+      "session": "以 Session 日志为主",
+      "hint": "关闭接管后，仍会继续按 Session 日志补录用量。"
+    },
     "failover": {
       "proxyRequired": "需要先启动路由服务才能配置故障转移",
       "autoSwitch": "自动故障转移",

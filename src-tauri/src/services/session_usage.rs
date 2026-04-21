@@ -56,6 +56,16 @@ struct ParsedAssistantUsage {
 
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_claude_session_logs_with_mode(db, true)
+}
+
+/// 同步 Claude Code 会话日志到使用统计数据库
+///
+/// 当 `record_usage=false` 时，仅推进同步游标，不写入请求日志。
+pub fn sync_claude_session_logs_with_mode(
+    db: &Database,
+    record_usage: bool,
+) -> Result<SessionSyncResult, AppError> {
     let projects_dir = get_claude_config_dir().join("projects");
     if !projects_dir.exists() {
         return Ok(SessionSyncResult {
@@ -79,7 +89,7 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     for file_path in &jsonl_files {
         result.files_scanned += 1;
 
-        match sync_single_file(db, file_path) {
+        match sync_single_file(db, file_path, record_usage) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -133,7 +143,11 @@ fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
 }
 
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
-fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+fn sync_single_file(
+    db: &Database,
+    file_path: &Path,
+    record_usage: bool,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
@@ -272,29 +286,31 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
 
-    for msg in messages.values() {
-        // 只导入有 stop_reason 的最终条目（完整的 API 调用）
-        if msg.stop_reason.is_none() {
-            continue;
-        }
+    if record_usage {
+        for msg in messages.values() {
+            // 只导入有 stop_reason 的最终条目（完整的 API 调用）
+            if msg.stop_reason.is_none() {
+                continue;
+            }
 
-        let request_id = format!(
-            "{}{}",
-            crate::proxy::usage::parser::SESSION_REQUEST_ID_PREFIX,
-            msg.message_id
-        );
+            let request_id = format!(
+                "{}{}",
+                crate::proxy::usage::parser::SESSION_REQUEST_ID_PREFIX,
+                msg.message_id
+            );
 
-        // 跳过 output_tokens 为 0 的无意义条目
-        if msg.output_tokens == 0 {
-            continue;
-        }
+            // 跳过 output_tokens 为 0 的无意义条目
+            if msg.output_tokens == 0 {
+                continue;
+            }
 
-        match insert_session_log_entry(db, &request_id, msg) {
-            Ok(true) => imported += 1,
-            Ok(false) => skipped += 1,
-            Err(e) => {
-                log::warn!("[SESSION-SYNC] 插入失败 ({}): {e}", msg.message_id);
-                skipped += 1;
+            match insert_session_log_entry(db, &request_id, msg) {
+                Ok(true) => imported += 1,
+                Ok(false) => skipped += 1,
+                Err(e) => {
+                    log::warn!("[SESSION-SYNC] 插入失败 ({}): {e}", msg.message_id);
+                    skipped += 1;
+                }
             }
         }
     }
@@ -558,6 +574,7 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_parse_usage_from_jsonl_line() {
@@ -635,5 +652,42 @@ mod tests {
 
         messages.insert("msg_1".to_string(), final_entry);
         assert_eq!(messages.get("msg_1").unwrap().output_tokens, 1349);
+    }
+
+    #[test]
+    fn test_sync_single_file_can_advance_cursor_without_recording() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"assistant\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":12,\"output_tokens\":6},\"stop_reason\":\"end_turn\"},\"timestamp\":\"2026-04-05T12:00:00Z\",\"sessionId\":\"session-1\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"id\":\"msg_2\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":8,\"output_tokens\":4},\"stop_reason\":\"end_turn\"},\"timestamp\":\"2026-04-05T12:01:00Z\",\"sessionId\":\"session-1\"}\n"
+            ),
+        )
+        .expect("write session log");
+
+        let db = Database::memory().expect("db");
+        let (imported, skipped) =
+            sync_single_file(&db, &path, false).expect("sync without recording");
+        assert_eq!(imported, 0);
+        assert_eq!(skipped, 0);
+
+        let conn = db.conn.lock().expect("lock conn");
+        let sync_offset: i64 = conn
+            .query_row(
+                "SELECT last_line_offset FROM session_log_sync WHERE file_path = ?1",
+                rusqlite::params![path.to_string_lossy().to_string()],
+                |row| row.get(0),
+            )
+            .expect("read sync offset");
+        assert_eq!(sync_offset, 2);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+                row.get(0)
+            })
+            .expect("count logs");
+        assert_eq!(count, 0);
     }
 }

@@ -558,6 +558,17 @@ async fn log_usage_internal(
 ) {
     use super::usage::logger::UsageLogger;
 
+    match crate::services::usage_source::should_record_proxy_usage(&state.db, app_type).await {
+        Ok(false) => {
+            log::debug!("[{app_type}] 已切换为 Session 用量来源，跳过代理请求日志写入");
+            return;
+        }
+        Err(e) => {
+            log::warn!("[{app_type}] 解析用量来源策略失败，继续写入代理请求日志: {e}");
+        }
+        Ok(true) => {}
+    }
+
     let logger = UsageLogger::new(&state.db);
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;

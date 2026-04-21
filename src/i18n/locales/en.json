@@ -2064,6 +2064,14 @@
         "inactive": "Route {{appLabel}}'s requests through local routing"
       }
     },
+    "usageStatsSource": {
+      "title": "Usage Stats Source",
+      "description": "Only applies while proxy takeover is enabled for this app.",
+      "label": "Stats source during takeover",
+      "proxy": "Prefer upstream usage",
+      "session": "Prefer Session logs",
+      "hint": "When takeover is off, usage still falls back to Session log imports."
+    },
     "failover": {
       "proxyRequired": "Routing service must be started to configure failover",
       "autoSwitch": "Auto Failover",

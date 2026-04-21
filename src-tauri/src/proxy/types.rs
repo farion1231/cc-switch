@@ -164,6 +164,31 @@ pub struct GlobalProxyConfig {
     pub enable_logging: bool,
 }
 
+/// 用量统计来源
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UsageStatsSource {
+    #[default]
+    Proxy,
+    Session,
+}
+
+impl UsageStatsSource {
+    pub fn from_db_value(value: &str) -> Self {
+        match value {
+            "session" => Self::Session,
+            _ => Self::Proxy,
+        }
+    }
+
+    pub fn as_db_value(self) -> &'static str {
+        match self {
+            Self::Proxy => "proxy",
+            Self::Session => "session",
+        }
+    }
+}
+
 /// 应用级代理配置（每个 app 独立）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -174,6 +199,9 @@ pub struct AppProxyConfig {
     pub enabled: bool,
     /// 该 app 自动故障转移开关
     pub auto_failover_enabled: bool,
+    /// 该 app 在代理接管时的用量统计来源
+    #[serde(default)]
+    pub usage_stats_source: UsageStatsSource,
     /// 最大重试次数
     pub max_retries: u32,
     /// 流式首字超时（秒）

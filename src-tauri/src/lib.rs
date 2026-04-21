@@ -895,30 +895,18 @@ pub fn run() {
 
                 // Session log usage sync: 启动时同步一次，之后每 60 秒检查
                 let db_for_session_sync = state.db.clone();
+                let proxy_service_for_session_sync = state.proxy_service.clone();
                 tauri::async_runtime::spawn(async move {
                     const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
 
                     // 首次同步
-                    if let Err(e) =
-                        crate::services::session_usage::sync_claude_session_logs(
-                            &db_for_session_sync,
-                        )
+                    if let Err(e) = crate::services::usage_source::sync_session_usage_by_policy(
+                        &db_for_session_sync,
+                        &proxy_service_for_session_sync,
+                    )
+                    .await
                     {
                         log::warn!("Session usage initial sync failed: {e}");
-                    }
-                    if let Err(e) =
-                        crate::services::session_usage_codex::sync_codex_usage(
-                            &db_for_session_sync,
-                        )
-                    {
-                        log::warn!("Codex usage initial sync failed: {e}");
-                    }
-                    if let Err(e) =
-                        crate::services::session_usage_gemini::sync_gemini_usage(
-                            &db_for_session_sync,
-                        )
-                    {
-                        log::warn!("Gemini usage initial sync failed: {e}");
                     }
 
                     // 定期同步
@@ -929,25 +917,13 @@ pub fn run() {
                     loop {
                         interval.tick().await;
                         if let Err(e) =
-                            crate::services::session_usage::sync_claude_session_logs(
+                            crate::services::usage_source::sync_session_usage_by_policy(
                                 &db_for_session_sync,
+                                &proxy_service_for_session_sync,
                             )
+                            .await
                         {
                             log::warn!("Session usage periodic sync failed: {e}");
-                        }
-                        if let Err(e) =
-                            crate::services::session_usage_codex::sync_codex_usage(
-                                &db_for_session_sync,
-                            )
-                        {
-                            log::warn!("Codex usage periodic sync failed: {e}");
-                        }
-                        if let Err(e) =
-                            crate::services::session_usage_gemini::sync_gemini_usage(
-                                &db_for_session_sync,
-                            )
-                        {
-                            log::warn!("Gemini usage periodic sync failed: {e}");
                         }
                     }
                 });
