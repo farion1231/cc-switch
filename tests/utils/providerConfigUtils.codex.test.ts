@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   extractCodexBaseUrl,
   extractCodexModelName,
+  hasTomlCommonConfigSnippet,
   setCodexBaseUrl,
   setCodexModelName,
+  updateTomlCommonConfigSnippet,
 } from "@/utils/providerConfigUtils";
 
 describe("Codex TOML utils", () => {
@@ -147,5 +149,99 @@ describe("Codex TOML utils", () => {
 
     expect(extractCodexBaseUrl(input)).toBe("https://api.example.com/v1");
     expect(extractCodexModelName(input)).toBe("gpt-5");
+  });
+
+  it("detects malformed common config that was appended under the last table", () => {
+    const input = [
+      'model_provider = "quicklyapi"',
+      'model = "gpt-5.4"',
+      "",
+      "[notice.model_migrations]",
+      'gpt-5-codex = "gpt-5.3-codex"',
+      "",
+      "network_access = true",
+      "web_search = true",
+      'approval_policy = "never"',
+      'sandbox_mode = "danger-full-access"',
+      "",
+    ].join("\n");
+    const snippet = [
+      "network_access = true",
+      "web_search = true",
+      'approval_policy = "never"',
+      'sandbox_mode = "danger-full-access"',
+      "",
+    ].join("\n");
+
+    expect(hasTomlCommonConfigSnippet(input, snippet)).toBe(true);
+  });
+
+  it("removes malformed common config that was appended under the last table", () => {
+    const input = [
+      'model_provider = "quicklyapi"',
+      'model = "gpt-5.4"',
+      "",
+      "[notice.model_migrations]",
+      'gpt-5-codex = "gpt-5.3-codex"',
+      "",
+      "network_access = true",
+      "web_search = true",
+      'approval_policy = "never"',
+      'sandbox_mode = "danger-full-access"',
+      "",
+    ].join("\n");
+    const snippet = [
+      "network_access = true",
+      "web_search = true",
+      'approval_policy = "never"',
+      'sandbox_mode = "danger-full-access"',
+      "",
+    ].join("\n");
+
+    const output = updateTomlCommonConfigSnippet(
+      input,
+      snippet,
+      false,
+    ).updatedConfig;
+
+    expect(output).toContain(
+      '[notice.model_migrations]\ngpt-5-codex = "gpt-5.3-codex"',
+    );
+    expect(output).not.toContain("network_access = true");
+    expect(output).not.toContain("web_search = true");
+    expect(output).not.toContain('approval_policy = "never"');
+    expect(output).not.toContain('sandbox_mode = "danger-full-access"');
+  });
+
+  it("does not treat matching fields inside the last table as malformed common config", () => {
+    const input = [
+      'model_provider = "quicklyapi"',
+      'model = "gpt-5.4"',
+      "",
+      "[tool]",
+      "network_access = true",
+      "web_search = true",
+      'approval_policy = "never"',
+      'sandbox_mode = "danger-full-access"',
+      'extra = "keep"',
+      "",
+    ].join("\n");
+    const snippet = [
+      "network_access = true",
+      "web_search = true",
+      'approval_policy = "never"',
+      'sandbox_mode = "danger-full-access"',
+      "",
+    ].join("\n");
+
+    expect(hasTomlCommonConfigSnippet(input, snippet)).toBe(false);
+
+    const output = updateTomlCommonConfigSnippet(
+      input,
+      snippet,
+      false,
+    ).updatedConfig;
+    expect(output).toContain("[tool]\nnetwork_access = true");
+    expect(output).toContain('extra = "keep"');
   });
 });
