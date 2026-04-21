@@ -1074,13 +1074,13 @@ fn build_batch_session_tmux_commands(plan: &BatchSessionPlan) -> Result<Vec<Vec<
             "-lc".to_string(),
             pane_command.clone(),
         ]);
+        commands.push(vec![
+            "select-layout".to_string(),
+            "-t".to_string(),
+            batch_session_target(plan, &first_window.name),
+            "tiled".to_string(),
+        ]);
     }
-    commands.push(vec![
-        "select-layout".to_string(),
-        "-t".to_string(),
-        batch_session_target(plan, &first_window.name),
-        "tiled".to_string(),
-    ]);
 
     for window in plan.windows.iter().skip(1) {
         let first_pane = window
@@ -1106,13 +1106,13 @@ fn build_batch_session_tmux_commands(plan: &BatchSessionPlan) -> Result<Vec<Vec<
                 "-lc".to_string(),
                 pane_command.clone(),
             ]);
+            commands.push(vec![
+                "select-layout".to_string(),
+                "-t".to_string(),
+                batch_session_target(plan, &window.name),
+                "tiled".to_string(),
+            ]);
         }
-        commands.push(vec![
-            "select-layout".to_string(),
-            "-t".to_string(),
-            batch_session_target(plan, &window.name),
-            "tiled".to_string(),
-        ]);
     }
 
     Ok(commands)
@@ -1777,6 +1777,53 @@ mod tests {
                 "cmd-c".to_string(),
             ]
         }));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn batch_session_tmux_commands_rebalance_after_each_split() {
+        let plan = BatchSessionPlan {
+            session_name: "cc-switch-test".to_string(),
+            windows: vec![BatchWindowPlan {
+                name: "1-claude".to_string(),
+                panes: vec![
+                    "cmd-a".to_string(),
+                    "cmd-b".to_string(),
+                    "cmd-c".to_string(),
+                    "cmd-d".to_string(),
+                    "cmd-e".to_string(),
+                ],
+            }],
+            pane_count: 5,
+        };
+
+        let commands = build_batch_session_tmux_commands(&plan).expect("tmux commands");
+
+        let split_targets: Vec<&Vec<String>> = commands
+            .iter()
+            .filter(|cmd| cmd.first().map(|value| value.as_str()) == Some("split-window"))
+            .collect();
+        assert_eq!(split_targets.len(), 4);
+
+        for split_command in split_targets {
+            let split_index = commands
+                .iter()
+                .position(|candidate| candidate == split_command)
+                .expect("split command index");
+            let next_command = commands
+                .get(split_index + 1)
+                .expect("select-layout should follow each split");
+
+            assert_eq!(
+                next_command,
+                &vec![
+                    "select-layout".to_string(),
+                    "-t".to_string(),
+                    "cc-switch-test:1-claude".to_string(),
+                    "tiled".to_string(),
+                ]
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]
