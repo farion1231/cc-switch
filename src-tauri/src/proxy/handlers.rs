@@ -573,6 +573,16 @@ fn log_forward_error(
 ) {
     use super::usage::logger::UsageLogger;
 
+    let (takeover_enabled, _) = state.db.get_proxy_flags_sync(ctx.app_type_str);
+    let usage_source = state.db.get_usage_stats_source_sync(ctx.app_type_str);
+    if takeover_enabled && usage_source == crate::proxy::types::UsageStatsSource::Session {
+        log::debug!(
+            "[{}] 已切换为 Session 用量来源，跳过代理失败请求日志写入",
+            ctx.app_type_str
+        );
+        return;
+    }
+
     let logger = UsageLogger::new(&state.db);
     let status_code = map_proxy_error_to_status(error);
     let error_message = get_error_message(error);
@@ -609,6 +619,17 @@ async fn log_usage(
     status_code: u16,
 ) {
     use super::usage::logger::UsageLogger;
+
+    match crate::services::usage_source::should_record_proxy_usage(&state.db, app_type).await {
+        Ok(false) => {
+            log::debug!("[{app_type}] 已切换为 Session 用量来源，跳过代理请求日志写入");
+            return;
+        }
+        Err(e) => {
+            log::warn!("[{app_type}] 解析用量来源策略失败，继续写入代理请求日志: {e}");
+        }
+        Ok(true) => {}
+    }
 
     let logger = UsageLogger::new(&state.db);
 

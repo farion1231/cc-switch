@@ -286,6 +286,14 @@ fn schema_create_tables_include_pricing_model_columns() {
         Some("response")
     );
 
+    let usage_source = get_column_info(&conn, "proxy_config", "usage_stats_source");
+    assert_eq!(usage_source.r#type, "TEXT");
+    assert_eq!(usage_source.notnull, 1);
+    assert_eq!(
+        normalize_default(&usage_source.default).as_deref(),
+        Some("proxy")
+    );
+
     let request_model = get_column_info(&conn, "proxy_request_logs", "request_model");
     assert_eq!(request_model.r#type, "TEXT");
     assert_eq!(request_model.notnull, 0);
@@ -335,6 +343,14 @@ fn schema_migration_v4_adds_pricing_model_columns() {
         Some("response")
     );
 
+    let usage_source = get_column_info(&conn, "proxy_config", "usage_stats_source");
+    assert_eq!(usage_source.r#type, "TEXT");
+    assert_eq!(usage_source.notnull, 1);
+    assert_eq!(
+        normalize_default(&usage_source.default).as_deref(),
+        Some("proxy")
+    );
+
     let request_model = get_column_info(&conn, "proxy_request_logs", "request_model");
     assert_eq!(request_model.r#type, "TEXT");
     assert_eq!(request_model.notnull, 0);
@@ -342,6 +358,53 @@ fn schema_migration_v4_adds_pricing_model_columns() {
     assert_eq!(
         Database::get_user_version(&conn).expect("version after migration"),
         SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn schema_migration_v9_adds_usage_stats_source_column() {
+    // 从 v9 旧库升级后，应补齐 usage source 列，且默认值为 proxy。
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE proxy_config (
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            proxy_enabled INTEGER NOT NULL DEFAULT 0,
+            listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+            listen_port INTEGER NOT NULL DEFAULT 15721,
+            enable_logging INTEGER NOT NULL DEFAULT 1,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+            max_retries INTEGER NOT NULL DEFAULT 3,
+            streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+            streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+            non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+            circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+            circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+            circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+            circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+            circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+            default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+            pricing_model_source TEXT NOT NULL DEFAULT 'response',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO proxy_config (app_type) VALUES ('claude');
+        INSERT INTO proxy_config (app_type) VALUES ('codex');
+        INSERT INTO proxy_config (app_type) VALUES ('gemini');
+        "#,
+    )
+    .expect("seed v9 schema");
+
+    Database::set_user_version(&conn, 9).expect("set user_version=9");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    let usage_source = get_column_info(&conn, "proxy_config", "usage_stats_source");
+    assert_eq!(usage_source.r#type, "TEXT");
+    assert_eq!(usage_source.notnull, 1);
+    assert_eq!(
+        normalize_default(&usage_source.default).as_deref(),
+        Some("proxy")
     );
 }
 

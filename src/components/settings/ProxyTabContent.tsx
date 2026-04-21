@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { ProxyPanel } from "@/components/proxy";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
+import { UsageStatsSourcePanel } from "@/components/proxy/UsageStatsSourcePanel";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -119,14 +120,35 @@ export function ProxyTabContent({
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-            <ProxyPanel
-              enableLocalProxy={settings?.enableLocalProxy ?? false}
-              onEnableLocalProxyChange={(checked) =>
-                onAutoSave({ enableLocalProxy: checked })
-              }
-              onToggleProxy={handleToggleProxy}
-              isProxyPending={isProxyPending}
-            />
+            <div className="space-y-6">
+              <ProxyPanel
+                enableLocalProxy={settings?.enableLocalProxy ?? false}
+                onEnableLocalProxyChange={(checked) =>
+                  onAutoSave({ enableLocalProxy: checked })
+                }
+                onToggleProxy={handleToggleProxy}
+                isProxyPending={isProxyPending}
+              />
+
+              <div className="border-t border-border/50 pt-6">
+                <Tabs defaultValue="claude" className="w-full">
+                  <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="claude">Claude</TabsTrigger>
+                    <TabsTrigger value="codex">Codex</TabsTrigger>
+                    <TabsTrigger value="gemini">Gemini</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="claude" className="mt-4">
+                    <UsageStatsSourcePanel appType="claude" />
+                  </TabsContent>
+                  <TabsContent value="codex" className="mt-4">
+                    <UsageStatsSourcePanel appType="codex" />
+                  </TabsContent>
+                  <TabsContent value="gemini" className="mt-4">
+                    <UsageStatsSourcePanel appType="gemini" />
+                  </TabsContent>
+                </Tabs>
+              </div>
+            </div>
           </AccordionContent>
         </AccordionItem>
 

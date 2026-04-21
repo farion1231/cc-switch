@@ -121,11 +121,14 @@ export interface GlobalProxyConfig {
   enableLogging: boolean;
 }
 
+export type UsageStatsSource = "proxy" | "session";
+
 // 应用级代理配置（每个 app 独立）
 export interface AppProxyConfig {
   appType: string;
   enabled: boolean;
   autoFailoverEnabled: boolean;
+  usageStatsSource: UsageStatsSource;
   maxRetries: number;
   streamingFirstByteTimeout: number;
   streamingIdleTimeout: number;

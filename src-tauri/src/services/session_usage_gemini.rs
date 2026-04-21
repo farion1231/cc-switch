@@ -34,7 +34,12 @@ struct GeminiTokens {
 }
 
 /// 同步 Gemini 使用数据（从 JSON 会话日志）
-pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+///
+/// 当 `record_usage=false` 时，仅推进同步状态，不写入请求日志。
+pub fn sync_gemini_usage_with_mode(
+    db: &Database,
+    record_usage: bool,
+) -> Result<SessionSyncResult, AppError> {
     let gemini_dir = get_gemini_dir();
 
     let files = collect_gemini_session_files(&gemini_dir);
@@ -51,7 +56,7 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     }
 
     for file_path in &files {
-        match sync_single_gemini_file(db, file_path) {
+        match sync_single_gemini_file(db, file_path, record_usage) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -119,7 +124,11 @@ fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
 }
 
 /// 同步单个 Gemini 会话 JSON 文件，返回 (imported, skipped)
-fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+fn sync_single_gemini_file(
+    db: &Database,
+    file_path: &Path,
+    record_usage: bool,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
@@ -189,23 +198,25 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
             .unwrap_or("unknown");
         let timestamp = msg.get("timestamp").and_then(|v| v.as_str());
 
-        // 生成唯一 request_id
-        let session_id_str = session_id.as_deref().unwrap_or("unknown");
-        let request_id = format!("gemini_session:{session_id_str}:{message_id}");
+        if record_usage {
+            // 生成唯一 request_id
+            let session_id_str = session_id.as_deref().unwrap_or("unknown");
+            let request_id = format!("gemini_session:{session_id_str}:{message_id}");
 
-        match insert_gemini_session_entry(
-            db,
-            &request_id,
-            &tokens,
-            model,
-            session_id.as_deref(),
-            timestamp,
-        ) {
-            Ok(true) => imported += 1,
-            Ok(false) => skipped += 1,
-            Err(e) => {
-                log::warn!("[GEMINI-SYNC] 插入失败 ({}): {e}", request_id);
-                skipped += 1;
+            match insert_gemini_session_entry(
+                db,
+                &request_id,
+                &tokens,
+                model,
+                session_id.as_deref(),
+                timestamp,
+            ) {
+                Ok(true) => imported += 1,
+                Ok(false) => skipped += 1,
+                Err(e) => {
+                    log::warn!("[GEMINI-SYNC] 插入失败 ({}): {e}", request_id);
+                    skipped += 1;
+                }
             }
         }
     }
@@ -426,6 +437,7 @@ fn try_find_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Model
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_collect_gemini_session_files_nonexistent() {
@@ -500,5 +512,57 @@ mod tests {
         let should_skip =
             tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 && tokens.cached == 0;
         assert!(!should_skip, "纯缓存命中记录不应被跳过");
+    }
+
+    #[test]
+    fn test_sync_single_gemini_file_can_advance_cursor_without_recording() {
+        // Gemini 同步在不写用量明细时，也应将文件标记为已消费。
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-test.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "sessionId": "gemini-session-1",
+                "messages": [
+                    {
+                        "id": "msg-1",
+                        "type": "gemini",
+                        "model": "gemini-2.5-pro",
+                        "timestamp": "2026-04-05T12:00:00Z",
+                        "tokens": {
+                            "input": 50,
+                            "output": 10,
+                            "cached": 5,
+                            "thoughts": 2
+                        }
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write gemini session");
+
+        let db = Database::memory().expect("db");
+        let (imported, skipped) =
+            sync_single_gemini_file(&db, &path, false).expect("sync without recording");
+        assert_eq!(imported, 0);
+        assert_eq!(skipped, 0);
+
+        let conn = db.conn.lock().expect("lock conn");
+        let sync_offset: i64 = conn
+            .query_row(
+                "SELECT last_line_offset FROM session_log_sync WHERE file_path = ?1",
+                rusqlite::params![path.to_string_lossy().to_string()],
+                |row| row.get(0),
+            )
+            .expect("read sync offset");
+        assert_eq!(sync_offset, 1);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+                row.get(0)
+            })
+            .expect("count logs");
+        assert_eq!(count, 0);
     }
 }

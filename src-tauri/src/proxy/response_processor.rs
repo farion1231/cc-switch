@@ -558,6 +558,17 @@ async fn log_usage_internal(
 ) {
     use super::usage::logger::UsageLogger;
 
+    match crate::services::usage_source::should_record_proxy_usage(&state.db, app_type).await {
+        Ok(false) => {
+            log::debug!("[{app_type}] 已切换为 Session 用量来源，跳过代理请求日志写入");
+            return;
+        }
+        Err(e) => {
+            log::warn!("[{app_type}] 解析用量来源策略失败，继续写入代理请求日志: {e}");
+        }
+        Ok(true) => {}
+    }
+
     let logger = UsageLogger::new(&state.db);
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;
@@ -1002,6 +1013,63 @@ mod tests {
             Decimal::from_str(&total_cost).unwrap(),
             Decimal::from_str("1.5").unwrap()
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_log_usage_skips_proxy_write_when_session_source_selected() -> Result<(), AppError>
+    {
+        // 接管后若选择 Session 日志统计，则代理响应侧不应再写入用量记录。
+        let db = Arc::new(Database::memory()?);
+        let app_type = "claude";
+
+        let mut config = db.get_proxy_config_for_app(app_type).await?;
+        config.enabled = true;
+        config.usage_stats_source = crate::proxy::types::UsageStatsSource::Session;
+        db.update_proxy_config_for_app(config).await?;
+
+        db.set_default_cost_multiplier(app_type, "1.5").await?;
+        db.set_pricing_model_source(app_type, "response").await?;
+        seed_pricing(&db)?;
+
+        let meta = ProviderMeta::default();
+        insert_provider(&db, "provider-3", app_type, meta)?;
+
+        let state = build_state(db.clone());
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            model: None,
+            message_id: None,
+        };
+
+        log_usage_internal(
+            &state,
+            "provider-3",
+            app_type,
+            "resp-model",
+            "req-model",
+            usage,
+            10,
+            None,
+            false,
+            200,
+            None,
+        )
+        .await;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id = ?1",
+                ["provider-3"],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        assert_eq!(count, 0);
+
         Ok(())
     }
 }

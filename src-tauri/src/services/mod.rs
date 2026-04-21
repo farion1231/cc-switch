@@ -16,6 +16,7 @@ pub mod skill;
 pub mod speedtest;
 pub mod stream_check;
 pub mod subscription;
+pub mod usage_source;
 pub mod usage_stats;
 pub mod webdav;
 pub mod webdav_auto_sync;

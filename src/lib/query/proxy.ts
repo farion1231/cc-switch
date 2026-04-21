@@ -3,6 +3,7 @@ import { proxyApi } from "@/lib/api/proxy";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import type { GlobalProxyConfig, AppProxyConfig } from "@/types/proxy";
+import { usageKeys } from "@/lib/query/usage";
 
 // ========== 代理服务器状态 Hooks ==========
 
@@ -82,6 +83,8 @@ export function useStopProxyServer() {
       queryClient.invalidateQueries({ queryKey: ["proxyRunning"] });
       queryClient.invalidateQueries({ queryKey: ["liveTakeoverActive"] });
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["appProxyConfig"] });
+      queryClient.invalidateQueries({ queryKey: ["proxyConfig"] });
     },
   });
 }
@@ -95,9 +98,13 @@ export function useSetProxyTakeoverForApp() {
   return useMutation({
     mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
       proxyApi.setProxyTakeoverForApp(appType, enabled),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
       queryClient.invalidateQueries({ queryKey: ["liveTakeoverActive"] });
+      queryClient.invalidateQueries({
+        queryKey: ["appProxyConfig", variables.appType],
+      });
+      queryClient.invalidateQueries({ queryKey: ["proxyConfig"] });
     },
   });
 }
@@ -229,6 +236,7 @@ export function useUpdateAppProxyConfig() {
       });
       queryClient.invalidateQueries({ queryKey: ["proxyConfig"] });
       queryClient.invalidateQueries({ queryKey: ["circuitBreakerConfig"] });
+      queryClient.invalidateQueries({ queryKey: usageKeys.all });
     },
     onError: (error: Error) => {
       toast.error(

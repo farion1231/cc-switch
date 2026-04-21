@@ -139,7 +139,12 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
 }
 
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
-pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+///
+/// 当 `record_usage=false` 时，仅推进同步游标和增量状态，不写入请求日志。
+pub fn sync_codex_usage_with_mode(
+    db: &Database,
+    record_usage: bool,
+) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
 
     let files = collect_codex_session_files(&codex_dir);
@@ -156,7 +161,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     }
 
     for file_path in &files {
-        match sync_single_codex_file(db, file_path) {
+        match sync_single_codex_file(db, file_path, record_usage) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -225,7 +230,11 @@ fn collect_jsonl_recursive(dir: &Path, files: &mut Vec<PathBuf>, depth: u32, max
 }
 
 /// 同步单�� Codex JSONL 文件，返回 (imported, skipped)
-fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+fn sync_single_codex_file(
+    db: &Database,
+    file_path: &Path,
+    record_usage: bool,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
@@ -391,29 +400,32 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     continue;
                 }
 
-                // 生成唯一 request_id
-                let session_id_str = state.session_id.as_deref().unwrap_or("unknown");
-                let request_id = format!("codex_session:{}:{}", session_id_str, state.event_index);
+                if record_usage {
+                    // 生成唯一 request_id
+                    let session_id_str = state.session_id.as_deref().unwrap_or("unknown");
+                    let request_id =
+                        format!("codex_session:{}:{}", session_id_str, state.event_index);
 
-                // 提取时间戳
-                let timestamp = value
-                    .get("timestamp")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                    // 提取时间戳
+                    let timestamp = value
+                        .get("timestamp")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
 
-                match insert_codex_session_entry(
-                    db,
-                    &request_id,
-                    &delta,
-                    &state.current_model,
-                    state.session_id.as_deref(),
-                    timestamp.as_deref(),
-                ) {
-                    Ok(true) => imported += 1,
-                    Ok(false) => skipped += 1,
-                    Err(e) => {
-                        log::warn!("[CODEX-SYNC] 插入失败 ({}): {e}", request_id);
-                        skipped += 1;
+                    match insert_codex_session_entry(
+                        db,
+                        &request_id,
+                        &delta,
+                        &state.current_model,
+                        state.session_id.as_deref(),
+                        timestamp.as_deref(),
+                    ) {
+                        Ok(true) => imported += 1,
+                        Ok(false) => skipped += 1,
+                        Err(e) => {
+                            log::warn!("[CODEX-SYNC] 插入失败 ({}): {e}", request_id);
+                            skipped += 1;
+                        }
                     }
                 }
             }
@@ -623,6 +635,7 @@ fn try_find_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Model
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_delta_first_event() {
@@ -809,5 +822,44 @@ mod tests {
         // 实际钳制在调用侧：delta.cached_input.min(delta.input)
         let clamped = delta.cached_input.min(delta.input);
         assert_eq!(clamped, 10);
+    }
+
+    #[test]
+    fn test_sync_single_codex_file_can_advance_cursor_without_recording() {
+        // Codex 同步在关闭用量写入时，也应正常持久化文件游标。
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("codex.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"session-1\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.4\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"model\":\"gpt-5.4\",\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":30}}}}\n"
+            ),
+        )
+        .expect("write codex session log");
+
+        let db = Database::memory().expect("db");
+        let (imported, skipped) =
+            sync_single_codex_file(&db, &path, false).expect("sync without recording");
+        assert_eq!(imported, 0);
+        assert_eq!(skipped, 0);
+
+        let conn = db.conn.lock().expect("lock conn");
+        let sync_offset: i64 = conn
+            .query_row(
+                "SELECT last_line_offset FROM session_log_sync WHERE file_path = ?1",
+                rusqlite::params![path.to_string_lossy().to_string()],
+                |row| row.get(0),
+            )
+            .expect("read sync offset");
+        assert_eq!(sync_offset, 3);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+                row.get(0)
+            })
+            .expect("count logs");
+        assert_eq!(count, 0);
     }
 }

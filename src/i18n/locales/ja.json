@@ -2064,6 +2064,14 @@
         "inactive": "{{appLabel}} のリクエストをローカルルーティング経由でルーティング"
       }
     },
+    "usageStatsSource": {
+      "title": "使用量統計のソース",
+      "description": "このアプリケーションでプロキシによる引き継ぎが有効な場合にのみ有効です。",
+      "label": "接管中の統計ソース",
+      "proxy": "上流の usage を優先",
+      "session": "Session ログを優先",
+      "hint": "接管をオフにすると、使用量は引き続き Session ログから補完されます。"
+    },
     "failover": {
       "proxyRequired": "フェイルオーバーを設定するには、ルーティングサービスを先に起動する必要があります",
       "autoSwitch": "自動フェイルオーバー",
