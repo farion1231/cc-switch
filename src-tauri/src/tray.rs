@@ -58,6 +58,7 @@ pub struct TrayAppSection {
 
 /// Auto 菜单项后缀
 pub const AUTO_SUFFIX: &str = "auto";
+pub const TRAY_ID: &str = "cc-switch";
 
 pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
     TrayAppSection {
@@ -207,7 +208,7 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
 
         // 4) 更新托盘菜单
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 let _ = tray.set_menu(Some(new_menu));
             }
         }
@@ -255,7 +256,7 @@ fn handle_provider_click(
 
         // 更新托盘菜单
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 let _ = tray.set_menu(Some(new_menu));
             }
         }
@@ -402,12 +403,23 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
 
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(new_menu) = create_tray_menu(app, state.inner()) {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 if let Err(e) = tray.set_menu(Some(new_menu)) {
                     log::error!("刷新托盘菜单失败: {e}");
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TRAY_ID;
+
+    #[test]
+    fn tray_id_is_unique_to_app() {
+        assert_eq!(TRAY_ID, "cc-switch");
+        assert_ne!(TRAY_ID, "main");
     }
 }
 
