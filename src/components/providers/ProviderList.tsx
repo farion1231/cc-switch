@@ -19,6 +19,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import type { ProviderRetryState } from "@/types/proxy";
 import { providersApi } from "@/lib/api/providers";
 import { useDragSort } from "@/hooks/useDragSort";
 import {
@@ -63,6 +64,7 @@ interface ProviderListProps {
   isProxyRunning?: boolean; // 代理服务运行状态
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  providerRetryStates?: Record<string, ProviderRetryState>;
   onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
 }
 
@@ -85,6 +87,7 @@ export function ProviderList({
   isProxyRunning = false,
   isProxyTakeover = false,
   activeProviderId,
+  providerRetryStates,
   onSetAsDefault,
 }: ProviderListProps) {
   const { t } = useTranslation();
@@ -359,6 +362,7 @@ export function ProviderList({
                   handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
+                retryState={providerRetryStates?.[provider.id]}
                 // OpenClaw: default model
                 isDefaultModel={isProviderDefaultModel(provider.id)}
                 onSetAsDefault={
@@ -490,6 +494,7 @@ interface SortableProviderCardProps {
   isInFailoverQueue: boolean;
   onToggleFailover: (enabled: boolean) => void;
   activeProviderId?: string;
+  retryState?: ProviderRetryState;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -521,6 +526,7 @@ function SortableProviderCard({
   isInFailoverQueue,
   onToggleFailover,
   activeProviderId,
+  retryState,
   isDefaultModel,
   onSetAsDefault,
 }: SortableProviderCardProps) {
@@ -573,6 +579,7 @@ function SortableProviderCard({
         isInFailoverQueue={isInFailoverQueue}
         onToggleFailover={onToggleFailover}
         activeProviderId={activeProviderId}
+        retryState={retryState}
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}

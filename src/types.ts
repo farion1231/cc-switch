@@ -109,6 +109,17 @@ export interface ProviderTestConfig {
   maxRetries?: number;
 }
 
+export type FailoverRetryMode = "finite" | "infinite";
+
+export interface FailoverRetryPolicy {
+  mode?: FailoverRetryMode;
+  maxRetries?: number;
+  baseDelaySeconds?: number;
+  maxDelaySeconds?: number;
+  backoffMultiplier?: number;
+  nonRetryableKeywords?: string[];
+}
+
 export type AuthBindingSource = "provider_config" | "managed_account";
 
 export interface AuthBinding {
@@ -133,6 +144,8 @@ export interface ProviderMeta {
   partnerPromotionKey?: string;
   // 供应商单独的模型测试配置
   testConfig?: ProviderTestConfig;
+  // provider 级故障转移重试策略
+  failoverRetry?: FailoverRetryPolicy;
   // 供应商成本倍率
   costMultiplier?: string;
   // 供应商计费模式来源

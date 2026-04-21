@@ -172,6 +172,57 @@ pub struct ProviderTestConfig {
     pub max_retries: Option<u32>,
 }
 
+pub const DEFAULT_FAILOVER_NON_RETRYABLE_KEYWORDS: [&str; 3] = [
+    "invalid_api_key",
+    "invalid_request",
+    "context_length_exceeded",
+];
+
+pub fn default_failover_non_retryable_keywords() -> Vec<String> {
+    DEFAULT_FAILOVER_NON_RETRYABLE_KEYWORDS
+        .iter()
+        .map(|keyword| keyword.to_string())
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FailoverRetryMode {
+    #[default]
+    Finite,
+    Infinite,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FailoverRetryPolicy {
+    #[serde(default)]
+    pub mode: FailoverRetryMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_delay_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_delay_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backoff_multiplier: Option<f64>,
+    #[serde(default = "default_failover_non_retryable_keywords")]
+    pub non_retryable_keywords: Vec<String>,
+}
+
+impl Default for FailoverRetryPolicy {
+    fn default() -> Self {
+        Self {
+            mode: FailoverRetryMode::Finite,
+            max_retries: Some(0),
+            base_delay_seconds: Some(3),
+            max_delay_seconds: Some(30),
+            backoff_multiplier: Some(2.0),
+            non_retryable_keywords: default_failover_non_retryable_keywords(),
+        }
+    }
+}
+
 /// 认证绑定来源
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -239,6 +290,9 @@ pub struct ProviderMeta {
     /// 供应商单独的模型测试配置
     #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
     pub test_config: Option<ProviderTestConfig>,
+    /// provider 级故障转移重试策略
+    #[serde(rename = "failoverRetry", skip_serializing_if = "Option::is_none")]
+    pub failover_retry: Option<FailoverRetryPolicy>,
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
@@ -692,8 +746,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
-        ProviderManager, ProviderMeta, UniversalProvider,
+        default_failover_non_retryable_keywords, ClaudeModelConfig, CodexModelConfig,
+        FailoverRetryMode, FailoverRetryPolicy, GeminiModelConfig, OpenCodeProviderConfig,
+        Provider, ProviderManager, ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
 
@@ -719,6 +774,87 @@ mod tests {
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
         assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_failover_retry_in_camel_case() {
+        let mut meta = ProviderMeta::default();
+        meta.failover_retry = Some(FailoverRetryPolicy {
+            mode: FailoverRetryMode::Infinite,
+            max_retries: Some(9),
+            base_delay_seconds: Some(5),
+            max_delay_seconds: Some(30),
+            backoff_multiplier: Some(2.5),
+            non_retryable_keywords: vec![
+                "invalid_api_key".to_string(),
+                "context_length_exceeded".to_string(),
+            ],
+        });
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+        let failover_retry = value
+            .get("failoverRetry")
+            .and_then(|item| item.as_object())
+            .expect("failoverRetry object");
+
+        assert_eq!(
+            failover_retry.get("mode").and_then(|item| item.as_str()),
+            Some("infinite")
+        );
+        assert_eq!(
+            failover_retry
+                .get("maxRetries")
+                .and_then(|item| item.as_u64()),
+            Some(9)
+        );
+        assert_eq!(
+            failover_retry
+                .get("baseDelaySeconds")
+                .and_then(|item| item.as_u64()),
+            Some(5)
+        );
+        assert_eq!(
+            failover_retry
+                .get("maxDelaySeconds")
+                .and_then(|item| item.as_u64()),
+            Some(30)
+        );
+        assert_eq!(
+            failover_retry
+                .get("backoffMultiplier")
+                .and_then(|item| item.as_f64()),
+            Some(2.5)
+        );
+        assert_eq!(
+            failover_retry
+                .get("nonRetryableKeywords")
+                .and_then(|item| item.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(ToString::to_string))
+                        .collect::<Vec<_>>()
+                }),
+            Some(vec![
+                "invalid_api_key".to_string(),
+                "context_length_exceeded".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn failover_retry_policy_defaults_match_product_requirements() {
+        let policy = FailoverRetryPolicy::default();
+
+        assert_eq!(policy.mode, FailoverRetryMode::Finite);
+        assert_eq!(policy.max_retries, Some(0));
+        assert_eq!(policy.base_delay_seconds, Some(3));
+        assert_eq!(policy.max_delay_seconds, Some(30));
+        assert_eq!(policy.backoff_multiplier, Some(2.0));
+        assert_eq!(
+            policy.non_retryable_keywords,
+            default_failover_non_retryable_keywords()
+        );
     }
 
     #[test]

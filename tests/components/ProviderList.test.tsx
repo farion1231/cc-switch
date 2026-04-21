@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ReactElement } from "react";
 import type { Provider } from "@/types";
+import type { ProviderRetryState } from "@/types/proxy";
 import { ProviderList } from "@/components/providers/ProviderList";
 
 const useDragSortMock = vi.fn();
@@ -305,5 +306,46 @@ describe("ProviderList Component", () => {
     expect(
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
+  });
+
+  it("passes provider retry state through to provider cards", () => {
+    const provider = createProvider({ id: "retry-provider", name: "Retry" });
+    const retryState: ProviderRetryState = {
+      app_type: "claude",
+      provider_id: "retry-provider",
+      provider_name: "Retry",
+      mode: "finite",
+      current_retry: 1,
+      max_retry: 2,
+      current_delay_seconds: 3,
+      active: true,
+      waiting: true,
+      sticky_infinite: false,
+    };
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ "retry-provider": provider }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        providerRetryStates={{ "retry-provider": retryState }}
+      />,
+    );
+
+    expect(providerCardRenderSpy).toHaveBeenCalledTimes(1);
+    expect(providerCardRenderSpy.mock.calls[0][0].retryState).toEqual(
+      retryState,
+    );
   });
 });
