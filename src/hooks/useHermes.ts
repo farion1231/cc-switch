@@ -155,10 +155,11 @@ export function useToggleHermesMemoryEnabled() {
 
 /**
  * Returns a handler that probes the local Hermes Web UI, opens it in the
- * system browser, and surfaces a localized toast on failure. Callers only
- * need to wire the returned function to a click handler.
+ * system browser, and surfaces a localized toast on failure. When
+ * `onOffline` is provided, it replaces the default offline toast —
+ * callers can use this to open a launch-dashboard confirm dialog instead.
  */
-export function useOpenHermesWebUI() {
+export function useOpenHermesWebUI(onOffline?: () => void) {
   const { t } = useTranslation();
   return useCallback(
     async (path?: string) => {
@@ -167,7 +168,11 @@ export function useOpenHermesWebUI() {
       } catch (error) {
         const detail = extractErrorMessage(error);
         if (detail === HERMES_WEB_OFFLINE_ERROR) {
-          toast.error(t("hermes.webui.offline"));
+          if (onOffline) {
+            onOffline();
+          } else {
+            toast.error(t("hermes.webui.offline"));
+          }
         } else {
           toast.error(t("hermes.webui.openFailed"), {
             description: detail || undefined,
@@ -175,6 +180,6 @@ export function useOpenHermesWebUI() {
         }
       }
     },
-    [t],
+    [t, onOffline],
   );
 }

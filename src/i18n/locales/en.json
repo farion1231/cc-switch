@@ -1677,9 +1677,14 @@
     },
     "webui": {
       "open": "Open Hermes Web UI",
-      "offline": "Hermes Web UI is not running. Start it with `hermes web` first.",
+      "offline": "Hermes Web UI is not running. Start it with `hermes dashboard` first.",
       "openFailed": "Failed to open Hermes Web UI",
-      "fixInWebUI": "Fix in Hermes Web UI"
+      "fixInWebUI": "Fix in Hermes Web UI",
+      "launchConfirmTitle": "Hermes Dashboard is not running",
+      "launchConfirmMessage": "Open a terminal and start it now with `hermes dashboard`?\n\nThe browser will open automatically once startup completes.\n\nIf the terminal reports that `hermes` cannot be found or the web extras are missing, run first:\npip install hermes-agent[web]",
+      "launchConfirmAction": "Open terminal & launch",
+      "launching": "Started `hermes dashboard` in a terminal.",
+      "launchFailed": "Failed to open terminal"
     },
     "health": {
       "title": "Hermes config warnings detected",

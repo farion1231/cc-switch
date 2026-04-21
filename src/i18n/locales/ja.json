@@ -1677,9 +1677,14 @@
     },
     "webui": {
       "open": "Hermes Web UI を開く",
-      "offline": "Hermes Web UI が起動していません。まず `hermes web` を実行してください。",
+      "offline": "Hermes Web UI が起動していません。まず `hermes dashboard` を実行してください。",
       "openFailed": "Hermes Web UI を開けませんでした",
-      "fixInWebUI": "Hermes Web UI で修正"
+      "fixInWebUI": "Hermes Web UI で修正",
+      "launchConfirmTitle": "Hermes Dashboard が起動していません",
+      "launchConfirmMessage": "ターミナルを開いて `hermes dashboard` を実行しますか？\n\n起動完了後、ブラウザが自動的に開きます。\n\nターミナルに `hermes` が見つからない、または web 依存が不足するというエラーが表示される場合は、まず次を実行してください：\npip install hermes-agent[web]",
+      "launchConfirmAction": "ターミナルを開いて起動",
+      "launching": "ターミナルで hermes dashboard を起動しました。",
+      "launchFailed": "ターミナルを開けませんでした"
     },
     "health": {
       "title": "Hermes 設定の警告を検出",

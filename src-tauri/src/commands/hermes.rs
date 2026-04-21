@@ -134,3 +134,16 @@ pub async fn open_hermes_web_ui(app: AppHandle, path: Option<String>) -> Result<
         .open_url(&target, None::<String>)
         .map_err(|e| format!("failed to open Hermes Web UI: {e}"))
 }
+
+/// Open the preferred terminal and run `hermes dashboard`. Non-blocking —
+/// callers should reinvoke `open_hermes_web_ui` once the server is ready,
+/// since Hermes startup can take several seconds and may fail outright if
+/// the `hermes-agent[web]` extras are missing.
+#[tauri::command]
+pub async fn launch_hermes_dashboard() -> Result<(), String> {
+    tokio::task::spawn_blocking(|| {
+        crate::commands::misc::launch_terminal_running("hermes dashboard", "hermes_dashboard")
+    })
+    .await
+    .map_err(|e| format!("launch task join error: {e}"))?
+}

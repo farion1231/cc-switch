@@ -33,6 +33,11 @@ export const hermesApi = {
     await invoke("open_hermes_web_ui", { path: path ?? null });
   },
 
+  /** Open the preferred terminal and run `hermes dashboard` (non-blocking). */
+  async launchDashboard(): Promise<void> {
+    await invoke("launch_hermes_dashboard");
+  },
+
   /**
    * Read one of Hermes' memory blobs (`MEMORY.md` or `USER.md`). Returns an
    * empty string when the file hasn't been created yet.

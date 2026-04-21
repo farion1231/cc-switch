@@ -46,6 +46,7 @@ import {
   useHermesHealth,
   useOpenHermesWebUI,
 } from "@/hooks/useHermes";
+import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
@@ -628,7 +629,10 @@ function App() {
     };
   }, []);
 
-  const openHermesWebUI = useOpenHermesWebUI();
+  const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
+  const openHermesWebUI = useOpenHermesWebUI(() =>
+    setLaunchDashboardOpen(true),
+  );
 
   const handleOpenWebsite = async (url: string) => {
     try {
@@ -1609,6 +1613,28 @@ function App() {
         }
         onConfirm={() => void handleConfirmAction()}
         onCancel={() => setConfirmAction(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={launchDashboardOpen}
+        title={t("hermes.webui.launchConfirmTitle")}
+        message={t("hermes.webui.launchConfirmMessage")}
+        confirmText={t("hermes.webui.launchConfirmAction")}
+        variant="info"
+        onConfirm={() => {
+          setLaunchDashboardOpen(false);
+          void (async () => {
+            try {
+              await hermesApi.launchDashboard();
+              toast.success(t("hermes.webui.launching"));
+            } catch (error) {
+              toast.error(t("hermes.webui.launchFailed"), {
+                description: extractErrorMessage(error) || undefined,
+              });
+            }
+          })();
+        }}
+        onCancel={() => setLaunchDashboardOpen(false)}
       />
 
       <DeepLinkImportDialog />
