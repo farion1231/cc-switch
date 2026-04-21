@@ -1019,6 +1019,7 @@ mod tests {
     #[tokio::test]
     async fn test_log_usage_skips_proxy_write_when_session_source_selected() -> Result<(), AppError>
     {
+        // 接管后若选择 Session 日志统计，则代理响应侧不应再写入用量记录。
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 

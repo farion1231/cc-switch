@@ -826,6 +826,7 @@ mod tests {
 
     #[test]
     fn test_sync_single_codex_file_can_advance_cursor_without_recording() {
+        // Codex 同步在关闭用量写入时，也应正常持久化文件游标。
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("codex.jsonl");
         std::fs::write(

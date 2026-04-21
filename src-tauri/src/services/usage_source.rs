@@ -182,6 +182,7 @@ mod tests {
     #[tokio::test]
     async fn effective_usage_source_falls_back_to_session_when_proxy_not_running(
     ) -> Result<(), AppError> {
+        // 代理未运行时，用量统计始终回退到 Session 日志。
         let db = Database::memory()?;
 
         let source = resolve_effective_usage_source(&db, false, "claude").await?;
@@ -191,6 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn effective_usage_source_uses_config_when_takeover_enabled() -> Result<(), AppError> {
+        // 本地路由/代理接管生效时，以 app 级别配置的统计来源为准。
         let db = Database::memory()?;
         let mut config = db.get_proxy_config_for_app("claude").await?;
         config.enabled = true;
@@ -205,6 +207,7 @@ mod tests {
     #[tokio::test]
     async fn effective_usage_source_falls_back_to_session_when_app_not_taken_over(
     ) -> Result<(), AppError> {
+        // 未被接管的 app 即使配置为上游统计，也仍然回退到 Session 日志。
         let db = Database::memory()?;
         let mut config = db.get_proxy_config_for_app("codex").await?;
         config.enabled = false;
@@ -219,6 +222,7 @@ mod tests {
     #[tokio::test]
     async fn should_record_proxy_usage_only_blocks_session_mode_during_takeover(
     ) -> Result<(), AppError> {
+        // 只有“已接管且明确选择 Session 日志”的 app，才会跳过代理侧用量写入。
         let db = Database::memory()?;
         let mut config = db.get_proxy_config_for_app("codex").await?;
         config.enabled = true;
@@ -238,6 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_record_session_usage_when_proxy_not_running() -> Result<(), AppError> {
+        // 代理完全未运行时，Session 日志同步应保持开启。
         let db = Database::memory()?;
 
         assert!(should_record_session_usage(&db, false, "claude").await?);
@@ -248,6 +253,7 @@ mod tests {
     #[tokio::test]
     async fn should_record_session_usage_uses_session_as_fallback_when_not_taken_over(
     ) -> Result<(), AppError> {
+        // 接管策略不应影响未实际接管的 app，其 Session 同步仍应作为回退路径。
         let db = Database::memory()?;
         let mut config = db.get_proxy_config_for_app("codex").await?;
         config.enabled = false;
@@ -261,6 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_record_session_usage_respects_takeover_source() -> Result<(), AppError> {
+        // 接管生效后，是否记录 Session 用量取决于每个 app 选择的统计来源。
         let db = Database::memory()?;
 
         let mut proxy_mode = db.get_proxy_config_for_app("gemini").await?;
@@ -281,9 +288,11 @@ mod tests {
     #[tokio::test]
     async fn sync_session_usage_by_policy_applies_per_app_recording_modes() -> Result<(), AppError>
     {
+        // 编排层端到端测试：只有最终解析为 Session 模式的 app 才应导入用量。
         let scope = TestHomeScope::new();
         let home = scope.root();
 
+        // Claude 保持上游统计模式，因此只扫描日志文件，不导入用量。
         let claude_path = home
             .join(".claude")
             .join("projects")
@@ -297,6 +306,7 @@ mod tests {
         )
         .expect("write claude session log");
 
+        // Codex 在接管开启时显式选择 Session 日志统计。
         let codex_path = home
             .join(".codex")
             .join("sessions")
@@ -315,6 +325,7 @@ mod tests {
         )
         .expect("write codex session log");
 
+        // Gemini 未被接管，因此会回退到 Session 日志统计。
         let gemini_path = home
             .join(".gemini")
             .join("tmp")
@@ -366,6 +377,7 @@ mod tests {
 
         let result = sync_session_usage_by_policy_with_proxy_running(&db, true).await?;
 
+        // 最终只有 Codex 和 Gemini 会写入用量，但三个文件的游标都应推进。
         assert_eq!(result.imported, 2);
         assert_eq!(result.skipped, 0);
         assert_eq!(result.files_scanned, 3);

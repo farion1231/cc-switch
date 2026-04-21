@@ -651,6 +651,7 @@ mod tests {
 
     #[test]
     fn test_sync_single_file_can_advance_cursor_without_recording() {
+        // record_usage=false 时，只推进文件游标，不写入用量记录。
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session.jsonl");
         std::fs::write(

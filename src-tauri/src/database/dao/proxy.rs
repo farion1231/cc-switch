@@ -939,6 +939,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_usage_stats_source_round_trip() -> Result<(), AppError> {
+        // 新增的 usage source 列应默认是 proxy，并能正确完成读写往返。
         let db = Database::memory()?;
 
         let default = db.get_proxy_config_for_app("claude").await?;

@@ -516,6 +516,7 @@ mod tests {
 
     #[test]
     fn test_sync_single_gemini_file_can_advance_cursor_without_recording() {
+        // Gemini 同步在不写用量明细时，也应将文件标记为已消费。
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session-test.json");
         std::fs::write(

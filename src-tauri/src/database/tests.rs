@@ -363,6 +363,7 @@ fn schema_migration_v4_adds_pricing_model_columns() {
 
 #[test]
 fn schema_migration_v9_adds_usage_stats_source_column() {
+    // 从 v9 旧库升级后，应补齐 usage source 列，且默认值为 proxy。
     let conn = Connection::open_in_memory().expect("open memory db");
     conn.execute_batch(
         r#"
