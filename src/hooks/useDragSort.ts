@@ -23,13 +23,14 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;
       }
-      if (a.sortIndex !== undefined) return -1;
-      if (b.sortIndex !== undefined) return 1;
+      // Providers without sortIndex (newly added) appear first
+      if (a.sortIndex === undefined && b.sortIndex !== undefined) return -1;
+      if (a.sortIndex !== undefined && b.sortIndex === undefined) return 1;
 
       const timeA = a.createdAt ?? 0;
       const timeB = b.createdAt ?? 0;
-      if (timeA && timeB && timeA !== timeB) {
-        return timeA - timeB;
+      if (timeA !== timeB) {
+        return timeB - timeA;
       }
 
       return a.name.localeCompare(b.name, locale);

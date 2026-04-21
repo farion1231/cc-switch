@@ -79,10 +79,11 @@ describe("useDragSort", () => {
       wrapper,
     });
 
+    // Providers without sortIndex (newly added) appear first, then by sortIndex ascending
     expect(result.current.sortedProviders.map((item) => item.id)).toEqual([
+      "c",
       "b",
       "a",
-      "c",
     ]);
   });
 
@@ -103,11 +104,12 @@ describe("useDragSort", () => {
     });
 
     expect(updateSortOrderMock).toHaveBeenCalledTimes(1);
+    // New sort order: ["c","b","a"]. Drag b (idx 1) over a (idx 2) → ["c","a","b"]
     expect(updateSortOrderMock).toHaveBeenCalledWith(
       [
-        { id: "a", sortIndex: 0 },
-        { id: "b", sortIndex: 1 },
-        { id: "c", sortIndex: 2 },
+        { id: "c", sortIndex: 0 },
+        { id: "a", sortIndex: 1 },
+        { id: "b", sortIndex: 2 },
       ],
       "claude",
     );
