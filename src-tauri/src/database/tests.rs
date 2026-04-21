@@ -202,6 +202,7 @@ fn schema_migration_adds_missing_columns_for_providers() {
         ("prompts", "updated_at"),
         ("skills", "installed_at"),
         ("skill_repos", "enabled"),
+        ("skill_repos", "url"),
     ] {
         assert!(
             Database::has_column(&conn, table, column).expect("check column"),

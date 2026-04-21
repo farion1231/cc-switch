@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Trash2, ExternalLink, Plus } from "lucide-react";
 import { settingsApi } from "@/lib/api";
+import { parseRepoUrl } from "@/lib/utils/repoUrlParser";
 import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
 
 interface RepoManagerProps {
@@ -44,26 +45,6 @@ export function RepoManager({
         (skill.repoBranch || "main") === (repo.branch || "main"),
     ).length;
 
-  const parseRepoUrl = (
-    url: string,
-  ): { owner: string; name: string } | null => {
-    // 支持格式:
-    // - https://github.com/owner/name
-    // - owner/name
-    // - https://github.com/owner/name.git
-
-    let cleaned = url.trim();
-    cleaned = cleaned.replace(/^https?:\/\/github\.com\//, "");
-    cleaned = cleaned.replace(/\.git$/, "");
-
-    const parts = cleaned.split("/");
-    if (parts.length === 2 && parts[0] && parts[1]) {
-      return { owner: parts[0], name: parts[1] };
-    }
-
-    return null;
-  };
-
   const handleAdd = async () => {
     setError("");
 
@@ -77,7 +58,8 @@ export function RepoManager({
       await onAdd({
         owner: parsed.owner,
         name: parsed.name,
-        branch: branch || "main",
+        url: parsed.url,
+        branch: branch.trim() || "main",
         enabled: true,
       });
 
@@ -88,9 +70,11 @@ export function RepoManager({
     }
   };
 
-  const handleOpenRepo = async (owner: string, name: string) => {
+  const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(`https://github.com/${owner}/${name}`);
+      await settingsApi.openExternal(
+        repo.url || `https://github.com/${repo.owner}/${repo.name}`,
+      );
     } catch (error) {
       console.error("Failed to open URL:", error);
     }
@@ -119,6 +103,9 @@ export function RepoManager({
                   onChange={(e) => setRepoUrl(e.target.value)}
                   className="flex-1"
                 />
+                <p className="text-xs text-muted-foreground">
+                  {t("skills.repo.urlHelp")}
+                </p>
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <Input
                     id="branch"
@@ -173,7 +160,7 @@ export function RepoManager({
                           variant="ghost"
                           size="icon"
                           type="button"
-                          onClick={() => handleOpenRepo(repo.owner, repo.name)}
+                          onClick={() => handleOpenRepo(repo)}
                           title={t("common.view", { defaultValue: "查看" })}
                         >
                           <ExternalLink className="h-4 w-4" />

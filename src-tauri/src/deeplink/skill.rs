@@ -4,7 +4,7 @@
 
 use super::DeepLinkImportRequest;
 use crate::error::AppError;
-use crate::services::skill::SkillRepo;
+use crate::services::skill::{SkillRepo, SkillService};
 use crate::store::AppState;
 
 /// Import a skill from deep link request
@@ -38,6 +38,7 @@ pub fn import_skill_from_deeplink(
     let repo = SkillRepo {
         owner: owner.clone(),
         name: name.clone(),
+        url: Some(SkillService::default_repo_web_url(&owner, &name)),
         branch: request.branch.unwrap_or_else(|| "main".to_string()),
         enabled: request.enabled.unwrap_or(true),
     };

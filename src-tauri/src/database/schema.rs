@@ -104,7 +104,7 @@ impl Database {
         // 6. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
-            owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
+            owner TEXT NOT NULL, name TEXT NOT NULL, url TEXT, branch TEXT NOT NULL DEFAULT 'main',
             enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
         )",
             [],
@@ -422,6 +422,11 @@ impl Database {
                         log::info!("迁移数据库从 v8 到 v9（全面补充模型定价）");
                         Self::migrate_v8_to_v9(conn)?;
                         Self::set_user_version(conn, 9)?;
+                    }
+                    9 => {
+                        log::info!("迁移数据库从 v9 到 v10（Skill 仓库源 URL 支持）");
+                        Self::migrate_v9_to_v10(conn)?;
+                        Self::set_user_version(conn, 10)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1165,6 +1170,12 @@ impl Database {
             .map_err(|e| AppError::Database(format!("清空模型定价失败: {e}")))?;
         Self::seed_model_pricing(conn)?;
         log::info!("v8 -> v9 迁移完成：已刷新全部模型定价数据");
+        Ok(())
+    }
+
+    /// v9 → v10: 为 skill_repos 补充源仓库 URL
+    fn migrate_v9_to_v10(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(conn, "skill_repos", "url", "TEXT")?;
         Ok(())
     }
 
