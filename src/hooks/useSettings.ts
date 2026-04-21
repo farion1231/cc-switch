@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
@@ -63,6 +64,7 @@ export function useSettings(): UseSettingsResult {
   const { t } = useTranslation();
   const { data } = useSettingsQuery();
   const saveMutation = useSaveSettingsMutation();
+  const queryClient = useQueryClient();
 
   // 1️⃣ 表单状态管理
   const {
@@ -124,13 +126,14 @@ export function useSettings(): UseSettingsResult {
 
   // 同步 Claude 插件集成配置到 ~/.claude/settings.json
   // 返回 true 表示已执行过 syncCurrentProvidersLiveSafe，调用方可跳过重复同步
+  // prevEnabled 必须由调用方在 saveMutation 之前从实时缓存（queryClient.getQueryData）捕获，
+  // 避免 useCallback closure 中 data 因未 re-render 而滞后导致的快速连切 race。
   const syncClaudePluginIfChanged = useCallback(
-    async (enabled: boolean | undefined): Promise<boolean> => {
-      if (
-        enabled === undefined ||
-        enabled === data?.enableClaudePluginIntegration
-      )
-        return false;
+    async (
+      enabled: boolean | undefined,
+      prevEnabled: boolean | undefined,
+    ): Promise<boolean> => {
+      if (enabled === undefined || enabled === prevEnabled) return false;
       try {
         if (enabled) {
           const currentId = await providersApi.getCurrent("claude");
@@ -170,7 +173,7 @@ export function useSettings(): UseSettingsResult {
         return false;
       }
     },
-    [data?.enableClaudePluginIntegration, t],
+    [t],
   );
 
   // 即时保存设置（用于 General 标签页的实时更新）
@@ -202,6 +205,12 @@ export function useSettings(): UseSettingsResult {
           openclawConfigDir: sanitizedOpenclawDir,
           language: mergedSettings.language,
         };
+
+        // 在 mutate 之前从实时缓存捕获上一次持久化的插件集成状态，
+        // 避免 closure 里的 data 因 React 尚未 re-render 而滞后
+        const prevPluginEnabled = queryClient.getQueryData<Settings>([
+          "settings",
+        ])?.enableClaudePluginIntegration;
 
         // 保存到配置文件
         await saveMutation.mutateAsync(payload);
@@ -253,7 +262,10 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
-        await syncClaudePluginIfChanged(payload.enableClaudePluginIntegration);
+        await syncClaudePluginIfChanged(
+          payload.enableClaudePluginIntegration,
+          prevPluginEnabled,
+        );
 
         // 持久化语言偏好
         try {
@@ -286,7 +298,7 @@ export function useSettings(): UseSettingsResult {
         throw error;
       }
     },
-    [data, saveMutation, settings, syncClaudePluginIfChanged, t],
+    [data, queryClient, saveMutation, settings, syncClaudePluginIfChanged, t],
   );
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）
@@ -327,6 +339,12 @@ export function useSettings(): UseSettingsResult {
           openclawConfigDir: sanitizedOpenclawDir,
           language: mergedSettings.language,
         };
+
+        // 在 mutate 之前从实时缓存捕获上一次持久化的插件集成状态，
+        // 避免 closure 里的 data 因 React 尚未 re-render 而滞后
+        const prevPluginEnabled = queryClient.getQueryData<Settings>([
+          "settings",
+        ])?.enableClaudePluginIntegration;
 
         await saveMutation.mutateAsync(payload);
 
@@ -378,6 +396,7 @@ export function useSettings(): UseSettingsResult {
 
         const pluginSynced = await syncClaudePluginIfChanged(
           payload.enableClaudePluginIntegration,
+          prevPluginEnabled,
         );
 
         try {
@@ -452,6 +471,7 @@ export function useSettings(): UseSettingsResult {
       appConfigDir,
       data,
       initialAppConfigDir,
+      queryClient,
       saveMutation,
       settings,
       setRequiresRestart,
