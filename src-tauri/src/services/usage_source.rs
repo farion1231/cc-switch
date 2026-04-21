@@ -47,6 +47,13 @@ pub async fn sync_session_usage_by_policy(
     proxy_service: &ProxyService,
 ) -> Result<SessionSyncResult, AppError> {
     let proxy_running = proxy_service.is_running().await;
+    sync_session_usage_by_policy_with_proxy_running(db, proxy_running).await
+}
+
+async fn sync_session_usage_by_policy_with_proxy_running(
+    db: &Database,
+    proxy_running: bool,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult {
         imported: 0,
         skipped: 0,
@@ -118,6 +125,59 @@ fn merge_sync_result(
 mod tests {
     use super::*;
     use crate::proxy::types::UsageStatsSource;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+
+    fn test_env_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+    }
+
+    struct TestHomeScope {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        temp: tempfile::TempDir,
+        old_test_home: Option<OsString>,
+        old_home: Option<OsString>,
+    }
+
+    impl TestHomeScope {
+        fn new() -> Self {
+            let guard = test_env_guard();
+            let temp = tempdir().expect("tempdir");
+            let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            let old_home = std::env::var_os("HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+            std::env::set_var("HOME", temp.path());
+
+            Self {
+                _guard: guard,
+                temp,
+                old_test_home,
+                old_home,
+            }
+        }
+
+        fn root(&self) -> &std::path::Path {
+            self.temp.path()
+        }
+    }
+
+    impl Drop for TestHomeScope {
+        fn drop(&mut self) {
+            match &self.old_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            match &self.old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
 
     #[tokio::test]
     async fn effective_usage_source_falls_back_to_session_when_proxy_not_running(
@@ -138,6 +198,20 @@ mod tests {
         db.update_proxy_config_for_app(config).await?;
 
         let source = resolve_effective_usage_source(&db, true, "claude").await?;
+        assert_eq!(source, UsageStatsSource::Session);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn effective_usage_source_falls_back_to_session_when_app_not_taken_over(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut config = db.get_proxy_config_for_app("codex").await?;
+        config.enabled = false;
+        config.usage_stats_source = UsageStatsSource::Proxy;
+        db.update_proxy_config_for_app(config).await?;
+
+        let source = resolve_effective_usage_source(&db, true, "codex").await?;
         assert_eq!(source, UsageStatsSource::Session);
         Ok(())
     }
@@ -200,6 +274,131 @@ mod tests {
         session_mode.usage_stats_source = UsageStatsSource::Session;
         db.update_proxy_config_for_app(session_mode).await?;
         assert!(should_record_session_usage(&db, true, "claude").await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sync_session_usage_by_policy_applies_per_app_recording_modes() -> Result<(), AppError>
+    {
+        let scope = TestHomeScope::new();
+        let home = scope.root();
+
+        let claude_path = home
+            .join(".claude")
+            .join("projects")
+            .join("project-a")
+            .join("session.jsonl");
+        fs::create_dir_all(claude_path.parent().expect("claude parent"))
+            .expect("create claude dirs");
+        fs::write(
+            &claude_path,
+            "{\"type\":\"assistant\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":12,\"output_tokens\":6},\"stop_reason\":\"end_turn\"},\"timestamp\":\"2026-04-05T12:00:00Z\",\"sessionId\":\"session-1\"}\n",
+        )
+        .expect("write claude session log");
+
+        let codex_path = home
+            .join(".codex")
+            .join("sessions")
+            .join("2026")
+            .join("03")
+            .join("06")
+            .join("codex.jsonl");
+        fs::create_dir_all(codex_path.parent().expect("codex parent")).expect("create codex dirs");
+        fs::write(
+            &codex_path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"session-1\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.4\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"model\":\"gpt-5.4\",\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":30}}}}\n"
+            ),
+        )
+        .expect("write codex session log");
+
+        let gemini_path = home
+            .join(".gemini")
+            .join("tmp")
+            .join("project-hash")
+            .join("chats")
+            .join("session-1.json");
+        fs::create_dir_all(gemini_path.parent().expect("gemini parent"))
+            .expect("create gemini dirs");
+        fs::write(
+            &gemini_path,
+            serde_json::json!({
+                "sessionId": "gemini-session-1",
+                "messages": [
+                    {
+                        "id": "msg-1",
+                        "type": "gemini",
+                        "model": "gemini-2.5-pro",
+                        "timestamp": "2026-04-05T12:00:00Z",
+                        "tokens": {
+                            "input": 50,
+                            "output": 10,
+                            "cached": 5,
+                            "thoughts": 2
+                        }
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write gemini session");
+
+        let db = Database::memory()?;
+
+        let mut claude_config = db.get_proxy_config_for_app("claude").await?;
+        claude_config.enabled = true;
+        claude_config.usage_stats_source = UsageStatsSource::Proxy;
+
+        let mut codex_config = db.get_proxy_config_for_app("codex").await?;
+        codex_config.enabled = true;
+        codex_config.usage_stats_source = UsageStatsSource::Session;
+
+        let mut gemini_config = db.get_proxy_config_for_app("gemini").await?;
+        gemini_config.enabled = false;
+        gemini_config.usage_stats_source = UsageStatsSource::Proxy;
+
+        db.update_proxy_config_for_app(claude_config).await?;
+        db.update_proxy_config_for_app(codex_config).await?;
+        db.update_proxy_config_for_app(gemini_config).await?;
+
+        let result = sync_session_usage_by_policy_with_proxy_running(&db, true).await?;
+
+        assert_eq!(result.imported, 2);
+        assert_eq!(result.skipped, 0);
+        assert_eq!(result.files_scanned, 3);
+        assert!(result.errors.is_empty());
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+                row.get(0)
+            })
+            .expect("count imported logs");
+        assert_eq!(count, 2);
+
+        let data_sources: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT data_source FROM proxy_request_logs ORDER BY data_source")
+                .expect("prepare data sources");
+            stmt.query_map([], |row| row.get::<_, String>(0))
+                .expect("query data sources")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("collect data sources")
+        };
+        assert_eq!(
+            data_sources,
+            vec!["codex_session".to_string(), "gemini_session".to_string()]
+        );
+
+        let sync_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM session_log_sync", [], |row| {
+                row.get(0)
+            })
+            .expect("count sync cursors");
+        assert_eq!(sync_count, 3);
 
         Ok(())
     }

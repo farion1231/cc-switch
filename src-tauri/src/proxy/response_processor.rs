@@ -1015,4 +1015,60 @@ mod tests {
         );
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_log_usage_skips_proxy_write_when_session_source_selected() -> Result<(), AppError>
+    {
+        let db = Arc::new(Database::memory()?);
+        let app_type = "claude";
+
+        let mut config = db.get_proxy_config_for_app(app_type).await?;
+        config.enabled = true;
+        config.usage_stats_source = crate::proxy::types::UsageStatsSource::Session;
+        db.update_proxy_config_for_app(config).await?;
+
+        db.set_default_cost_multiplier(app_type, "1.5").await?;
+        db.set_pricing_model_source(app_type, "response").await?;
+        seed_pricing(&db)?;
+
+        let meta = ProviderMeta::default();
+        insert_provider(&db, "provider-3", app_type, meta)?;
+
+        let state = build_state(db.clone());
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            model: None,
+            message_id: None,
+        };
+
+        log_usage_internal(
+            &state,
+            "provider-3",
+            app_type,
+            "resp-model",
+            "req-model",
+            usage,
+            10,
+            None,
+            false,
+            200,
+            None,
+        )
+        .await;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id = ?1",
+                ["provider-3"],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        assert_eq!(count, 0);
+
+        Ok(())
+    }
 }
