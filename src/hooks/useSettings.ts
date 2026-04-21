@@ -406,8 +406,7 @@ export function useSettings(): UseSettingsResult {
         const codexDirChanged = sanitizedCodexDir !== previousCodexDir;
         const geminiDirChanged = sanitizedGeminiDir !== previousGeminiDir;
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
-        const openclawDirChanged =
-          sanitizedOpenclawDir !== previousOpenclawDir;
+        const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
