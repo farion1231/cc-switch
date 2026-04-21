@@ -18,6 +18,7 @@ import {
   getSettings,
   setSettings,
   getAppConfigDirOverride,
+  getCliDetectionState,
   setAppConfigDirOverrideState,
   getMcpConfig,
   setMcpServerEnabled,
@@ -232,6 +233,22 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_app_config_dir_override`, () =>
     success(getAppConfigDirOverride()),
   ),
+
+  http.post(`${TAURI_ENDPOINT}/detect_cli_tools`, () =>
+    success(getCliDetectionState()),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
+
+  http.post(`${TAURI_ENDPOINT}/delete_env_vars`, () =>
+    success({
+      backupPath: "/mock/env-backup.json",
+      timestamp: Date.now(),
+      envVars: [],
+    }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/restore_env_backup`, () => success(null)),
 
   http.post(
     `${TAURI_ENDPOINT}/apply_claude_plugin_config`,

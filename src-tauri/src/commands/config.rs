@@ -8,6 +8,15 @@ use crate::app_config::AppType;
 use crate::codex_config;
 use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::settings;
+use std::path::{Path, PathBuf};
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+const DETECTABLE_CLI_APPS: [&str; 4] = ["claude", "codex", "gemini", "opencode"];
 
 #[tauri::command]
 pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
@@ -15,6 +24,41 @@ pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
 }
 
 use std::str::FromStr;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliDetectionSummary {
+    wsl_installed: bool,
+    wsl_distro: Option<String>,
+    tools: Vec<CliToolDetection>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliToolDetection {
+    app: String,
+    native: CliLocationDetection,
+    wsl: Option<WslCliLocationDetection>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliLocationDetection {
+    env_type: String,
+    executable_path: Option<String>,
+    config_dir: String,
+    config_exists: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WslCliLocationDetection {
+    env_type: String,
+    distro: String,
+    executable_path: Option<String>,
+    config_dir: String,
+    config_exists: bool,
+}
 
 fn invalid_json_format_error(error: serde_json::Error) -> String {
     let lang = settings::get_settings()
@@ -37,6 +81,368 @@ fn invalid_toml_format_error(error: toml_edit::TomlError) -> String {
         "en" => format!("Invalid TOML format: {error}"),
         "ja" => format!("TOML形式が無効です: {error}"),
         _ => format!("无效的 TOML 格式: {error}"),
+    }
+}
+
+fn native_env_type() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "windows"
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        "macos"
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        "linux"
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        "unknown"
+    }
+}
+
+fn default_config_dir_for_app(app: &str) -> PathBuf {
+    let home = config::get_home_dir();
+    match app {
+        "claude" => home.join(".claude"),
+        "codex" => home.join(".codex"),
+        "gemini" => home.join(".gemini"),
+        "opencode" => home.join(".config").join("opencode"),
+        _ => home,
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.as_os_str().is_empty() {
+        return;
+    }
+
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn extend_from_path_env(paths: &mut Vec<PathBuf>) {
+    if let Some(raw) = std::env::var_os("PATH") {
+        for entry in std::env::split_paths(&raw) {
+            push_unique_path(paths, entry);
+        }
+    }
+}
+
+fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        vec![
+            dir.join(format!("{tool}.cmd")),
+            dir.join(format!("{tool}.exe")),
+            dir.join(tool),
+        ]
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        vec![dir.join(tool)]
+    }
+}
+
+fn opencode_extra_search_paths(home: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    for key in ["OPENCODE_INSTALL_DIR", "XDG_BIN_DIR"] {
+        if let Some(value) = std::env::var_os(key) {
+            push_unique_path(&mut paths, PathBuf::from(value));
+        }
+    }
+
+    if !home.as_os_str().is_empty() {
+        push_unique_path(&mut paths, home.join("bin"));
+        push_unique_path(&mut paths, home.join(".opencode").join("bin"));
+        push_unique_path(&mut paths, home.join(".bun").join("bin"));
+        push_unique_path(&mut paths, home.join("go").join("bin"));
+    }
+
+    if let Some(gopath) = std::env::var_os("GOPATH") {
+        for entry in std::env::split_paths(&gopath) {
+            push_unique_path(&mut paths, entry.join("bin"));
+        }
+    }
+
+    paths
+}
+
+fn native_search_paths(tool: &str) -> Vec<PathBuf> {
+    let home = config::get_home_dir();
+    let mut search_paths = Vec::new();
+
+    extend_from_path_env(&mut search_paths);
+
+    if !home.as_os_str().is_empty() {
+        push_unique_path(&mut search_paths, home.join(".local").join("bin"));
+        push_unique_path(&mut search_paths, home.join(".npm-global").join("bin"));
+        push_unique_path(&mut search_paths, home.join("n").join("bin"));
+        push_unique_path(&mut search_paths, home.join(".volta").join("bin"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        push_unique_path(&mut search_paths, PathBuf::from("/opt/homebrew/bin"));
+        push_unique_path(&mut search_paths, PathBuf::from("/usr/local/bin"));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        push_unique_path(&mut search_paths, PathBuf::from("/usr/local/bin"));
+        push_unique_path(&mut search_paths, PathBuf::from("/usr/bin"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = dirs::data_dir() {
+            push_unique_path(&mut search_paths, appdata.join("npm"));
+        }
+        if let Ok(program_files) = std::env::var("ProgramFiles") {
+            push_unique_path(
+                &mut search_paths,
+                PathBuf::from(program_files).join("nodejs"),
+            );
+        }
+        if let Ok(program_files_x86) = std::env::var("ProgramFiles(x86)") {
+            push_unique_path(
+                &mut search_paths,
+                PathBuf::from(program_files_x86).join("nodejs"),
+            );
+        }
+    }
+
+    let fnm_base = home.join(".local").join("state").join("fnm_multishells");
+    if fnm_base.exists() {
+        if let Ok(entries) = std::fs::read_dir(&fnm_base) {
+            for entry in entries.flatten() {
+                push_unique_path(&mut search_paths, entry.path().join("bin"));
+            }
+        }
+    }
+
+    let nvm_base = home.join(".nvm").join("versions").join("node");
+    if nvm_base.exists() {
+        if let Ok(entries) = std::fs::read_dir(&nvm_base) {
+            for entry in entries.flatten() {
+                push_unique_path(&mut search_paths, entry.path().join("bin"));
+            }
+        }
+    }
+
+    if tool == "opencode" {
+        for path in opencode_extra_search_paths(&home) {
+            push_unique_path(&mut search_paths, path);
+        }
+    }
+
+    search_paths
+}
+
+fn canonicalize_for_display(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
+}
+
+fn find_native_executable_in_paths(tool: &str) -> Option<PathBuf> {
+    for dir in native_search_paths(tool) {
+        for candidate in tool_executable_candidates(tool, &dir) {
+            if candidate.exists() {
+                return Some(canonicalize_for_display(candidate));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn query_windows_executable(tool: &str) -> Option<PathBuf> {
+    let output = std::process::Command::new("where.exe")
+        .arg(tool)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .find(|path| path.exists())
+        .map(canonicalize_for_display)
+}
+
+fn detect_native_executable(tool: &str) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        query_windows_executable(tool).or_else(|| find_native_executable_in_paths(tool))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        find_native_executable_in_paths(tool)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_wsl_output(args: &[&str]) -> Option<std::process::Output> {
+    std::process::Command::new("wsl.exe")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()
+}
+
+#[cfg(target_os = "windows")]
+fn first_nonempty_line(raw: &str) -> Option<String> {
+    raw.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn is_valid_wsl_distro_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+#[cfg(target_os = "windows")]
+fn detect_wsl_installation() -> (bool, Option<String>) {
+    let installed = query_windows_executable("wsl.exe").is_some();
+    if !installed {
+        return (false, None);
+    }
+
+    if let Some(output) = run_wsl_output(&["--", "sh", "-lc", "printf %s \"$WSL_DISTRO_NAME\""]) {
+        if output.status.success() {
+            if let Some(line) = first_nonempty_line(&String::from_utf8_lossy(&output.stdout)) {
+                return (true, Some(line));
+            }
+        }
+    }
+
+    let distro = run_wsl_output(&["-l", "-q"])
+        .and_then(|output| {
+            if !output.status.success() {
+                return None;
+            }
+            first_nonempty_line(&String::from_utf8_lossy(&output.stdout))
+        })
+        .filter(|name| is_valid_wsl_distro_name(name));
+
+    (true, distro)
+}
+
+#[cfg(target_os = "windows")]
+fn detect_wsl_home(distro: &str) -> Option<String> {
+    if !is_valid_wsl_distro_name(distro) {
+        return None;
+    }
+
+    let output = run_wsl_output(&["-d", distro, "--", "sh", "-lc", "printf %s \"$HOME\""])?;
+    if !output.status.success() {
+        return None;
+    }
+
+    first_nonempty_line(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(target_os = "windows")]
+fn detect_wsl_executable(tool: &str, distro: &str) -> Option<String> {
+    if !is_valid_wsl_distro_name(distro) {
+        return None;
+    }
+
+    let output = run_wsl_output(&[
+        "-d",
+        distro,
+        "--",
+        "sh",
+        "-lc",
+        &format!("command -v {tool} 2>/dev/null"),
+    ])?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    first_nonempty_line(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(target_os = "windows")]
+fn detect_wsl_config_exists(app: &str, distro: &str) -> bool {
+    if !is_valid_wsl_distro_name(distro) {
+        return false;
+    }
+
+    let test_command = match app {
+        "claude" => r#"test -d "$HOME/.claude""#,
+        "codex" => r#"test -d "$HOME/.codex""#,
+        "gemini" => r#"test -d "$HOME/.gemini""#,
+        "opencode" => r#"test -d "$HOME/.config/opencode""#,
+        _ => return false,
+    };
+
+    run_wsl_output(&["-d", distro, "--", "sh", "-lc", test_command])
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn join_config_dir_for_home(home: &Path, app: &str) -> PathBuf {
+    match app {
+        "claude" => home.join(".claude"),
+        "codex" => home.join(".codex"),
+        "gemini" => home.join(".gemini"),
+        "opencode" => home.join(".config").join("opencode"),
+        _ => home.to_path_buf(),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn detect_wsl_location(app: &str, distro: &str) -> Option<WslCliLocationDetection> {
+    let home = detect_wsl_home(distro)?;
+    let config_dir = join_config_dir_for_home(Path::new(&home), app);
+
+    Some(WslCliLocationDetection {
+        env_type: "wsl".to_string(),
+        distro: distro.to_string(),
+        executable_path: detect_wsl_executable(app, distro),
+        config_dir: config_dir.to_string_lossy().to_string(),
+        config_exists: detect_wsl_config_exists(app, distro),
+    })
+}
+
+fn detect_cli_tool(app: &str, wsl_distro: Option<&str>) -> CliToolDetection {
+    let config_dir = default_config_dir_for_app(app);
+
+    CliToolDetection {
+        app: app.to_string(),
+        native: CliLocationDetection {
+            env_type: native_env_type().to_string(),
+            executable_path: detect_native_executable(app)
+                .map(|path| path.to_string_lossy().to_string()),
+            config_dir: config_dir.to_string_lossy().to_string(),
+            config_exists: config_dir.exists(),
+        },
+        #[cfg(target_os = "windows")]
+        wsl: wsl_distro.and_then(|distro| detect_wsl_location(app, distro)),
+        #[cfg(not(target_os = "windows"))]
+        wsl: None,
     }
 }
 
@@ -120,6 +526,24 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
     };
 
     Ok(dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn detect_cli_tools() -> Result<CliDetectionSummary, String> {
+    #[cfg(target_os = "windows")]
+    let (wsl_installed, wsl_distro) = detect_wsl_installation();
+
+    #[cfg(not(target_os = "windows"))]
+    let (wsl_installed, wsl_distro) = (false, None);
+
+    Ok(CliDetectionSummary {
+        wsl_installed,
+        wsl_distro: wsl_distro.clone(),
+        tools: DETECTABLE_CLI_APPS
+            .iter()
+            .map(|app| detect_cli_tool(app, wsl_distro.as_deref()))
+            .collect(),
+    })
 }
 
 #[tauri::command]

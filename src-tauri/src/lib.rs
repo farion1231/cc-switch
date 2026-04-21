@@ -1014,6 +1014,7 @@ pub fn run() {
             commands::get_config_status,
             commands::get_claude_code_config_path,
             commands::get_config_dir,
+            commands::detect_cli_tools,
             commands::open_config_folder,
             commands::pick_directory,
             commands::open_external,

@@ -71,6 +71,8 @@ export function SettingsPage({
     isPortable,
     appConfigDir,
     resolvedDirs,
+    cliDetections,
+    cliDetectionMeta,
     updateSettings,
     updateDirectory,
     updateAppConfigDir,
@@ -309,6 +311,8 @@ export function SettingsPage({
                           <DirectorySettings
                             appConfigDir={appConfigDir}
                             resolvedDirs={resolvedDirs}
+                            cliDetections={cliDetections}
+                            cliDetectionMeta={cliDetectionMeta}
                             onAppConfigChange={updateAppConfigDir}
                             onBrowseAppConfig={browseAppConfigDir}
                             onResetAppConfig={resetAppConfigDir}

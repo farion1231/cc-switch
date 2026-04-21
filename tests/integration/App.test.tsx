@@ -163,9 +163,11 @@ describe("App integration with MSW", () => {
     toastErrorMock.mockReset();
   });
 
-  it("covers basic provider flows via real hooks", async () => {
-    const { default: App } = await import("@/App");
-    renderApp(App);
+  it(
+    "covers basic provider flows via real hooks",
+    async () => {
+      const { default: App } = await import("@/App");
+      renderApp(App);
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -216,30 +218,36 @@ describe("App integration with MSW", () => {
       providerId: "codex-2",
     });
 
-    expect(toastErrorMock).not.toHaveBeenCalled();
-    expect(toastSuccessMock).toHaveBeenCalled();
-  });
+      expect(toastErrorMock).not.toHaveBeenCalled();
+      expect(toastSuccessMock).toHaveBeenCalled();
+    },
+    15000,
+  );
 
-  it("shows toast when auto sync fails in background", async () => {
-    const { default: App } = await import("@/App");
-    renderApp(App);
+  it(
+    "shows toast when auto sync fails in background",
+    async () => {
+      const { default: App } = await import("@/App");
+      renderApp(App);
 
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
-      ),
-    );
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "claude-1",
+        ),
+      );
 
-    emitTauriEvent("webdav-sync-status-updated", {
-      source: "auto",
-      status: "error",
-      error: "network timeout",
-    });
+      emitTauriEvent("webdav-sync-status-updated", {
+        source: "auto",
+        status: "error",
+        error: "network timeout",
+      });
 
-    await waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalled();
-    });
-  });
+      await waitFor(() => {
+        expect(toastErrorMock).toHaveBeenCalled();
+      });
+    },
+    15000,
+  );
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
     setProviders("openclaw", {

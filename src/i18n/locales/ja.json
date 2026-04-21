@@ -586,6 +586,25 @@
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
+    "cliDetection": {
+      "loading": "ネイティブ環境と WSL 内の CLI 設定場所を検出しています…",
+      "nativeOnly": "現在はネイティブ環境の検出結果のみを表示しています。Windows で WSL が利用可能な場合は、WSL 側の CLI 設定パスもここに表示されます。",
+      "wslInstalled": "WSL を検出しました。表示中のディストリビューション: {{distro}}",
+      "unknownDistro": "不明なディストリビューション",
+      "noData": "この CLI の検出情報はまだ取得できていません。",
+      "nativeFound": "{{env}} の設定ディレクトリ: {{path}}",
+      "nativeDefault": "{{env}} のデフォルト設定ディレクトリ: {{path}}",
+      "wslPath": "WSL（{{distro}}）の設定ディレクトリ: {{path}}",
+      "noWslPath": "表示できる WSL 側 CLI 設定パスは見つかりませんでした。",
+      "executable": "CLI 実行ファイル: {{path}}",
+      "env": {
+        "windows": "Windows",
+        "wsl": "WSL",
+        "macos": "macOS",
+        "linux": "Linux",
+        "unknown": "不明"
+      }
+    },
     "checkForUpdates": "アップデートを確認",
     "updateTo": "v{{version}} に更新",
     "updating": "更新中...",
