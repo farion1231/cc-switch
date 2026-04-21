@@ -1,4 +1,4 @@
-//! 代理服务业务逻辑层
+﻿//! 代理服务业务逻辑层
 //!
 //! 提供代理服务器的启动、停止和配置管理
 
@@ -1743,9 +1743,41 @@ impl ProxyService {
         Ok(value)
     }
 
+    fn should_override_claude_enabled_plugins() -> bool {
+        crate::settings::get_settings().override_claude_enabled_plugins
+    }
+
+    fn preserve_local_claude_enabled_plugins(settings: &mut Value) -> Result<(), String> {
+        let Some(target_obj) = settings.as_object_mut() else {
+            return Ok(());
+        };
+
+        let path = get_claude_settings_path();
+        if !path.exists() {
+            return Ok(());
+        }
+
+        let local_config: Value =
+            read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
+        let Some(enabled_plugins) = local_config.get("enabledPlugins").cloned() else {
+            return Ok(());
+        };
+
+        // 覆盖模式关闭时，始终以本地现有 enabledPlugins 为准（存在则覆盖，不存在则新增）
+        target_obj.insert("enabledPlugins".to_string(), enabled_plugins);
+        Ok(())
+    }
+
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
         let path = get_claude_settings_path();
-        let settings = crate::services::provider::sanitize_claude_settings_for_live(config);
+        let mut settings = crate::services::provider::sanitize_claude_settings_for_live(config);
+
+        if !Self::should_override_claude_enabled_plugins() {
+            if let Err(e) = Self::preserve_local_claude_enabled_plugins(&mut settings) {
+                log::warn!("保留 Claude enabledPlugins 失败（将继续写入其他配置）: {e}");
+            }
+        }
+
         write_json_file(&path, &settings).map_err(|e| format!("写入 Claude 配置失败: {e}"))
     }
 
@@ -2079,6 +2111,89 @@ model = "gpt-5.1-codex"
             .expect("base_url should exist");
 
         assert_eq!(base_url, new_url);
+    }
+
+    #[test]
+    #[serial]
+    fn write_claude_live_keeps_local_enabled_plugins_when_override_disabled() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let mut settings = crate::settings::get_settings();
+        settings.override_claude_enabled_plugins = false;
+        crate::settings::update_settings(settings).expect("disable override setting");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+
+        let path = get_claude_settings_path();
+        write_json_file(
+            &path,
+            &json!({
+                "enabledPlugins": ["plugin-local-1", "plugin-local-2"],
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "local-token"
+                }
+            }),
+        )
+        .expect("seed local claude settings");
+
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "new-token"
+                }
+            }))
+            .expect("write claude live");
+
+        let live = service.read_claude_live().expect("read live");
+        assert_eq!(
+            live.get("enabledPlugins"),
+            Some(&json!(["plugin-local-1", "plugin-local-2"])),
+            "enabledPlugins should be copied from local settings when override is disabled"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn write_claude_live_overwrites_enabled_plugins_when_override_enabled() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let mut settings = crate::settings::get_settings();
+        settings.override_claude_enabled_plugins = true;
+        crate::settings::update_settings(settings).expect("enable override setting");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+
+        let path = get_claude_settings_path();
+        write_json_file(
+            &path,
+            &json!({
+                "enabledPlugins": ["plugin-local"],
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "local-token"
+                }
+            }),
+        )
+        .expect("seed local claude settings");
+
+        service
+            .write_claude_live(&json!({
+                "enabledPlugins": ["plugin-provider"],
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "provider-token"
+                }
+            }))
+            .expect("write claude live");
+
+        let live = service.read_claude_live().expect("read live");
+        assert_eq!(
+            live.get("enabledPlugins"),
+            Some(&json!(["plugin-provider"])),
+            "enabledPlugins should keep existing overwrite behavior when override is enabled"
+        );
     }
 
     #[tokio::test]

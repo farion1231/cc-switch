@@ -146,6 +146,9 @@ export function ProviderForm({
   const { data: settingsData } = useSettingsQuery();
   const showCommonConfigNotice =
     settingsData != null && settingsData.commonConfigConfirmed !== true;
+  const showEnabledPluginsOverrideWarning =
+    appId === "claude" &&
+    !(settingsData?.overrideClaudeEnabledPlugins ?? true);
 
   const handleCommonConfigConfirm = async () => {
     try {
@@ -1832,6 +1835,14 @@ export function ProviderForm({
                 onExtract={handleClaudeExtract}
                 isExtracting={isClaudeExtracting}
               />
+              {showEnabledPluginsOverrideWarning && (
+                <p className="text-xs text-amber-600">
+                  {t("provider.enabledPluginsOverrideWarning", {
+                    defaultValue:
+                      "已关闭“覆盖 Claude 启用插件”，当前供应商配置中的 enabledPlugins 不会生效，将继续使用本地配置中的 enabledPlugins",
+                  })}
+                </p>
+              )}
               {settingsConfigErrorField}
             </>
           )}

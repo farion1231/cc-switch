@@ -153,6 +153,7 @@
     "writeCommonConfig": "写入通用配置",
     "editCommonConfigButton": "编辑通用配置",
     "configJsonHint": "请填写完整的 Claude Code 配置",
+    "enabledPluginsOverrideWarning": "已关闭“覆盖 Claude 启用插件”，当前供应商配置中的 enabledPlugins 不会生效，将继续使用本地配置中的 enabledPlugins",
     "editCommonConfigTitle": "编辑通用配置片段",
     "editCommonConfigHint": "通用配置片段将合并到所有启用它的供应商配置中",
     "addProvider": "添加供应商",
@@ -506,6 +507,8 @@
     "useAppWindowControlsDescription": "开启后使用应用自建的最小化、最大化/还原、关闭按钮；关闭后沿用系统窗口模式。",
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",
     "enableClaudePluginIntegrationDescription": "开启后 Vscode Claude Code 插件的供应商将随本软件切换",
+    "overrideClaudeEnabledPlugins": "覆盖 Claude 启用插件",
+    "overrideClaudeEnabledPluginsDescription": "开启后切换供应商会覆盖 Claude settings.json 中的 enabledPlugins 字段",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "开启后跳过 Claude Code 初次安装确认",
     "appVisibility": {

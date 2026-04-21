@@ -180,6 +180,9 @@ pub struct AppSettings {
     /// 是否启用 Claude 插件联动
     #[serde(default)]
     pub enable_claude_plugin_integration: bool,
+    /// 是否覆盖 Claude 本地 settings.json 的 enabledPlugins 字段
+    #[serde(default = "default_true")]
+    pub override_claude_enabled_plugins: bool,
     /// 是否跳过 Claude Code 初次安装确认
     #[serde(default)]
     pub skip_claude_onboarding: bool,
@@ -297,6 +300,7 @@ impl Default for AppSettings {
             minimize_to_tray_on_close: true,
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
+            override_claude_enabled_plugins: true,
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,

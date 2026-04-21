@@ -60,6 +60,16 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
         />
 
         <ToggleRow
+          icon={<MonitorUp className="h-4 w-4 text-amber-500" />}
+          title={t("settings.overrideClaudeEnabledPlugins")}
+          description={t("settings.overrideClaudeEnabledPluginsDescription")}
+          checked={settings.overrideClaudeEnabledPlugins ?? true}
+          onCheckedChange={(value) =>
+            onChange({ overrideClaudeEnabledPlugins: value })
+          }
+        />
+
+        <ToggleRow
           icon={<MonitorUp className="h-4 w-4 text-cyan-500" />}
           title={t("settings.skipClaudeOnboarding")}
           description={t("settings.skipClaudeOnboardingDescription")}
