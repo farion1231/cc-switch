@@ -168,7 +168,7 @@ async fn update_tray_menu(
 ) -> Result<bool, String> {
     match tray::create_tray_menu(&app, state.inner()) {
         Ok(new_menu) => {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
                 tray.set_menu(Some(new_menu))
                     .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
                 return Ok(true);
@@ -728,7 +728,7 @@ pub fn run() {
             let menu = tray::create_tray_menu(app.handle(), &app_state)?;
 
             // 构建托盘
-            let mut tray_builder = TrayIconBuilder::with_id("main")
+            let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .on_tray_icon_event(|tray, event| match event {
                     // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
                     // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
