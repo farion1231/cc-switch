@@ -2,7 +2,10 @@ import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { resetProviderState } from "../msw/state";
+import {
+  getLastBatchTerminalLaunchPayload,
+  resetProviderState,
+} from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 
 const toastSuccessMock = vi.fn();
@@ -45,6 +48,10 @@ vi.mock("@/components/providers/ProviderList", () => ({
       <button onClick={() => onCreate?.()}>create</button>
     </div>
   ),
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(async () => "/mock/batch-dir"),
 }));
 
 vi.mock("@/components/providers/AddProviderDialog", () => ({
@@ -229,5 +236,39 @@ describe("App integration with MSW", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
+  });
+
+  it("opens the global batch launch dialog and submits a batch terminal launch", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "批量启动" }));
+    expect(screen.getByText("批量启动终端")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "开始批量启动" }));
+
+    await waitFor(() => {
+      expect(getLastBatchTerminalLaunchPayload()).toMatchObject({
+        app: "claude",
+        options: {
+          bypass: false,
+          enableTelegramChannel: false,
+        },
+        tasks: [
+          {
+            providerId: "claude-1",
+            directories: ["/mock/batch-dir"],
+          },
+        ],
+      });
+    });
+
+    expect(toastSuccessMock).toHaveBeenCalled();
   });
 });

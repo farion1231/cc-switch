@@ -136,6 +136,7 @@ const createDefaultSessionMessages = (): Record<string, SessionMessage[]> => ({
 
 let sessionsState = createDefaultSessions();
 let sessionMessagesState = createDefaultSessionMessages();
+let lastBatchTerminalLaunchPayload: unknown = null;
 let mcpConfigs: McpConfigState = {
   claude: {
     sample: {
@@ -186,6 +187,7 @@ export const resetProviderState = () => {
   current = createDefaultCurrent();
   sessionsState = createDefaultSessions();
   sessionMessagesState = createDefaultSessionMessages();
+  lastBatchTerminalLaunchPayload = null;
   settingsState = {
     showInTray: true,
     minimizeToTrayOnClose: true,
@@ -237,6 +239,13 @@ export const resetProviderState = () => {
     openclaw: {},
   };
 };
+
+export const recordBatchTerminalLaunch = (payload: unknown) => {
+  lastBatchTerminalLaunchPayload = JSON.parse(JSON.stringify(payload));
+};
+
+export const getLastBatchTerminalLaunchPayload = () =>
+  lastBatchTerminalLaunchPayload;
 
 export const getProviders = (appType: AppId) =>
   cloneProviders(providers)[appType] ?? {};

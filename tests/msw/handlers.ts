@@ -19,6 +19,7 @@ import {
   getAppConfigDirOverride,
   setAppConfigDirOverrideState,
   getMcpConfig,
+  recordBatchTerminalLaunch,
   setMcpServerEnabled,
   upsertMcpServer,
   deleteMcpServer,
@@ -43,6 +44,7 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),
+  http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getProviders(app));
@@ -109,6 +111,19 @@ export const handlers = [
   }),
 
   http.post(`${TAURI_ENDPOINT}/open_external`, () => success(true)),
+
+  http.post(
+    `${TAURI_ENDPOINT}/launch_batch_provider_terminals`,
+    async ({ request }) => {
+      const payload = await withJson<unknown>(request);
+      recordBatchTerminalLaunch(payload);
+      return success({
+        sessionName: "cc-switch-test-session",
+        taskCount: 1,
+        paneCount: 1,
+      });
+    },
+  ),
 
   http.post(`${TAURI_ENDPOINT}/list_sessions`, () => success(listSessions())),
 

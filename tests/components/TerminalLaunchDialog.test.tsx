@@ -24,7 +24,10 @@ vi.mock("@/components/ui/dialog", () => ({
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, defaultValue?: string) => defaultValue ?? key,
+    t: (key: string, opts?: string | Record<string, unknown>) => {
+      if (typeof opts === "string") return opts;
+      return (opts?.defaultValue as string | undefined) ?? key;
+    },
   }),
 }));
 
@@ -42,6 +45,7 @@ describe("TerminalLaunchDialog", () => {
       <TerminalLaunchDialog
         isOpen={true}
         provider={provider}
+        app="claude"
         onConfirm={handleConfirm}
         onCancel={vi.fn()}
       />,
@@ -60,6 +64,7 @@ describe("TerminalLaunchDialog", () => {
       <TerminalLaunchDialog
         isOpen={true}
         provider={provider}
+        app="claude"
         onConfirm={handleConfirm}
         onCancel={vi.fn()}
       />,
@@ -71,6 +76,7 @@ describe("TerminalLaunchDialog", () => {
       <TerminalLaunchDialog
         isOpen={false}
         provider={provider}
+        app="claude"
         onConfirm={handleConfirm}
         onCancel={vi.fn()}
       />,
@@ -80,6 +86,7 @@ describe("TerminalLaunchDialog", () => {
       <TerminalLaunchDialog
         isOpen={true}
         provider={provider}
+        app="claude"
         onConfirm={handleConfirm}
         onCancel={vi.fn()}
       />,

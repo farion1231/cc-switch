@@ -1045,6 +1045,7 @@ pub fn run() {
             commands::get_tool_versions,
             // Provider terminal
             commands::open_provider_terminal,
+            commands::launch_batch_provider_terminals,
             // Universal Provider management
             commands::get_universal_providers,
             commands::get_universal_provider,

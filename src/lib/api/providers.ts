@@ -21,6 +21,22 @@ export interface SwitchResult {
   warnings: string[];
 }
 
+export interface BatchTerminalLaunchOptions {
+  bypass: boolean;
+  enableTelegramChannel?: boolean;
+}
+
+export interface BatchTerminalLaunchTask {
+  providerId: string;
+  directories: string[];
+}
+
+export interface BatchTerminalLaunchResult {
+  sessionName: string;
+  taskCount: number;
+  paneCount: number;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -97,6 +113,17 @@ export const providersApi = {
     });
   },
 
+  async launchBatchTerminals(
+    app: AppId,
+    options: BatchTerminalLaunchOptions,
+    tasks: BatchTerminalLaunchTask[],
+  ): Promise<BatchTerminalLaunchResult> {
+    return await invoke("launch_batch_provider_terminals", {
+      app,
+      options,
+      tasks,
+    });
+  },
 
   /**
    * 从 OpenCode live 配置导入供应商到数据库

@@ -22,6 +22,7 @@ import {
   KeyRound,
   Shield,
   Cpu,
+  Layers3,
 } from "lucide-react";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
@@ -72,7 +73,12 @@ import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
-import { TerminalLaunchDialog } from "@/components/providers/TerminalLaunchDialog";
+import { TerminalLaunchDialog, BYPASS_ARG_FOR_APP } from "@/components/providers/TerminalLaunchDialog";
+import {
+  BatchTerminalLaunchDialog,
+  type BatchTerminalLaunchOptions,
+  type BatchTerminalLaunchTask,
+} from "@/components/providers/BatchTerminalLaunchDialog";
 
 type View =
   | "providers"
@@ -149,6 +155,7 @@ function App() {
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isBatchTerminalOpen, setIsBatchTerminalOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
@@ -651,17 +658,12 @@ function App() {
   };
 
   const handleOpenTerminal = async (provider: Provider) => {
-    if (activeApp === "claude") {
-      setTerminalLaunchProvider(provider);
-    } else {
-      // 其他应用直接启动
-      performOpenTerminal(provider, false, false);
-    }
+    setTerminalLaunchProvider(provider);
   };
 
   const performOpenTerminal = async (
     provider: Provider,
-    dangerouslySkipPermissions: boolean,
+    bypass: boolean,
     enableTelegramChannel: boolean,
   ) => {
     try {
@@ -674,8 +676,8 @@ function App() {
       const cwd = typeof selected === "string" ? selected : undefined;
       const args: string[] = [];
 
-      if (dangerouslySkipPermissions) {
-        args.push("--dangerously-skip-permissions");
+      if (bypass) {
+        args.push(BYPASS_ARG_FOR_APP[activeApp]);
       }
 
       if (enableTelegramChannel) {
@@ -694,6 +696,53 @@ function App() {
       toast.error(
         t("provider.terminalOpenFailed", {
           defaultValue: "打开终端失败",
+        }) + (errorMessage ? `: ${errorMessage}` : ""),
+      );
+    }
+  };
+
+  const pickBatchTerminalDirectory = async ({
+    taskIndex,
+    paneIndex,
+    provider,
+  }: {
+    taskIndex: number;
+    paneIndex: number;
+    provider: Provider;
+  }) => {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: `选择 #${taskIndex + 1} ${provider.name} 的 Pane ${paneIndex + 1} 启动目录`,
+    });
+
+    return typeof selected === "string" ? selected : null;
+  };
+
+  const performBatchTerminalLaunch = async (
+    options: BatchTerminalLaunchOptions,
+    tasks: BatchTerminalLaunchTask[],
+  ) => {
+    try {
+      const result = await providersApi.launchBatchTerminals(
+        activeApp,
+        options,
+        tasks,
+      );
+      setIsBatchTerminalOpen(false);
+      toast.success(
+        t("provider.batchTerminal.started", {
+          sessionName: result.sessionName,
+          paneCount: result.paneCount,
+          defaultValue: `批量终端已启动：${result.sessionName}（${result.paneCount} 个 pane）`,
+        }),
+      );
+    } catch (error) {
+      console.error("[App] Failed to launch batch terminals", error);
+      const errorMessage = extractErrorMessage(error);
+      toast.error(
+        t("provider.batchTerminal.startFailed", {
+          defaultValue: "批量启动终端失败",
         }) + (errorMessage ? `: ${errorMessage}` : ""),
       );
     }
@@ -983,6 +1032,16 @@ function App() {
                   className="hover:bg-black/5 dark:hover:bg-white/5"
                 >
                   <Settings className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setIsBatchTerminalOpen(true)}
+                  aria-label={t("provider.batchTerminal.button", "批量启动")}
+                  title={t("provider.batchTerminal.button", "批量启动")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Layers3 className="w-4 h-4" />
                 </Button>
                 <UpdateBadge
                   onClick={() => {
@@ -1331,6 +1390,7 @@ function App() {
       <TerminalLaunchDialog
         isOpen={Boolean(terminalLaunchProvider)}
         provider={terminalLaunchProvider}
+        app={activeApp}
         onConfirm={(bypass, enableTelegramChannel) => {
           if (terminalLaunchProvider) {
             void performOpenTerminal(
@@ -1342,6 +1402,17 @@ function App() {
           setTerminalLaunchProvider(null);
         }}
         onCancel={() => setTerminalLaunchProvider(null)}
+      />
+
+      <BatchTerminalLaunchDialog
+        isOpen={isBatchTerminalOpen}
+        app={activeApp}
+        providers={providers}
+        onConfirm={(options, tasks) =>
+          void performBatchTerminalLaunch(options, tasks)
+        }
+        onPickDirectory={pickBatchTerminalDirectory}
+        onCancel={() => setIsBatchTerminalOpen(false)}
       />
 
       <DeepLinkImportDialog />

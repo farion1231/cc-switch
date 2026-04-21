@@ -5,6 +5,7 @@ use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -741,6 +742,92 @@ pub async fn open_provider_terminal(
     Ok(true)
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchTerminalLaunchOptions {
+    bypass: bool,
+    #[serde(default)]
+    enable_telegram_channel: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchTerminalLaunchTask {
+    #[allow(non_snake_case)]
+    provider_id: String,
+    directories: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchTerminalLaunchResult {
+    session_name: String,
+    task_count: usize,
+    pane_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BatchWindowPlan {
+    name: String,
+    panes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BatchSessionPlan {
+    session_name: String,
+    windows: Vec<BatchWindowPlan>,
+    pane_count: usize,
+}
+
+#[tauri::command]
+pub async fn launch_batch_provider_terminals(
+    state: State<'_, crate::store::AppState>,
+    app: String,
+    options: BatchTerminalLaunchOptions,
+    tasks: Vec<BatchTerminalLaunchTask>,
+) -> Result<BatchTerminalLaunchResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    if tasks.is_empty() {
+        return Err("至少需要一个批量启动任务".to_string());
+    }
+
+    let args = build_batch_terminal_args(&app_type, &options);
+    let providers = ProviderService::list(state.inner(), app_type.clone())
+        .map_err(|e| format!("获取提供商列表失败: {e}"))?;
+
+    let mut windows = Vec::new();
+    for (task_index, task) in tasks.iter().enumerate() {
+        if task.directories.is_empty() {
+            return Err(format!("任务 {} 至少需要一个启动目录", task_index + 1));
+        }
+        let provider = providers
+            .get(&task.provider_id)
+            .ok_or_else(|| format!("提供商 {} 不存在", task.provider_id))?;
+        let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
+        let panes = task
+            .directories
+            .iter()
+            .map(|directory| {
+                build_tmux_pane_command(&env_vars, &provider.id, &app_type, &args, directory)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        windows.push(BatchWindowPlan {
+            name: sanitize_tmux_name(&format!("{}-{}", task_index + 1, provider.name)),
+            panes,
+        });
+    }
+
+    let plan = build_batch_session_plan(windows);
+    launch_batch_session(&plan)?;
+
+    Ok(BatchTerminalLaunchResult {
+        session_name: plan.session_name,
+        task_count: plan.windows.len(),
+        pane_count: plan.pane_count,
+    })
+}
+
 /// 从提供商配置中提取环境变量
 fn extract_env_vars_from_config(
     config: &serde_json::Value,
@@ -789,6 +876,294 @@ fn extract_env_vars_from_config(
     }
 
     env_vars
+}
+
+fn build_batch_terminal_args(
+    app_type: &AppType,
+    options: &BatchTerminalLaunchOptions,
+) -> Vec<String> {
+    let mut args = Vec::new();
+    if options.bypass {
+        let bypass = match app_type {
+            AppType::Claude => "--dangerously-skip-permissions",
+            AppType::Codex | AppType::Gemini | AppType::OpenCode | AppType::OpenClaw => "--yolo",
+        };
+        args.push(bypass.to_string());
+    }
+
+    if *app_type == AppType::Claude && options.enable_telegram_channel {
+        args.push("--channels".to_string());
+        args.push("plugin:telegram@claude-plugins-official".to_string());
+    }
+
+    args
+}
+
+fn shell_escape_single_quotes(value: &str) -> String {
+    value.replace('\'', "'\"'\"'")
+}
+
+fn export_env_lines(env_vars: &[(String, String)]) -> String {
+    env_vars
+        .iter()
+        .map(|(k, v)| {
+            let escaped = v.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("export {k}=\"{escaped}\"")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn build_cli_command(app_type: &AppType, args: &[String], extra: Option<&str>) -> String {
+    let cli_cmd = app_type.as_str();
+    let mut segments = vec![cli_cmd.to_string()];
+    if !args.is_empty() {
+        segments.push(args.join(" "));
+    }
+    if let Some(extra_arg) = extra {
+        segments.push(extra_arg.to_string());
+    }
+    segments.join(" ")
+}
+
+fn build_tmux_pane_command(
+    env_vars: &[(String, String)],
+    provider_id: &str,
+    app_type: &AppType,
+    args: &[String],
+    cwd: &str,
+) -> Result<String, String> {
+    let escaped_cwd = shell_escape_single_quotes(cwd);
+    let exports = export_env_lines(env_vars);
+
+    if *app_type == AppType::Claude {
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join(format!(
+            "claude_batch_{}_{}_{}.json",
+            provider_id,
+            std::process::id(),
+            sanitize_tmux_name(cwd)
+        ));
+        write_claude_config(&config_file, env_vars)?;
+        let config_path = shell_escape_single_quotes(&config_file.to_string_lossy());
+        let cli_command = build_cli_command(
+            app_type,
+            args,
+            Some(&format!("--settings '{config_path}'")),
+        );
+        return Ok(format!(
+            "cd '{escaped_cwd}'\n{exports}\necho \"Using provider-specific claude config:\"\necho '{config_path}'\n{cli_command}\nexec bash --norc --noprofile"
+        ));
+    }
+
+    let cli_command = build_cli_command(app_type, args, None);
+    Ok(format!(
+        "cd '{escaped_cwd}'\n{exports}\n{cli_command}\nexec bash --norc --noprofile"
+    ))
+}
+
+fn sanitize_tmux_name(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    sanitized.trim_matches('-').to_string()
+}
+
+fn build_batch_session_plan(windows: Vec<BatchWindowPlan>) -> BatchSessionPlan {
+    let pane_count = windows.iter().map(|window| window.panes.len()).sum();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+
+    BatchSessionPlan {
+        session_name: format!("cc-switch-{timestamp}"),
+        windows,
+        pane_count,
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn run_tmux_command(args: &[String]) -> Result<(), String> {
+    use std::process::Command;
+
+    let output = Command::new("tmux")
+        .args(args)
+        .output()
+        .map_err(|e| format!("执行 tmux 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "tmux 执行失败 (exit code: {:?}): {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn batch_session_target(plan: &BatchSessionPlan, window_name: &str) -> String {
+    format!("{}:{window_name}", plan.session_name)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn build_batch_session_tmux_commands(plan: &BatchSessionPlan) -> Result<Vec<Vec<String>>, String> {
+    if plan.windows.is_empty() {
+        return Err("没有可启动的 tmux window".to_string());
+    }
+
+    let first_window = &plan.windows[0];
+    let first_command = first_window
+        .panes
+        .first()
+        .ok_or_else(|| "首个任务缺少 pane 命令".to_string())?;
+
+    let mut commands = vec![vec![
+        "new-session".to_string(),
+        "-d".to_string(),
+        "-s".to_string(),
+        plan.session_name.clone(),
+        "-n".to_string(),
+        first_window.name.clone(),
+        "bash".to_string(),
+        "-lc".to_string(),
+        first_command.clone(),
+    ]];
+
+    commands.push(vec![
+        "set-option".to_string(),
+        "-t".to_string(),
+        plan.session_name.clone(),
+        "-g".to_string(),
+        "mouse".to_string(),
+        "on".to_string(),
+    ]);
+    commands.push(vec![
+        "set-option".to_string(),
+        "-t".to_string(),
+        plan.session_name.clone(),
+        "-g".to_string(),
+        "pane-border-status".to_string(),
+        "top".to_string(),
+    ]);
+    commands.push(vec![
+        "set-option".to_string(),
+        "-t".to_string(),
+        plan.session_name.clone(),
+        "-g".to_string(),
+        "pane-border-format".to_string(),
+        "Pane #{pane_index} | #{pane_current_path}".to_string(),
+    ]);
+
+    for pane_command in first_window.panes.iter().skip(1) {
+        commands.push(vec![
+            "split-window".to_string(),
+            "-t".to_string(),
+            batch_session_target(plan, &first_window.name),
+            "bash".to_string(),
+            "-lc".to_string(),
+            pane_command.clone(),
+        ]);
+    }
+    commands.push(vec![
+        "select-layout".to_string(),
+        "-t".to_string(),
+        batch_session_target(plan, &first_window.name),
+        "tiled".to_string(),
+    ]);
+
+    for window in plan.windows.iter().skip(1) {
+        let first_pane = window
+            .panes
+            .first()
+            .ok_or_else(|| format!("window {} 缺少 pane 命令", window.name))?;
+        commands.push(vec![
+            "new-window".to_string(),
+            "-t".to_string(),
+            plan.session_name.clone(),
+            "-n".to_string(),
+            window.name.clone(),
+            "bash".to_string(),
+            "-lc".to_string(),
+            first_pane.clone(),
+        ]);
+        for pane_command in window.panes.iter().skip(1) {
+            commands.push(vec![
+                "split-window".to_string(),
+                "-t".to_string(),
+                batch_session_target(plan, &window.name),
+                "bash".to_string(),
+                "-lc".to_string(),
+                pane_command.clone(),
+            ]);
+        }
+        commands.push(vec![
+            "select-layout".to_string(),
+            "-t".to_string(),
+            batch_session_target(plan, &window.name),
+            "tiled".to_string(),
+        ]);
+    }
+
+    Ok(commands)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn launch_batch_session(plan: &BatchSessionPlan) -> Result<(), String> {
+    let commands = build_batch_session_tmux_commands(plan)?;
+    for command in commands {
+        run_tmux_command(&command)?;
+    }
+
+    launch_terminal_with_command(
+        &format!("tmux attach -t {}", plan.session_name),
+        Some(plan.session_name.as_str()),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn launch_batch_session(_plan: &BatchSessionPlan) -> Result<(), String> {
+    Err("批量 tmux 启动暂不支持 Windows".to_string())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn launch_terminal_with_command(command: &str, title_hint: Option<&str>) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = std::env::temp_dir();
+    let script_file = temp_dir.join(format!(
+        "cc_switch_tmux_attach_{}_{}.sh",
+        title_hint.unwrap_or("session"),
+        std::process::id()
+    ));
+    let script_content = format!(
+        "#!/bin/bash\n{}\nexec bash --norc --noprofile\n",
+        command
+    );
+    std::fs::write(&script_file, &script_content)
+        .map_err(|e| format!("写入 tmux 启动脚本失败: {e}"))?;
+    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("设置 tmux 启动脚本权限失败: {e}"))?;
+
+    #[cfg(target_os = "macos")]
+    {
+        return launch_macos_terminal(&format!("bash '{}'", script_file.display()), None, None);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return launch_linux_terminal(&format!("bash '{}'", script_file.display()), None, None);
+    }
 }
 
 /// 创建临时配置文件并启动终端
@@ -1273,6 +1648,135 @@ mod tests {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
         assert_eq!(extract_version("no version here"), "no version here");
+    }
+
+    #[test]
+    fn batch_terminal_args_follow_current_mapping_rules() {
+        let bypass_only = BatchTerminalLaunchOptions {
+            bypass: true,
+            enable_telegram_channel: false,
+        };
+        assert_eq!(
+            build_batch_terminal_args(&AppType::Claude, &bypass_only),
+            vec!["--dangerously-skip-permissions".to_string()]
+        );
+        assert_eq!(
+            build_batch_terminal_args(&AppType::Codex, &bypass_only),
+            vec!["--yolo".to_string()]
+        );
+        assert_eq!(
+            build_batch_terminal_args(&AppType::Gemini, &bypass_only),
+            vec!["--yolo".to_string()]
+        );
+
+        let claude_with_tg = BatchTerminalLaunchOptions {
+            bypass: true,
+            enable_telegram_channel: true,
+        };
+        assert_eq!(
+            build_batch_terminal_args(&AppType::Claude, &claude_with_tg),
+            vec![
+                "--dangerously-skip-permissions".to_string(),
+                "--channels".to_string(),
+                "plugin:telegram@claude-plugins-official".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn batch_session_plan_counts_windows_and_panes() {
+        let plan = build_batch_session_plan(vec![
+            BatchWindowPlan {
+                name: "1-claude".to_string(),
+                panes: vec!["cmd-a".to_string(), "cmd-b".to_string()],
+            },
+            BatchWindowPlan {
+                name: "2-backup".to_string(),
+                panes: vec!["cmd-c".to_string()],
+            },
+        ]);
+
+        assert!(plan.session_name.starts_with("cc-switch-"));
+        assert_eq!(plan.windows.len(), 2);
+        assert_eq!(plan.pane_count, 3);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn batch_session_tmux_commands_enable_clickable_navigation() {
+        let plan = BatchSessionPlan {
+            session_name: "cc-switch-test".to_string(),
+            windows: vec![
+                BatchWindowPlan {
+                    name: "1-claude".to_string(),
+                    panes: vec!["cmd-a".to_string(), "cmd-b".to_string()],
+                },
+                BatchWindowPlan {
+                    name: "2-codex".to_string(),
+                    panes: vec!["cmd-c".to_string()],
+                },
+            ],
+            pane_count: 3,
+        };
+
+        let commands = build_batch_session_tmux_commands(&plan).expect("tmux commands");
+
+        assert!(commands.iter().any(|cmd| {
+            cmd == &vec![
+                "set-option".to_string(),
+                "-t".to_string(),
+                "cc-switch-test".to_string(),
+                "-g".to_string(),
+                "mouse".to_string(),
+                "on".to_string(),
+            ]
+        }));
+
+        assert!(commands.iter().any(|cmd| {
+            cmd == &vec![
+                "set-option".to_string(),
+                "-t".to_string(),
+                "cc-switch-test".to_string(),
+                "-g".to_string(),
+                "pane-border-status".to_string(),
+                "top".to_string(),
+            ]
+        }));
+
+        assert!(commands.iter().any(|cmd| {
+            cmd == &vec![
+                "set-option".to_string(),
+                "-t".to_string(),
+                "cc-switch-test".to_string(),
+                "-g".to_string(),
+                "pane-border-format".to_string(),
+                "Pane #{pane_index} | #{pane_current_path}".to_string(),
+            ]
+        }));
+
+        assert!(commands.iter().any(|cmd| {
+            cmd == &vec![
+                "split-window".to_string(),
+                "-t".to_string(),
+                "cc-switch-test:1-claude".to_string(),
+                "bash".to_string(),
+                "-lc".to_string(),
+                "cmd-b".to_string(),
+            ]
+        }));
+
+        assert!(commands.iter().any(|cmd| {
+            cmd == &vec![
+                "new-window".to_string(),
+                "-t".to_string(),
+                "cc-switch-test".to_string(),
+                "-n".to_string(),
+                "2-codex".to_string(),
+                "bash".to_string(),
+                "-lc".to_string(),
+                "cmd-c".to_string(),
+            ]
+        }));
     }
 
     #[cfg(target_os = "windows")]
