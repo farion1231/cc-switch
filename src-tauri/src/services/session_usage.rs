@@ -55,11 +55,6 @@ struct ParsedAssistantUsage {
 }
 
 /// 同步 Claude Code 会话日志到使用统计数据库
-pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_claude_session_logs_with_mode(db, true)
-}
-
-/// 同步 Claude Code 会话日志到使用统计数据库
 ///
 /// 当 `record_usage=false` 时，仅推进同步游标，不写入请求日志。
 pub fn sync_claude_session_logs_with_mode(

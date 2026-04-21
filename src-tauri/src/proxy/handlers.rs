@@ -573,8 +573,8 @@ fn log_forward_error(
 ) {
     use super::usage::logger::UsageLogger;
 
-    let (takeover_enabled, _) = state.db.get_proxy_flags_sync(&ctx.app_type_str);
-    let usage_source = state.db.get_usage_stats_source_sync(&ctx.app_type_str);
+    let (takeover_enabled, _) = state.db.get_proxy_flags_sync(ctx.app_type_str);
+    let usage_source = state.db.get_usage_stats_source_sync(ctx.app_type_str);
     if takeover_enabled && usage_source == crate::proxy::types::UsageStatsSource::Session {
         log::debug!(
             "[{}] 已切换为 Session 用量来源，跳过代理失败请求日志写入",

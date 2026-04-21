@@ -34,11 +34,6 @@ struct GeminiTokens {
 }
 
 /// 同步 Gemini 使用数据（从 JSON 会话日志）
-pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_gemini_usage_with_mode(db, true)
-}
-
-/// 同步 Gemini 使用数据（从 JSON 会话日志）
 ///
 /// 当 `record_usage=false` 时，仅推进同步状态，不写入请求日志。
 pub fn sync_gemini_usage_with_mode(

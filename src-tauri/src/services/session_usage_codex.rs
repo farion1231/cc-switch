@@ -139,11 +139,6 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
 }
 
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
-pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_codex_usage_with_mode(db, true)
-}
-
-/// 同步 Codex 使用数据（从 JSONL 会话日志）
 ///
 /// 当 `record_usage=false` 时，仅推进同步游标和增量状态，不写入请求日志。
 pub fn sync_codex_usage_with_mode(
