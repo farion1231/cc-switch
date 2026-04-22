@@ -17,7 +17,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
     let mut sessions = Vec::new();
 
-    // Iterate over project hash directories: tmp/<project_hash>/chats/session-*.json
+    // Iterate over project directories: tmp/<project_name>/chats/session-*.json
     let project_dirs = match std::fs::read_dir(&tmp_dir) {
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
@@ -34,13 +34,22 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
             Err(_) => continue,
         };
 
+        let project_root_file = entry.path().join(".project_root");
+        let project_dir = match std::fs::read_to_string(project_root_file) {
+            Ok(name) => Some(name),
+            Err(_) => None,
+        };
+
         for file_entry in chat_files.flatten() {
             let path = file_entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
             if let Some(meta) = parse_session(&path) {
-                sessions.push(meta);
+                sessions.push(SessionMeta {
+                    project_dir: project_dir.clone(),
+                    ..meta
+                });
             }
         }
     }
@@ -159,7 +168,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         session_id: session_id.clone(),
         title: title.clone(),
         summary: title,
-        project_dir: None, // project hash is not reversible
+        project_dir: None, // (optionally) populated later
         created_at,
         last_active_at: last_active_at.or(created_at),
         source_path: Some(source_path),
