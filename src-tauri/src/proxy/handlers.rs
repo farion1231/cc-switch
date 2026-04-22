@@ -151,10 +151,20 @@ async fn handle_claude_transform(
     api_format: &str,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
+    let use_streaming = should_use_claude_transform_streaming(
+        is_stream,
+        response.is_sse(),
+        api_format,
+        ctx.provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("codex_oauth"),
+    );
     let tool_schema_hints = transform_gemini::extract_anthropic_tool_schema_hints(original_body);
     let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
 
-    if is_stream {
+    if use_streaming {
         // 根据 api_format 选择流式转换器
         let stream = response.bytes_stream();
         let sse_stream: Box<
@@ -561,6 +571,17 @@ pub async fn handle_gemini(
     process_response(response, &ctx, &state, &GEMINI_PARSER_CONFIG).await
 }
 
+fn should_use_claude_transform_streaming(
+    requested_streaming: bool,
+    upstream_is_sse: bool,
+    api_format: &str,
+    is_codex_oauth: bool,
+) -> bool {
+    requested_streaming
+        || upstream_is_sse
+        || (is_codex_oauth && api_format == "openai_responses")
+}
+
 // ============================================================================
 // 使用量记录（保留用于 Claude 转换逻辑）
 // ============================================================================
@@ -639,5 +660,40 @@ async fn log_usage(
         is_streaming,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_use_claude_transform_streaming;
+
+    #[test]
+    fn codex_oauth_responses_force_streaming_even_if_client_sent_false() {
+        assert!(should_use_claude_transform_streaming(
+            false,
+            false,
+            "openai_responses",
+            true,
+        ));
+    }
+
+    #[test]
+    fn upstream_sse_response_always_uses_streaming_path() {
+        assert!(should_use_claude_transform_streaming(
+            false,
+            true,
+            "openai_chat",
+            false,
+        ));
+    }
+
+    #[test]
+    fn non_streaming_response_stays_non_streaming_for_regular_openai_responses() {
+        assert!(!should_use_claude_transform_streaming(
+            false,
+            false,
+            "openai_responses",
+            false,
+        ));
     }
 }
