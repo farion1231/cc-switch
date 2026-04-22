@@ -114,6 +114,7 @@ mod tests {
             cache_read_tokens: 200,
             cache_creation_tokens: 100,
             model: None,
+            message_id: None,
         };
 
         let pricing = ModelPricing::from_strings("3.0", "15.0", "0.3", "3.75").unwrap();
@@ -144,6 +145,7 @@ mod tests {
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
             model: None,
+            message_id: None,
         };
 
         let pricing = ModelPricing::from_strings("3.0", "15.0", "0", "0").unwrap();
@@ -165,6 +167,7 @@ mod tests {
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
             model: None,
+            message_id: None,
         };
 
         let multiplier = Decimal::from_str("1.0").unwrap();
@@ -181,6 +184,7 @@ mod tests {
             cache_read_tokens: 1,
             cache_creation_tokens: 1,
             model: None,
+            message_id: None,
         };
 
         let pricing = ModelPricing::from_strings("0.075", "0.3", "0.01875", "0.075").unwrap();

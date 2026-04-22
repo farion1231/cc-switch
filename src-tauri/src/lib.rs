@@ -168,7 +168,7 @@ async fn update_tray_menu(
 ) -> Result<bool, String> {
     match tray::create_tray_menu(&app, state.inner()) {
         Ok(new_menu) => {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
                 tray.set_menu(Some(new_menu))
                     .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
                 return Ok(true);
@@ -728,7 +728,7 @@ pub fn run() {
             let menu = tray::create_tray_menu(app.handle(), &app_state)?;
 
             // 构建托盘
-            let mut tray_builder = TrayIconBuilder::with_id("main")
+            let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .on_tray_icon_event(|_tray, event| match event {
                     // 左键点击已通过 show_menu_on_left_click(true) 打开菜单，这里不再额外处理
                     TrayIconEvent::Click { .. } => {}

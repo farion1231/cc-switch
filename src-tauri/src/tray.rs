@@ -58,6 +58,7 @@ pub struct TrayAppSection {
 
 /// Auto 菜单项后缀
 pub const AUTO_SUFFIX: &str = "auto";
+pub const TRAY_ID: &str = "cc-switch";
 
 pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
     TrayAppSection {
@@ -207,7 +208,7 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
 
         // 4) 更新托盘菜单
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 let _ = tray.set_menu(Some(new_menu));
             }
         }
@@ -255,7 +256,7 @@ fn handle_provider_click(
 
         // 更新托盘菜单
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 let _ = tray.set_menu(Some(new_menu));
             }
         }
@@ -297,6 +298,9 @@ pub fn create_tray_menu(
             .map_err(|e| AppError::Message(format!("创建打开主界面菜单失败: {e}")))?;
     menu_builder = menu_builder.item(&show_main_item).separator();
 
+    // Pre-compute proxy running state (used to disable official providers in tray menu)
+    let is_proxy_running = futures::executor::block_on(app_state.proxy_service.is_running());
+
     // 每个应用类型折叠为子菜单，避免供应商过多时菜单过长
     for section in TRAY_SECTIONS.iter() {
         if !visible_apps.is_visible(&section.app_type) {
@@ -327,15 +331,32 @@ pub fn create_tray_menu(
             };
             let submenu_id = format!("submenu_{}", app_type_str);
 
+            // Check if this app is under proxy takeover (for disabling official providers)
+            let is_app_taken_over = is_proxy_running
+                && (futures::executor::block_on(app_state.db.get_live_backup(app_type_str))
+                    .ok()
+                    .flatten()
+                    .is_some()
+                    || app_state
+                        .proxy_service
+                        .detect_takeover_in_live_config_for_app(&section.app_type));
+
             let mut submenu_builder = SubmenuBuilder::with_id(app, &submenu_id, &submenu_label);
 
             for (id, provider) in sort_providers(&providers) {
                 let is_current = current_id == *id;
+                let is_official_blocked =
+                    is_app_taken_over && provider.category.as_deref() == Some("official");
+                let label = if is_official_blocked {
+                    format!("{} \u{26D4}", &provider.name) // ⛔ emoji
+                } else {
+                    provider.name.clone()
+                };
                 let item = CheckMenuItem::with_id(
                     app,
                     format!("{}{}", section.prefix, id),
-                    &provider.name,
-                    true,
+                    &label,
+                    !is_official_blocked, // disabled when blocked
                     is_current,
                     None::<&str>,
                 )
@@ -382,12 +403,23 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
 
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(new_menu) = create_tray_menu(app, state.inner()) {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 if let Err(e) = tray.set_menu(Some(new_menu)) {
                     log::error!("刷新托盘菜单失败: {e}");
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TRAY_ID;
+
+    #[test]
+    fn tray_id_is_unique_to_app() {
+        assert_eq!(TRAY_ID, "cc-switch");
+        assert_ne!(TRAY_ID, "main");
     }
 }
 

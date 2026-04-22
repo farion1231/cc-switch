@@ -10,6 +10,7 @@ pub mod error;
 pub mod error_mapper;
 pub(crate) mod failover_switch;
 mod forwarder;
+pub mod gemini_url;
 pub mod handler_config;
 pub mod handler_context;
 mod handlers;
