@@ -38,6 +38,8 @@ pub(crate) fn preserve_local_claude_enabled_plugins(settings: &mut Value) -> Res
         return Ok(());
     };
 
+    target_obj.remove("enabledPlugins");
+
     let path = get_claude_settings_path();
     if !path.exists() {
         return Ok(());
