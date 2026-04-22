@@ -914,6 +914,7 @@ pub fn set_tools_config(tools: &OpenClawToolsConfig) -> Result<OpenClawWriteOutc
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::sync::{Mutex, OnceLock};
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -971,6 +972,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn default_model_write_preserves_top_level_comments() {
         let source = r#"{
   // top-level comment
@@ -999,6 +1001,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn default_model_noop_write_skips_backup() {
         let source = r#"{
   models: {
@@ -1033,6 +1036,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn save_detects_external_conflict() {
         let source = r#"{
   models: {
@@ -1055,6 +1059,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn remove_last_provider_writes_empty_providers_without_panic() {
         let source = r#"{
   models: {

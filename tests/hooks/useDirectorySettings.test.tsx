@@ -69,7 +69,8 @@ describe("useDirectorySettings", () => {
       if (app === "codex") return "/remote/codex";
       if (app === "gemini") return "/remote/gemini";
       if (app === "opencode") return "/remote/opencode";
-      return "/remote/openclaw";
+      if (app === "openclaw") return "/remote/openclaw";
+      return "/remote/hermes";
     });
     selectConfigDirectoryMock.mockReset();
   });
@@ -91,6 +92,7 @@ describe("useDirectorySettings", () => {
       gemini: "/remote/gemini",
       opencode: "/remote/opencode",
       openclaw: "/remote/openclaw",
+      hermes: "/remote/hermes",
     });
   });
 
@@ -243,13 +245,13 @@ describe("useDirectorySettings", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     act(() => {
-      result.current.resetAllDirectories(
-        "/server/claude",
-        "/server/codex",
-        "/server/gemini",
-        "/server/opencode",
-        "/server/openclaw",
-      );
+      result.current.resetAllDirectories({
+        claude: "/server/claude",
+        codex: "/server/codex",
+        gemini: "/server/gemini",
+        opencode: "/server/opencode",
+        openclaw: "/server/openclaw",
+      });
     });
 
     expect(result.current.resolvedDirs.claude).toBe("/server/claude");

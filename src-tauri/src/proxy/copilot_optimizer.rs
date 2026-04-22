@@ -443,6 +443,41 @@ pub fn sanitize_orphan_tool_results(mut body: Value) -> Value {
     body
 }
 
+/// 请求前主动剥离所有 assistant 消息里的 thinking / redacted_thinking block
+///
+/// Copilot 的三条目标端点（`/chat/completions`、`/v1/responses`、`/v1/chat/completions`）
+/// 均为 OpenAI 兼容格式，不识别 Anthropic 的 thinking block。若原样转发，上游会
+/// 拒绝并返回 invalid_request_error —— 届时 `thinking_rectifier` 才做反应式清理并
+/// 重试。那次已经失败的请求依旧消耗一次 premium quota，所以此处提前剥离。
+///
+/// 与 `thinking_rectifier::rectify_anthropic_request` 的区别：
+/// - 本函数只剥 thinking / redacted_thinking 两类 block，不触碰 signature，也不
+///   移除顶层 thinking 字段——那些是错误路径上的激进整流，常规路径不需要。
+/// - 保持与 `merge_tool_results` / `sanitize_orphan_tool_results` 一致的"消费 body、
+///   返回新 body"签名，便于接入 forwarder 管道。
+pub fn strip_thinking_blocks(mut body: Value) -> Value {
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return body;
+    };
+
+    for msg in messages.iter_mut() {
+        if msg.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) else {
+            continue;
+        };
+        content.retain(|block| {
+            !matches!(
+                block.get("type").and_then(|t| t.as_str()),
+                Some("thinking") | Some("redacted_thinking")
+            )
+        });
+    }
+
+    body
+}
+
 // ─── 内部辅助 ─────────────────────────────────
 
 /// 从请求体的 `system` 字段提取文本（处理 string/array 两种格式）。
@@ -1370,5 +1405,139 @@ mod tests {
         let content = result["messages"][1]["content"].as_array().unwrap();
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[1]["type"], "text");
+    }
+
+    // === strip_thinking_blocks 测试 ===
+
+    #[test]
+    fn test_strip_thinking_removes_assistant_thinking_blocks() {
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "let me ponder", "signature": "sig"},
+                    {"type": "redacted_thinking", "data": "opaque"},
+                    {"type": "text", "text": "hello"},
+                    {"type": "tool_use", "id": "t1", "name": "read", "input": {}}
+                ]}
+            ]
+        });
+        let result = strip_thinking_blocks(body);
+        let content = result["messages"][1]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_strip_thinking_leaves_user_messages_untouched() {
+        // 仅处理 assistant，user 的 thinking 块（极少见，但可能）不动
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "thinking", "thinking": "x"},
+                    {"type": "text", "text": "hi"}
+                ]}
+            ]
+        });
+        let result = strip_thinking_blocks(body);
+        let content = result["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+    }
+
+    #[test]
+    fn test_strip_thinking_handles_missing_messages() {
+        let body = serde_json::json!({ "model": "claude-3-5-sonnet" });
+        let result = strip_thinking_blocks(body.clone());
+        assert_eq!(result, body);
+    }
+
+    #[test]
+    fn test_strip_thinking_leaves_empty_content_array() {
+        // 仅含 thinking 的 assistant 消息剥完后 content 为空——保留上游自处理
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "solo"}
+                ]}
+            ]
+        });
+        let result = strip_thinking_blocks(body);
+        let content = result["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 0);
+    }
+
+    #[test]
+    fn test_strip_thinking_preserves_signature_on_non_thinking_blocks() {
+        // signature 留给 thinking_rectifier 在错误路径处理，此处不动
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "t1", "name": "x", "input": {}, "signature": "s"}
+                ]}
+            ]
+        });
+        let result = strip_thinking_blocks(body);
+        let block = &result["messages"][0]["content"][0];
+        assert_eq!(block["signature"], "s");
+    }
+
+    #[test]
+    fn test_strip_thinking_multiple_assistant_turns() {
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "q1"}]},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "a"},
+                    {"type": "text", "text": "r1"}
+                ]},
+                {"role": "user", "content": [{"type": "text", "text": "q2"}]},
+                {"role": "assistant", "content": [
+                    {"type": "redacted_thinking", "data": "x"},
+                    {"type": "text", "text": "r2"}
+                ]}
+            ]
+        });
+        let result = strip_thinking_blocks(body);
+        let a1 = result["messages"][1]["content"].as_array().unwrap();
+        let a2 = result["messages"][3]["content"].as_array().unwrap();
+        assert_eq!(a1.len(), 1);
+        assert_eq!(a1[0]["text"], "r1");
+        assert_eq!(a2.len(), 1);
+        assert_eq!(a2[0]["text"], "r2");
+    }
+
+    #[test]
+    fn test_strip_thinking_ignores_string_content() {
+        // assistant.content 是字符串而非 block 数组 — 历史请求或极简客户端会这样
+        // 不应崩溃，也不应转换结构
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "assistant", "content": "plain text response"}
+            ]
+        });
+        let result = strip_thinking_blocks(body.clone());
+        assert_eq!(result, body);
+    }
+
+    #[test]
+    fn test_strip_thinking_preserves_block_order() {
+        let body = serde_json::json!({
+            "messages": [
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "pre"},
+                    {"type": "text", "text": "A"},
+                    {"type": "tool_use", "id": "t1", "name": "x", "input": {}},
+                    {"type": "redacted_thinking", "data": "mid"},
+                    {"type": "text", "text": "B"}
+                ]}
+            ]
+        });
+        let result = strip_thinking_blocks(body);
+        let content = result["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[0]["text"], "A");
+        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content[2]["text"], "B");
     }
 }
