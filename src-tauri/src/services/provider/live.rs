@@ -33,10 +33,6 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
-fn should_override_claude_enabled_plugins() -> bool {
-    crate::settings::get_settings().override_claude_enabled_plugins
-}
-
 fn preserve_local_claude_enabled_plugins(settings: &mut Value) -> Result<(), AppError> {
     let Some(target_obj) = settings.as_object_mut() else {
         return Ok(());
@@ -692,7 +688,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let path = get_claude_settings_path();
             let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
 
-            if !should_override_claude_enabled_plugins() {
+            // 覆盖模式关闭时，保留本地现有 enabledPlugins（存在则覆盖，不存在则新增）
+            if !crate::settings::get_settings().override_claude_enabled_plugins {
                 if let Err(e) = preserve_local_claude_enabled_plugins(&mut settings) {
                     log::warn!("保留 Claude enabledPlugins 失败（将继续写入其他配置）: {e}");
                 }

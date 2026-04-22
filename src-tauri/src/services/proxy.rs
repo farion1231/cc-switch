@@ -1743,10 +1743,6 @@ impl ProxyService {
         Ok(value)
     }
 
-    fn should_override_claude_enabled_plugins() -> bool {
-        crate::settings::get_settings().override_claude_enabled_plugins
-    }
-
     fn preserve_local_claude_enabled_plugins(settings: &mut Value) -> Result<(), String> {
         let Some(target_obj) = settings.as_object_mut() else {
             return Ok(());
@@ -1772,7 +1768,7 @@ impl ProxyService {
         let path = get_claude_settings_path();
         let mut settings = crate::services::provider::sanitize_claude_settings_for_live(config);
 
-        if !Self::should_override_claude_enabled_plugins() {
+        if !crate::settings::get_settings().override_claude_enabled_plugins {
             if let Err(e) = Self::preserve_local_claude_enabled_plugins(&mut settings) {
                 log::warn!("保留 Claude enabledPlugins 失败（将继续写入其他配置）: {e}");
             }
