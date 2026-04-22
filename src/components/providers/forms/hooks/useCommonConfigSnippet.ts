@@ -118,17 +118,22 @@ export function useCommonConfigSnippet({
   // 初始化时检查通用配置片段（编辑模式）
   useEffect(() => {
     if (!enabled) return;
-    if (initialData && !isLoading) {
+    if (initialData && !isLoading && !hasInitializedEditMode.current) {
+      hasInitializedEditMode.current = true;
+
       const configString = JSON.stringify(initialData.settingsConfig, null, 2);
       const inferredHasCommon = hasCommonConfigSnippet(
         configString,
         commonConfigSnippet,
       );
-      const hasCommon = initialEnabled ?? inferredHasCommon;
+
+      // 优先级：显式设置的 initialEnabled > 从配置推断的值
+      // 如果 initialEnabled 为 undefined，使用推断值
+      const hasCommon = initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
       setUseCommonConfig(hasCommon);
 
-      if (hasCommon && !inferredHasCommon && !hasInitializedEditMode.current) {
-        hasInitializedEditMode.current = true;
+      // 如果应该启用通用配置但配置中还没有，则自动添加
+      if (hasCommon && !inferredHasCommon) {
         const { updatedConfig, error } = updateCommonConfigSnippet(
           settingsConfig,
           commonConfigSnippet,
@@ -141,8 +146,6 @@ export function useCommonConfigSnippet({
             isUpdatingFromCommonConfig.current = false;
           }, 0);
         }
-      } else {
-        hasInitializedEditMode.current = true;
       }
     }
   }, [

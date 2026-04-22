@@ -11,6 +11,9 @@ const applyClaudeOnboardingSkipMock = vi.fn();
 const clearClaudeOnboardingSkipMock = vi.fn();
 const syncCurrentProvidersLiveMock = vi.fn();
 const updateTrayMenuMock = vi.fn();
+const getCurrentMock = vi.fn();
+const getAllMock = vi.fn();
+const getQueryDataMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastSuccessMock = vi.fn();
 
@@ -46,6 +49,18 @@ vi.mock("@/lib/query", () => ({
   }),
 }));
 
+vi.mock("@tanstack/react-query", async () => {
+  const actual = await vi.importActual<typeof import("@tanstack/react-query")>(
+    "@tanstack/react-query",
+  );
+  return {
+    ...actual,
+    useQueryClient: () => ({
+      getQueryData: (...args: unknown[]) => getQueryDataMock(...args),
+    }),
+  };
+});
+
 vi.mock("@/lib/api", () => ({
   settingsApi: {
     setAppConfigDirOverride: (...args: unknown[]) =>
@@ -61,6 +76,8 @@ vi.mock("@/lib/api", () => ({
   },
   providersApi: {
     updateTrayMenu: (...args: unknown[]) => updateTrayMenuMock(...args),
+    getCurrent: (...args: unknown[]) => getCurrentMock(...args),
+    getAll: (...args: unknown[]) => getAllMock(...args),
   },
 }));
 
@@ -127,6 +144,9 @@ describe("useSettings hook", () => {
     applyClaudeOnboardingSkipMock.mockReset();
     clearClaudeOnboardingSkipMock.mockReset();
     syncCurrentProvidersLiveMock.mockReset();
+    getCurrentMock.mockReset();
+    getAllMock.mockReset();
+    getQueryDataMock.mockReset();
     toastErrorMock.mockReset();
     toastSuccessMock.mockReset();
     window.localStorage.clear();
@@ -163,6 +183,11 @@ describe("useSettings hook", () => {
     applyClaudePluginConfigMock.mockResolvedValue(true);
     applyClaudeOnboardingSkipMock.mockResolvedValue(true);
     clearClaudeOnboardingSkipMock.mockResolvedValue(true);
+    syncCurrentProvidersLiveMock.mockResolvedValue({ ok: true });
+    getCurrentMock.mockResolvedValue(null);
+    getAllMock.mockResolvedValue({});
+    // 默认将 queryClient 缓存对齐到 serverSettings，既有断言的 "prev === data" 语义保持不变
+    getQueryDataMock.mockImplementation(() => serverSettings);
   });
 
   it("auto-saves and applies Claude onboarding skip when toggled on", async () => {
@@ -276,7 +301,7 @@ describe("useSettings hook", () => {
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(true);
     expect(window.localStorage.getItem("language")).toBe("en");
     expect(toastErrorMock).not.toHaveBeenCalled();
-    // 目录有变化，应触发一次同步当前供应商到 live
+    // 插件同步已包含 syncCurrentProvidersLiveSafe，目录变更不再重复调用
     expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(1);
   });
 
@@ -358,6 +383,45 @@ describe("useSettings hook", () => {
     const message = toastErrorMock.mock.calls.at(-1)?.[0] as string;
     expect(message).toContain("同步 Claude 插件失败");
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(true);
+  });
+
+  it("detects plugin toggle via live cache even when closure data is stale", async () => {
+    // 模拟快速连切后的 race：useSettingsQueryMock 的 data 滞后停留在 false（closure 未更新），
+    // 但 queryClient 缓存（getQueryData）实时值已为 true（上次持久化到 enabled），
+    // form 里用户想切回 false。旧实现会因 data === form 而跳过副作用；新实现应读 prev=true 并执行。
+    serverSettings = {
+      ...serverSettings,
+      enableClaudePluginIntegration: false,
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        enableClaudePluginIntegration: false,
+        language: "zh",
+      },
+    });
+    directorySettingsMock = createDirectorySettingsMock();
+
+    // 缓存里的"真实上次值"是 true（enabled），与 closure data(false) 有时序差
+    getQueryDataMock.mockImplementation(() => ({
+      ...serverSettings,
+      enableClaudePluginIntegration: true,
+    }));
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.saveSettings(undefined, { silent: true });
+    });
+
+    // 修复生效：读的是缓存实时值 true，payload=false，差异触发 clear_claude_config
+    expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({ official: true });
+    expect(syncCurrentProvidersLiveMock).toHaveBeenCalled();
   });
 
   it("resets form, language and directories using server data", () => {
