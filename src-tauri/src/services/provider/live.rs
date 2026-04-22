@@ -33,7 +33,7 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
-fn preserve_local_claude_enabled_plugins(settings: &mut Value) -> Result<(), AppError> {
+pub(crate) fn preserve_local_claude_enabled_plugins(settings: &mut Value) -> Result<(), AppError> {
     let Some(target_obj) = settings.as_object_mut() else {
         return Ok(());
     };

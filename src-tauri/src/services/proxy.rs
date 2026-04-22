@@ -1,4 +1,4 @@
-﻿//! 代理服务业务逻辑层
+//! 代理服务业务逻辑层
 //!
 //! 提供代理服务器的启动、停止和配置管理
 
@@ -1744,24 +1744,8 @@ impl ProxyService {
     }
 
     fn preserve_local_claude_enabled_plugins(settings: &mut Value) -> Result<(), String> {
-        let Some(target_obj) = settings.as_object_mut() else {
-            return Ok(());
-        };
-
-        let path = get_claude_settings_path();
-        if !path.exists() {
-            return Ok(());
-        }
-
-        let local_config: Value =
-            read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
-        let Some(enabled_plugins) = local_config.get("enabledPlugins").cloned() else {
-            return Ok(());
-        };
-
-        // 覆盖模式关闭时，始终以本地现有 enabledPlugins 为准（存在则覆盖，不存在则新增）
-        target_obj.insert("enabledPlugins".to_string(), enabled_plugins);
-        Ok(())
+        crate::services::provider::preserve_local_claude_enabled_plugins(settings)
+            .map_err(|e| format!("读取 Claude 配置失败: {e}"))
     }
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
