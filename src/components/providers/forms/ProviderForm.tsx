@@ -147,8 +147,7 @@ export function ProviderForm({
   const showCommonConfigNotice =
     settingsData != null && settingsData.commonConfigConfirmed !== true;
   const showEnabledPluginsOverrideWarning =
-    appId === "claude" &&
-    !(settingsData?.overrideClaudeEnabledPlugins ?? true);
+    appId === "claude" && !(settingsData?.overrideClaudeEnabledPlugins ?? true);
 
   const handleCommonConfigConfirm = async () => {
     try {
