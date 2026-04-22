@@ -62,6 +62,157 @@ fn tool_item_key_from_event(data: &Value) -> Option<String> {
     None
 }
 
+#[inline]
+fn output_item_from_event(data: &Value) -> &Value {
+    data.get("item").unwrap_or(data)
+}
+
+#[inline]
+fn output_item_identifier(data: &Value, item: &Value) -> Option<String> {
+    item.get("id")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            data.get("item_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+        })
+        .or_else(|| {
+            data.get("output_index")
+                .and_then(|v| v.as_u64())
+                .map(|idx| format!("out:{idx}"))
+        })
+}
+
+#[inline]
+fn allocate_index_for_key(
+    key: Option<String>,
+    next_content_index: &mut u32,
+    index_by_key: &mut HashMap<String, u32>,
+) -> u32 {
+    if let Some(key) = key {
+        if let Some(existing) = index_by_key.get(&key).copied() {
+            existing
+        } else {
+            let assigned = *next_content_index;
+            *next_content_index += 1;
+            index_by_key.insert(key, assigned);
+            assigned
+        }
+    } else {
+        let assigned = *next_content_index;
+        *next_content_index += 1;
+        assigned
+    }
+}
+
+fn extract_web_search_result_content(item: &Value) -> Value {
+    let sources = item
+        .pointer("/action/sources")
+        .and_then(Value::as_array)
+        .or_else(|| item.get("results").and_then(Value::as_array));
+
+    Value::Array(
+        sources
+            .into_iter()
+            .flatten()
+            .filter_map(|source| {
+                let url = source.get("url").and_then(Value::as_str)?;
+                Some(json!({
+                    "type": "web_search_result",
+                    "url": url,
+                    "title": source.get("title").cloned().unwrap_or_else(|| json!(""))
+                }))
+            })
+            .collect(),
+    )
+}
+
+#[inline]
+fn normalized_web_search_action_fields(item: &Value) -> serde_json::Map<String, Value> {
+    let mut action = serde_json::Map::new();
+    let source = item
+        .get("action")
+        .filter(|action| action.is_object())
+        .or_else(|| item.get("input").filter(|input| input.is_object()))
+        .unwrap_or(item);
+
+    if let Some(action_type) = source
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|action_type| !action_type.is_empty())
+    {
+        action.insert("type".to_string(), json!(action_type));
+    }
+    if let Some(query) = source
+        .get("query")
+        .and_then(Value::as_str)
+        .filter(|query| !query.is_empty())
+    {
+        action.insert("query".to_string(), json!(query));
+    }
+    if let Some(queries) = source
+        .get("queries")
+        .and_then(Value::as_array)
+        .filter(|queries| {
+            queries
+                .iter()
+                .any(|query| query.as_str().is_some_and(|query| !query.trim().is_empty()))
+        })
+    {
+        action.insert("queries".to_string(), Value::Array(queries.clone()));
+    }
+    if let Some(url) = source
+        .get("url")
+        .and_then(Value::as_str)
+        .filter(|url| !url.is_empty())
+    {
+        action.insert("url".to_string(), json!(url));
+    }
+    if let Some(pattern) = source
+        .get("pattern")
+        .and_then(Value::as_str)
+        .filter(|pattern| !pattern.is_empty())
+    {
+        action.insert("pattern".to_string(), json!(pattern));
+    }
+
+    action
+}
+
+fn web_search_action_delta_json(item: &Value) -> Option<String> {
+    let action = Value::Object(normalized_web_search_action_fields(item));
+    if action.as_object().is_some_and(|action| !action.is_empty()) {
+        serde_json::to_string(&action).ok()
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn web_search_call_status(item: &Value) -> &str {
+    item.get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("completed")
+}
+
+fn extract_web_search_error_content(item: &Value) -> Value {
+    let error_code = item
+        .pointer("/error/code")
+        .and_then(Value::as_str)
+        .or_else(|| item.pointer("/error/type").and_then(Value::as_str))
+        .or_else(|| {
+            item.pointer("/incomplete_details/reason")
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("unavailable");
+
+    json!({
+        "type": "web_search_tool_result_error",
+        "error_code": error_code
+    })
+}
+
 /// Resolve content index for a text/refusal content part event.
 ///
 /// Uses `content_part_key` to look up or assign a stable index, falling back to
@@ -113,6 +264,9 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
         let mut current_text_index: Option<u32> = None;
         let mut tool_index_by_item_id: HashMap<String, u32> = HashMap::new();
         let mut last_tool_index: Option<u32> = None;
+        let mut emitted_web_search_tool_use_keys: HashSet<String> = HashSet::new();
+        let mut counted_web_search_result_keys: HashSet<String> = HashSet::new();
+        let mut web_search_requests: u64 = 0;
 
         tokio::pin!(stream);
 
@@ -429,6 +583,94 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                             serde_json::to_string(&event).unwrap_or_default());
                                         yield Ok(Bytes::from(sse));
                                         open_indices.insert(index);
+                                    } else if item_type == "web_search_call" {
+                                        if let Some(index) = current_text_index.take() {
+                                            if open_indices.remove(&index) {
+                                                let stop_event = json!({
+                                                    "type": "content_block_stop",
+                                                    "index": index
+                                                });
+                                                let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                                    serde_json::to_string(&stop_event).unwrap_or_default());
+                                                yield Ok(Bytes::from(stop_sse));
+                                            }
+                                            if fallback_open_index == Some(index) {
+                                                fallback_open_index = None;
+                                            }
+                                        }
+
+                                        if !has_sent_message_start {
+                                            let start_event = json!({
+                                                "type": "message_start",
+                                                "message": {
+                                                    "id": message_id.clone().unwrap_or_default(),
+                                                    "type": "message",
+                                                    "role": "assistant",
+                                                    "model": current_model.clone().unwrap_or_default(),
+                                                    "usage": { "input_tokens": 0, "output_tokens": 0 }
+                                                }
+                                            });
+                                            let sse = format!("event: message_start\ndata: {}\n\n",
+                                                serde_json::to_string(&start_event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse));
+                                            has_sent_message_start = true;
+                                        }
+
+                                        let block_id = item
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .or_else(|| data.get("item_id").and_then(|v| v.as_str()))
+                                            .unwrap_or("");
+                                        let key = output_item_identifier(&data, item)
+                                            .map(|id| format!("web_search_tool_use:{id}"));
+                                        let index = allocate_index_for_key(
+                                            key.clone(),
+                                            &mut next_content_index,
+                                            &mut index_by_key,
+                                        );
+                                        if let Some(action_json) = web_search_action_delta_json(item) {
+                                            if !open_indices.contains(&index) {
+                                                let event = json!({
+                                                    "type": "content_block_start",
+                                                    "index": index,
+                                                    "content_block": {
+                                                        "type": "server_tool_use",
+                                                        "id": block_id,
+                                                        "name": "web_search"
+                                                    }
+                                                });
+                                                let sse = format!("event: content_block_start\ndata: {}\n\n",
+                                                    serde_json::to_string(&event).unwrap_or_default());
+                                                yield Ok(Bytes::from(sse));
+                                                open_indices.insert(index);
+                                            }
+
+                                            let event = json!({
+                                                "type": "content_block_delta",
+                                                "index": index,
+                                                "delta": {
+                                                    "type": "input_json_delta",
+                                                    "partial_json": action_json
+                                                }
+                                            });
+                                            let sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                serde_json::to_string(&event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse));
+
+                                            if open_indices.remove(&index) {
+                                                let stop_event = json!({
+                                                    "type": "content_block_stop",
+                                                    "index": index
+                                                });
+                                                let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                                    serde_json::to_string(&stop_event).unwrap_or_default());
+                                                yield Ok(Bytes::from(stop_sse));
+                                            }
+
+                                            if let Some(key) = key {
+                                                emitted_web_search_tool_use_keys.insert(key);
+                                            }
+                                        }
                                     }
                                     // message type output_item.added is handled via content_part.added
                                 }
@@ -671,7 +913,13 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                 fallback_open_index = None;
 
                                 let usage_json = response_obj.get("usage").map(|u| {
-                                    build_anthropic_usage_from_responses(Some(u))
+                                    let mut usage = build_anthropic_usage_from_responses(Some(u));
+                                    if web_search_requests > 0 {
+                                        usage["server_tool_use"] = json!({
+                                            "web_search_requests": web_search_requests
+                                        });
+                                    }
+                                    usage
                                 });
 
                                 // Emit message_delta (with usage + stop_reason)
@@ -714,8 +962,131 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                     }
                                 }
                             }
-                            "response.output_item.done"
-                            | "response.in_progress" => {}
+                            "response.output_item.done" => {
+                                let item = output_item_from_event(&data);
+                                if item.get("type").and_then(|v| v.as_str()) == Some("web_search_call") {
+                                    let status = web_search_call_status(item);
+                                    if !has_sent_message_start {
+                                        let start_event = json!({
+                                            "type": "message_start",
+                                            "message": {
+                                                "id": message_id.clone().unwrap_or_default(),
+                                                "type": "message",
+                                                "role": "assistant",
+                                                "model": current_model.clone().unwrap_or_default(),
+                                                "usage": { "input_tokens": 0, "output_tokens": 0 }
+                                            }
+                                        });
+                                        let sse = format!("event: message_start\ndata: {}\n\n",
+                                            serde_json::to_string(&start_event).unwrap_or_default());
+                                        yield Ok(Bytes::from(sse));
+                                        has_sent_message_start = true;
+                                    }
+
+                                    let block_id = item
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .or_else(|| data.get("item_id").and_then(|v| v.as_str()))
+                                        .unwrap_or("");
+                                    let item_id = output_item_identifier(&data, item);
+                                    let tool_use_key = item_id
+                                        .clone()
+                                        .map(|id| format!("web_search_tool_use:{id}"));
+                                    let should_emit_tool_use = tool_use_key
+                                        .as_ref()
+                                        .map(|key| !emitted_web_search_tool_use_keys.contains(key))
+                                        .unwrap_or(true);
+
+                                    if should_emit_tool_use {
+                                        let index = allocate_index_for_key(
+                                            tool_use_key.clone(),
+                                            &mut next_content_index,
+                                            &mut index_by_key,
+                                        );
+                                        let start_event = json!({
+                                            "type": "content_block_start",
+                                            "index": index,
+                                            "content_block": {
+                                                "type": "server_tool_use",
+                                                "id": block_id,
+                                                "name": "web_search"
+                                            }
+                                        });
+                                        let start_sse = format!("event: content_block_start\ndata: {}\n\n",
+                                            serde_json::to_string(&start_event).unwrap_or_default());
+                                        yield Ok(Bytes::from(start_sse));
+
+                                        if let Some(action_json) = web_search_action_delta_json(item) {
+                                            let delta_event = json!({
+                                                "type": "content_block_delta",
+                                                "index": index,
+                                                "delta": {
+                                                    "type": "input_json_delta",
+                                                    "partial_json": action_json
+                                                }
+                                            });
+                                            let delta_sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                serde_json::to_string(&delta_event).unwrap_or_default());
+                                            yield Ok(Bytes::from(delta_sse));
+                                        }
+
+                                        let stop_event = json!({
+                                            "type": "content_block_stop",
+                                            "index": index
+                                        });
+                                        let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                            serde_json::to_string(&stop_event).unwrap_or_default());
+                                        yield Ok(Bytes::from(stop_sse));
+
+                                        if let Some(key) = tool_use_key.clone() {
+                                            emitted_web_search_tool_use_keys.insert(key);
+                                        }
+                                    }
+
+                                    let result_content = match status {
+                                        "completed" => {
+                                            let result_counter_key = item_id
+                                                .clone()
+                                                .unwrap_or_else(|| format!("id:{block_id}"));
+                                            if counted_web_search_result_keys.insert(result_counter_key) {
+                                                web_search_requests += 1;
+                                            }
+                                            Some(extract_web_search_result_content(item))
+                                        }
+                                        "failed" => Some(extract_web_search_error_content(item)),
+                                        _ => None,
+                                    };
+
+                                    if let Some(result_content) = result_content {
+                                        let result_index = allocate_index_for_key(
+                                            item_id.map(|id| format!("web_search_result:{id}")),
+                                            &mut next_content_index,
+                                            &mut index_by_key,
+                                        );
+                                        let start_event = json!({
+                                            "type": "content_block_start",
+                                            "index": result_index,
+                                            "content_block": {
+                                                "type": "web_search_tool_result",
+                                                "tool_use_id": block_id,
+                                                "content": result_content
+                                            }
+                                        });
+                                        let start_sse = format!("event: content_block_start\ndata: {}\n\n",
+                                            serde_json::to_string(&start_event).unwrap_or_default());
+                                        yield Ok(Bytes::from(start_sse));
+
+                                        let stop_event = json!({
+                                            "type": "content_block_stop",
+                                            "index": result_index
+                                        });
+                                        let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                            serde_json::to_string(&stop_event).unwrap_or_default());
+                                        yield Ok(Bytes::from(stop_sse));
+                                    }
+                                }
+                            }
+                            "response.in_progress" => {}
 
                             // Any other unknown/future events — silently skip.
                             _ => {}
@@ -818,6 +1189,205 @@ mod tests {
         assert!(merged.contains("\"input_tokens\":12"));
         assert!(merged.contains("\"output_tokens\":3"));
         assert!(merged.contains("\"type\":\"message_stop\""));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_conversion_with_web_search_call() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ws\",\"model\":\"gpt-5-codex\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_1\",\"type\":\"web_search_call\",\"action\":{\"query\":\"OpenAI latest\"}}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_1\",\"type\":\"web_search_call\",\"action\":{\"query\":\"OpenAI latest\",\"sources\":[{\"url\":\"https://openai.com\",\"title\":\"OpenAI\"}]}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"},\"output_index\":1,\"content_index\":0}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Here is what I found.\",\"output_index\":1,\"content_index\":0}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"output_index\":1,\"content_index\":0}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":8}}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert!(merged.contains("\"type\":\"server_tool_use\""));
+        assert!(merged.contains("\"name\":\"web_search\""));
+        assert!(merged.contains("\"type\":\"input_json_delta\""));
+        assert!(merged.contains("\\\"query\\\":\\\"OpenAI latest\\\""));
+        assert!(merged.contains("\"type\":\"web_search_tool_result\""));
+        assert!(merged.contains("\"tool_use_id\":\"ws_1\""));
+        assert!(merged.contains("\"url\":\"https://openai.com\""));
+        assert!(merged.contains("\"web_search_requests\":1"));
+        assert!(merged.contains("\"stop_reason\":\"end_turn\""));
+        assert!(!merged.contains("\"stop_reason\":\"tool_use\""));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_conversion_with_web_search_query_only_on_done() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ws_done\",\"model\":\"gpt-5-codex\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_1\",\"type\":\"web_search_call\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_1\",\"type\":\"web_search_call\",\"action\":{\"query\":\"OpenAI latest\",\"sources\":[{\"url\":\"https://openai.com\",\"title\":\"OpenAI\"}]}}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":8}}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 1);
+        assert!(merged.contains("\\\"query\\\":\\\"OpenAI latest\\\""));
+        assert!(merged.contains("\"type\":\"web_search_tool_result\""));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_conversion_with_non_query_web_search_action() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ws_open\",\"model\":\"gpt-5-codex\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_open_1\",\"type\":\"web_search_call\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_open_1\",\"type\":\"web_search_call\",\"action\":{\"type\":\"open_page\",\"sources\":[{\"url\":\"https://openai.com/research\",\"title\":\"Research\"}]}}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":8}}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 1);
+        assert!(merged.contains("\"type\":\"input_json_delta\""));
+        assert!(merged.contains("\\\"type\\\":\\\"open_page\\\""));
+        assert!(merged.contains("\"type\":\"web_search_tool_result\""));
+        assert!(merged.contains("\"tool_use_id\":\"ws_open_1\""));
+        assert!(merged.contains("\"url\":\"https://openai.com/research\""));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_conversion_does_not_duplicate_web_search_tool_use_between_added_and_done(
+    ) {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ws_dup\",\"model\":\"gpt-5-codex\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_dup_1\",\"type\":\"web_search_call\",\"action\":{\"query\":\"OpenAI latest\"}}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_dup_1\",\"type\":\"web_search_call\",\"action\":{\"query\":\"OpenAI latest\",\"sources\":[{\"url\":\"https://openai.com\",\"title\":\"OpenAI\"}]}}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":8}}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 1);
+        assert_eq!(merged.matches("\"type\":\"input_json_delta\"").count(), 1);
+        assert_eq!(
+            merged
+                .matches("\"type\":\"web_search_tool_result\"")
+                .count(),
+            1
+        );
+        assert!(merged.contains("\"tool_use_id\":\"ws_dup_1\""));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_conversion_with_failed_web_search_call_does_not_count_usage() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ws_failed\",\"model\":\"gpt-5-codex\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_failed_1\",\"type\":\"web_search_call\",\"status\":\"failed\",\"action\":{\"query\":\"OpenAI latest\"}}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":2}}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert!(merged.contains("\"type\":\"server_tool_use\""));
+        assert!(merged.contains("\\\"query\\\":\\\"OpenAI latest\\\""));
+        assert!(merged.contains("\"type\":\"web_search_tool_result\""));
+        assert!(merged.contains("\"type\":\"web_search_tool_result_error\""));
+        assert!(merged.contains("\"error_code\":\"unavailable\""));
+        assert!(!merged.contains("\"web_search_requests\":"));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_conversion_with_failed_non_query_web_search_preserves_action() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ws_failed_open\",\"model\":\"gpt-5-codex\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_failed_open_1\",\"type\":\"web_search_call\",\"status\":\"failed\",\"action\":{\"type\":\"find_in_page\",\"url\":\"https://openai.com/research\",\"pattern\":\"GPT-5\"}}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":2}}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert!(merged.contains("\"type\":\"server_tool_use\""));
+        assert!(merged.contains("\\\"type\\\":\\\"find_in_page\\\""));
+        assert!(merged.contains("\\\"url\\\":\\\"https://openai.com/research\\\""));
+        assert!(merged.contains("\\\"pattern\\\":\\\"GPT-5\\\""));
+        assert!(merged.contains("\"type\":\"web_search_tool_result_error\""));
+        assert!(!merged.contains("\"web_search_requests\":"));
     }
 
     #[tokio::test]

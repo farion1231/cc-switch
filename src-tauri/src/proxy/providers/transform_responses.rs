@@ -10,6 +10,260 @@
 
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
+
+fn is_anthropic_web_search_tool(tool: &Value) -> bool {
+    matches!(
+        (
+            tool.get("name").and_then(Value::as_str),
+            tool.get("type").and_then(Value::as_str),
+        ),
+        (Some("web_search"), Some(tool_type)) if tool_type.starts_with("web_search_")
+    )
+}
+
+fn ensure_include(result: &mut Value, item: &str) {
+    if let Some(obj) = result.as_object_mut() {
+        let entry = obj
+            .entry("include".to_string())
+            .or_insert_with(|| json!([]));
+        if !entry.is_array() {
+            *entry = json!([]);
+        }
+
+        if let Some(includes) = entry.as_array_mut() {
+            if !includes.iter().any(|v| v.as_str() == Some(item)) {
+                includes.push(json!(item));
+            }
+        }
+    }
+}
+
+fn normalized_non_empty_string_array(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::trim))
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn map_anthropic_tool_to_responses(
+    tool: &Value,
+    allow_unsupported_max_uses: bool,
+) -> Result<Option<Value>, ProxyError> {
+    if tool.get("type").and_then(Value::as_str) == Some("BatchTool") {
+        return Ok(None);
+    }
+
+    if is_anthropic_web_search_tool(tool) {
+        let allowed_domains = normalized_non_empty_string_array(tool.get("allowed_domains"));
+        let blocked_domains = normalized_non_empty_string_array(tool.get("blocked_domains"));
+
+        if !allowed_domains.is_empty() && !blocked_domains.is_empty() {
+            return Err(ProxyError::TransformError(
+                "Cannot specify both allowed_domains and blocked_domains in the same request"
+                    .to_string(),
+            ));
+        }
+
+        if !blocked_domains.is_empty() {
+            return Err(ProxyError::TransformError(
+                "Anthropic blocked_domains has no direct OpenAI web_search equivalent".to_string(),
+            ));
+        }
+
+        if tool.get("max_uses").is_some() {
+            if allow_unsupported_max_uses {
+                log::warn!(
+                    "Anthropic web_search max_uses has no direct Codex OAuth Responses equivalent; ignoring it"
+                );
+            } else {
+                return Err(ProxyError::TransformError(
+                    "Anthropic web_search max_uses has no direct OpenAI web_search equivalent"
+                        .to_string(),
+                ));
+            }
+        }
+
+        let mut mapped = serde_json::Map::new();
+        mapped.insert("type".to_string(), json!("web_search"));
+
+        if !allowed_domains.is_empty() {
+            mapped.insert(
+                "filters".to_string(),
+                json!({ "allowed_domains": allowed_domains }),
+            );
+        }
+
+        if let Some(location) = tool.get("user_location").cloned() {
+            mapped.insert("user_location".to_string(), location);
+        }
+
+        return Ok(Some(Value::Object(mapped)));
+    }
+
+    Ok(Some(json!({
+        "type": "function",
+        "name": tool.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+        "description": tool.get("description"),
+        "parameters": super::transform::clean_schema(
+            tool.get("input_schema").cloned().unwrap_or(json!({}))
+        )
+    })))
+}
+
+fn extract_web_search_sources_from_response_item(item: &Value) -> Vec<Value> {
+    let sources = item
+        .pointer("/action/sources")
+        .and_then(Value::as_array)
+        .or_else(|| item.get("results").and_then(Value::as_array));
+
+    sources
+        .into_iter()
+        .flatten()
+        .filter_map(|source| {
+            let url = source.get("url").and_then(Value::as_str)?;
+            let mut mapped = serde_json::Map::new();
+            mapped.insert("type".to_string(), json!("web_search_result"));
+            mapped.insert("url".to_string(), json!(url));
+            mapped.insert(
+                "title".to_string(),
+                source.get("title").cloned().unwrap_or_else(|| json!("")),
+            );
+            Some(Value::Object(mapped))
+        })
+        .collect()
+}
+
+fn extract_web_search_sources_from_anthropic_content(content: &Value) -> Vec<Value> {
+    content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|block| {
+            let url = block.get("url").and_then(Value::as_str)?;
+            let mut mapped = serde_json::Map::new();
+            mapped.insert("url".to_string(), json!(url));
+            mapped.insert(
+                "title".to_string(),
+                block.get("title").cloned().unwrap_or_else(|| json!("")),
+            );
+            Some(Value::Object(mapped))
+        })
+        .collect()
+}
+
+fn extract_anthropic_web_search_error_code(content: &Value) -> Option<String> {
+    match content {
+        Value::Object(obj)
+            if obj.get("type").and_then(Value::as_str) == Some("web_search_tool_result_error") =>
+        {
+            obj.get("error_code")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        }
+        _ => None,
+    }
+}
+
+fn normalized_web_search_action_fields(value: &Value) -> serde_json::Map<String, Value> {
+    let mut action = serde_json::Map::new();
+    let source = value
+        .get("action")
+        .filter(|action| action.is_object())
+        .or_else(|| value.get("input").filter(|input| input.is_object()))
+        .unwrap_or(value);
+
+    if let Some(action_type) = source
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|action_type| !action_type.is_empty())
+    {
+        action.insert("type".to_string(), json!(action_type));
+    }
+
+    if let Some(query) = source
+        .get("query")
+        .and_then(Value::as_str)
+        .filter(|query| !query.is_empty())
+    {
+        action.insert("query".to_string(), json!(query));
+    }
+
+    if let Some(queries) = source
+        .get("queries")
+        .and_then(Value::as_array)
+        .filter(|queries| {
+            queries
+                .iter()
+                .any(|query| query.as_str().is_some_and(|query| !query.trim().is_empty()))
+        })
+    {
+        action.insert("queries".to_string(), Value::Array(queries.clone()));
+    }
+
+    if let Some(url) = source
+        .get("url")
+        .and_then(Value::as_str)
+        .filter(|url| !url.is_empty())
+    {
+        action.insert("url".to_string(), json!(url));
+    }
+
+    if let Some(pattern) = source
+        .get("pattern")
+        .and_then(Value::as_str)
+        .filter(|pattern| !pattern.is_empty())
+    {
+        action.insert("pattern".to_string(), json!(pattern));
+    }
+
+    action
+}
+
+fn build_responses_web_search_action(action_source: Option<&Value>, sources: Vec<Value>) -> Value {
+    let mut action = action_source
+        .map(normalized_web_search_action_fields)
+        .unwrap_or_default();
+
+    if !sources.is_empty() {
+        action.insert("sources".to_string(), Value::Array(sources));
+    }
+
+    Value::Object(action)
+}
+
+fn build_anthropic_web_search_input(item: &Value) -> Value {
+    Value::Object(normalized_web_search_action_fields(item))
+}
+
+fn response_web_search_status(item: &Value) -> &str {
+    item.get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("completed")
+}
+
+fn extract_response_web_search_error_code(item: &Value) -> Option<String> {
+    item.pointer("/error/code")
+        .and_then(Value::as_str)
+        .or_else(|| item.pointer("/error/type").and_then(Value::as_str))
+        .or_else(|| {
+            item.pointer("/incomplete_details/reason")
+                .and_then(Value::as_str)
+        })
+        .map(ToString::to_string)
+}
+
+fn build_anthropic_web_search_error_content(error_code: Option<&str>) -> Value {
+    json!({
+        "type": "web_search_tool_result_error",
+        "error_code": error_code.unwrap_or("unavailable")
+    })
+}
 
 /// Anthropic 请求 → OpenAI Responses 请求
 ///
@@ -67,6 +321,9 @@ pub fn anthropic_to_responses(
     if let Some(v) = body.get("stream") {
         result["stream"] = v.clone();
     }
+    if let Some(v) = body.get("include").filter(|v| v.is_array()) {
+        result["include"] = v.clone();
+    }
 
     // Map Anthropic thinking → OpenAI Responses reasoning.effort
     if let Some(model_name) = body.get("model").and_then(|m| m.as_str()) {
@@ -80,29 +337,34 @@ pub fn anthropic_to_responses(
     // stop_sequences → 丢弃 (Responses API 不支持)
 
     // 转换 tools (过滤 BatchTool)
+    let mut web_search_tool_names: HashSet<String> = HashSet::new();
+    let mut has_web_search = false;
     if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
-        let response_tools: Vec<Value> = tools
-            .iter()
-            .filter(|t| t.get("type").and_then(|v| v.as_str()) != Some("BatchTool"))
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
-                    "description": t.get("description"),
-                    "parameters": super::transform::clean_schema(
-                        t.get("input_schema").cloned().unwrap_or(json!({}))
-                    )
-                })
-            })
-            .collect();
+        let mut response_tools = Vec::new();
+        for tool in tools {
+            if is_anthropic_web_search_tool(tool) {
+                has_web_search = true;
+                if let Some(name) = tool.get("name").and_then(Value::as_str) {
+                    web_search_tool_names.insert(name.to_string());
+                }
+            }
+
+            if let Some(mapped) = map_anthropic_tool_to_responses(tool, is_codex_oauth)? {
+                response_tools.push(mapped);
+            }
+        }
 
         if !response_tools.is_empty() {
             result["tools"] = json!(response_tools);
         }
     }
 
+    if has_web_search {
+        ensure_include(&mut result, "web_search_call.action.sources");
+    }
+
     if let Some(v) = body.get("tool_choice") {
-        result["tool_choice"] = map_tool_choice_to_responses(v);
+        result["tool_choice"] = map_tool_choice_to_responses(v, &web_search_tool_names);
     }
 
     // Inject prompt_cache_key for improved cache routing on OpenAI-compatible endpoints
@@ -129,20 +391,7 @@ pub fn anthropic_to_responses(
     //   SSE 解析层只处理流式响应，强制覆盖避免客户端误传 false）
     if is_codex_oauth {
         result["store"] = json!(false);
-
-        const REASONING_MARKER: &str = "reasoning.encrypted_content";
-        let mut includes: Vec<Value> = body
-            .get("include")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        if !includes
-            .iter()
-            .any(|v| v.as_str() == Some(REASONING_MARKER))
-        {
-            includes.push(json!(REASONING_MARKER));
-        }
-        result["include"] = json!(includes);
+        ensure_include(&mut result, "reasoning.encrypted_content");
 
         if let Some(obj) = result.as_object_mut() {
             // —— 删除 ChatGPT 反代不接受的字段 ——
@@ -166,7 +415,10 @@ pub fn anthropic_to_responses(
     Ok(result)
 }
 
-fn map_tool_choice_to_responses(tool_choice: &Value) -> Value {
+fn map_tool_choice_to_responses(
+    tool_choice: &Value,
+    web_search_tool_names: &HashSet<String>,
+) -> Value {
     match tool_choice {
         Value::String(_) => tool_choice.clone(),
         Value::Object(obj) => match obj.get("type").and_then(|t| t.as_str()) {
@@ -177,6 +429,12 @@ fn map_tool_choice_to_responses(tool_choice: &Value) -> Value {
             // Anthropic forced tool -> Responses function tool selector
             Some("tool") => {
                 let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                if web_search_tool_names.contains(name) {
+                    log::warn!(
+                        "Anthropic forced web_search tool_choice has no direct Responses equivalent; falling back to auto"
+                    );
+                    return json!("auto");
+                }
                 json!({
                     "type": "function",
                     "name": name
@@ -292,6 +550,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
             // 数组内容（多模态/工具调用）
             Some(Value::Array(blocks)) => {
                 let mut message_content = Vec::new();
+                let mut pending_web_searches: HashMap<String, Value> = HashMap::new();
 
                 for block in blocks {
                     let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -376,6 +635,58 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             }));
                         }
 
+                        "server_tool_use" => {
+                            if block.get("name").and_then(Value::as_str) == Some("web_search") {
+                                let id = block
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string();
+                                if !id.is_empty() {
+                                    pending_web_searches.insert(id, block.clone());
+                                }
+                            }
+                        }
+
+                        "web_search_tool_result" => {
+                            if !message_content.is_empty() {
+                                input.push(json!({
+                                    "role": role,
+                                    "content": message_content.clone()
+                                }));
+                                message_content.clear();
+                            }
+
+                            let call_id = block
+                                .get("tool_use_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            let pending = pending_web_searches.remove(&call_id);
+                            let error_code = extract_anthropic_web_search_error_code(
+                                block.get("content").unwrap_or(&Value::Null),
+                            );
+                            let status = if error_code.is_some() {
+                                "failed"
+                            } else {
+                                "completed"
+                            };
+                            let sources = if error_code.is_some() {
+                                Vec::new()
+                            } else {
+                                extract_web_search_sources_from_anthropic_content(
+                                    block.get("content").unwrap_or(&Value::Null),
+                                )
+                            };
+
+                            input.push(json!({
+                                "type": "web_search_call",
+                                "id": call_id,
+                                "status": status,
+                                "action": build_responses_web_search_action(pending.as_ref(), sources)
+                            }));
+                        }
+
                         "thinking" => {
                             // 丢弃 thinking blocks（与 openai_chat 一致）
                         }
@@ -389,6 +700,15 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                     input.push(json!({
                         "role": role,
                         "content": message_content
+                    }));
+                }
+
+                for (call_id, pending) in pending_web_searches {
+                    input.push(json!({
+                        "type": "web_search_call",
+                        "id": call_id,
+                        "status": "in_progress",
+                        "action": build_responses_web_search_action(Some(&pending), Vec::new())
                     }));
                 }
             }
@@ -413,6 +733,7 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     let mut content = Vec::new();
 
     let mut has_tool_use = false;
+    let mut web_search_requests = 0_u64;
     for item in output {
         let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
@@ -456,6 +777,39 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
                 has_tool_use = true;
             }
 
+            "web_search_call" => {
+                let id = item.get("id").and_then(Value::as_str).unwrap_or("");
+                let status = response_web_search_status(item);
+
+                content.push(json!({
+                    "type": "server_tool_use",
+                    "id": id,
+                    "name": "web_search",
+                    "input": build_anthropic_web_search_input(item)
+                }));
+
+                match status {
+                    "completed" => {
+                        content.push(json!({
+                            "type": "web_search_tool_result",
+                            "tool_use_id": id,
+                            "content": extract_web_search_sources_from_response_item(item)
+                        }));
+                        web_search_requests += 1;
+                    }
+                    "failed" => {
+                        content.push(json!({
+                            "type": "web_search_tool_result",
+                            "tool_use_id": id,
+                            "content": build_anthropic_web_search_error_content(
+                                extract_response_web_search_error_code(item).as_deref()
+                            )
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+
             "reasoning" => {
                 // 映射 reasoning summary → thinking block
                 if let Some(summary) = item.get("summary").and_then(|s| s.as_array()) {
@@ -492,7 +846,12 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
             .and_then(|r| r.as_str()),
     );
 
-    let usage_json = build_anthropic_usage_from_responses(body.get("usage"));
+    let mut usage_json = build_anthropic_usage_from_responses(body.get("usage"));
+    if web_search_requests > 0 {
+        usage_json["server_tool_use"] = json!({
+            "web_search_requests": web_search_requests
+        });
+    }
 
     let result = json!({
         "id": body.get("id").and_then(|i| i.as_str()).unwrap_or(""),
@@ -583,6 +942,135 @@ mod tests {
     }
 
     #[test]
+    fn test_anthropic_to_responses_maps_web_search_tool_and_include() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search this"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "allowed_domains": ["openai.com"],
+                "user_location": {"type": "approximate", "country": "US"}
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+        assert_eq!(result["tools"][0]["type"], "web_search");
+        assert_eq!(
+            result["tools"][0]["filters"]["allowed_domains"],
+            json!(["openai.com"])
+        );
+        assert_eq!(
+            result["tools"][0]["user_location"],
+            json!({"type": "approximate", "country": "US"})
+        );
+
+        let includes = result["include"]
+            .as_array()
+            .expect("include should be array");
+        assert!(includes
+            .iter()
+            .any(|v| v.as_str() == Some("web_search_call.action.sources")));
+        assert!(!includes
+            .iter()
+            .any(|v| v.as_str() == Some("web_search_call.results")));
+        assert!(includes
+            .iter()
+            .any(|v| v.as_str() == Some("reasoning.encrypted_content")));
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_rejects_blocked_domains_web_search() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search this"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "blocked_domains": ["example.com"]
+            }]
+        });
+
+        let err = anthropic_to_responses(input, None, false).unwrap_err();
+        assert!(
+            matches!(err, ProxyError::TransformError(message) if message.contains("blocked_domains"))
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_rejects_mixed_allowed_and_blocked_domains_web_search() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search this"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "allowed_domains": ["openai.com"],
+                "blocked_domains": ["example.com"]
+            }]
+        });
+
+        let err = anthropic_to_responses(input, None, false).unwrap_err();
+        assert!(
+            matches!(err, ProxyError::TransformError(message) if message.contains("Cannot specify both allowed_domains and blocked_domains"))
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_omits_empty_allowed_domains_web_search() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search this"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "allowed_domains": []
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false).unwrap();
+        assert_eq!(result["tools"][0]["type"], "web_search");
+        assert!(result["tools"][0].get("filters").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_rejects_max_uses_web_search() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search this"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 1
+            }]
+        });
+
+        let err = anthropic_to_responses(input, None, false).unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(message) if message.contains("max_uses")));
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_codex_oauth_ignores_max_uses_web_search() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 5
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, true).unwrap();
+        assert_eq!(result["tools"][0]["type"], "web_search");
+    }
+
+    #[test]
     fn test_anthropic_to_responses_tool_choice_any_to_required() {
         let input = json!({
             "model": "gpt-4o",
@@ -607,6 +1095,23 @@ mod tests {
         let result = anthropic_to_responses(input, None, false).unwrap();
         assert_eq!(result["tool_choice"]["type"], "function");
         assert_eq!(result["tool_choice"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_web_search_tool_choice_falls_back_to_auto() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search"
+            }],
+            "tool_choice": {"type": "tool", "name": "web_search"}
+        });
+
+        let result = anthropic_to_responses(input, None, false).unwrap();
+        assert_eq!(result["tool_choice"], "auto");
     }
 
     #[test]
@@ -661,6 +1166,121 @@ mod tests {
         assert_eq!(input_arr[0]["type"], "function_call_output");
         assert_eq!(input_arr[0]["call_id"], "call_123");
         assert_eq!(input_arr[0]["output"], "Sunny, 25°C");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_web_search_history_round_trip() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "server_tool_use",
+                        "id": "ws_1",
+                        "name": "web_search",
+                        "input": {"query": "OpenAI latest"}
+                    },
+                    {
+                        "type": "web_search_tool_result",
+                        "tool_use_id": "ws_1",
+                        "content": [
+                            {"type": "web_search_result", "url": "https://openai.com", "title": "OpenAI"}
+                        ]
+                    },
+                    {"type": "text", "text": "Here is what I found."}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false).unwrap();
+        let items = result["input"].as_array().expect("input should be array");
+
+        assert_eq!(items[0]["type"], "web_search_call");
+        assert_eq!(items[0]["id"], "ws_1");
+        assert_eq!(items[0]["action"]["query"], "OpenAI latest");
+        assert_eq!(
+            items[0]["action"]["sources"][0]["url"],
+            "https://openai.com"
+        );
+        assert_eq!(items[1]["role"], "assistant");
+        assert_eq!(items[1]["content"][0]["text"], "Here is what I found.");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_web_search_error_history_preserved() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "server_tool_use",
+                        "id": "ws_err_1",
+                        "name": "web_search",
+                        "input": {"query": "OpenAI latest"}
+                    },
+                    {
+                        "type": "web_search_tool_result",
+                        "tool_use_id": "ws_err_1",
+                        "content": {
+                            "type": "web_search_tool_result_error",
+                            "error_code": "max_uses_exceeded"
+                        }
+                    }
+                ]
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false).unwrap();
+        let items = result["input"].as_array().expect("input should be array");
+
+        assert_eq!(items[0]["type"], "web_search_call");
+        assert_eq!(items[0]["id"], "ws_err_1");
+        assert_eq!(items[0]["status"], "failed");
+        assert_eq!(items[0]["action"]["query"], "OpenAI latest");
+        assert!(items[0]["action"].get("sources").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_failed_non_query_web_search_history_preserved() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "server_tool_use",
+                        "id": "ws_open_err_1",
+                        "name": "web_search",
+                        "input": {
+                            "type": "open_page",
+                            "url": "https://openai.com/research"
+                        }
+                    },
+                    {
+                        "type": "web_search_tool_result",
+                        "tool_use_id": "ws_open_err_1",
+                        "content": {
+                            "type": "web_search_tool_result_error",
+                            "error_code": "unavailable"
+                        }
+                    }
+                ]
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false).unwrap();
+        let items = result["input"].as_array().expect("input should be array");
+
+        assert_eq!(items[0]["type"], "web_search_call");
+        assert_eq!(items[0]["id"], "ws_open_err_1");
+        assert_eq!(items[0]["status"], "failed");
+        assert_eq!(items[0]["action"]["type"], "open_page");
+        assert_eq!(items[0]["action"]["url"], "https://openai.com/research");
     }
 
     #[test]
@@ -758,6 +1378,112 @@ mod tests {
         assert_eq!(result["content"][0]["name"], "get_weather");
         assert_eq!(result["content"][0]["input"]["location"], "Tokyo");
         assert_eq!(result["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_with_web_search_call() {
+        let input = json!({
+            "id": "resp_ws",
+            "status": "completed",
+            "model": "gpt-5-codex",
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_1",
+                    "action": {
+                        "query": "OpenAI latest",
+                        "sources": [
+                            {"url": "https://openai.com", "title": "OpenAI"}
+                        ]
+                    }
+                },
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Here is what I found."}]
+                }
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "server_tool_use");
+        assert_eq!(result["content"][0]["id"], "ws_1");
+        assert_eq!(result["content"][0]["input"]["query"], "OpenAI latest");
+        assert_eq!(result["content"][1]["type"], "web_search_tool_result");
+        assert_eq!(result["content"][1]["tool_use_id"], "ws_1");
+        assert_eq!(
+            result["content"][1]["content"][0]["url"],
+            "https://openai.com"
+        );
+        assert_eq!(result["content"][2]["type"], "text");
+        assert_eq!(result["stop_reason"], "end_turn");
+        assert_eq!(
+            result["usage"]["server_tool_use"]["web_search_requests"],
+            json!(1)
+        );
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_with_failed_web_search_call() {
+        let input = json!({
+            "id": "resp_ws_failed",
+            "status": "completed",
+            "model": "gpt-5-codex",
+            "output": [{
+                "type": "web_search_call",
+                "id": "ws_failed_1",
+                "status": "failed",
+                "action": {
+                    "query": "OpenAI latest"
+                }
+            }],
+            "usage": {"input_tokens": 10, "output_tokens": 2}
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "server_tool_use");
+        assert_eq!(result["content"][0]["id"], "ws_failed_1");
+        assert_eq!(result["content"][0]["input"]["query"], "OpenAI latest");
+        assert_eq!(result["content"][1]["type"], "web_search_tool_result");
+        assert_eq!(result["content"][1]["tool_use_id"], "ws_failed_1");
+        assert_eq!(
+            result["content"][1]["content"]["type"],
+            "web_search_tool_result_error"
+        );
+        assert_eq!(result["content"][1]["content"]["error_code"], "unavailable");
+        assert!(result["usage"].get("server_tool_use").is_none());
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_preserves_non_query_web_search_action_input() {
+        let input = json!({
+            "id": "resp_ws_open_failed",
+            "status": "completed",
+            "model": "gpt-5-codex",
+            "output": [{
+                "type": "web_search_call",
+                "id": "ws_open_failed_1",
+                "status": "failed",
+                "action": {
+                    "type": "open_page",
+                    "url": "https://openai.com/research"
+                }
+            }],
+            "usage": {"input_tokens": 10, "output_tokens": 2}
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "server_tool_use");
+        assert_eq!(result["content"][0]["input"]["type"], "open_page");
+        assert_eq!(
+            result["content"][0]["input"]["url"],
+            "https://openai.com/research"
+        );
+        assert_eq!(result["content"][1]["type"], "web_search_tool_result");
+        assert_eq!(
+            result["content"][1]["content"]["type"],
+            "web_search_tool_result_error"
+        );
     }
 
     #[test]
