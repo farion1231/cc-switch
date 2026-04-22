@@ -56,8 +56,8 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       modalities: { input: ["text"], output: ["text"] },
     },
     {
-      id: "kimi-k2.5",
-      name: "Kimi K2.5",
+      id: "kimi-k2.6",
+      name: "Kimi K2.6",
       contextLimit: 262144,
       outputLimit: 262144,
       modalities: { input: ["text", "image", "video"], output: ["text"] },
@@ -451,19 +451,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Kimi k2.5",
+    name: "Kimi k2.6",
     websiteUrl: "https://platform.moonshot.cn/console",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Kimi k2.5",
+      name: "Kimi k2.6",
       options: {
         baseURL: "https://api.moonshot.cn/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "kimi-k2.5": { name: "Kimi K2.5" },
+        "kimi-k2.6": { name: "Kimi K2.6" },
       },
     },
     category: "cn_official",
