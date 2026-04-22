@@ -288,6 +288,15 @@ impl Default for SensitiveWordConfig {
         Self {
             enabled: false,
             file_path: String::new(),
+        }
+    }
+}
+/// Copilot 优化器配置
+///
+/// 存储在 settings 表中，key = "copilot_optimizer_config"
+/// 解决 Copilot 代理消耗量异常问题（Issue #1813）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CopilotOptimizerConfig {
     /// 总开关（默认开启 — 对 Copilot 用户至关重要）
     #[serde(default = "default_true")]
