@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class managed app, rolling out Claude Opus 4.7 across the preset matrix, adding a Gemini Native API proxy, and sharpening session, usage, and proxy workflows.
 
-**Stats**: 94 commits | 216 files changed | +19,923 insertions | -3,554 deletions
+**Stats**: 100 commits | 219 files changed | +20,548 insertions | -3,569 deletions
 
 ### Added
 
@@ -33,6 +33,9 @@ Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class ma
 - **Hermes Config Directory Override**: Added a settings option to point CC Switch at a custom `~/.hermes/config.yaml` location, backed by data-driven dispatch.
 - **StepFun Step Plan Preset**: Added StepFun Step Plan (EN/ZH) provider presets.
 - **New API Usage Script Template**: Added a User-Agent header to the New API usage script template for better upstream compatibility.
+- **Launch Hermes Dashboard from Toolbar**: When the Hermes Web UI probe fails, the toolbar entry now offers to run `hermes dashboard` in the user's preferred terminal via a temp bash/batch script. `hermes dashboard` opens the browser itself once ready, so no polling is required. Also corrects the stale `hermes web` hint in the offline toast (the real command is `hermes dashboard`) and reorders Linux terminal detection to try `which` before stat'ing `/usr/bin`, `/bin`, `/usr/local/bin`.
+- **LemonData Provider Preset (All Six Apps)**: Registered LemonData as a third-party partner preset across Claude, Codex, Gemini, OpenCode, OpenClaw, and Hermes, with icon assets and zh/en/ja partner-promotion copy. Claude uses `ANTHROPIC_API_KEY` auth; OpenAI-compatible apps target `gpt-5.4`.
+- **DDSHub Codex Preset**: Added a Codex-compatible endpoint for DDSHub at the same host as its Claude service; base URL omits the `/v1` suffix because the gateway auto-routes OpenAI SDK paths.
 
 ### Changed
 
@@ -48,6 +51,7 @@ Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class ma
 - **Copilot Request Classification**: Refined request routing inside the Copilot optimizer to further reduce unnecessary premium interaction consumption.
 - **Usage Script Intranet Support**: Removed private-IP / suspicious-hostname blocking from usage scripts, unblocking enterprise intranet, Docker, and self-hosted API endpoints. Built-in templates still enforce HTTPS (except localhost) and same-origin checks; custom templates remain user-controlled with those request-URL checks skipped.
 - **Failover Queue Notes**: Provider notes now appear in failover queue selectors and queue rows for easier identification across multi-provider queues.
+- **Hermes Toolbar Layout**: Swapped the Hermes Web UI button from `ExternalLink` to `LayoutDashboard` (clicking may spawn `hermes dashboard` rather than just opening a URL), and moved MCP to the final toolbar slot so Hermes matches the Claude / Codex / Gemini / OpenCode layout.
 
 ### Fixed
 
@@ -76,6 +80,8 @@ Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class ma
 - **Stream Check Default Models Refresh**: Updated stream-check default probe models to match each vendor's current lineup.
 - **Skills Import Sync**: Imported Skills are now immediately synced into enabled app directories instead of only being recorded in the database, so the UI no longer shows "installed" while the target app directory is missing the skill.
 - **Ghostty Session Restore**: Fixed Ghostty session restore launch by using shell execution with `--working-directory`, avoiding `cwd` escaping issues when the path contains spaces or special characters.
+- **Hermes Health Check Borrowing OpenClaw Schema**: Hermes providers were routed through `check_additive_app_stream` (the OpenClaw dispatcher), which reads camelCase `baseUrl` / `apiKey` / `api` and surfaced "OpenClaw provider is missing baseUrl" even when every Hermes field was filled. Introduced `check_hermes_stream` with Hermes-specific extractors that map `api_mode` (`chat_completions` / `anthropic_messages` / `codex_responses`) to the matching `check_claude_stream` `api_format`, and returns `bedrock_converse` as unsupported. `api_mode` is now resolved before URL / API key extraction, so `bedrock_converse` users see the real cause rather than a misleading "missing base_url".
+- **Usage Query Modal for Hermes & OpenClaw**: `getProviderCredentials` now reads flat `settingsConfig` fields for Hermes (snake_case `base_url` / `api_key`) and OpenClaw (camelCase `baseUrl` / `apiKey`), so the "official balance" template auto-selects for matching providers like SiliconFlow. Also refactored the BALANCE and TOKEN_PLAN test paths to reuse the precomputed `providerCredentials` instead of re-reading `env.ANTHROPIC_*` directly, fixing the "empty key" error for non-Claude apps even when the key was configured.
 
 ### Docs
 
