@@ -1701,6 +1701,42 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "LemonData",
+    websiteUrl: "https://lemondata.cc",
+    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
+    settingsConfig: {
+      baseUrl: "https://api.lemondata.cc/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.4",
+          name: "GPT-5.4",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lemondata",
+    icon: "lemondata",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "lemondata/gpt-5.4",
+      },
+      modelCatalog: {
+        "lemondata/gpt-5.4": { alias: "GPT-5.4" },
+      },
+    },
+  },
   // ========== Cloud Providers ==========
   {
     name: "AWS Bedrock",

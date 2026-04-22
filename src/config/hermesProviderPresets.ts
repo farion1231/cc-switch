@@ -989,6 +989,25 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "LemonData",
+    websiteUrl: "https://lemondata.cc",
+    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
+    settingsConfig: {
+      name: "lemondata",
+      base_url: "https://api.lemondata.cc/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lemondata",
+    icon: "lemondata",
+    suggestedDefaults: {
+      model: { default: "gpt-5.4", provider: "lemondata" },
+    },
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",
