@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,7 @@ import { Trash2, ExternalLink, Plus } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
+import { skillsApi } from "@/lib/api/skills";
 
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
@@ -27,6 +28,11 @@ export function RepoManagerPanel({
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [error, setError] = useState("");
+  const [autoUpdateFreq, setAutoUpdateFreq] = useState("daily");
+
+  useEffect(() => {
+    skillsApi.getAutoUpdateFrequency().then(setAutoUpdateFreq).catch(console.error);
+  }, []);
 
   const getSkillCount = (repo: SkillRepo) =>
     skills.filter(
@@ -37,15 +43,20 @@ export function RepoManagerPanel({
     ).length;
 
   const parseRepoUrl = (
-    url: string,
-  ): { owner: string; name: string } | null => {
-    let cleaned = url.trim();
-    cleaned = cleaned.replace(/^https?:\/\/github\.com\//, "");
-    cleaned = cleaned.replace(/\.git$/, "");
+    input: string,
+  ): { owner: string; name: string; url: string } | null => {
+    let cleaned = input.trim().replace(/\.git$/, "");
+
+    const urlMatch = cleaned.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)$/);
+    if (urlMatch) {
+      const [, host, owner, name] = urlMatch;
+      const isGitHub = host!.toLowerCase() === "github.com";
+      return { owner: owner!, name: name!, url: isGitHub ? "" : cleaned };
+    }
 
     const parts = cleaned.split("/");
     if (parts.length === 2 && parts[0] && parts[1]) {
-      return { owner: parts[0], name: parts[1] };
+      return { owner: parts[0], name: parts[1], url: "" };
     }
 
     return null;
@@ -66,6 +77,7 @@ export function RepoManagerPanel({
         name: parsed.name,
         branch: branch || "main",
         enabled: true,
+        url: parsed.url,
       });
 
       setRepoUrl("");
@@ -75,9 +87,10 @@ export function RepoManagerPanel({
     }
   };
 
-  const handleOpenRepo = async (owner: string, name: string) => {
+  const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(`https://github.com/${owner}/${name}`);
+      const webUrl = repo.url || `https://github.com/${repo.owner}/${repo.name}`;
+      await settingsApi.openExternal(webUrl);
     } catch (error) {
       console.error("Failed to open URL:", error);
     }
@@ -153,7 +166,16 @@ export function RepoManagerPanel({
               >
                 <div>
                   <div className="text-sm font-medium text-foreground">
-                    {repo.owner}/{repo.name}
+                    {repo.url ? (
+                      <>
+                        <span className="text-muted-foreground">
+                          {new URL(repo.url).host}/
+                        </span>
+                        {repo.owner}/{repo.name}
+                      </>
+                    ) : (
+                      <>{repo.owner}/{repo.name}</>
+                    )}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     {t("skills.repo.branch")}: {repo.branch || "main"}
@@ -169,7 +191,7 @@ export function RepoManagerPanel({
                     variant="ghost"
                     size="icon"
                     type="button"
-                    onClick={() => handleOpenRepo(repo.owner, repo.name)}
+                    onClick={() => handleOpenRepo(repo)}
                     title={t("common.view", { defaultValue: "查看" })}
                     className="hover:bg-black/5 dark:hover:bg-white/5"
                   >
@@ -190,6 +212,38 @@ export function RepoManagerPanel({
             ))}
           </div>
         )}
+      </div>
+
+      {/* 自动更新设置 */}
+      <div className="space-y-4 glass-card rounded-xl p-6">
+        <h3 className="text-base font-semibold text-foreground">
+          {t("skills.autoUpdate.title")}
+        </h3>
+        <div className="flex items-center gap-3">
+          <Label htmlFor="auto-update-freq" className="text-foreground whitespace-nowrap">
+            {t("skills.autoUpdate.frequency")}
+          </Label>
+          <select
+            id="auto-update-freq"
+            value={autoUpdateFreq}
+            onChange={async (e) => {
+              const val = e.target.value;
+              setAutoUpdateFreq(val);
+              try {
+                await skillsApi.setAutoUpdateFrequency(val);
+              } catch (err) {
+                console.error("Failed to set auto-update frequency:", err);
+              }
+            }}
+            className="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <option value="on_launch">{t("skills.autoUpdate.onLaunch")}</option>
+            <option value="daily">{t("skills.autoUpdate.daily")}</option>
+            <option value="weekly">{t("skills.autoUpdate.weekly")}</option>
+            <option value="monthly">{t("skills.autoUpdate.monthly")}</option>
+            <option value="off">{t("skills.autoUpdate.off")}</option>
+          </select>
+        </div>
       </div>
     </FullScreenPanel>
   );

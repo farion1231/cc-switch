@@ -1722,6 +1722,8 @@
       "parseMetadataFailed": "スキルメタデータの解析に失敗しました",
       "getHomeDirFailed": "ユーザーのホームディレクトリを取得できません",
       "noSkillsInZip": "ZIP ファイルにスキルが見つかりません（SKILL.md ファイルが必要です）",
+      "gitCloneFailed": "Git リポジトリのクローンに失敗しました",
+      "gitNotInstalled": "このリポジトリには Git が必要ですが、Git が検出されませんでした",
       "networkError": "ネットワークエラー",
       "fsError": "ファイルシステムエラー",
       "unknownError": "不明なエラー",
@@ -1733,14 +1735,15 @@
         "checkDiskSpace": "ディスク容量を確認してください",
         "checkPermission": "ディレクトリの権限を確認してください",
         "uninstallFirst": "同名のスキルを先にアンインストールしてください",
-        "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）が含まれていることを確認してください"
+        "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）が含まれていることを確認してください",
+        "installGit": "Git をインストールしてください: https://git-scm.com/downloads"
       }
     },
     "repo": {
       "title": "スキルリポジトリを管理",
-      "description": "GitHub のスキルリポジトリソースを追加または削除します",
+      "description": "スキルリポジトリソースを追加または削除します（GitHub、GitLab、Gitea など）",
       "url": "リポジトリ URL",
-      "urlPlaceholder": "owner/name または https://github.com/owner/name",
+      "urlPlaceholder": "owner/name または https://gitlab.example.com/owner/name",
       "branch": "ブランチ",
       "branchPlaceholder": "main",
       "path": "スキルパス",
@@ -1754,6 +1757,15 @@
       "removeSuccess": "リポジトリ {{owner}}/{{name}} を削除しました",
       "removeFailed": "削除に失敗しました",
       "skillCount": "{{count}} 件のスキルを検出"
+    },
+    "autoUpdate": {
+      "title": "自動更新",
+      "frequency": "更新頻度",
+      "onLaunch": "起動時",
+      "daily": "毎日",
+      "weekly": "毎週",
+      "monthly": "毎月",
+      "off": "オフ"
     },
     "search": "スキルを検索",
     "searchPlaceholder": "スキル名またはリポジトリで検索...",

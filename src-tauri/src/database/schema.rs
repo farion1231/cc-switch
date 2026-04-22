@@ -423,6 +423,11 @@ impl Database {
                         Self::migrate_v8_to_v9(conn)?;
                         Self::set_user_version(conn, 9)?;
                     }
+                    9 => {
+                        log::info!("迁移数据库从 v9 到 v10（Skill 仓库支持自定义 Git 平台）");
+                        Self::migrate_v9_to_v10(conn)?;
+                        Self::set_user_version(conn, 10)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1165,6 +1170,13 @@ impl Database {
             .map_err(|e| AppError::Database(format!("清空模型定价失败: {e}")))?;
         Self::seed_model_pricing(conn)?;
         log::info!("v8 -> v9 迁移完成：已刷新全部模型定价数据");
+        Ok(())
+    }
+
+    fn migrate_v9_to_v10(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(conn, "skill_repos", "url", "TEXT NOT NULL DEFAULT ''")?;
+        Self::add_column_if_missing(conn, "skills", "repo_url", "TEXT NOT NULL DEFAULT ''")?;
+        log::info!("v9 -> v10 迁移完成：skill_repos 和 skills 表已支持自定义 Git 平台 URL");
         Ok(())
     }
 

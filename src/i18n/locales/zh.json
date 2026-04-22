@@ -1723,6 +1723,8 @@
       "parseMetadataFailed": "解析技能元数据失败",
       "getHomeDirFailed": "无法获取用户主目录",
       "noSkillsInZip": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
+      "gitCloneFailed": "Git 克隆仓库失败",
+      "gitNotInstalled": "该仓库需要 Git 才能访问，但未检测到 Git",
       "networkError": "网络错误",
       "fsError": "文件系统错误",
       "unknownError": "未知错误",
@@ -1734,14 +1736,15 @@
         "checkDiskSpace": "请检查磁盘空间",
         "checkPermission": "请检查目录权限",
         "uninstallFirst": "请先卸载已安装的同名技能",
-        "checkZipContent": "请确认 ZIP 文件包含有效的技能目录（含 SKILL.md 文件）"
+        "checkZipContent": "请确认 ZIP 文件包含有效的技能目录（含 SKILL.md 文件）",
+        "installGit": "请安装 Git: https://git-scm.com/downloads"
       }
     },
     "repo": {
       "title": "管理技能仓库",
-      "description": "添加或删除 GitHub 技能仓库源",
+      "description": "添加或删除技能仓库源（支持 GitHub、GitLab、Gitea 等）",
       "url": "仓库 URL",
-      "urlPlaceholder": "owner/name 或 https://github.com/owner/name",
+      "urlPlaceholder": "owner/name 或 https://gitlab.example.com/owner/name",
       "branch": "分支",
       "branchPlaceholder": "main",
       "path": "技能路径",
@@ -1755,6 +1758,15 @@
       "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
       "removeFailed": "删除失败",
       "skillCount": "识别到 {{count}} 个技能"
+    },
+    "autoUpdate": {
+      "title": "自动更新",
+      "frequency": "更新频率",
+      "onLaunch": "每次启动",
+      "daily": "每天",
+      "weekly": "每周",
+      "monthly": "每月",
+      "off": "关闭"
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或仓库名称...",

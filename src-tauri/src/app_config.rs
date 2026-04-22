@@ -167,6 +167,9 @@ pub struct InstalledSkill {
     /// 仓库分支
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_branch: Option<String>,
+    /// 仓库完整 URL（为空时默认 GitHub）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
     /// README URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readme_url: Option<String>,

@@ -39,6 +39,8 @@ function getErrorI18nKey(code: string): string {
     EMPTY_ARCHIVE: "skills.error.emptyArchive",
     GET_HOME_DIR_FAILED: "skills.error.getHomeDirFailed",
     NO_SKILLS_IN_ZIP: "skills.error.noSkillsInZip",
+    GIT_CLONE_FAILED: "skills.error.gitCloneFailed",
+    GIT_NOT_INSTALLED: "skills.error.gitNotInstalled",
   };
 
   return mapping[code] || "skills.error.unknownError";
@@ -56,6 +58,7 @@ function getSuggestionI18nKey(suggestion: string): string {
     checkPermission: "skills.error.suggestion.checkPermission",
     uninstallFirst: "skills.error.suggestion.uninstallFirst",
     checkZipContent: "skills.error.suggestion.checkZipContent",
+    installGit: "skills.error.suggestion.installGit",
     http403: "skills.error.http403",
     http404: "skills.error.http404",
     http429: "skills.error.http429",
