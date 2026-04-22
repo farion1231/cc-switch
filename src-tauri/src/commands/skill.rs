@@ -162,6 +162,34 @@ pub async fn update_skill(
         .map_err(|e| e.to_string())
 }
 
+/// 获取 Skill 自动更新频率
+#[tauri::command]
+pub async fn get_skill_auto_update_frequency(
+    app_state: State<'_, AppState>,
+) -> Result<String, String> {
+    app_state
+        .db
+        .get_setting("skill_auto_update_frequency")
+        .map(|v| v.unwrap_or_else(|| "daily".to_string()))
+        .map_err(|e| e.to_string())
+}
+
+/// 设置 Skill 自动更新频率
+#[tauri::command]
+pub async fn set_skill_auto_update_frequency(
+    frequency: String,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    let valid = ["on_launch", "daily", "weekly", "monthly", "off"];
+    if !valid.contains(&frequency.as_str()) {
+        return Err(format!("无效的更新频率: {frequency}"));
+    }
+    app_state
+        .db
+        .set_setting("skill_auto_update_frequency", &frequency)
+        .map_err(|e| e.to_string())
+}
+
 /// 迁移 Skill 存储位置
 #[tauri::command]
 pub async fn migrate_skill_storage(

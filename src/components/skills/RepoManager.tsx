@@ -45,20 +45,27 @@ export function RepoManager({
     ).length;
 
   const parseRepoUrl = (
-    url: string,
-  ): { owner: string; name: string } | null => {
+    input: string,
+  ): { owner: string; name: string; url: string } | null => {
     // 支持格式:
-    // - https://github.com/owner/name
-    // - owner/name
-    // - https://github.com/owner/name.git
+    // - https://any-host.com/owner/name
+    // - https://any-host.com/owner/name.git
+    // - owner/name (默认 GitHub)
 
-    let cleaned = url.trim();
-    cleaned = cleaned.replace(/^https?:\/\/github\.com\//, "");
-    cleaned = cleaned.replace(/\.git$/, "");
+    let cleaned = input.trim().replace(/\.git$/, "");
 
+    // 完整 URL
+    const urlMatch = cleaned.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)$/);
+    if (urlMatch) {
+      const [, host, owner, name] = urlMatch;
+      const isGitHub = host!.toLowerCase() === "github.com";
+      return { owner: owner!, name: name!, url: isGitHub ? "" : cleaned };
+    }
+
+    // 短格式 owner/name
     const parts = cleaned.split("/");
     if (parts.length === 2 && parts[0] && parts[1]) {
-      return { owner: parts[0], name: parts[1] };
+      return { owner: parts[0], name: parts[1], url: "" };
     }
 
     return null;
@@ -79,6 +86,7 @@ export function RepoManager({
         name: parsed.name,
         branch: branch || "main",
         enabled: true,
+        url: parsed.url,
       });
 
       setRepoUrl("");
@@ -88,9 +96,10 @@ export function RepoManager({
     }
   };
 
-  const handleOpenRepo = async (owner: string, name: string) => {
+  const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(`https://github.com/${owner}/${name}`);
+      const webUrl = repo.url || `https://github.com/${repo.owner}/${repo.name}`;
+      await settingsApi.openExternal(webUrl);
     } catch (error) {
       console.error("Failed to open URL:", error);
     }
@@ -157,7 +166,16 @@ export function RepoManager({
                     >
                       <div>
                         <div className="text-sm font-medium text-foreground">
-                          {repo.owner}/{repo.name}
+                          {repo.url ? (
+                            <>
+                              <span className="text-muted-foreground">
+                                {new URL(repo.url).host}/
+                              </span>
+                              {repo.owner}/{repo.name}
+                            </>
+                          ) : (
+                            <>{repo.owner}/{repo.name}</>
+                          )}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {t("skills.repo.branch")}: {repo.branch || "main"}
@@ -173,7 +191,7 @@ export function RepoManager({
                           variant="ghost"
                           size="icon"
                           type="button"
-                          onClick={() => handleOpenRepo(repo.owner, repo.name)}
+                          onClick={() => handleOpenRepo(repo)}
                           title={t("common.view", { defaultValue: "查看" })}
                         >
                           <ExternalLink className="h-4 w-4" />

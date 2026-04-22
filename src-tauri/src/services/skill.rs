@@ -68,6 +68,9 @@ pub struct DiscoverableSkill {
     /// 分支名称
     #[serde(rename = "repoBranch")]
     pub repo_branch: String,
+    /// 仓库完整 URL（为空时默认 GitHub）
+    #[serde(rename = "repoUrl", default)]
+    pub repo_url: String,
 }
 
 /// 技能对象（兼容旧 API，内部使用 DiscoverableSkill）
@@ -100,7 +103,7 @@ pub struct Skill {
 /// 仓库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillRepo {
-    /// GitHub 用户/组织名
+    /// 用户/组织名
     pub owner: String,
     /// 仓库名称
     pub name: String,
@@ -108,6 +111,9 @@ pub struct SkillRepo {
     pub branch: String,
     /// 是否启用
     pub enabled: bool,
+    /// 完整仓库 URL（为空时默认 GitHub）
+    #[serde(default)]
+    pub url: String,
 }
 
 /// 技能安装状态（旧版兼容）
@@ -139,24 +145,28 @@ impl Default for SkillStore {
                     name: "skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
+                    url: String::new(),
                 },
                 SkillRepo {
                     owner: "ComposioHQ".to_string(),
                     name: "awesome-claude-skills".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
+                    url: String::new(),
                 },
                 SkillRepo {
                     owner: "cexll".to_string(),
                     name: "myclaude".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
+                    url: String::new(),
                 },
                 SkillRepo {
                     owner: "JimLiu".to_string(),
                     name: "baoyu-skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
+                    url: String::new(),
                 },
             ],
         }
@@ -435,6 +445,69 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
     parsed
 }
 
+/// 检测本机是否安装了 git
+fn is_git_available() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// 获取仓库的有效 git URL
+fn effective_repo_url(repo: &SkillRepo) -> String {
+    if !repo.url.is_empty() {
+        let mut url = repo.url.clone();
+        if !url.ends_with(".git") {
+            url.push_str(".git");
+        }
+        url
+    } else {
+        format!("https://github.com/{}/{}.git", repo.owner, repo.name)
+    }
+}
+
+/// 获取仓库的 web URL（用于浏览器打开）
+fn effective_repo_web_url(repo: &SkillRepo) -> String {
+    if !repo.url.is_empty() {
+        repo.url.trim_end_matches(".git").to_string()
+    } else {
+        format!("https://github.com/{}/{}", repo.owner, repo.name)
+    }
+}
+
+/// 根据仓库 URL 推断 Git 平台类型，返回 ZIP archive URL 模板
+fn build_zip_url(repo: &SkillRepo, branch: &str) -> String {
+    let web_url = effective_repo_web_url(repo);
+    let lower = web_url.to_lowercase();
+
+    if lower.contains("github.com") {
+        format!("{web_url}/archive/refs/heads/{branch}.zip")
+    } else if lower.contains("gitlab") {
+        format!("{web_url}/-/archive/{branch}/{}-{branch}.zip", repo.name)
+    } else {
+        // Gitea / Gogs / 其他平台通用格式
+        format!("{web_url}/archive/{branch}.zip")
+    }
+}
+
+/// 获取 repo-cache 目录
+fn get_repo_cache_dir(repo: &SkillRepo) -> PathBuf {
+    let base = get_app_config_dir().join("repo-cache");
+    if !repo.url.is_empty() {
+        let sanitized = repo.url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches(".git")
+            .replace(['/', '\\', ':'], "_");
+        base.join(sanitized)
+    } else {
+        base.join(format!("github.com_{}_{}", repo.owner, repo.name))
+    }
+}
+
 // ========== SkillService ==========
 
 pub struct SkillService;
@@ -451,8 +524,36 @@ impl SkillService {
     }
 
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
-    fn build_skill_doc_url(owner: &str, repo: &str, branch: &str, doc_path: &str) -> String {
-        format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+    fn build_skill_doc_url(repo: &SkillRepo, branch: &str, doc_path: &str) -> String {
+        let base = effective_repo_web_url(repo);
+        let lower = base.to_lowercase();
+        if lower.contains("gitlab") {
+            format!("{base}/-/blob/{branch}/{doc_path}")
+        } else {
+            format!("{base}/blob/{branch}/{doc_path}")
+        }
+    }
+
+    /// 从 InstalledSkill 构建临时 SkillRepo（用于 URL 构建等）
+    fn skill_to_repo(skill: &InstalledSkill) -> SkillRepo {
+        SkillRepo {
+            owner: skill.repo_owner.clone().unwrap_or_default(),
+            name: skill.repo_name.clone().unwrap_or_default(),
+            branch: skill.repo_branch.clone().unwrap_or_else(|| "main".to_string()),
+            enabled: true,
+            url: skill.repo_url.clone().unwrap_or_default(),
+        }
+    }
+
+    /// 从 DiscoverableSkill 构建临时 SkillRepo
+    fn discoverable_to_repo(skill: &DiscoverableSkill) -> SkillRepo {
+        SkillRepo {
+            owner: skill.repo_owner.clone(),
+            name: skill.repo_name.clone(),
+            branch: skill.repo_branch.clone(),
+            enabled: true,
+            url: skill.repo_url.clone(),
+        }
     }
 
     /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
@@ -644,6 +745,7 @@ impl SkillService {
                 name: skill.repo_name.clone(),
                 branch: skill.repo_branch.clone(),
                 enabled: true,
+                url: skill.repo_url.clone(),
             };
 
             // 下载仓库
@@ -743,8 +845,7 @@ impl SkillService {
             .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
 
         let readme_url = Some(Self::build_skill_doc_url(
-            &skill.repo_owner,
-            &skill.repo_name,
+            &Self::discoverable_to_repo(&skill),
             &repo_branch,
             &doc_path,
         ));
@@ -768,6 +869,7 @@ impl SkillService {
             repo_owner: Some(skill.repo_owner.clone()),
             repo_name: Some(skill.repo_name.clone()),
             repo_branch: Some(repo_branch),
+            repo_url: if skill.repo_url.is_empty() { None } else { Some(skill.repo_url.clone()) },
             readme_url,
             apps: SkillApps::only(current_app),
             installed_at: chrono::Utc::now().timestamp(),
@@ -909,11 +1011,15 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
 
         for ((owner, name, branch), group_skills) in &repo_groups {
+            let repo_url = group_skills.first()
+                .and_then(|s| s.repo_url.clone())
+                .unwrap_or_default();
             let repo = SkillRepo {
                 owner: owner.clone(),
                 name: name.clone(),
                 branch: branch.clone(),
                 enabled: true,
+                url: repo_url,
             };
 
             // 下载仓库 ZIP
@@ -1022,6 +1128,7 @@ impl SkillService {
             name: name.clone(),
             branch: branch.clone(),
             enabled: true,
+            url: skill.repo_url.clone().unwrap_or_default(),
         };
 
         let ssot_dir = Self::get_ssot_dir()?;
@@ -1106,6 +1213,7 @@ impl SkillService {
             repo_owner: skill.repo_owner.clone(),
             repo_name: skill.repo_name.clone(),
             repo_branch: Some(used_branch),
+            repo_url: skill.repo_url.clone(),
             readme_url,
             apps: skill.apps.clone(),
             installed_at: skill.installed_at,
@@ -1540,6 +1648,7 @@ impl SkillService {
                 repo_owner,
                 repo_name,
                 repo_branch,
+                repo_url: None,
                 readme_url,
                 apps,
                 installed_at: chrono::Utc::now().timestamp(),
@@ -1959,14 +2068,14 @@ impl SkillService {
             description: meta.description.unwrap_or_default(),
             directory: directory.to_string(),
             readme_url: Some(Self::build_skill_doc_url(
-                &repo.owner,
-                &repo.name,
+                repo,
                 &repo.branch,
                 doc_path,
             )),
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
+            repo_url: repo.url.clone(),
         })
     }
 
@@ -2120,10 +2229,6 @@ impl SkillService {
 
     /// 下载仓库
     async fn download_repo(&self, repo: &SkillRepo) -> Result<(PathBuf, String)> {
-        let temp_dir = tempfile::tempdir()?;
-        let temp_path = temp_dir.path().to_path_buf();
-        let _ = temp_dir.keep();
-
         let mut branches = Vec::new();
         if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
             branches.push(repo.branch.as_str());
@@ -2135,17 +2240,89 @@ impl SkillService {
             branches.push("master");
         }
 
-        let mut last_error = None;
-        for branch in branches {
-            let url = format!(
-                "https://github.com/{}/{}/archive/refs/heads/{}.zip",
-                repo.owner, repo.name, branch
-            );
+        // 优先使用 git clone
+        if is_git_available() {
+            let git_url = effective_repo_url(repo);
+            let cache_dir = get_repo_cache_dir(repo);
 
-            match self.download_and_extract(&url, &temp_path).await {
-                Ok(_) => {
+            // 如果缓存目录已存在且是 git 仓库，用 git pull
+            if cache_dir.join(".git").is_dir() {
+                for branch in &branches {
+                    let checkout = std::process::Command::new("git")
+                        .args(["checkout", branch])
+                        .current_dir(&cache_dir)
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::piped())
+                        .status();
+                    if checkout.map(|s| s.success()).unwrap_or(false) {
+                        let pull = std::process::Command::new("git")
+                            .args(["pull", "--ff-only"])
+                            .current_dir(&cache_dir)
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::piped())
+                            .status();
+                        if pull.map(|s| s.success()).unwrap_or(false) {
+                            let temp_dir = tempfile::tempdir()?;
+                            let temp_path = temp_dir.path().to_path_buf();
+                            let _ = temp_dir.keep();
+                            Self::copy_dir_recursive_excluding(&cache_dir, &temp_path, ".git")?;
+                            return Ok((temp_path, branch.to_string()));
+                        }
+                    }
+                }
+                // pull 失败，删除缓存重新 clone
+                let _ = fs::remove_dir_all(&cache_dir);
+            }
+
+            // git clone --depth 1
+            for branch in &branches {
+                let _ = fs::create_dir_all(cache_dir.parent().unwrap_or(&cache_dir));
+                let status = std::process::Command::new("git")
+                    .args([
+                        "clone", "--depth", "1", "--branch", branch,
+                        &git_url,
+                        &cache_dir.to_string_lossy(),
+                    ])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::piped())
+                    .status();
+                if status.map(|s| s.success()).unwrap_or(false) {
+                    let temp_dir = tempfile::tempdir()?;
+                    let temp_path = temp_dir.path().to_path_buf();
+                    let _ = temp_dir.keep();
+                    Self::copy_dir_recursive_excluding(&cache_dir, &temp_path, ".git")?;
                     return Ok((temp_path, branch.to_string()));
                 }
+                let _ = fs::remove_dir_all(&cache_dir);
+            }
+
+            // 非 GitHub 仓库且 git clone 失败，直接报错
+            if !repo.url.is_empty() && !repo.url.to_lowercase().contains("github.com") {
+                return Err(anyhow!(format_skill_error(
+                    "GIT_CLONE_FAILED",
+                    &[("url", &git_url)],
+                    Some("checkNetwork"),
+                )));
+            }
+        } else if !repo.url.is_empty() && !repo.url.to_lowercase().contains("github.com") {
+            // 没有 git 且不是 GitHub 仓库，无法用 ZIP 兜底
+            return Err(anyhow!(format_skill_error(
+                "GIT_NOT_INSTALLED",
+                &[],
+                Some("installGit"),
+            )));
+        }
+
+        // ZIP 兜底（GitHub 或已知平台）
+        let temp_dir = tempfile::tempdir()?;
+        let temp_path = temp_dir.path().to_path_buf();
+        let _ = temp_dir.keep();
+
+        let mut last_error = None;
+        for branch in branches {
+            let url = build_zip_url(repo, branch);
+            match self.download_and_extract(&url, &temp_path).await {
+                Ok(_) => return Ok((temp_path, branch.to_string())),
                 Err(e) => {
                     last_error = Some(e);
                     continue;
@@ -2153,7 +2330,7 @@ impl SkillService {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
+        Err(last_error.unwrap_or_else(|| anyhow!("所有分支下载失败")))
     }
 
     /// 下载并解压 ZIP
@@ -2240,6 +2417,29 @@ impl SkillService {
             let entry = entry?;
             let path = entry.path();
             let dest_path = dest.join(entry.file_name());
+
+            if path.is_dir() {
+                Self::copy_dir_recursive(&path, &dest_path)?;
+            } else {
+                fs::copy(&path, &dest_path)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 递归复制目录，排除指定名称的子目录
+    fn copy_dir_recursive_excluding(src: &Path, dest: &Path, exclude: &str) -> Result<()> {
+        fs::create_dir_all(dest)?;
+
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name == exclude {
+                continue;
+            }
+            let path = entry.path();
+            let dest_path = dest.join(&name);
 
             if path.is_dir() {
                 Self::copy_dir_recursive(&path, &dest_path)?;
@@ -2565,6 +2765,7 @@ impl SkillService {
                 repo_owner: None,
                 repo_name: None,
                 repo_branch: None,
+                repo_url: None,
                 readme_url: None,
                 apps: SkillApps::only(current_app),
                 installed_at: chrono::Utc::now().timestamp(),
@@ -2795,8 +2996,13 @@ fn build_repo_info_from_lock(
             let fallback = format!("{dir_name}/SKILL.md");
             let doc_path = info.skill_path.as_deref().unwrap_or(&fallback);
             let url = Some(SkillService::build_skill_doc_url(
-                &info.owner,
-                &info.repo,
+                &SkillRepo {
+                    owner: info.owner.clone(),
+                    name: info.repo.clone(),
+                    branch: url_branch.clone(),
+                    enabled: true,
+                    url: String::new(),
+                },
                 &url_branch,
                 doc_path,
             ));
@@ -2833,9 +3039,9 @@ fn save_repos_from_lock(
                 let skill_repo = SkillRepo {
                     owner: info.owner.clone(),
                     name: info.repo.clone(),
-                    // 未知分支时使用 HEAD 语义，后续下载会回退到 main/master。
                     branch: info.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
                     enabled: true,
+                    url: String::new(),
                 };
                 if let Err(e) = db.save_skill_repo(&skill_repo) {
                     log::warn!("保存 skill 仓库 {}/{} 失败: {}", info.owner, info.repo, e);
@@ -2952,6 +3158,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             repo_owner,
             repo_name,
             repo_branch,
+            repo_url: None,
             readme_url,
             apps,
             installed_at: chrono::Utc::now().timestamp(),

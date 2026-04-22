@@ -23,7 +23,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-                        installed_at, content_hash, updated_at
+                        installed_at, content_hash, updated_at, repo_url
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -38,6 +38,7 @@ impl Database {
                     repo_owner: row.get(4)?,
                     repo_name: row.get(5)?,
                     repo_branch: row.get(6)?,
+                    repo_url: row.get::<_, String>(15).ok().filter(|s| !s.is_empty()),
                     readme_url: row.get(7)?,
                     apps: SkillApps {
                         claude: row.get(8)?,
@@ -67,7 +68,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-                        installed_at, content_hash, updated_at
+                        installed_at, content_hash, updated_at, repo_url
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -81,6 +82,7 @@ impl Database {
                 repo_owner: row.get(4)?,
                 repo_name: row.get(5)?,
                 repo_branch: row.get(6)?,
+                repo_url: row.get(15)?,
                 readme_url: row.get(7)?,
                 apps: SkillApps {
                     claude: row.get(8)?,
@@ -108,8 +110,8 @@ impl Database {
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-              installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+              installed_at, content_hash, updated_at, repo_url)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 skill.id,
                 skill.name,
@@ -126,6 +128,7 @@ impl Database {
                 skill.installed_at,
                 skill.content_hash,
                 skill.updated_at,
+                skill.repo_url.as_deref().unwrap_or(""),
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -185,7 +188,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT owner, name, branch, enabled FROM skill_repos ORDER BY owner ASC, name ASC",
+                "SELECT owner, name, branch, enabled, url FROM skill_repos ORDER BY owner ASC, name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -196,6 +199,7 @@ impl Database {
                     name: row.get(1)?,
                     branch: row.get(2)?,
                     enabled: row.get(3)?,
+                    url: row.get::<_, String>(4).unwrap_or_default(),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -211,8 +215,8 @@ impl Database {
     pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
-            params![repo.owner, repo.name, repo.branch, repo.enabled],
+            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled, url) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![repo.owner, repo.name, repo.branch, repo.enabled, repo.url],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())

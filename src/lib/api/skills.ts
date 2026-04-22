@@ -22,6 +22,7 @@ export interface InstalledSkill {
   repoOwner?: string;
   repoName?: string;
   repoBranch?: string;
+  repoUrl?: string;
   readmeUrl?: string;
   apps: SkillApps;
   installedAt: number;
@@ -50,6 +51,7 @@ export interface DiscoverableSkill {
   repoOwner: string;
   repoName: string;
   repoBranch: string;
+  repoUrl: string;
 }
 
 /** 未管理的 Skill（用于导入） */
@@ -120,6 +122,8 @@ export interface SkillRepo {
   name: string;
   branch: string;
   enabled: boolean;
+  /** 完整仓库 URL（为空时默认 GitHub） */
+  url: string;
 }
 
 // ========== API ==========
@@ -270,5 +274,17 @@ export const skillsApi = {
     currentApp: AppId,
   ): Promise<InstalledSkill[]> {
     return await invoke("install_skills_from_zip", { filePath, currentApp });
+  },
+
+  // ========== 自动更新 ==========
+
+  /** 获取自动更新频率 */
+  async getAutoUpdateFrequency(): Promise<string> {
+    return await invoke("get_skill_auto_update_frequency");
+  },
+
+  /** 设置自动更新频率 */
+  async setAutoUpdateFrequency(frequency: string): Promise<void> {
+    return await invoke("set_skill_auto_update_frequency", { frequency });
   },
 };

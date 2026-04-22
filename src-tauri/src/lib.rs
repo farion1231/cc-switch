@@ -893,6 +893,96 @@ pub fn run() {
                     }
                 });
 
+                // Skill 自动更新定时器
+                {
+                    let app_handle_for_skill = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        // 启动后延迟 30 秒再检查，避免启动时 IO 竞争
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+                        loop {
+                            let state = app_handle_for_skill.state::<AppState>();
+                            let skill_state = app_handle_for_skill
+                                .state::<commands::skill::SkillServiceState>();
+
+                            let frequency = state
+                                .db
+                                .get_setting("skill_auto_update_frequency")
+                                .unwrap_or(None)
+                                .unwrap_or_else(|| "daily".to_string());
+
+                            if frequency == "off" {
+                                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                                continue;
+                            }
+
+                            let interval_secs: u64 = match frequency.as_str() {
+                                "on_launch" => 0,
+                                "daily" => 24 * 3600,
+                                "weekly" => 7 * 24 * 3600,
+                                "monthly" => 30 * 24 * 3600,
+                                _ => 24 * 3600,
+                            };
+
+                            let last_update = state
+                                .db
+                                .get_setting("skill_last_auto_update")
+                                .unwrap_or(None)
+                                .and_then(|s| s.parse::<u64>().ok())
+                                .unwrap_or(0);
+
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+
+                            let should_update = frequency == "on_launch"
+                                || now.saturating_sub(last_update) >= interval_secs;
+
+                            if should_update {
+                                log::info!("Skill 自动更新检查开始（频率: {frequency}）");
+                                match skill_state.0.check_updates(&state.db).await {
+                                    Ok(updates) if !updates.is_empty() => {
+                                        log::info!(
+                                            "发现 {} 个 Skill 更新，开始自动更新",
+                                            updates.len()
+                                        );
+                                        for update in &updates {
+                                            match skill_state
+                                                .0
+                                                .update_skill(&state.db, &update.id)
+                                                .await
+                                            {
+                                                Ok(_) => log::info!(
+                                                    "✓ 自动更新 Skill: {}",
+                                                    update.name
+                                                ),
+                                                Err(e) => log::warn!(
+                                                    "✗ 自动更新 Skill {} 失败: {e}",
+                                                    update.name
+                                                ),
+                                            }
+                                        }
+                                    }
+                                    Ok(_) => log::info!("Skill 自动更新检查完成，无更新"),
+                                    Err(e) => log::warn!("Skill 自动更新检查失败: {e}"),
+                                }
+                                let _ = state
+                                    .db
+                                    .set_setting("skill_last_auto_update", &now.to_string());
+                            }
+
+                            // on_launch 模式只在启动时执行一次
+                            if frequency == "on_launch" {
+                                break;
+                            }
+
+                            // 每小时检查一次是否到了更新时间
+                            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                        }
+                    });
+                }
+
                 // Session log usage sync: 启动时同步一次，之后每 60 秒检查
                 let db_for_session_sync = state.db.clone();
                 tauri::async_runtime::spawn(async move {
@@ -1133,6 +1223,8 @@ pub fn run() {
             commands::discover_available_skills,
             commands::check_skill_updates,
             commands::update_skill,
+            commands::get_skill_auto_update_frequency,
+            commands::set_skill_auto_update_frequency,
             commands::migrate_skill_storage,
             commands::search_skills_sh,
             // Skill management (legacy API compatibility)

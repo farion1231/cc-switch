@@ -1722,6 +1722,8 @@
       "parseMetadataFailed": "Failed to parse skill metadata",
       "getHomeDirFailed": "Unable to get user home directory",
       "noSkillsInZip": "No skills found in ZIP file (requires SKILL.md file)",
+      "gitCloneFailed": "Failed to clone Git repository",
+      "gitNotInstalled": "This repository requires Git, but Git was not detected",
       "networkError": "Network error",
       "fsError": "File system error",
       "unknownError": "Unknown error",
@@ -1733,14 +1735,15 @@
         "checkDiskSpace": "Please check disk space",
         "checkPermission": "Please check directory permissions",
         "uninstallFirst": "Please uninstall the existing skill with the same name first",
-        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)"
+        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)",
+        "installGit": "Please install Git: https://git-scm.com/downloads"
       }
     },
     "repo": {
       "title": "Manage Skill Repositories",
-      "description": "Add or remove GitHub skill repository sources",
+      "description": "Add or remove skill repository sources (GitHub, GitLab, Gitea, etc.)",
       "url": "Repository URL",
-      "urlPlaceholder": "owner/name or https://github.com/owner/name",
+      "urlPlaceholder": "owner/name or https://gitlab.example.com/owner/name",
       "branch": "Branch",
       "branchPlaceholder": "main",
       "path": "Skills Path",
@@ -1754,6 +1757,15 @@
       "removeSuccess": "Repository {{owner}}/{{name}} removed",
       "removeFailed": "Failed to remove",
       "skillCount": "{{count}} skills detected"
+    },
+    "autoUpdate": {
+      "title": "Auto Update",
+      "frequency": "Frequency",
+      "onLaunch": "On Launch",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "off": "Off"
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or repo...",
