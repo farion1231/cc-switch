@@ -577,9 +577,7 @@ fn should_use_claude_transform_streaming(
     api_format: &str,
     is_codex_oauth: bool,
 ) -> bool {
-    requested_streaming
-        || upstream_is_sse
-        || (is_codex_oauth && api_format == "openai_responses")
+    requested_streaming || upstream_is_sse || (is_codex_oauth && api_format == "openai_responses")
 }
 
 // ============================================================================
