@@ -25,10 +25,13 @@ export function useAutoCompact(
       if (Date.now() < lockUntilRef.current) return;
 
       if (!compact) {
-        // Cache the total content width in normal mode
-        normalWidthRef.current = el.scrollWidth;
         // Overflow detected → switch to compact
         if (el.scrollWidth > el.clientWidth + 1) {
+          // Cache only at the overflow edge: when content fits,
+          // scrollWidth === clientWidth (DOM spec), so caching unconditionally
+          // would pollute normalWidthRef with the container width (e.g. after
+          // maximizing), making the expand threshold unreachable.
+          normalWidthRef.current = el.scrollWidth;
           setCompact(true);
         }
       } else if (normalWidthRef.current > 0) {

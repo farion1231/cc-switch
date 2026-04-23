@@ -107,13 +107,14 @@ export function useSettings(): UseSettingsResult {
   const resetSettings = useCallback(() => {
     resetForm(data ?? null);
     syncLanguage(initialLanguage);
-    resetAllDirectories(
-      sanitizeDir(data?.claudeConfigDir),
-      sanitizeDir(data?.codexConfigDir),
-      sanitizeDir(data?.geminiConfigDir),
-      sanitizeDir(data?.opencodeConfigDir),
-      sanitizeDir(data?.openclawConfigDir),
-    );
+    resetAllDirectories({
+      claude: sanitizeDir(data?.claudeConfigDir),
+      codex: sanitizeDir(data?.codexConfigDir),
+      gemini: sanitizeDir(data?.geminiConfigDir),
+      opencode: sanitizeDir(data?.opencodeConfigDir),
+      openclaw: sanitizeDir(data?.openclawConfigDir),
+      hermes: sanitizeDir(data?.hermesConfigDir),
+    });
     setRequiresRestart(false);
   }, [
     data,

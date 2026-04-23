@@ -74,6 +74,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
           "inline-flex items-center justify-center flex-shrink-0",
           className,
         )}
+        title={name}
         style={{ ...sizeStyle, color: effectiveColor }}
         dangerouslySetInnerHTML={{ __html: iconSvg }}
       />
@@ -86,6 +87,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       <img
         src={iconUrl}
         alt={name}
+        title={name}
         className={cn(
           "inline-flex items-center justify-center flex-shrink-0 object-contain",
           className,
@@ -113,6 +115,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
           "bg-muted text-muted-foreground font-semibold",
           className,
         )}
+        title={name}
         style={sizeStyle}
       >
         <span

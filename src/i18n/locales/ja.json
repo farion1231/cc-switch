@@ -80,7 +80,7 @@
     "hideAttribution": "AI署名を非表示",
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
-    "effortHigh": "高強度思考",
+    "effortMax": "最大強度思考",
     "disableAutoUpgrade": "自動アップグレードを無効化"
   },
   "header": {
@@ -141,6 +141,8 @@
     "sortUpdateFailed": "並び順の更新に失敗しました",
     "configureUsage": "利用状況を設定",
     "officialPartner": "公式パートナー",
+    "managedByHermes": "Hermes 管理",
+    "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
     "openTerminal": "ターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
@@ -579,11 +581,14 @@
     "opencodeConfigDirDescription": "OpenCode の設定ディレクトリ（opencode.json）を上書きします。",
     "openclawConfigDir": "OpenClaw 設定ディレクトリ",
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
+    "hermesConfigDir": "Hermes 設定ディレクトリ",
+    "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
+    "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -658,11 +663,12 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes"
   },
   "sessionManager": {
     "title": "セッション管理",
-    "subtitle": "Claude Code / Codex / OpenCode / OpenClaw / Gemini CLI のセッションを管理",
+    "subtitle": "Claude Code / Codex / OpenCode / OpenClaw / Hermes / Gemini CLI のセッションを管理",
     "searchPlaceholder": "内容・ディレクトリ・ID で検索",
     "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
@@ -791,10 +797,15 @@
       "ctok": "公式サイトで CTok コミュニティに参加し、プランを購読してください。",
       "ddshub": "DDSHub は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、初回チャージで 10% の追加クレジットがもらえます（グループ管理者に連絡して受け取り）！",
       "lionccapi": "LionCCAPIはCC Switchユーザーに特別特典を提供しています。登録後、WeChat HSQBJ088888888を追加し、「cc-switch」と伝えると$10分のクレジットがもらえます！",
-      "shengsuanyun": "胜算云はCC Switchユーザーに特別特典を提供しています。このリンクから登録すると、10元分の無料クレジットと初回チャージ10%ボーナスがもらえます！"
+      "shengsuanyun": "胜算云はCC Switchユーザーに特別特典を提供しています。このリンクから登録すると、10元分の無料クレジットと初回チャージ10%ボーナスがもらえます！",
+      "lemondata": "Lemon Code は CC Switch ユーザー向けの特別オファーを提供しています。このリンクから登録すると 1 ドル分の無料クレジットがもらえます。"
     },
     "presets": {
-      "ucloud": "Compshare"
+      "ucloud": "Compshare",
+      "shengsuanyun": "Shengsuanyun",
+      "openrouter": "OpenRouter",
+      "deepseek": "DeepSeek",
+      "together": "Together AI"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -820,7 +831,6 @@
     "visitWebsite": "{{url}} を開く",
     "anthropicModel": "メインモデル",
     "anthropicSmallFastModel": "高速モデル",
-    "anthropicReasoningModel": "推論モデル（Thinking）",
     "apiFormat": "API フォーマット",
     "apiFormatHint": "プロバイダー API の入力フォーマットを選択",
     "fullUrlLabel": "フル URL",
@@ -1309,7 +1319,8 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
-        "openclaw": "OpenClaw"
+        "openclaw": "OpenClaw",
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -1628,6 +1639,83 @@
     },
     "primaryModel": "プライマリモデル",
     "fallbackModel": "フォールバックモデル"
+  },
+  "hermes": {
+    "form": {
+      "baseUrl": "API エンドポイント",
+      "baseUrlHint": "プロバイダーの API エンドポイント URL。",
+      "providerKey": "プロバイダーキー",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "小文字、数字、ハイフンのみ。config.yaml のプロバイダー名として使用されます。",
+      "providerKeyLockedHint": "このプロバイダーは Hermes 設定に追加済みのため、キーは変更できません。",
+      "providerKeyRequired": "プロバイダーキーは必須です",
+      "providerKeyInvalid": "プロバイダーキーは小文字、数字、ハイフンのみ使用できます",
+      "providerKeyDuplicate": "このプロバイダーキーは既に存在します",
+      "apiMode": "API モード",
+      "apiModeHint": "プロバイダーの API プロトコル。エンドポイントに合わせて正しい形式を選択してください。",
+      "apiModeChatCompletions": "OpenAI Chat Completions",
+      "apiModeAnthropicMessages": "Anthropic Messages",
+      "apiModeCodexResponses": "OpenAI Responses",
+      "apiModeBedrockConverse": "AWS Bedrock Converse",
+      "baseUrlRequired": "API エンドポイントは必須です",
+      "baseUrlScheme": "http:// または https:// で始まるアドレスを指定してください",
+      "baseUrlInvalid": "API エンドポイントは有効な URL ではありません",
+      "models": "モデル一覧",
+      "addModel": "モデルを追加",
+      "noModels": "モデル未設定。このプロバイダーに切り替えてもデフォルトモデルは更新されません。",
+      "modelId": "モデル ID",
+      "modelIdPlaceholder": "anthropic/claude-opus-4-7",
+      "modelName": "表示名",
+      "modelNamePlaceholder": "Claude Opus 4.7",
+      "contextLength": "コンテキスト長",
+      "advancedOptions": "詳細オプション",
+      "modelsHint": "切り替え時、最初のモデルが model.default に書き込まれます。",
+      "primaryModel": "デフォルト",
+      "fallbackModel": "予備",
+      "providerAdvanced": "プロバイダー詳細オプション",
+      "rateLimitDelay": "リクエスト間隔（秒）",
+      "rateLimitDelayHint": "連続したリクエスト間の最小待機秒数（任意）。空欄の場合は制限なし。"
+    },
+    "webui": {
+      "open": "Hermes Web UI を開く",
+      "offline": "Hermes Web UI が起動していません。まず `hermes dashboard` を実行してください。",
+      "openFailed": "Hermes Web UI を開けませんでした",
+      "fixInWebUI": "Hermes Web UI で修正",
+      "launchConfirmTitle": "Hermes Dashboard が起動していません",
+      "launchConfirmMessage": "ターミナルを開いて `hermes dashboard` を実行しますか？\n\n起動完了後、ブラウザが自動的に開きます。\n\nターミナルに `hermes` が見つからない、または web 依存が不足するというエラーが表示される場合は、まず次を実行してください：\npip install hermes-agent[web]",
+      "launchConfirmAction": "ターミナルを開いて起動",
+      "launching": "ターミナルで hermes dashboard を起動しました。",
+      "launchFailed": "ターミナルを開けませんでした"
+    },
+    "health": {
+      "title": "Hermes 設定の警告を検出",
+      "parseFailed": "config.yaml を有効な YAML として解析できません。ここで編集する前にファイルを修正してください。",
+      "configNotFound": "Hermes config.yaml が見つかりません。~/.hermes/config.yaml に作成するか、設定でパスを構成してください。",
+      "envParseFailed": ".env ファイルを解析できません。",
+      "modelNoDefault": "'model' セクションに既定モデルまたはプロバイダーが設定されていません。",
+      "customProvidersNotList": "custom_providers はマッピングではなく、YAML リスト（'-' で始まる項目）である必要があります。",
+      "modelProviderUnknown": "model.provider が指すプロバイダーは設定に存在しません。",
+      "modelDefaultNotInProvider": "model.default は選択中のプロバイダーのモデル一覧に含まれていません。",
+      "duplicateProviderName": "custom_providers にプロバイダー名の重複があります。1 件のみ有効になります。",
+      "duplicateProviderBaseUrl": "custom_providers に重複した base_url があります。誤ってコピーされた可能性があります。",
+      "schemaMigratedV12": "Hermes の新しいスキーマでは一部のプロバイダーが 'providers:' dict に移動しました。CC Switch では読み取り専用で表示されます。編集・削除は Hermes Web UI から行ってください。"
+    },
+    "memory": {
+      "title": "メモリ",
+      "agentTab": "エージェント記憶 (MEMORY.md)",
+      "userTab": "ユーザープロファイル (USER.md)",
+      "usage": "{{current}} / {{limit}} 文字",
+      "overLimit": "上限を超えました。Hermes は次回読み込み時に切り詰めます",
+      "enableOn": "有効",
+      "enableOff": "無効",
+      "disabledHint": "再度有効化するまで Hermes はこの記憶をスキップします",
+      "toggleFailed": "メモリの切り替えに失敗しました",
+      "saveSuccess": "記憶を保存しました",
+      "saveFailed": "記憶の保存に失敗しました",
+      "loadFailed": "記憶ファイルの読み込みに失敗しました",
+      "openConfig": "Hermes Web UI で上限を調整",
+      "runtimeNote": "変更は Hermes の再起動または新規セッション時に反映されます。"
+    }
   },
   "env": {
     "warning": {
@@ -2057,7 +2145,7 @@
       "hint": "ルーティングするアプリを選択します。有効にすると、そのアプリのリクエストはローカルルーティング経由で転送されます",
       "enabled": "{{app}} ルーティング有効",
       "disabled": "{{app}} ルーティング無効",
-      "failed": "ルーティングの切り替えに失敗しました",
+      "failed": "ルーティングの切り替えに失敗しました: {{detail}}",
       "tooltip": {
         "active": "{{appLabel}} がルーティング中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
         "broken": "{{appLabel}} がルーティング中ですが、ルーティングサービスが実行されていません",
@@ -2389,7 +2477,7 @@
       "artistry": "高度にクリエイティブで芸術的なタスクカテゴリ。斬新なアイデアとクリエイティブなソリューションを促進。デフォルトで Gemini 3 Pro の max バリアントを使用。",
       "quick": "軽量タスクカテゴリ。単一ファイルの修正、タイポ修正、簡単な調整などの些細な作業に使用。デフォルトで Claude Haiku 4.5 高速モデルを使用。",
       "unspecifiedLow": "未分類の低作業量タスクカテゴリ。他のカテゴリに該当せず作業量が小さいタスクに適用。デフォルトで Claude Sonnet 4.5 を使用。",
-      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.6 の max バリアントを使用。",
+      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.7 の max バリアントを使用。",
       "writing": "ライティングカテゴリ。ドキュメント、散文、技術文書に特化。デフォルトで Gemini 3 Flash 高速生成モデルを使用。"
     },
     "slimAgentDesc": {

@@ -821,6 +821,12 @@ impl RequestForwarder {
                 mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
             }
 
+            // 3.5. 主动剥离 thinking block — Copilot 走 OpenAI 兼容端点不识别该块
+            //      避免上游拒绝后由 rectifier 反应式重试（首次请求已消耗 quota）
+            if self.copilot_optimizer_config.strip_thinking {
+                mapped_body = super::copilot_optimizer::strip_thinking_blocks(mapped_body);
+            }
+
             // 4. Warmup 小模型降级
             if self.copilot_optimizer_config.warmup_downgrade && classification.is_warmup {
                 log::info!(

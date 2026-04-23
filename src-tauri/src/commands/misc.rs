@@ -1310,6 +1310,188 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
     Ok(())
 }
 
+/// 打开用户首选终端并在其中执行一条命令行。脚本尾部 `read -n 1` / `pause`
+/// 是刻意设计的——让命令退出后窗口不要瞬间关闭，用户才看得到 `command
+/// not found` / `ModuleNotFoundError` 这类诊断信息。
+///
+/// **Security**：`command_line` 会被原样拼进 shell/batch 脚本，调用方必须
+/// 保证它是可信字符串（当前只由后端硬编码调用）。
+pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result<(), String> {
+    let temp_dir = std::env::temp_dir();
+    let pid = std::process::id();
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let (script_file, script_content) = {
+        let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
+        let content = format!(
+            r#"#!/bin/bash
+trap 'rm -f "{script_path}"' EXIT
+echo "[cc-switch] Starting: {cmd}"
+echo ""
+{cmd}
+echo ""
+echo "[cc-switch] Command exited. Press any key to close."
+read -n 1 -s
+"#,
+            script_path = file.display(),
+            cmd = command_line,
+        );
+        (file, content)
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::write(&script_file, &script_content)
+            .map_err(|e| format!("写入启动脚本失败: {e}"))?;
+        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+
+        let preferred = crate::settings::get_preferred_terminal();
+        let terminal = preferred.as_deref().unwrap_or("terminal");
+
+        let result = match terminal {
+            "iterm2" => launch_macos_iterm2(&script_file),
+            "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
+            "kitty" => launch_macos_open_app("kitty", &script_file, false),
+            "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
+            "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
+            "kaku" => launch_macos_open_app("Kaku", &script_file, true),
+            _ => launch_macos_terminal_app(&script_file),
+        };
+
+        if result.is_err() && terminal != "terminal" {
+            log::warn!(
+                "首选终端 {} 启动失败，回退到 Terminal.app: {:?}",
+                terminal,
+                result.as_ref().err()
+            );
+            return launch_macos_terminal_app(&script_file);
+        }
+        result
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        std::fs::write(&script_file, &script_content)
+            .map_err(|e| format!("写入启动脚本失败: {e}"))?;
+        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+
+        let preferred = crate::settings::get_preferred_terminal();
+        let default_terminals = [
+            ("gnome-terminal", vec!["--"]),
+            ("konsole", vec!["-e"]),
+            ("xfce4-terminal", vec!["-e"]),
+            ("mate-terminal", vec!["--"]),
+            ("lxterminal", vec!["-e"]),
+            ("alacritty", vec!["-e"]),
+            ("kitty", vec!["-e"]),
+            ("ghostty", vec!["-e"]),
+        ];
+
+        let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
+            let pref_args = default_terminals
+                .iter()
+                .find(|(name, _)| *name == pref.as_str())
+                .map(|(_, args)| args.to_vec())
+                .unwrap_or_else(|| vec!["-e"]);
+            let mut list = vec![(pref.as_str(), pref_args)];
+            for (name, args) in &default_terminals {
+                if *name != pref.as_str() {
+                    list.push((*name, args.to_vec()));
+                }
+            }
+            list
+        } else {
+            default_terminals
+                .iter()
+                .map(|(name, args)| (*name, args.to_vec()))
+                .collect()
+        };
+
+        let mut last_error = String::from("未找到可用的终端");
+
+        for (terminal, args) in terminals_to_try {
+            let terminal_exists = which_command(terminal)
+                || ["/usr/bin", "/bin", "/usr/local/bin"]
+                    .iter()
+                    .any(|dir| std::path::Path::new(&format!("{}/{}", dir, terminal)).exists());
+
+            if terminal_exists {
+                let spawn_result = Command::new(terminal)
+                    .args(&args)
+                    .arg("bash")
+                    .arg(script_file.to_string_lossy().as_ref())
+                    .spawn();
+                match spawn_result {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        last_error = format!("执行 {} 失败: {}", terminal, e);
+                    }
+                }
+            }
+        }
+
+        let _ = std::fs::remove_file(&script_file);
+        Err(last_error)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let preferred = crate::settings::get_preferred_terminal();
+        let terminal = preferred.as_deref().unwrap_or("cmd");
+
+        let bat_file = temp_dir.join(format!("cc_switch_{}_{}.bat", label, pid));
+        let content = format!(
+            "@echo off\r\necho [cc-switch] Starting: {cmd}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
+            cmd = command_line,
+        );
+        std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+
+        let bat_path = bat_file.to_string_lossy();
+        let ps_cmd = format!("& '{}'", bat_path);
+
+        let result = match terminal {
+            "powershell" => run_windows_start_command(
+                &["powershell", "-NoExit", "-Command", &ps_cmd],
+                "PowerShell",
+            ),
+            "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+            _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
+        };
+
+        let final_result = if result.is_err() && terminal != "cmd" {
+            log::warn!(
+                "首选终端 {} 启动失败，回退到 cmd: {:?}",
+                terminal,
+                result.as_ref().err()
+            );
+            run_windows_start_command(&["cmd", "/K", &bat_path], "cmd")
+        } else {
+            result
+        };
+
+        // The .bat self-deletes (`del "%~f0"`) after it runs, but that only
+        // fires if *some* terminal actually launched it. If every attempt
+        // failed, sweep the temp file ourselves to avoid pollution.
+        if final_result.is_err() {
+            let _ = std::fs::remove_file(&bat_file);
+        }
+        final_result
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (temp_dir, pid, command_line, label);
+        Err("不支持的操作系统".to_string())
+    }
+}
+
 /// 设置窗口主题（Windows/macOS 标题栏颜色）
 /// theme: "dark" | "light" | "system"
 #[tauri::command]

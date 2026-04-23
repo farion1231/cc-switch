@@ -529,6 +529,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::Hermes => {
+                if let Some(custom) = crate::settings::get_hermes_override_dir() {
+                    return Ok(custom.join("skills"));
+                }
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置
@@ -544,6 +549,7 @@ impl SkillService {
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
+            AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
         })
     }
 

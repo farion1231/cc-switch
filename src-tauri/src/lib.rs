@@ -11,6 +11,7 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+pub mod hermes_config;
 mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
@@ -540,6 +541,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No new OpenClaw providers to import"),
                 Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
             }
+            match crate::services::provider::import_hermes_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} Hermes provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new Hermes providers to import"),
+                Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -627,6 +635,14 @@ pub fn run() {
                     Ok(_) => log::debug!("○ No OpenCode MCP servers found to import"),
                     Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
                 }
+
+                match crate::services::mcp::McpService::import_from_hermes(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Hermes");
+                    }
+                    Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
+                }
             }
 
             // 4. 导入提示词文件（表空时触发）
@@ -639,6 +655,7 @@ pub fn run() {
                     crate::app_config::AppType::Gemini,
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
+                    crate::app_config::AppType::Hermes,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1234,6 +1251,18 @@ pub fn run() {
             commands::set_openclaw_env,
             commands::get_openclaw_tools,
             commands::set_openclaw_tools,
+            // Hermes specific
+            commands::import_hermes_providers_from_live,
+            commands::get_hermes_live_provider_ids,
+            commands::get_hermes_live_provider,
+            commands::scan_hermes_config_health,
+            commands::get_hermes_model_config,
+            commands::open_hermes_web_ui,
+            commands::launch_hermes_dashboard,
+            commands::get_hermes_memory,
+            commands::set_hermes_memory,
+            commands::get_hermes_memory_limits,
+            commands::set_hermes_memory_enabled,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
