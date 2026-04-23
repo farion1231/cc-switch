@@ -929,7 +929,9 @@
     "addAnotherAccount": "Add another account",
     "logoutAll": "Logout all accounts",
     "retry": "Retry",
-    "copyCode": "Copy code"
+    "copyCode": "Copy code",
+    "fastMode": "FAST mode",
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
   },
   "endpointTest": {
     "title": "API Endpoint Management",
