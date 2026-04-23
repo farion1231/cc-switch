@@ -62,7 +62,7 @@ export function useModelState({
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);
   const latestConfigRef = useRef(settingsConfig);
-  
+
   latestConfigRef.current = settingsConfig;
 
   // 初始化读取：读新键；若缺失，按兼容优先级回退
