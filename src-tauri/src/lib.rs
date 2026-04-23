@@ -1264,7 +1264,6 @@ pub fn run() {
             commands::import_hermes_providers_from_live,
             commands::get_hermes_live_provider_ids,
             commands::get_hermes_live_provider,
-            commands::scan_hermes_config_health,
             commands::get_hermes_model_config,
             commands::open_hermes_web_ui,
             commands::launch_hermes_dashboard,

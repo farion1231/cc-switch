@@ -27,7 +27,6 @@ export const hermesKeys = {
   all: ["hermes"] as const,
   liveProviderIds: ["hermes", "liveProviderIds"] as const,
   modelConfig: ["hermes", "modelConfig"] as const,
-  health: ["hermes", "health"] as const,
   memory: (kind: HermesMemoryKind) => ["hermes", "memory", kind] as const,
   memoryLimits: ["hermes", "memoryLimits"] as const,
 };
@@ -41,7 +40,6 @@ export function invalidateHermesProviderCaches(queryClient: QueryClient) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
     queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
-    queryClient.invalidateQueries({ queryKey: hermesKeys.health }),
   ]);
 }
 
@@ -61,15 +59,6 @@ export function useHermesModelConfig(enabled: boolean) {
   return useQuery({
     queryKey: hermesKeys.modelConfig,
     queryFn: () => hermesApi.getModelConfig(),
-    enabled,
-  });
-}
-
-export function useHermesHealth(enabled: boolean) {
-  return useQuery({
-    queryKey: hermesKeys.health,
-    queryFn: () => hermesApi.scanHealth(),
-    staleTime: 30_000,
     enabled,
   });
 }

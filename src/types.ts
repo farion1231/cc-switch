@@ -589,17 +589,6 @@ export interface HermesModelConfig {
   [key: string]: unknown;
 }
 
-export interface HermesHealthWarning {
-  code: string;
-  message: string;
-  path?: string;
-}
-
-export interface HermesWriteOutcome {
-  backupPath?: string;
-  warnings: HermesHealthWarning[];
-}
-
 export type HermesMemoryKind = "memory" | "user";
 
 export interface HermesMemoryLimits {
