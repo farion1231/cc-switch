@@ -37,8 +37,13 @@ import {
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
+import {
+  hermesProviderPresets,
+  type HermesProviderPreset,
+} from "@/config/hermesProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
+import { HermesFormFields } from "./HermesFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -80,6 +85,7 @@ import {
   useOpencodeFormState,
   useOmoDraftState,
   useOpenclawFormState,
+  useHermesFormState,
   useCopilotAuth,
   useCodexOauth,
 } from "./hooks";
@@ -93,8 +99,10 @@ import {
   OPENCLAW_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
+import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
+import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 
 type PresetEntry = {
   id: string;
@@ -103,7 +111,8 @@ type PresetEntry = {
     | CodexProviderPreset
     | GeminiProviderPreset
     | OpenCodeProviderPreset
-    | OpenClawProviderPreset;
+    | OpenClawProviderPreset
+    | HermesProviderPreset;
 };
 
 interface ProviderFormProps {
@@ -253,7 +262,9 @@ export function ProviderForm({
               ? OPENCODE_DEFAULT_CONFIG
               : appId === "openclaw"
                 ? OPENCLAW_DEFAULT_CONFIG
-                : CLAUDE_DEFAULT_CONFIG,
+                : appId === "hermes"
+                  ? HERMES_DEFAULT_CONFIG
+                  : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -314,7 +325,6 @@ export function ProviderForm({
 
   const {
     claudeModel,
-    reasoningModel,
     defaultHaikuModel,
     defaultSonnetModel,
     defaultOpusModel,
@@ -448,6 +458,11 @@ export function ProviderForm({
     } else if (appId === "openclaw") {
       return openclawProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `openclaw-${index}`,
+        preset,
+      }));
+    } else if (appId === "hermes") {
+      return hermesProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `hermes-${index}`,
         preset,
       }));
     }
@@ -645,6 +660,18 @@ export function ProviderForm({
     isLoading: isOpenclawLiveProviderIdsLoading,
   } = useOpenClawLiveProviderIds(appId === "openclaw");
 
+  const hermesForm = useHermesFormState({
+    initialData,
+    appId,
+    providerId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
+  const {
+    data: hermesLiveProviderIds = [],
+    isLoading: isHermesLiveProviderIdsLoading,
+  } = useHermesLiveProviderIds(appId === "hermes");
+
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
       return Array.from(
@@ -667,10 +694,22 @@ export function ProviderForm({
       );
     }
 
+    if (appId === "hermes") {
+      return Array.from(
+        new Set(
+          [...hermesForm.existingHermesKeys, ...hermesLiveProviderIds].filter(
+            (key) => key !== providerId,
+          ),
+        ),
+      );
+    }
+
     return [];
   }, [
     appId,
     existingOpencodeKeys,
+    hermesForm.existingHermesKeys,
+    hermesLiveProviderIds,
     isAnyOmoCategory,
     openclawForm.existingOpenclawKeys,
     openclawLiveProviderIds,
@@ -686,11 +725,15 @@ export function ProviderForm({
     if (appId === "openclaw") {
       return isOpenclawLiveProviderIdsLoading;
     }
+    if (appId === "hermes") {
+      return isHermesLiveProviderIdsLoading;
+    }
     return false;
   }, [
     appId,
     isAnyOmoCategory,
     isEditMode,
+    isHermesLiveProviderIdsLoading,
     isOpenclawLiveProviderIdsLoading,
     isOpencodeLiveProviderIdsLoading,
   ]);
@@ -703,9 +746,13 @@ export function ProviderForm({
     if (appId === "openclaw") {
       return openclawLiveProviderIds.includes(providerId);
     }
+    if (appId === "hermes") {
+      return hermesLiveProviderIds.includes(providerId);
+    }
     return false;
   }, [
     appId,
+    hermesLiveProviderIds,
     isAnyOmoCategory,
     isEditMode,
     openclawLiveProviderIds,
@@ -793,6 +840,34 @@ export function ProviderForm({
         additiveExistingProviderKeys.includes(openclawForm.openclawProviderKey)
       ) {
         toast.error(t("openclaw.providerKeyDuplicate"));
+        return;
+      }
+    }
+
+    // Hermes: validate provider key
+    if (appId === "hermes") {
+      const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+      if (!hermesForm.hermesProviderKey.trim()) {
+        toast.error(t("hermes.form.providerKeyRequired"));
+        return;
+      }
+      if (!keyPattern.test(hermesForm.hermesProviderKey)) {
+        toast.error(t("hermes.form.providerKeyInvalid"));
+        return;
+      }
+      if (isProviderKeyLockStateLoading) {
+        toast.error(
+          t("providerForm.providerKeyStatusLoading", {
+            defaultValue: "正在加载供应商标识状态，请稍后再试",
+          }),
+        );
+        return;
+      }
+      if (
+        !isProviderKeyLocked &&
+        additiveExistingProviderKeys.includes(hermesForm.hermesProviderKey)
+      ) {
+        toast.error(t("hermes.form.providerKeyDuplicate"));
         return;
       }
     }
@@ -969,6 +1044,8 @@ export function ProviderForm({
       }
     } else if (appId === "openclaw") {
       payload.providerKey = openclawForm.openclawProviderKey;
+    } else if (appId === "hermes") {
+      payload.providerKey = hermesForm.hermesProviderKey;
     }
 
     if (isAnyOmoCategory && !payload.presetCategory) {
@@ -1182,6 +1259,20 @@ export function ProviderForm({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  // 使用 API Key 链接 hook (Hermes)
+  const {
+    shouldShowApiKeyLink: shouldShowHermesApiKeyLink,
+    websiteUrl: hermesWebsiteUrl,
+    isPartner: isHermesPartner,
+    partnerPromotionKey: hermesPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "hermes",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -1212,6 +1303,9 @@ export function ProviderForm({
       // OpenClaw 自定义模式：重置为空配置
       if (appId === "openclaw") {
         openclawForm.resetOpenclawState();
+      }
+      if (appId === "hermes") {
+        hermesForm.resetHermesState();
       }
       return;
     }
@@ -1307,6 +1401,23 @@ export function ProviderForm({
       openclawForm.resetOpenclawState(config);
 
       // Update form fields
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    // Hermes preset handling
+    if (appId === "hermes") {
+      const preset = entry.preset as HermesProviderPreset;
+      const config = preset.settingsConfig;
+
+      hermesForm.resetHermesState(config);
+
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
         websiteUrl: preset.websiteUrl ?? "",
@@ -1509,6 +1620,79 @@ export function ProviderForm({
                       </p>
                     )}
                 </div>
+              ) : appId === "hermes" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="hermes-key">
+                    {t("hermes.form.providerKey", {
+                      defaultValue: "Provider Key",
+                    })}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <Input
+                    id="hermes-key"
+                    value={hermesForm.hermesProviderKey}
+                    onChange={(e) =>
+                      hermesForm.setHermesProviderKey(
+                        e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                      )
+                    }
+                    placeholder={t("hermes.form.providerKeyPlaceholder", {
+                      defaultValue: "my-provider",
+                    })}
+                    disabled={
+                      isProviderKeyLocked || isProviderKeyLockStateLoading
+                    }
+                    className={
+                      (additiveExistingProviderKeys.includes(
+                        hermesForm.hermesProviderKey,
+                      ) &&
+                        !isProviderKeyLocked) ||
+                      (hermesForm.hermesProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          hermesForm.hermesProviderKey,
+                        ))
+                        ? "border-destructive"
+                        : ""
+                    }
+                  />
+                  {additiveExistingProviderKeys.includes(
+                    hermesForm.hermesProviderKey,
+                  ) &&
+                    !isProviderKeyLocked && (
+                      <p className="text-xs text-destructive">
+                        {t("hermes.form.providerKeyDuplicate")}
+                      </p>
+                    )}
+                  {hermesForm.hermesProviderKey.trim() !== "" &&
+                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                      hermesForm.hermesProviderKey,
+                    ) && (
+                      <p className="text-xs text-destructive">
+                        {t("hermes.form.providerKeyInvalid")}
+                      </p>
+                    )}
+                  {!(
+                    additiveExistingProviderKeys.includes(
+                      hermesForm.hermesProviderKey,
+                    ) && !isProviderKeyLocked
+                  ) &&
+                    (hermesForm.hermesProviderKey.trim() === "" ||
+                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                        hermesForm.hermesProviderKey,
+                      )) && (
+                      <p className="text-xs text-muted-foreground">
+                        {isProviderKeyLocked
+                          ? t("hermes.form.providerKeyLockedHint", {
+                              defaultValue:
+                                "This provider is in Hermes config; key is locked.",
+                            })
+                          : t("hermes.form.providerKeyHint", {
+                              defaultValue:
+                                "Lowercase letters, numbers, and hyphens only. Used as the provider name in config.yaml.",
+                            })}
+                      </p>
+                    )}
+                </div>
               ) : undefined
             }
           />
@@ -1567,7 +1751,6 @@ export function ProviderForm({
               onAutoSelectChange={setEndpointAutoSelect}
               shouldShowModelSelector={category !== "official"}
               claudeModel={claudeModel}
-              reasoningModel={reasoningModel}
               defaultHaikuModel={defaultHaikuModel}
               defaultSonnetModel={defaultSonnetModel}
               defaultOpusModel={defaultOpusModel}
@@ -1703,6 +1886,29 @@ export function ProviderForm({
             />
           )}
 
+          {/* Hermes 专属字段 */}
+          {appId === "hermes" && (
+            <HermesFormFields
+              baseUrl={hermesForm.hermesBaseUrl}
+              onBaseUrlChange={hermesForm.handleHermesBaseUrlChange}
+              apiKey={hermesForm.hermesApiKey}
+              onApiKeyChange={hermesForm.handleHermesApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowHermesApiKeyLink}
+              websiteUrl={hermesWebsiteUrl}
+              isPartner={isHermesPartner}
+              partnerPromotionKey={hermesPartnerPromotionKey}
+              apiMode={hermesForm.hermesApiMode}
+              onApiModeChange={hermesForm.handleHermesApiModeChange}
+              models={hermesForm.hermesModels}
+              onModelsChange={hermesForm.handleHermesModelsChange}
+              rateLimitDelay={hermesForm.hermesRateLimitDelay}
+              onRateLimitDelayChange={
+                hermesForm.handleHermesRateLimitDelayChange
+              }
+            />
+          )}
+
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {appId === "codex" ? (
             <>
@@ -1786,7 +1992,7 @@ export function ProviderForm({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" ? (
+          ) : appId === "openclaw" || appId === "hermes" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -1795,12 +2001,20 @@ export function ProviderForm({
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
                   onChange={(config) => form.setValue("settingsConfig", config)}
-                  placeholder={`{
+                  placeholder={
+                    appId === "hermes"
+                      ? `{
+  "name": "my-provider",
+  "base_url": "https://api.example.com/v1",
+  "api_key": ""
+}`
+                      : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",
   "models": []
-}`}
+}`
+                  }
                   rows={14}
                   showValidation={true}
                   language="json"
@@ -1838,7 +2052,8 @@ export function ProviderForm({
 
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
-            appId !== "openclaw" && (
+            appId !== "openclaw" &&
+            appId !== "hermes" && (
               <ProviderAdvancedConfig
                 testConfig={testConfig}
                 pricingConfig={pricingConfig}

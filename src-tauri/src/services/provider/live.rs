@@ -42,6 +42,8 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::OpenClaw => crate::openclaw_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Hermes => crate::hermes_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -345,7 +347,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw => false,
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => false,
     }
 }
 
@@ -415,7 +417,7 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw => Ok(settings.clone()),
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Ok(settings.clone()),
     }
 }
 
@@ -470,7 +472,7 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw => Ok(settings.clone()),
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Ok(settings.clone()),
     }
 }
 
@@ -790,6 +792,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 }
             }
         }
+        AppType::Hermes => {
+            crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
+            log::debug!("Hermes provider '{}' written to live config", provider.id);
+        }
     }
     Ok(())
 }
@@ -985,6 +991,19 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_openclaw_config()?;
             Ok(config)
         }
+        AppType::Hermes => {
+            let config_path = crate::hermes_config::get_hermes_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "hermes.config.missing",
+                    "Hermes 配置文件不存在",
+                    "Hermes configuration file not found",
+                ));
+            }
+            let yaml_config = crate::hermes_config::read_hermes_config()?;
+            let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
+            Ok(config)
+        }
     }
 }
 
@@ -1067,8 +1086,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode and OpenClaw use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw => {
+        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1314,6 +1333,74 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     Ok(imported)
+}
+
+/// Import all providers from Hermes live config to database
+///
+/// This imports existing providers from ~/.hermes/config.yaml
+/// into the CC Switch database. Each provider found will be added to the
+/// database with is_current set to false.
+pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::hermes_config;
+
+    let providers = hermes_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let existing_ids = state.db.get_provider_ids("hermes")?;
+
+    for (name, config) in providers {
+        // Validate: skip entries with empty name
+        if name.trim().is_empty() {
+            log::warn!("Skipping Hermes provider with empty name");
+            continue;
+        }
+
+        // Skip if already exists in database
+        if existing_ids.contains(&name) {
+            log::debug!("Hermes provider '{name}' already exists in database, skipping");
+            continue;
+        }
+
+        // Create provider
+        let mut provider = Provider::with_id(name.clone(), name.clone(), config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        // Save to database
+        if let Err(e) = state.db.save_provider("hermes", &provider) {
+            log::warn!("Failed to import Hermes provider '{name}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported Hermes provider '{name}' from live config");
+    }
+
+    Ok(imported)
+}
+
+/// Remove a Hermes provider from live config
+///
+/// This removes a specific provider from ~/.hermes/config.yaml
+/// without affecting other providers in the file.
+pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::hermes_config;
+
+    // Check if Hermes config directory exists
+    if !hermes_config::get_hermes_dir().exists() {
+        log::debug!("Hermes config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    hermes_config::remove_provider(provider_id)?;
+    log::info!("Hermes provider '{provider_id}' removed from live config");
+
+    Ok(())
 }
 
 /// Remove an OpenClaw provider from live config

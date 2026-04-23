@@ -130,6 +130,9 @@ impl ConfigService {
                 // OpenClaw uses additive mode, no live sync needed
                 // OpenClaw providers are managed directly in the config file
             }
+            AppType::Hermes => {
+                // Hermes uses additive mode, no live sync needed
+            }
         }
 
         Ok(())

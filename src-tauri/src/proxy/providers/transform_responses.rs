@@ -203,6 +203,7 @@ pub(crate) fn map_responses_stop_reason(
         {
             "max_tokens"
         }
+        "incomplete" => "end_turn",
         _ => "end_turn",
     })
 }

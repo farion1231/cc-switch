@@ -80,7 +80,7 @@
     "hideAttribution": "Hide AI Attribution",
     "enableTeammates": "Teammates Mode",
     "enableToolSearch": "Enable Tool Search",
-    "effortHigh": "High Effort Thinking",
+    "effortMax": "Max Effort Thinking",
     "disableAutoUpgrade": "Disable Auto-Upgrade"
   },
   "header": {
@@ -141,6 +141,8 @@
     "sortUpdateFailed": "Failed to update sort order",
     "configureUsage": "Configure usage query",
     "officialPartner": "Official Partner",
+    "managedByHermes": "Hermes Managed",
+    "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
@@ -579,11 +581,14 @@
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json).",
     "openclawConfigDir": "OpenClaw Configuration Directory",
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
+    "hermesConfigDir": "Hermes Configuration Directory",
+    "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
+    "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -658,11 +663,12 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes"
   },
   "sessionManager": {
     "title": "Session Manager",
-    "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw and Gemini CLI sessions",
+    "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw, Hermes and Gemini CLI sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",
@@ -791,10 +797,15 @@
       "ctok": "Join the CTok community on the official website and subscribe to a plan.",
       "ddshub": "DDSHub offers a special bonus for CC Switch users — register via this link and get 10% extra credit on your first top-up (contact group admin to claim)!",
       "lionccapi": "LionCCAPI offers exclusive benefits for CC Switch users. After registration, add WeChat HSQBJ088888888 and mention 'cc-switch' to receive $10 free credits!",
-      "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!"
+      "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!",
+      "lemondata": "Lemon Code offers a special promotion for CC Switch users. Sign up via this link to receive $1 in free credits."
     },
     "presets": {
-      "ucloud": "Compshare"
+      "ucloud": "Compshare",
+      "shengsuanyun": "Shengsuanyun",
+      "openrouter": "OpenRouter",
+      "deepseek": "DeepSeek",
+      "together": "Together AI"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
@@ -820,7 +831,6 @@
     "visitWebsite": "Visit {{url}}",
     "anthropicModel": "Main Model",
     "anthropicSmallFastModel": "Fast Model",
-    "anthropicReasoningModel": "Reasoning Model (Thinking)",
     "apiFormat": "API Format",
     "apiFormatHint": "Select the input format for the provider's API",
     "fullUrlLabel": "Full URL",
@@ -1309,7 +1319,8 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
-        "openclaw": "OpenClaw"
+        "openclaw": "OpenClaw",
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -1628,6 +1639,83 @@
     },
     "primaryModel": "Primary Model",
     "fallbackModel": "Fallback Model"
+  },
+  "hermes": {
+    "form": {
+      "baseUrl": "API Endpoint",
+      "baseUrlHint": "The API endpoint URL for this provider.",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Used as the provider name in config.yaml.",
+      "providerKeyLockedHint": "This provider is in Hermes config; key is locked.",
+      "providerKeyRequired": "Provider key is required",
+      "providerKeyInvalid": "Provider key can only contain lowercase letters, numbers, and hyphens",
+      "providerKeyDuplicate": "This provider key already exists",
+      "apiMode": "API Mode",
+      "apiModeHint": "Provider API protocol. Choose the format that matches your endpoint.",
+      "apiModeChatCompletions": "OpenAI Chat Completions",
+      "apiModeAnthropicMessages": "Anthropic Messages",
+      "apiModeCodexResponses": "OpenAI Responses",
+      "apiModeBedrockConverse": "AWS Bedrock Converse",
+      "baseUrlRequired": "API endpoint is required",
+      "baseUrlScheme": "Use an http:// or https:// address",
+      "baseUrlInvalid": "API endpoint is not a valid URL",
+      "models": "Models",
+      "addModel": "Add model",
+      "noModels": "No models configured. Switching to this provider won't change the default model.",
+      "modelId": "Model ID",
+      "modelIdPlaceholder": "anthropic/claude-opus-4-7",
+      "modelName": "Display name",
+      "modelNamePlaceholder": "Claude Opus 4.7",
+      "contextLength": "Context length",
+      "advancedOptions": "Advanced options",
+      "modelsHint": "On switch, the first model is written to top-level model.default.",
+      "primaryModel": "Default",
+      "fallbackModel": "Alternate",
+      "providerAdvanced": "Provider advanced options",
+      "rateLimitDelay": "Rate limit delay (seconds)",
+      "rateLimitDelayHint": "Minimum delay in seconds between consecutive requests (optional). Leave empty for no limit."
+    },
+    "webui": {
+      "open": "Open Hermes Web UI",
+      "offline": "Hermes Web UI is not running. Start it with `hermes dashboard` first.",
+      "openFailed": "Failed to open Hermes Web UI",
+      "fixInWebUI": "Fix in Hermes Web UI",
+      "launchConfirmTitle": "Hermes Dashboard is not running",
+      "launchConfirmMessage": "Open a terminal and start it now with `hermes dashboard`?\n\nThe browser will open automatically once startup completes.\n\nIf the terminal reports that `hermes` cannot be found or the web extras are missing, run first:\npip install hermes-agent[web]",
+      "launchConfirmAction": "Open terminal & launch",
+      "launching": "Started `hermes dashboard` in a terminal.",
+      "launchFailed": "Failed to open terminal"
+    },
+    "health": {
+      "title": "Hermes config warnings detected",
+      "parseFailed": "config.yaml could not be parsed as valid YAML. Fix the file before editing it here.",
+      "configNotFound": "Hermes config.yaml not found. Create it at ~/.hermes/config.yaml or configure the path in settings.",
+      "envParseFailed": "The .env file could not be parsed.",
+      "modelNoDefault": "No default model or provider is configured in the 'model' section.",
+      "customProvidersNotList": "custom_providers should be a YAML list (items prefixed with '-'), not a mapping.",
+      "modelProviderUnknown": "model.provider references a provider that is not configured.",
+      "modelDefaultNotInProvider": "model.default is not in the selected provider's models list.",
+      "duplicateProviderName": "custom_providers contains duplicate provider names — only one entry will be used.",
+      "duplicateProviderBaseUrl": "custom_providers contains duplicate base_urls — possible accidental copy.",
+      "schemaMigratedV12": "Hermes' newer schema moved some providers into the 'providers:' dict. They are shown read-only in CC Switch — edit or remove those entries via Hermes Web UI."
+    },
+    "memory": {
+      "title": "Memory",
+      "agentTab": "Agent Memory (MEMORY.md)",
+      "userTab": "User Profile (USER.md)",
+      "usage": "{{current}} / {{limit}} characters",
+      "overLimit": "Over budget — Hermes will truncate on next load",
+      "enableOn": "Enabled",
+      "enableOff": "Disabled",
+      "disabledHint": "Hermes will skip this memory until re-enabled",
+      "toggleFailed": "Failed to toggle memory",
+      "saveSuccess": "Memory saved",
+      "saveFailed": "Failed to save memory",
+      "loadFailed": "Failed to read memory file",
+      "openConfig": "Adjust limits in Hermes Web UI",
+      "runtimeNote": "Changes apply on Hermes restart or new session."
+    }
   },
   "env": {
     "warning": {
@@ -2057,7 +2145,7 @@
       "hint": "Select apps to route — once enabled, requests from that app will go through local routing",
       "enabled": "{{app}} routing enabled",
       "disabled": "{{app}} routing disabled",
-      "failed": "Failed to toggle routing",
+      "failed": "Failed to toggle routing: {{detail}}",
       "tooltip": {
         "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitch provider for hot switching",
         "broken": "{{appLabel}} is routing, but routing service is not running",
@@ -2389,7 +2477,7 @@
       "artistry": "Highly creative and artistic task category that inspires novel ideas and creative solutions. Defaults to Gemini 3 Pro max variant.",
       "quick": "Lightweight task category for single-file modifications, typo fixes, and simple adjustments. Defaults to Claude Haiku 4.5 fast model.",
       "unspecifiedLow": "Uncategorized low-effort task category for tasks that don't fit other categories with small workload. Defaults to Claude Sonnet 4.5.",
-      "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 4.6 max variant.",
+      "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 4.7 max variant.",
       "writing": "Writing category for documentation, prose and technical writing. Defaults to Gemini 3 Flash fast generation model."
     },
     "slimAgentDesc": {

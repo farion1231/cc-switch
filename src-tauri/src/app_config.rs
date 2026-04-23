@@ -15,6 +15,8 @@ pub struct McpApps {
     pub gemini: bool,
     #[serde(default)]
     pub opencode: bool,
+    #[serde(default)]
+    pub hermes: bool,
 }
 
 impl McpApps {
@@ -26,6 +28,7 @@ impl McpApps {
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
+            AppType::Hermes => self.hermes,
         }
     }
 
@@ -37,6 +40,7 @@ impl McpApps {
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
+            AppType::Hermes => self.hermes = enabled,
         }
     }
 
@@ -55,12 +59,15 @@ impl McpApps {
         if self.opencode {
             apps.push(AppType::OpenCode);
         }
+        if self.hermes {
+            apps.push(AppType::Hermes);
+        }
         apps
     }
 
     /// 检查是否所有应用都未启用
     pub fn is_empty(&self) -> bool {
-        !self.claude && !self.codex && !self.gemini && !self.opencode
+        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.hermes
     }
 }
 
@@ -75,6 +82,8 @@ pub struct SkillApps {
     pub gemini: bool,
     #[serde(default)]
     pub opencode: bool,
+    #[serde(default)]
+    pub hermes: bool,
 }
 
 impl SkillApps {
@@ -85,6 +94,7 @@ impl SkillApps {
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
+            AppType::Hermes => self.hermes,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
         }
     }
@@ -96,6 +106,7 @@ impl SkillApps {
             AppType::Codex => self.codex = enabled,
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
+            AppType::Hermes => self.hermes = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
         }
     }
@@ -115,12 +126,15 @@ impl SkillApps {
         if self.opencode {
             apps.push(AppType::OpenCode);
         }
+        if self.hermes {
+            apps.push(AppType::Hermes);
+        }
         apps
     }
 
     /// 检查是否所有应用都未启用
     pub fn is_empty(&self) -> bool {
-        !self.claude && !self.codex && !self.gemini && !self.opencode
+        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.hermes
     }
 
     /// 仅启用指定应用（其他应用设为禁用）
@@ -251,6 +265,9 @@ pub struct McpRoot {
     /// OpenClaw MCP 配置（v4.1.0+，实际使用 openclaw.json）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub openclaw: McpConfig,
+    /// Hermes MCP 配置（实际使用 config.yaml）
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub hermes: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -264,6 +281,7 @@ impl Default for McpRoot {
             gemini: McpConfig::default(),
             opencode: McpConfig::default(),
             openclaw: McpConfig::default(),
+            hermes: McpConfig::default(),
         }
     }
 }
@@ -288,6 +306,8 @@ pub struct PromptRoot {
     pub opencode: PromptConfig,
     #[serde(default)]
     pub openclaw: PromptConfig,
+    #[serde(default)]
+    pub hermes: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -304,6 +324,7 @@ pub enum AppType {
     Gemini,
     OpenCode,
     OpenClaw,
+    Hermes,
 }
 
 impl AppType {
@@ -314,15 +335,19 @@ impl AppType {
             AppType::Gemini => "gemini",
             AppType::OpenCode => "opencode",
             AppType::OpenClaw => "openclaw",
+            AppType::Hermes => "hermes",
         }
     }
 
     /// Check if this app uses additive mode
     ///
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
-    /// - Additive mode (true): All providers are written to live config (OpenCode, OpenClaw)
+    /// - Additive mode (true): All providers are written to live config (OpenCode, OpenClaw, Hermes)
     pub fn is_additive_mode(&self) -> bool {
-        matches!(self, AppType::OpenCode | AppType::OpenClaw)
+        matches!(
+            self,
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+        )
     }
 
     /// Return an iterator over all app types
@@ -333,6 +358,7 @@ impl AppType {
             AppType::Gemini,
             AppType::OpenCode,
             AppType::OpenClaw,
+            AppType::Hermes,
         ]
         .into_iter()
     }
@@ -349,10 +375,11 @@ impl FromStr for AppType {
             "gemini" => Ok(AppType::Gemini),
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
+            "hermes" => Ok(AppType::Hermes),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, openclaw。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, openclaw."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, openclaw, hermes。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, openclaw, hermes."),
             )),
         }
     }
@@ -375,6 +402,9 @@ pub struct CommonConfigSnippets {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openclaw: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hermes: Option<String>,
 }
 
 impl CommonConfigSnippets {
@@ -386,6 +416,7 @@ impl CommonConfigSnippets {
             AppType::Gemini => self.gemini.as_ref(),
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
+            AppType::Hermes => self.hermes.as_ref(),
         }
     }
 
@@ -397,6 +428,7 @@ impl CommonConfigSnippets {
             AppType::Gemini => self.gemini = snippet,
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
+            AppType::Hermes => self.hermes = snippet,
         }
     }
 }
@@ -438,6 +470,7 @@ impl Default for MultiAppConfig {
         apps.insert("gemini".to_string(), ProviderManager::default());
         apps.insert("opencode".to_string(), ProviderManager::default());
         apps.insert("openclaw".to_string(), ProviderManager::default());
+        apps.insert("hermes".to_string(), ProviderManager::default());
 
         Self {
             version: 2,
@@ -598,6 +631,7 @@ impl MultiAppConfig {
             AppType::Gemini => &self.mcp.gemini,
             AppType::OpenCode => &self.mcp.opencode,
             AppType::OpenClaw => &self.mcp.openclaw,
+            AppType::Hermes => &self.mcp.hermes,
         }
     }
 
@@ -609,6 +643,7 @@ impl MultiAppConfig {
             AppType::Gemini => &mut self.mcp.gemini,
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
+            AppType::Hermes => &mut self.mcp.hermes,
         }
     }
 
@@ -624,6 +659,7 @@ impl MultiAppConfig {
         Self::auto_import_prompt_if_exists(&mut config, AppType::Gemini)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenCode)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenClaw)?;
+        Self::auto_import_prompt_if_exists(&mut config, AppType::Hermes)?;
 
         Ok(config)
     }
@@ -645,6 +681,7 @@ impl MultiAppConfig {
             || !self.prompts.gemini.prompts.is_empty()
             || !self.prompts.opencode.prompts.is_empty()
             || !self.prompts.openclaw.prompts.is_empty()
+            || !self.prompts.hermes.prompts.is_empty()
         {
             return Ok(false);
         }
@@ -658,6 +695,7 @@ impl MultiAppConfig {
             AppType::Gemini,
             AppType::OpenCode,
             AppType::OpenClaw,
+            AppType::Hermes,
         ] {
             // 复用已有的单应用导入逻辑
             if Self::auto_import_prompt_if_exists(self, app)? {
@@ -729,6 +767,7 @@ impl MultiAppConfig {
             AppType::Gemini => &mut config.prompts.gemini.prompts,
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
+            AppType::Hermes => &mut config.prompts.hermes.prompts,
         };
 
         prompts.insert(id, prompt);
@@ -769,6 +808,7 @@ impl MultiAppConfig {
                 AppType::Gemini => &self.mcp.gemini.servers,
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
+                AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

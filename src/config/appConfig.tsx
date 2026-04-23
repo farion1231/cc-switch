@@ -21,15 +21,20 @@ export const APP_IDS: AppId[] = [
   "gemini",
   "opencode",
   "openclaw",
+  "hermes",
 ];
 
-/** App IDs shown in MCP & Skills panels (excludes OpenClaw) */
-export const MCP_SKILLS_APP_IDS: AppId[] = [
+/** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
+export const SKILLS_APP_IDS: AppId[] = [
   "claude",
   "codex",
   "gemini",
   "opencode",
+  "hermes",
 ];
+
+/** App IDs shown in MCP panels (excludes OpenClaw) */
+export const MCP_APP_IDS: AppId[] = [...SKILLS_APP_IDS];
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {
@@ -78,5 +83,20 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-rose-500/10 ring-1 ring-rose-500/20 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400",
     badgeClass:
       "bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 border-0 gap-1.5",
+  },
+  hermes: {
+    label: "Hermes",
+    icon: (
+      <ProviderIcon
+        icon="hermes"
+        name="Hermes"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
+    badgeClass:
+      "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
   },
 };

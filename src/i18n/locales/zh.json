@@ -80,7 +80,7 @@
     "hideAttribution": "隐藏 AI 署名",
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "启用 Tool Search",
-    "effortHigh": "高强度思考",
+    "effortMax": "最大强度思考",
     "disableAutoUpgrade": "禁用自动升级"
   },
   "header": {
@@ -141,6 +141,8 @@
     "sortUpdateFailed": "排序更新失败",
     "configureUsage": "配置用量查询",
     "officialPartner": "官方合作伙伴",
+    "managedByHermes": "Hermes 托管",
+    "managedByHermesHint": "该条目定义在 Hermes 的 providers: dict，请在 Hermes Web UI 中编辑或删除。",
     "openTerminal": "打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
@@ -579,11 +581,14 @@
     "opencodeConfigDirDescription": "覆盖 OpenCode 配置目录 (opencode.json)。",
     "openclawConfigDir": "OpenClaw 配置目录",
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
+    "hermesConfigDir": "Hermes 配置目录",
+    "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
+    "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -658,11 +663,12 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes"
   },
   "sessionManager": {
     "title": "会话管理",
-    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw 与 Gemini CLI 会话记录",
+    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes 与 Gemini CLI 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
@@ -791,11 +797,15 @@
       "ctok": "官网加入CTok社群，订阅套餐。",
       "ddshub": "呆呆兽为CC Switch 的用户提供了特别福利，通过此链接注册后，首单充值可额外赠送 10% 额度（联系群主领取）！",
       "lionccapi": "LionCCAPI 为 CC Switch 的用户提供了特别福利，注册后添加客服微信HSQBJ088888888，发暗号cc-switch备注即可送10美金额度！",
-      "shengsuanyun": "胜算云为 CC Switch 的用户提供了特别福利，使用此链接注册的新用户可获 10 元模力及首充 10% 赠送！"
+      "shengsuanyun": "胜算云为 CC Switch 的用户提供了特别福利，使用此链接注册的新用户可获 10 元模力及首充 10% 赠送！",
+      "lemondata": "Lemon Code 为 CC Switch 的用户提供了特别优惠。使用此链接注册可以获得1美元免费额度。"
     },
     "presets": {
       "ucloud": "优云智算",
-      "shengsuanyun": "胜算云"
+      "shengsuanyun": "胜算云",
+      "openrouter": "OpenRouter",
+      "deepseek": "DeepSeek",
+      "together": "Together AI"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -821,7 +831,6 @@
     "visitWebsite": "访问 {{url}}",
     "anthropicModel": "主模型",
     "anthropicSmallFastModel": "快速模型",
-    "anthropicReasoningModel": "推理模型 (Thinking)",
     "apiFormat": "API 格式",
     "apiFormatHint": "选择供应商 API 的输入格式",
     "fullUrlLabel": "完整 URL",
@@ -1310,7 +1319,8 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
-        "openclaw": "OpenClaw"
+        "openclaw": "OpenClaw",
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -1629,6 +1639,83 @@
     },
     "primaryModel": "默认模型",
     "fallbackModel": "回退模型"
+  },
+  "hermes": {
+    "form": {
+      "baseUrl": "API 端点",
+      "baseUrlHint": "供应商的 API 端点地址。",
+      "providerKey": "供应商标识",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "只能使用小写字母、数字和连字符。用作 config.yaml 中的供应商名称。",
+      "providerKeyLockedHint": "该供应商已添加到 Hermes 配置中，标识不可修改。",
+      "providerKeyRequired": "供应商标识不能为空",
+      "providerKeyInvalid": "供应商标识只能包含小写字母、数字和连字符",
+      "providerKeyDuplicate": "该供应商标识已存在",
+      "apiMode": "API 模式",
+      "apiModeHint": "供应商 API 协议。请根据端点选择正确的协议。",
+      "apiModeChatCompletions": "OpenAI Chat Completions",
+      "apiModeAnthropicMessages": "Anthropic Messages",
+      "apiModeCodexResponses": "OpenAI Responses",
+      "apiModeBedrockConverse": "AWS Bedrock Converse",
+      "baseUrlRequired": "API 端点不能为空",
+      "baseUrlScheme": "请使用 http:// 或 https:// 开头的地址",
+      "baseUrlInvalid": "API 端点不是有效的 URL",
+      "models": "模型列表",
+      "addModel": "添加模型",
+      "noModels": "暂无模型配置。切换到此供应商时将不会更新默认模型。",
+      "modelId": "模型 ID",
+      "modelIdPlaceholder": "anthropic/claude-opus-4-7",
+      "modelName": "显示名称",
+      "modelNamePlaceholder": "Claude Opus 4.7",
+      "contextLength": "上下文长度",
+      "advancedOptions": "高级选项",
+      "modelsHint": "切换到此供应商时，第一个模型会写入顶层 model.default。",
+      "primaryModel": "默认模型",
+      "fallbackModel": "备选模型",
+      "providerAdvanced": "供应商高级选项",
+      "rateLimitDelay": "请求间隔（秒）",
+      "rateLimitDelayHint": "连续请求间的最小间隔秒数（可选）。留空表示无限制。"
+    },
+    "webui": {
+      "open": "打开 Hermes Web UI",
+      "offline": "Hermes Web UI 未启动，请先运行 `hermes dashboard` 启动服务。",
+      "openFailed": "打开 Hermes Web UI 失败",
+      "fixInWebUI": "在 Hermes Web UI 修复",
+      "launchConfirmTitle": "Hermes Dashboard 未启动",
+      "launchConfirmMessage": "是否打开终端并运行 `hermes dashboard` 启动服务？\n\n启动完成后会自动打开浏览器。\n\n若终端提示找不到 hermes 或缺少 web 依赖，请先运行：\npip install hermes-agent[web]",
+      "launchConfirmAction": "打开终端并启动",
+      "launching": "已在终端启动 hermes dashboard",
+      "launchFailed": "打开终端失败"
+    },
+    "health": {
+      "title": "检测到 Hermes 配置警告",
+      "parseFailed": "config.yaml 无法解析为有效 YAML。请先修复文件再在此编辑。",
+      "configNotFound": "未找到 Hermes config.yaml。请在 ~/.hermes/config.yaml 创建或在设置中配置路径。",
+      "envParseFailed": ".env 文件无法解析。",
+      "modelNoDefault": "model 段未设置默认模型或供应商。",
+      "customProvidersNotList": "custom_providers 应为 YAML 列表（以 `-` 开头），而不是映射。",
+      "modelProviderUnknown": "model.provider 指向的供应商未在配置中找到。",
+      "modelDefaultNotInProvider": "model.default 指向的模型不在所选供应商的模型列表中。",
+      "duplicateProviderName": "custom_providers 中存在重复的供应商名，只会有一条生效。",
+      "duplicateProviderBaseUrl": "custom_providers 中存在重复的 base_url，可能是意外复制。",
+      "schemaMigratedV12": "Hermes 新版 schema 把部分供应商移到了 'providers:' dict。CC Switch 中以只读方式显示，编辑或删除请通过 Hermes Web UI 操作。"
+    },
+    "memory": {
+      "title": "记忆管理",
+      "agentTab": "Agent 记忆 (MEMORY.md)",
+      "userTab": "用户画像 (USER.md)",
+      "usage": "已用 {{current}} / {{limit}} 字符",
+      "overLimit": "已超过上限，Hermes 下次加载时会截断",
+      "enableOn": "已启用",
+      "enableOff": "已禁用",
+      "disabledHint": "在重新启用前 Hermes 会跳过此记忆",
+      "toggleFailed": "切换记忆状态失败",
+      "saveSuccess": "记忆已保存",
+      "saveFailed": "保存记忆失败",
+      "loadFailed": "读取记忆文件失败",
+      "openConfig": "在 Hermes Web UI 调整上限",
+      "runtimeNote": "更改将在 Hermes 下次启动或新建会话时生效。"
+    }
   },
   "env": {
     "warning": {
@@ -2058,7 +2145,7 @@
       "hint": "选择要路由的应用，启用后该应用的请求将通过本地路由转发",
       "enabled": "{{app}} 路由已启用",
       "disabled": "{{app}} 路由已关闭",
-      "failed": "切换路由状态失败",
+      "failed": "切换路由状态失败: {{detail}}",
       "tooltip": {
         "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切换该应用供应商为热切换",
         "broken": "{{appLabel}} 路由中，但路由服务未运行",
@@ -2390,7 +2477,7 @@
       "artistry": "高度创意与艺术性任务类别，激发新颖想法和创造性解决方案，默认使用 Gemini 3 Pro 的最大变体。",
       "quick": "轻量任务类别，用于单文件修改、错别字修复、简单调整等琐碎工作，默认使用 Claude Haiku 4.5 快速模型。",
       "unspecifiedLow": "未归类低工作量任务类别，适用于不适合其他类别且工作量较小的任务，默认使用 Claude Sonnet 4.5。",
-      "unspecifiedHigh": "未归类高工作量任务类别，适用于不适合其他类别且工作量较大的任务，默认使用 Claude Opus 4.6 的最大变体。",
+      "unspecifiedHigh": "未归类高工作量任务类别，适用于不适合其他类别且工作量较大的任务，默认使用 Claude Opus 4.7 的最大变体。",
       "writing": "写作类别，专注于文档、散文和技术写作，默认使用 Gemini 3 Flash 快速生成模型。"
     },
     "slimAgentDesc": {

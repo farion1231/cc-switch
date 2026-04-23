@@ -31,7 +31,7 @@ pub use skill::import_skill_from_deeplink;
 ///
 /// Represents a parsed ccswitch:// URL ready for processing.
 /// This struct contains all possible fields for all resource types.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeepLinkImportRequest {
     /// Protocol version (e.g., "v1")
