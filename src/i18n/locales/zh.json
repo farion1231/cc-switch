@@ -931,7 +931,7 @@
     "retry": "重试",
     "copyCode": "复制代码",
     "fastMode": "FAST 模式",
-    "fastModeDescription": "为更低延迟发送 service_tier=\"priority\"。如果 ChatGPT Codex 后端拒绝这个参数，可以将其关闭。"
+    "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。"
   },
   "endpointTest": {
     "title": "请求地址管理",

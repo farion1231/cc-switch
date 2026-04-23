@@ -383,7 +383,7 @@ export function ProviderForm({
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
-    () => initialData?.meta?.codexFastMode ?? true,
+    () => initialData?.meta?.codexFastMode ?? false,
   );
 
   const {

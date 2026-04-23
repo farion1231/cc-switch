@@ -931,7 +931,7 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "fastMode": "FAST モード",
-    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。ChatGPT Codex バックエンドがこのパラメータを拒否する場合はオフにしてください。"
+    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",

@@ -47,7 +47,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   className,
   selectedAccountId,
   onAccountSelect,
-  fastModeEnabled = true,
+  fastModeEnabled = false,
   onFastModeChange,
 }) => {
   const { t } = useTranslation();

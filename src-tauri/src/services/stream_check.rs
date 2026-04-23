@@ -364,7 +364,7 @@ impl StreamCheckService {
             .meta
             .as_ref()
             .map(|m| m.codex_fast_mode_enabled())
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         let body = if is_openai_responses {
             anthropic_to_responses(

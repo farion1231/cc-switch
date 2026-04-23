@@ -931,7 +931,7 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
-    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Turn it off if the ChatGPT Codex backend rejects the parameter."
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
   },
   "endpointTest": {
     "title": "API Endpoint Management",

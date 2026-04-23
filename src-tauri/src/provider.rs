@@ -280,9 +280,10 @@ pub struct ProviderMeta {
 }
 
 impl ProviderMeta {
-    /// Codex OAuth FAST mode 是否启用，未设置时默认 true（与 OpenAI 官方 codex-rs 一致）。
+    /// Codex OAuth FAST mode 是否启用。默认关闭，因为 `service_tier="priority"`
+    /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
     pub fn codex_fast_mode_enabled(&self) -> bool {
-        self.codex_fast_mode.unwrap_or(true)
+        self.codex_fast_mode.unwrap_or(false)
     }
 
     /// 解析指定托管认证供应商绑定的账号 ID。

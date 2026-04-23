@@ -155,7 +155,7 @@ pub fn transform_claude_request_for_api_format(
                 .meta
                 .as_ref()
                 .map(|m| m.codex_fast_mode_enabled())
-                .unwrap_or(true);
+                .unwrap_or(false);
             super::transform_responses::anthropic_to_responses(
                 body,
                 Some(cache_key),
