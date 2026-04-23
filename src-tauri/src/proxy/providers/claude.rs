@@ -89,11 +89,7 @@ pub fn transform_claude_request_for_api_format(
     session_id: Option<&str>,
     shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
 ) -> Result<serde_json::Value, ProxyError> {
-    let is_codex_oauth = provider
-        .meta
-        .as_ref()
-        .and_then(|m| m.provider_type.as_deref())
-        == Some("codex_oauth");
+    let is_codex_oauth = provider.is_codex_oauth();
 
     // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
     // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
@@ -151,11 +147,7 @@ pub fn transform_claude_request_for_api_format(
         "openai_responses" => {
             // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
             // + include: ["reasoning.encrypted_content"]，由 transform 层统一处理。
-            let codex_fast_mode = provider
-                .meta
-                .as_ref()
-                .map(|m| m.codex_fast_mode_enabled())
-                .unwrap_or(false);
+            let codex_fast_mode = provider.codex_fast_mode_enabled();
             super::transform_responses::anthropic_to_responses(
                 body,
                 Some(cache_key),

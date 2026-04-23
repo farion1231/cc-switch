@@ -65,6 +65,25 @@ impl Provider {
             in_failover_queue: false,
         }
     }
+
+    pub fn is_codex_oauth(&self) -> bool {
+        self.meta.as_ref().and_then(|m| m.provider_type.as_deref()) == Some("codex_oauth")
+    }
+
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| m.codex_fast_mode_enabled())
+            .unwrap_or(false)
+    }
+
+    pub fn has_usage_script_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.usage_script.as_ref())
+            .map(|s| s.enabled)
+            .unwrap_or(false)
+    }
 }
 
 /// 供应商管理器

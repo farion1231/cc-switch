@@ -748,9 +748,16 @@ pub fn run() {
 
             // 构建托盘
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
-                .on_tray_icon_event(|_tray, event| match event {
-                    // 左键点击已通过 show_menu_on_left_click(true) 打开菜单，这里不再额外处理
-                    TrayIconEvent::Click { .. } => {}
+                .on_tray_icon_event(|tray, event| match event {
+                    // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+                    // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
+                    // refresh_all_usage_in_tray 内部有 10 秒防抖。
+                    TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+                        let app = tray.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            crate::tray::refresh_all_usage_in_tray(&app).await;
+                        });
+                    }
                     _ => log::debug!("unhandled event {event:?}"),
                 })
                 .menu(&menu)
