@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 pub fn is_openai_o_series(model: &str) -> bool {
     model.len() > 1
         && model.starts_with('o')
+        && model.starts_with('gpt-5')
         && model.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit())
 }
 
