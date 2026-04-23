@@ -76,6 +76,14 @@ impl Provider {
             .map(|m| m.codex_fast_mode_enabled())
             .unwrap_or(false)
     }
+
+    pub fn has_usage_script_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.usage_script.as_ref())
+            .map(|s| s.enabled)
+            .unwrap_or(false)
+    }
 }
 
 /// 供应商管理器

@@ -108,41 +108,68 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
 fn format_subscription_summary(
     quota: &crate::services::subscription::SubscriptionQuota,
 ) -> Option<String> {
-    use crate::services::subscription::{TIER_FIVE_HOUR, TIER_SEVEN_DAY};
+    use crate::services::subscription::{
+        TIER_FIVE_HOUR, TIER_GEMINI_FLASH, TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_SEVEN_DAY,
+    };
     if !quota.success {
         return None;
     }
-    let five = quota.tiers.iter().find(|t| t.name == TIER_FIVE_HOUR);
-    let seven = quota.tiers.iter().find(|t| t.name == TIER_SEVEN_DAY);
-    // 色标取两个窗口里较高的利用率——用户更关心"离上限多近"。
-    let worst = [five, seven]
-        .iter()
-        .filter_map(|t| t.map(|t| t.utilization))
-        .fold(
-            f64::NAN,
-            |acc, v| {
-                if acc.is_nan() || v > acc {
-                    v
-                } else {
-                    acc
-                }
-            },
-        );
-    if worst.is_nan() {
-        return None;
-    }
-    let emoji = emoji_for_utilization(worst);
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(t) = five {
-        parts.push(format!("h{}%", t.utilization.round() as i64));
-    }
-    if let Some(t) = seven {
-        parts.push(format!("w{}%", t.utilization.round() as i64));
-    }
+
+    // 按 tool 选取主卡槽 tier 并映射到短 label：
+    //   Claude / Codex 沿用时间窗口（h=5 小时，w=7 天）；
+    //   Gemini 用模型维度（p=pro，f=flash，l=flash-lite）——Gemini 后端 tier
+    //   命名是 gemini_pro / gemini_flash / gemini_flash_lite，与时间窗口不同命名空间。
+    //   flash_lite 必须纳入：否则 lite 利用率最高时色标偏低，与前端 footer 行为不一致。
+    let parts: Vec<(&'static str, f64)> = match quota.tool.as_str() {
+        "gemini" => {
+            let mut v = Vec::new();
+            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_GEMINI_PRO) {
+                v.push(("p", t.utilization));
+            }
+            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_GEMINI_FLASH) {
+                v.push(("f", t.utilization));
+            }
+            if let Some(t) = quota
+                .tiers
+                .iter()
+                .find(|t| t.name == TIER_GEMINI_FLASH_LITE)
+            {
+                v.push(("l", t.utilization));
+            }
+            v
+        }
+        _ => {
+            let mut v = Vec::new();
+            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_FIVE_HOUR) {
+                v.push(("h", t.utilization));
+            }
+            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_SEVEN_DAY) {
+                v.push(("w", t.utilization));
+            }
+            v
+        }
+    };
+
     if parts.is_empty() {
         return None;
     }
-    Some(format!("{} {}", emoji, parts.join(" ")))
+
+    // 色标取所有已选 tier 里最高的利用率——用户更关心"离上限多近"。
+    let worst = parts
+        .iter()
+        .map(|(_, u)| *u)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if !worst.is_finite() {
+        return None;
+    }
+
+    let emoji = emoji_for_utilization(worst);
+    let body = parts
+        .iter()
+        .map(|(label, u)| format!("{label}{}%", u.round() as i64))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(format!("{emoji} {body}"))
 }
 
 fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String> {
@@ -172,14 +199,7 @@ fn format_usage_suffix(
 ) -> Option<String> {
     // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
     // 并顺手 invalidate，防止后续重建继续命中过期数据。
-    let script_enabled = provider
-        .meta
-        .as_ref()
-        .and_then(|m| m.usage_script.as_ref())
-        .map(|s| s.enabled)
-        .unwrap_or(false);
-
-    if script_enabled {
+    if provider.has_usage_script_enabled() {
         // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
         if let Some(Some(s)) =
             app_state
@@ -581,17 +601,6 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::TRAY_ID;
-
-    #[test]
-    fn tray_id_is_unique_to_app() {
-        assert_eq!(TRAY_ID, "cc-switch");
-        assert_ne!(TRAY_ID, "main");
-    }
-}
-
 #[cfg(target_os = "macos")]
 pub fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
     use tauri::ActivationPolicy;
@@ -686,10 +695,14 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
     });
 }
 
-/// 并行触发所有可见 app 和 provider 的用量查询；成功结果通过各 command 的
-/// write-through 逻辑写入 `UsageCache`，单次重建菜单由 `schedule_tray_refresh`
-/// 做合并。内部 10 秒节流防止鼠标悬停反复进出时雪崩请求；互斥锁被毒化时
-/// 以上次状态为准继续推进，不会永久阻塞后续刷新。
+/// 并行刷新每个可见 app "当前 provider" 的用量；成功 / 失败结果都通过各
+/// command 的 write-through 逻辑写入 `UsageCache`，单次重建菜单由
+/// `schedule_tray_refresh` 做合并。内部 10 秒节流防止鼠标悬停反复进出时
+/// 雪崩请求；互斥锁被毒化时以上次状态为准继续推进，不会永久阻塞。
+///
+/// 刷新面与 `format_usage_suffix` 的展示面严格对齐 —— 每次悬停最多发
+/// `TRAY_SECTIONS.len()` 次外部请求，script 优先（覆盖 coding_plan / balance /
+/// Copilot / 自定义脚本），否则当前 provider 必须是 `official` 才查订阅。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
     use futures::future::join_all;
@@ -717,52 +730,48 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         .visible_apps
         .unwrap_or_default();
 
-    let subscription_futures = TRAY_SECTIONS
-        .iter()
-        .filter(|section| visible_apps.is_visible(&section.app_type))
-        .map(|section| {
-            let app_clone = app.clone();
-            let state = app.state::<AppState>();
-            let tool = section.app_type.as_str().to_string();
-            let log_name = section.log_name;
-            async move {
-                if let Err(e) =
-                    crate::commands::get_subscription_quota(app_clone, state, tool).await
-                {
-                    log::debug!("[Tray] 刷新{log_name}订阅用量失败（可能未登录）: {e}");
-                }
-            }
-        });
-
+    let mut subscription_futures = Vec::new();
     let mut script_futures = Vec::new();
+
     for section in TRAY_SECTIONS.iter() {
         if !visible_apps.is_visible(&section.app_type) {
             continue;
         }
+
         let app_type_str = section.app_type.as_str();
-        let providers = match app_state.db.get_all_providers(app_type_str) {
-            Ok(p) => p,
+        let log_name = section.log_name;
+
+        // 解析 effective current provider；未设置 / 出错都静默跳过，
+        // 与 create_tray_menu 的行为保持一致。
+        let current_id =
+            match crate::settings::get_effective_current_provider(&app_state.db, &section.app_type)
+            {
+                Ok(Some(id)) => id,
+                Ok(None) => continue,
+                Err(e) => {
+                    log::warn!("[Tray] 读取{log_name}当前供应商失败: {e}");
+                    continue;
+                }
+            };
+        // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
+        // 进内存（每次悬停 × 3 sections 的热路径）。
+        let current = match app_state.db.get_provider_by_id(&current_id, app_type_str) {
+            Ok(Some(p)) => p,
+            Ok(None) => continue,
             Err(e) => {
-                log::warn!("[Tray] 读取{}供应商列表失败: {e}", section.log_name);
+                log::warn!("[Tray] 读取{log_name}当前供应商失败: {e}");
                 continue;
             }
         };
-        for (id, provider) in providers.iter() {
-            let has_usage_script = provider
-                .meta
-                .as_ref()
-                .and_then(|m| m.usage_script.as_ref())
-                .map(|s| s.enabled)
-                .unwrap_or(false);
-            if !has_usage_script {
-                continue;
-            }
+
+        // 与 format_usage_suffix 同一优先级：脚本启用 → 查脚本；
+        // 否则当前 provider 是 official → 查订阅；其它情况不发请求。
+        if current.has_usage_script_enabled() {
             let app_clone = app.clone();
             let state = app.state::<AppState>();
             let copilot_state = app.state::<CopilotAuthState>();
-            let provider_id = id.clone();
+            let provider_id = current_id.clone();
             let app_str = app_type_str.to_string();
-            let log_name = section.log_name;
             script_futures.push(async move {
                 if let Err(e) = crate::commands::queryProviderUsage(
                     app_clone,
@@ -776,9 +785,153 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                     log::debug!("[Tray] 刷新{log_name}供应商 {provider_id} 用量失败: {e}");
                 }
             });
+        } else if current.category.as_deref() == Some("official") {
+            let app_clone = app.clone();
+            let state = app.state::<AppState>();
+            let tool = app_type_str.to_string();
+            subscription_futures.push(async move {
+                if let Err(e) =
+                    crate::commands::get_subscription_quota(app_clone, state, tool).await
+                {
+                    log::debug!("[Tray] 刷新{log_name}订阅用量失败（可能未登录）: {e}");
+                }
+            });
         }
     }
 
-    join_all(subscription_futures).await;
-    join_all(script_futures).await;
+    // 两组并行启动，整体等待 —— 订阅/脚本互不依赖，没必要串行。
+    futures::future::join(join_all(subscription_futures), join_all(script_futures)).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_subscription_summary, TRAY_ID};
+    use crate::services::subscription::{CredentialStatus, QuotaTier, SubscriptionQuota};
+
+    #[test]
+    fn tray_id_is_unique_to_app() {
+        assert_eq!(TRAY_ID, "cc-switch");
+        assert_ne!(TRAY_ID, "main");
+    }
+
+    fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {
+        SubscriptionQuota {
+            tool: tool.to_string(),
+            credential_status: CredentialStatus::Valid,
+            credential_message: None,
+            success,
+            tiers,
+            extra_usage: None,
+            error: None,
+            queried_at: Some(0),
+        }
+    }
+
+    fn tier(name: &str, utilization: f64) -> QuotaTier {
+        QuotaTier {
+            name: name.to_string(),
+            utilization,
+            resets_at: None,
+        }
+    }
+
+    #[test]
+    fn claude_summary_uses_h_and_w_labels() {
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier("five_hour", 9.0), tier("seven_day", 27.0)],
+        );
+        let s = format_subscription_summary(&quota).expect("should format");
+        assert!(s.contains("h9%"), "expected h9% in {s}");
+        assert!(s.contains("w27%"), "expected w27% in {s}");
+    }
+
+    #[test]
+    fn gemini_summary_uses_p_and_f_labels() {
+        let quota = make_quota(
+            "gemini",
+            true,
+            vec![tier("gemini_pro", 15.0), tier("gemini_flash", 42.0)],
+        );
+        let s = format_subscription_summary(&quota).expect("should format");
+        assert!(s.contains("p15%"), "expected p15% in {s}");
+        assert!(s.contains("f42%"), "expected f42% in {s}");
+    }
+
+    #[test]
+    fn gemini_summary_includes_all_three_tiers() {
+        let quota = make_quota(
+            "gemini",
+            true,
+            vec![
+                tier("gemini_pro", 5.0),
+                tier("gemini_flash", 42.0),
+                tier("gemini_flash_lite", 80.0),
+            ],
+        );
+        let s = format_subscription_summary(&quota).expect("should format");
+        assert!(s.contains("p5%"), "expected p5% in {s}");
+        assert!(s.contains("f42%"), "expected f42% in {s}");
+        assert!(s.contains("l80%"), "expected l80% in {s}");
+    }
+
+    #[test]
+    fn gemini_summary_lite_only_still_renders() {
+        // flash_lite 如果是 API 返回的唯一 tier，仍应显示（避免前端 footer 能看到、
+        // 托盘空白的不对称）。
+        let quota = make_quota("gemini", true, vec![tier("gemini_flash_lite", 80.0)]);
+        let s = format_subscription_summary(&quota).expect("should format");
+        assert!(s.contains("l80%"), "expected l80% in {s}");
+    }
+
+    #[test]
+    fn gemini_summary_emoji_reflects_highest_tier_including_lite() {
+        // lite 是利用率最高的那条 → emoji 必须是红色，不能被 pro/flash 掩盖。
+        let quota = make_quota(
+            "gemini",
+            true,
+            vec![
+                tier("gemini_pro", 10.0),
+                tier("gemini_flash", 20.0),
+                tier("gemini_flash_lite", 95.0),
+            ],
+        );
+        let s = format_subscription_summary(&quota).unwrap();
+        assert!(
+            s.starts_with("\u{1F534}"),
+            "expected red emoji (lite worst) in {s}"
+        );
+    }
+
+    #[test]
+    fn worst_emoji_reflects_highest_utilization() {
+        // 🔴 = \u{1F534}; 任一 tier ≥ 90% 时预期显示红色。
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier("five_hour", 10.0), tier("seven_day", 95.0)],
+        );
+        let s = format_subscription_summary(&quota).unwrap();
+        assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
+    }
+
+    #[test]
+    fn failure_quota_returns_none() {
+        let quota = make_quota("claude", false, vec![tier("five_hour", 50.0)]);
+        assert!(format_subscription_summary(&quota).is_none());
+    }
+
+    #[test]
+    fn unknown_tiers_return_none() {
+        let quota = make_quota("claude", true, vec![tier("one_hour", 80.0)]);
+        assert!(format_subscription_summary(&quota).is_none());
+    }
+
+    #[test]
+    fn gemini_without_any_known_tiers_returns_none() {
+        // 完全没有 pro/flash/flash_lite 三种 tier 的退化响应 → None。
+        let quota = make_quota("gemini", true, vec![tier("some_future_tier", 80.0)]);
+        assert!(format_subscription_summary(&quota).is_none());
+    }
 }
