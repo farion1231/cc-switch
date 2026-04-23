@@ -86,6 +86,13 @@ export function useSettingsForm(): UseSettingsFormResult {
         data.enableClaudePluginIntegration ?? false,
       silentStartup: data.silentStartup ?? false,
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
+      claudeDesktopGatewayAuthScheme:
+        data.claudeDesktopGatewayAuthScheme ?? "x-api-key",
+      claudeDesktopGatewayHeaders: data.claudeDesktopGatewayHeaders ?? [],
+      claudeDesktopCodeTabEnabled: data.claudeDesktopCodeTabEnabled ?? true,
+      claudeDesktopLocalMcpEnabled: data.claudeDesktopLocalMcpEnabled ?? false,
+      claudeDesktopIncludeManagedMcp:
+        data.claudeDesktopIncludeManagedMcp ?? true,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
@@ -110,6 +117,11 @@ export function useSettingsForm(): UseSettingsFormResult {
             useAppWindowControls: false,
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
+            claudeDesktopGatewayAuthScheme: "x-api-key",
+            claudeDesktopGatewayHeaders: [],
+            claudeDesktopCodeTabEnabled: true,
+            claudeDesktopLocalMcpEnabled: false,
+            claudeDesktopIncludeManagedMcp: true,
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -147,6 +159,16 @@ export function useSettingsForm(): UseSettingsFormResult {
           serverData.enableClaudePluginIntegration ?? false,
         silentStartup: serverData.silentStartup ?? false,
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
+        claudeDesktopGatewayAuthScheme:
+          serverData.claudeDesktopGatewayAuthScheme ?? "x-api-key",
+        claudeDesktopGatewayHeaders:
+          serverData.claudeDesktopGatewayHeaders ?? [],
+        claudeDesktopCodeTabEnabled:
+          serverData.claudeDesktopCodeTabEnabled ?? true,
+        claudeDesktopLocalMcpEnabled:
+          serverData.claudeDesktopLocalMcpEnabled ?? false,
+        claudeDesktopIncludeManagedMcp:
+          serverData.claudeDesktopIncludeManagedMcp ?? true,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),

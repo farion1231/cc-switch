@@ -1,6 +1,7 @@
 mod app_config;
 mod app_store;
 mod auto_launch;
+mod claude_desktop;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
@@ -1056,6 +1057,12 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::get_claude_desktop_preview,
+            commands::get_claude_desktop_mode_status,
+            commands::export_claude_desktop_config,
+            commands::install_claude_desktop_mobileconfig,
+            commands::open_claude_desktop_install_settings,
+            commands::save_claude_desktop_export_dialog,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
             commands::get_optimizer_config,
