@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  HermesHealthWarning,
   HermesMemoryKind,
   HermesMemoryLimits,
   HermesModelConfig,
@@ -12,17 +11,13 @@ import type {
  * CC Switch intentionally keeps its Hermes surface minimal — deep configuration
  * (model, agent behavior, env vars, skills, cron, logs, analytics) lives in
  * the Hermes Web UI at http://127.0.0.1:9119. CC Switch only reads the `model`
- * section to highlight the active provider, scans config health, and launches
- * the Hermes Web UI for everything else. Writes to `model` happen implicitly
- * via `apply_switch_defaults` when the user switches providers.
+ * section to highlight the active provider and launches the Hermes Web UI for
+ * everything else. Writes to `model` happen implicitly via
+ * `apply_switch_defaults` when the user switches providers.
  */
 export const hermesApi = {
   async getModelConfig(): Promise<HermesModelConfig | null> {
     return await invoke("get_hermes_model_config");
-  },
-
-  async scanHealth(): Promise<HermesHealthWarning[]> {
-    return await invoke("scan_hermes_config_health");
   },
 
   /**

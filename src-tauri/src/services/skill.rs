@@ -672,36 +672,16 @@ impl SkillService {
             repo_branch = used_branch;
 
             // 复制到 SSOT
-            let mut source = temp_dir.join(&source_rel);
-            if !source.exists() {
-                // 回退：在 temp_dir 中递归查找名称匹配的目录（含 SKILL.md）
-                let target_name = source_rel
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if let Some(found) = Self::find_skill_dir_by_name(&temp_dir, &target_name) {
-                    log::info!(
-                        "Skill directory '{}' not found at direct path, using fallback: {}",
-                        target_name,
-                        found.display()
-                    );
-                    source = found;
-                } else if temp_dir.join("SKILL.md").exists() {
-                    // 根级 Skill：仓库本身就是 skill，SKILL.md 直接在解压根目录
-                    log::info!(
-                        "Skill directory '{}' not found, but SKILL.md exists at root, using temp_dir",
-                        target_name,
-                    );
-                    source = temp_dir.clone();
-                } else {
+            let source =
+                Self::resolve_skill_source_dir(&temp_dir, &skill.directory).ok_or_else(|| {
+                    let missing = temp_dir.join(&source_rel).display().to_string();
                     let _ = fs::remove_dir_all(&temp_dir);
-                    return Err(anyhow!(format_skill_error(
+                    anyhow!(format_skill_error(
                         "SKILL_DIR_NOT_FOUND",
-                        &[("path", &source.display().to_string())],
+                        &[("path", &missing)],
                         Some("checkRepoUrl"),
-                    )));
-                }
-            }
+                    ))
+                })?;
 
             let canonical_temp = temp_dir.canonicalize().unwrap_or_else(|_| temp_dir.clone());
             let canonical_source = source.canonicalize().map_err(|_| {
@@ -954,13 +934,12 @@ impl SkillService {
                 });
 
                 let remote_skill_dir = match remote_match {
-                    Some(rs) => temp_dir.join(&rs.directory),
+                    Some(rs) => match Self::resolve_skill_source_dir(&temp_dir, &rs.directory) {
+                        Some(path) => path,
+                        None => continue,
+                    },
                     None => continue,
                 };
-
-                if !remote_skill_dir.exists() {
-                    continue;
-                }
 
                 let remote_hash = match Self::compute_dir_hash(&remote_skill_dir) {
                     Ok(h) => h,
@@ -1065,15 +1044,16 @@ impl SkillService {
                 ))
             })?;
 
-        let source = temp_dir.join(&remote_match.directory);
-        if !source.exists() {
-            let _ = fs::remove_dir_all(&temp_dir);
-            return Err(anyhow!(format_skill_error(
-                "SKILL_DIR_NOT_FOUND",
-                &[("path", &source.display().to_string())],
-                Some("checkRepoUrl"),
-            )));
-        }
+        let source = Self::resolve_skill_source_dir(&temp_dir, &remote_match.directory)
+            .ok_or_else(|| {
+                let missing = temp_dir.join(&remote_match.directory).display().to_string();
+                let _ = fs::remove_dir_all(&temp_dir);
+                anyhow!(format_skill_error(
+                    "SKILL_DIR_NOT_FOUND",
+                    &[("path", &missing)],
+                    Some("checkRepoUrl"),
+                ))
+            })?;
 
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
@@ -2108,6 +2088,40 @@ impl SkillService {
         walk(root, target_name, 0)
     }
 
+    /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
+    ///
+    /// 兼容三种情况：
+    /// 1. `skills/foo` 这类直接相对路径；
+    /// 2. 仅持有安装名 `foo`，需要在仓库中递归查找真实目录；
+    /// 3. 仓库根目录本身就是 skill，此时回退到解压根目录。
+    fn resolve_skill_source_dir(root: &Path, raw_directory: &str) -> Option<PathBuf> {
+        let source_rel = Self::sanitize_skill_source_path(raw_directory)?;
+        let direct = root.join(&source_rel);
+        if direct.is_dir() {
+            return Some(direct);
+        }
+
+        let target_name = source_rel.file_name()?.to_string_lossy().to_string();
+        if let Some(found) = Self::find_skill_dir_by_name(root, &target_name) {
+            log::info!(
+                "Skill directory '{}' not found at direct path, using fallback: {}",
+                target_name,
+                found.display()
+            );
+            return Some(found);
+        }
+
+        if root.is_dir() && root.join("SKILL.md").exists() {
+            log::info!(
+                "Skill directory '{}' not found, but SKILL.md exists at root, using repo root",
+                target_name,
+            );
+            return Some(root.to_path_buf());
+        }
+
+        None
+    }
+
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
     fn deduplicate_discoverable_skills(skills: &mut Vec<DiscoverableSkill>) {
         let mut seen = HashMap::new();
@@ -2974,4 +2988,54 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
     log::info!("Skills 迁移完成，共 {count} 个");
 
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn write_skill(dir: &Path, name: &str) {
+        fs::create_dir_all(dir).expect("create skill dir");
+        fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Test skill\n---\n"),
+        )
+        .expect("write SKILL.md");
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_returns_repo_root_for_root_level_skill() {
+        let temp = tempdir().expect("tempdir");
+        write_skill(temp.path(), "Root Skill");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "last30days-skill-cn")
+            .expect("root-level skill should resolve to the extracted repo root");
+
+        assert_eq!(resolved, temp.path());
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_returns_direct_nested_directory_when_present() {
+        let temp = tempdir().expect("tempdir");
+        let nested = temp.path().join("skills").join("nested-skill");
+        write_skill(&nested, "Nested Skill");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "skills/nested-skill")
+            .expect("nested skill should resolve from its relative source path");
+
+        assert_eq!(resolved, nested);
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_falls_back_to_matching_install_name() {
+        let temp = tempdir().expect("tempdir");
+        let nested = temp.path().join("skills").join("nested-skill");
+        write_skill(&nested, "Nested Skill");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "nested-skill")
+            .expect("install name should fall back to the matching discovered skill directory");
+
+        assert_eq!(resolved, nested);
+    }
 }

@@ -69,6 +69,9 @@ export function useModelState({
 
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);
+  const latestConfigRef = useRef(settingsConfig);
+
+  latestConfigRef.current = settingsConfig;
 
   // 初始化读取：读新键；若缺失，按兼容优先级回退
   // Haiku: DEFAULT_HAIKU || SMALL_FAST || MODEL
@@ -146,8 +149,8 @@ export function useModelState({
       if (field === "ANTHROPIC_DEFAULT_OPUS_MODEL") setDefaultOpusModel(value);
 
       try {
-        const currentConfig = settingsConfig
-          ? JSON.parse(settingsConfig)
+        const currentConfig = latestConfigRef.current
+          ? JSON.parse(latestConfigRef.current)
           : { env: {} };
         if (!currentConfig.env) currentConfig.env = {};
         const env = currentConfig.env as Record<string, unknown>;
@@ -162,12 +165,14 @@ export function useModelState({
         // 删除旧键
         delete env["ANTHROPIC_SMALL_FAST_MODEL"];
 
-        onConfigChange(JSON.stringify(currentConfig, null, 2));
+        const updatedConfig = JSON.stringify(currentConfig, null, 2);
+        latestConfigRef.current = updatedConfig;
+        onConfigChange(updatedConfig);
       } catch (err) {
         console.error("Failed to update model config:", err);
       }
     },
-    [settingsConfig, onConfigChange],
+    [onConfigChange],
   );
 
   return {

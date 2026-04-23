@@ -17,10 +17,13 @@ use serde_json::{json, Value};
 /// `is_codex_oauth`: 当目标后端是 ChatGPT Plus/Pro 反代 (`chatgpt.com/backend-api/codex`) 时为 true。
 /// 该后端强制要求 `store: false`，并要求 `include` 包含 `reasoning.encrypted_content`
 /// 以便在无服务端状态下保持多轮 reasoning 上下文。
+/// `codex_fast_mode`: 仅在 `is_codex_oauth` 为 true 时生效，控制是否注入
+/// `service_tier = "priority"`。
 pub fn anthropic_to_responses(
     body: Value,
     cache_key: Option<&str>,
     is_codex_oauth: bool,
+    codex_fast_mode: bool,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
@@ -125,10 +128,15 @@ pub fn anthropic_to_responses(
     //   （codex-rs 结构体根本没有这三个字段，OpenAI 自己的客户端不发它们）
     // - instructions / tools / parallel_tool_calls: 必填字段，缺则兜底默认值
     //   （cc-switch 的 transform 当前是"条件写入"，可能产生缺失）
+    // - service_tier: 仅在 FAST mode 开启时写入 "priority"
+    //   （与 OpenAI 官方 codex-rs 当前请求结构保持一致）
     // - stream: 必须永远 true（codex-rs 硬编码 true，且 cc-switch 的
     //   SSE 解析层只处理流式响应，强制覆盖避免客户端误传 false）
     if is_codex_oauth {
         result["store"] = json!(false);
+        if codex_fast_mode {
+            result["service_tier"] = json!("priority");
+        }
 
         const REASONING_MARKER: &str = "reasoning.encrypted_content";
         let mut includes: Vec<Value> = body
@@ -520,7 +528,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["model"], "gpt-4o");
         assert_eq!(result["max_output_tokens"], 1024);
         assert_eq!(result["input"][0]["role"], "user");
@@ -539,7 +547,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["instructions"], "You are a helpful assistant.");
         // system should not appear in input
         assert_eq!(result["input"].as_array().unwrap().len(), 1);
@@ -557,7 +565,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["instructions"], "Part 1\n\nPart 2");
     }
 
@@ -574,7 +582,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["name"], "get_weather");
         assert!(result["tools"][0].get("parameters").is_some());
@@ -591,7 +599,7 @@ mod tests {
             "tool_choice": {"type": "any"}
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"], "required");
     }
 
@@ -604,7 +612,7 @@ mod tests {
             "tool_choice": {"type": "tool", "name": "get_weather"}
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"]["type"], "function");
         assert_eq!(result["tool_choice"]["name"], "get_weather");
     }
@@ -623,7 +631,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         let input_arr = result["input"].as_array().unwrap();
 
         // Should produce: assistant message (text) + function_call item
@@ -653,7 +661,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         let input_arr = result["input"].as_array().unwrap();
 
         // Should produce: function_call_output item (lifted)
@@ -677,7 +685,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         let input_arr = result["input"].as_array().unwrap();
 
         // thinking should be discarded, only text remains
@@ -700,7 +708,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         let content = result["input"][0]["content"].as_array().unwrap();
 
         assert_eq!(content[0]["type"], "input_text");
@@ -858,7 +866,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["model"], "o3-mini");
     }
 
@@ -870,7 +878,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, Some("my-provider-id"), false).unwrap();
+        let result = anthropic_to_responses(input, Some("my-provider-id"), false, false).unwrap();
         assert_eq!(result["prompt_cache_key"], "my-provider-id");
     }
 
@@ -888,7 +896,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert!(result["tools"][0].get("cache_control").is_none());
     }
 
@@ -905,7 +913,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert!(result["input"][0]["content"][0]
             .get("cache_control")
             .is_none());
@@ -967,7 +975,7 @@ mod tests {
             "max_tokens": 4096,
             "messages": [{"role": "user", "content": "Hello"}]
         });
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["max_output_tokens"], 4096);
         assert!(result.get("max_completion_tokens").is_none());
     }
@@ -981,7 +989,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
     }
 
@@ -995,7 +1003,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "low");
     }
 
@@ -1008,7 +1016,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "low");
     }
 
@@ -1021,7 +1029,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "medium");
     }
 
@@ -1034,7 +1042,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "high");
     }
 
@@ -1047,7 +1055,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
     }
 
@@ -1060,7 +1068,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert!(result.get("reasoning").is_none());
     }
 
@@ -1074,10 +1082,11 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, true).unwrap();
+        let result = anthropic_to_responses(input, None, true, true).unwrap();
 
         // store 必须显式为 false（ChatGPT 后端拒绝 true）
         assert_eq!(result["store"], json!(false));
+        assert_eq!(result["service_tier"], json!("priority"));
 
         // include 必须包含 reasoning.encrypted_content（无服务端状态下保持多轮 reasoning）
         assert_eq!(result["include"], json!(["reasoning.encrypted_content"]));
@@ -1093,9 +1102,10 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert!(result.get("store").is_none());
+        assert!(result.get("service_tier").is_none());
         assert!(result.get("include").is_none());
     }
 
@@ -1109,7 +1119,7 @@ mod tests {
             "include": ["something.else", "reasoning.encrypted_content"]
         });
 
-        let result = anthropic_to_responses(input, None, true).unwrap();
+        let result = anthropic_to_responses(input, None, true, true).unwrap();
         let includes = result["include"]
             .as_array()
             .expect("include should be array");
@@ -1131,6 +1141,21 @@ mod tests {
     }
 
     #[test]
+    fn test_anthropic_to_responses_codex_oauth_fast_mode_can_be_disabled() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+
+        assert_eq!(result["store"], json!(false));
+        assert!(result.get("service_tier").is_none());
+        assert_eq!(result["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
     fn test_anthropic_to_responses_codex_oauth_strips_max_output_tokens() {
         // ChatGPT Plus/Pro 反代不接受 max_output_tokens（OpenAI 官方 codex-rs 的
         // ResponsesApiRequest 结构体里也没有这个字段），必须删除，否则服务端 400：
@@ -1141,7 +1166,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, true).unwrap();
+        let result = anthropic_to_responses(input, None, true, true).unwrap();
 
         assert!(
             result.get("max_output_tokens").is_none(),
@@ -1159,7 +1184,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert_eq!(result["max_output_tokens"], json!(1024));
     }
@@ -1177,7 +1202,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, true).unwrap();
+        let result = anthropic_to_responses(input, None, true, true).unwrap();
 
         assert!(
             result.get("temperature").is_none(),
@@ -1195,7 +1220,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, true).unwrap();
+        let result = anthropic_to_responses(input, None, true, true).unwrap();
 
         assert!(
             result.get("top_p").is_none(),
@@ -1212,7 +1237,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, true).unwrap();
+        let result = anthropic_to_responses(input, None, true, true).unwrap();
 
         assert_eq!(
             result["instructions"],
@@ -1246,7 +1271,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, true).unwrap();
+        let result = anthropic_to_responses(input, None, true, true).unwrap();
 
         assert_eq!(
             result["instructions"],
@@ -1270,7 +1295,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, true).unwrap();
+        let result = anthropic_to_responses(input, None, true, true).unwrap();
 
         assert_eq!(
             result["stream"],
@@ -1291,7 +1316,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert_eq!(result["temperature"], json!(0.7));
         assert_eq!(result["top_p"], json!(0.9));
@@ -1307,7 +1332,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert!(
             result.get("parallel_tool_calls").is_none(),

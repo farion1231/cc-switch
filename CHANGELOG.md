@@ -5,6 +5,40 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [3.14.1] - 2026-04-23
+
+Development since v3.14.0 focuses on Codex OAuth stability, tray usage visibility, Skills import/install reliability, Gemini session restore paths, and simplifying Hermes configuration health handling.
+
+**Stats**: 13 commits | 48 files changed | +1,883 insertions | -808 deletions
+
+### Added
+
+- **Tray Usage Visibility**: System tray submenus now show cached usage for the current Claude / Codex / Gemini provider, including subscription and script-based usage summaries with utilization color markers. Tray-triggered refreshes are throttled, limited to visible apps, and synchronized back into React Query so the main window and tray share fresh usage data (#2184).
+- **Tray Coding-Plan Usage (Kimi / Zhipu / MiniMax)**: System tray now renders 5-hour + weekly window usage for Chinese coding-plan providers using the same `🟢 h12% w80%` two-window layout as official subscription badges (worst utilization drives the emoji). Creating a Claude provider whose `ANTHROPIC_BASE_URL` matches a known coding-plan host now auto-injects `meta.usage_script`, so the tray lights up without opening the Usage Script modal. Existing `usage_script` values are preserved on update.
+- **Codex OAuth FAST Mode**: Added an explicit FAST mode toggle for Codex OAuth-backed Claude providers. When enabled, converted Responses requests send `service_tier="priority"` for lower latency; the toggle stays off by default to avoid unexpectedly increasing ChatGPT quota consumption (#2210).
+
+### Changed
+
+- **Session and Settings Layout Polish**: Hardened the scroll-area viewport with width containment to fix horizontal overflow, and tightened app bottom spacing plus settings footer spacing so long session/settings views fit more cleanly (#2201).
+
+### Removed
+
+- **Hermes Config Health Scanner**: Removed the in-app Hermes config health scanner, warning banner, `scan_hermes_config_health` command, `HermesHealthWarning` type, and `HermesWriteOutcome.warnings` payload. CC Switch now keeps the Hermes surface focused on active provider display, provider switching defaults, memory editing, and launching the Hermes Web UI for deep configuration.
+
+### Fixed
+
+- **Codex OAuth Cache Routing**: Stabilized ChatGPT Codex reverse-proxy cache identity by using client-provided session IDs for `prompt_cache_key` and Codex session headers, preserving explicit cache keys, and avoiding generated UUID cache churn (#2218).
+- **Codex OAuth Responses SSE Aggregation**: Non-streaming Anthropic clients now receive JSON even when the ChatGPT Codex upstream forces OpenAI Responses SSE; CC Switch aggregates the upstream SSE events before running the non-streaming transform (#2235).
+- **Codex OAuth Stream Check Parity**: Stream checks now build Codex OAuth test requests with the same `store: false`, encrypted reasoning include, and provider FAST mode setting as production proxy requests (#2210).
+- **Codex Model Extraction**: Replaced first-line regex matching with TOML parsing when reading Codex config models, so multiline TOML is handled correctly (#2227).
+- **Model Quick-Set / One-Click Config**: Model quick-set updates now apply against the latest provider form config, preventing stale state from making one-click configuration fail (#2249).
+- **Skills Import Duplicates**: The Skills import dialog disables actions while import is pending and the installed-skills cache deduplicates imported results by ID, preventing double-clicks from adding duplicate installed entries (#2139, #2211).
+- **Root-Level Skill Repos**: Skill install and update flows now consistently resolve three source patterns: direct nested paths, install-name recursive search, and repository-root `SKILL.md` sources (#2231).
+- **Gemini Session Restore Paths**: Gemini session scanning now reads `.project_root` metadata so restore flows can pass the original project directory when available (#2240).
+- **Provider Hover Names**: Provider icons now expose the provider name on hover for inline SVG, image URL, and fallback initials render paths (#2237).
+
 ## [3.14.0] - 2026-04-21
 
 Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class managed app, rolling out Claude Opus 4.7 across the preset matrix, adding a Gemini Native API proxy, and sharpening session, usage, and proxy workflows.

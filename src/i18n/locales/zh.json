@@ -938,7 +938,9 @@
     "addAnotherAccount": "添加其他账号",
     "logoutAll": "注销所有账号",
     "retry": "重试",
-    "copyCode": "复制代码"
+    "copyCode": "复制代码",
+    "fastMode": "FAST 模式",
+    "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。"
   },
   "endpointTest": {
     "title": "请求地址管理",
@@ -1689,25 +1691,11 @@
       "open": "打开 Hermes Web UI",
       "offline": "Hermes Web UI 未启动，请先运行 `hermes dashboard` 启动服务。",
       "openFailed": "打开 Hermes Web UI 失败",
-      "fixInWebUI": "在 Hermes Web UI 修复",
       "launchConfirmTitle": "Hermes Dashboard 未启动",
       "launchConfirmMessage": "是否打开终端并运行 `hermes dashboard` 启动服务？\n\n启动完成后会自动打开浏览器。\n\n若终端提示找不到 hermes 或缺少 web 依赖，请先运行：\npip install hermes-agent[web]",
       "launchConfirmAction": "打开终端并启动",
       "launching": "已在终端启动 hermes dashboard",
       "launchFailed": "打开终端失败"
-    },
-    "health": {
-      "title": "检测到 Hermes 配置警告",
-      "parseFailed": "config.yaml 无法解析为有效 YAML。请先修复文件再在此编辑。",
-      "configNotFound": "未找到 Hermes config.yaml。请在 ~/.hermes/config.yaml 创建或在设置中配置路径。",
-      "envParseFailed": ".env 文件无法解析。",
-      "modelNoDefault": "model 段未设置默认模型或供应商。",
-      "customProvidersNotList": "custom_providers 应为 YAML 列表（以 `-` 开头），而不是映射。",
-      "modelProviderUnknown": "model.provider 指向的供应商未在配置中找到。",
-      "modelDefaultNotInProvider": "model.default 指向的模型不在所选供应商的模型列表中。",
-      "duplicateProviderName": "custom_providers 中存在重复的供应商名，只会有一条生效。",
-      "duplicateProviderBaseUrl": "custom_providers 中存在重复的 base_url，可能是意外复制。",
-      "schemaMigratedV12": "Hermes 新版 schema 把部分供应商移到了 'providers:' dict。CC Switch 中以只读方式显示，编辑或删除请通过 Hermes Web UI 操作。"
     },
     "memory": {
       "title": "记忆管理",
