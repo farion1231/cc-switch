@@ -67,10 +67,7 @@ impl Provider {
     }
 
     pub fn is_codex_oauth(&self) -> bool {
-        self.meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("codex_oauth")
+        self.meta.as_ref().and_then(|m| m.provider_type.as_deref()) == Some("codex_oauth")
     }
 
     pub fn codex_fast_mode_enabled(&self) -> bool {
