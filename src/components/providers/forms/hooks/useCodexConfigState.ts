@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import {
   extractCodexBaseUrl,
+  extractCodexAuthEnvKey,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
   extractCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
@@ -27,6 +28,32 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
   const isUpdatingCodexModelNameRef = useRef(false);
+
+  const resolveCodexAuthKeyField = useCallback((configText: string): string => {
+    return extractCodexAuthEnvKey(configText) || "OPENAI_API_KEY";
+  }, []);
+
+  const readCodexApiKeyFromAuth = useCallback(
+    (auth: Record<string, unknown>, configText: string): string => {
+      const primaryKey = resolveCodexAuthKeyField(configText);
+      const candidates = [
+        primaryKey,
+        "OPENAI_API_KEY",
+        "AZURE_API_KEY",
+        "CODEX_API_KEY",
+      ];
+
+      for (const key of candidates) {
+        const value = auth[key];
+        if (typeof value === "string") {
+          return value;
+        }
+      }
+
+      return "";
+    },
+    [resolveCodexAuthKeyField],
+  );
 
   // 初始化 Codex 配置（编辑模式）
   useEffect(() => {
@@ -59,9 +86,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
 
       // 提取 API Key
       try {
-        if (auth && typeof auth.OPENAI_API_KEY === "string") {
-          setCodexApiKey(auth.OPENAI_API_KEY);
-        }
+        setCodexApiKey(readCodexApiKeyFromAuth(auth, configStr));
       } catch {
         // ignore
       }
@@ -90,11 +115,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const getCodexAuthApiKey = useCallback((authString: string): string => {
     try {
       const auth = JSON.parse(authString || "{}");
-      return typeof auth.OPENAI_API_KEY === "string" ? auth.OPENAI_API_KEY : "";
+      return readCodexApiKeyFromAuth(auth, codexConfig);
     } catch {
       return "";
     }
-  }, []);
+  }, [codexConfig, readCodexApiKeyFromAuth]);
 
   // 从 codexAuth 中提取并同步 API Key
   useEffect(() => {
@@ -146,13 +171,19 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexApiKey(trimmed);
       try {
         const auth = JSON.parse(codexAuth || "{}");
-        auth.OPENAI_API_KEY = trimmed;
+        const authKeyField = resolveCodexAuthKeyField(codexConfig);
+        auth[authKeyField] = trimmed;
+        for (const key of ["OPENAI_API_KEY", "AZURE_API_KEY", "CODEX_API_KEY"]) {
+          if (key !== authKeyField) {
+            delete auth[key];
+          }
+        }
         setCodexAuth(JSON.stringify(auth, null, 2));
       } catch {
         // ignore
       }
     },
-    [codexAuth, setCodexAuth],
+    [codexAuth, codexConfig, resolveCodexAuthKeyField, setCodexAuth],
   );
 
   // 处理 Codex Base URL 变化
@@ -230,16 +261,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
 
       // 提取 API Key
       try {
-        if (auth && typeof auth.OPENAI_API_KEY === "string") {
-          setCodexApiKey(auth.OPENAI_API_KEY);
-        } else {
-          setCodexApiKey("");
-        }
+        setCodexApiKey(readCodexApiKeyFromAuth(auth, config));
       } catch {
         setCodexApiKey("");
       }
     },
-    [setCodexAuth, setCodexConfig],
+    [readCodexApiKeyFromAuth, setCodexAuth, setCodexConfig],
   );
 
   return {

@@ -2195,8 +2195,24 @@ impl ProviderService {
                         )
                     })?;
 
+                let config_toml = provider
+                    .settings_config
+                    .get("config")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                let auth_key_name = Regex::new(r#"(?m)^\s*env_key\s*=\s*["']([^"']+)["']"#)
+                    .ok()
+                    .and_then(|re| re.captures(config_toml))
+                    .and_then(|caps| caps.get(1))
+                    .map(|m| m.as_str().trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "OPENAI_API_KEY".to_string());
+
                 let api_key = auth
-                    .get("OPENAI_API_KEY")
+                    .get(&auth_key_name)
+                    .or_else(|| auth.get("OPENAI_API_KEY"))
+                    .or_else(|| auth.get("AZURE_API_KEY"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
                         AppError::localized(
@@ -2206,12 +2222,6 @@ impl ProviderService {
                         )
                     })?
                     .to_string();
-
-                let config_toml = provider
-                    .settings_config
-                    .get("config")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
 
                 let base_url = if config_toml.contains("base_url") {
                     let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {
