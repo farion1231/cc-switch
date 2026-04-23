@@ -382,6 +382,9 @@ export function ProviderForm({
   const [selectedCodexAccountId, setSelectedCodexAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+  const [codexFastMode, setCodexFastMode] = useState<boolean>(
+    () => initialData?.meta?.codexFastMode ?? false,
+  );
 
   const {
     codexAuth,
@@ -1115,7 +1118,7 @@ export function ProviderForm({
     const providerType =
       templatePreset?.providerType || initialData?.meta?.providerType;
 
-    payload.meta = {
+    const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
       commonConfigEnabled:
         appId === "claude"
@@ -1146,6 +1149,7 @@ export function ProviderForm({
         isCopilotProvider && selectedGitHubAccountId
           ? selectedGitHubAccountId
           : undefined,
+      codexFastMode: isCodexOauthProvider ? codexFastMode : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
@@ -1169,6 +1173,12 @@ export function ProviderForm({
           ? true
           : undefined,
     };
+
+    if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
+      delete nextMeta.codexFastMode;
+    }
+
+    payload.meta = nextMeta;
 
     await onSubmit(payload);
   };
@@ -1735,6 +1745,8 @@ export function ProviderForm({
               isCodexOauthAuthenticated={isCodexOauthAuthenticated}
               selectedCodexAccountId={selectedCodexAccountId}
               onCodexAccountSelect={setSelectedCodexAccountId}
+              codexFastMode={codexFastMode}
+              onCodexFastModeChange={setCodexFastMode}
               templateValueEntries={templateValueEntries}
               templateValues={templateValues}
               templatePresetName={templatePreset?.name || ""}

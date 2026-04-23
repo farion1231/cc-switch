@@ -57,6 +57,8 @@ pub struct RequestContext {
     pub app_type: AppType,
     /// Session ID（从客户端请求提取或新生成）
     pub session_id: String,
+    /// Session ID 是否由客户端提供。生成的 UUID 不能作为上游缓存 key，否则每个请求都会换 key。
+    pub session_client_provided: bool,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -161,6 +163,7 @@ impl RequestContext {
             app_type_str,
             app_type,
             session_id,
+            session_client_provided: session_result.client_provided,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -223,6 +226,7 @@ impl RequestContext {
             state.app_handle.clone(),
             self.current_provider_id.clone(),
             self.session_id.clone(),
+            self.session_client_provided,
             first_byte_timeout,
             idle_timeout,
             self.rectifier_config.clone(),
