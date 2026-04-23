@@ -672,15 +672,16 @@ impl SkillService {
             repo_branch = used_branch;
 
             // 复制到 SSOT
-            let source = Self::resolve_skill_source_dir(&temp_dir, &skill.directory).ok_or_else(|| {
-                let missing = temp_dir.join(&source_rel).display().to_string();
-                let _ = fs::remove_dir_all(&temp_dir);
-                anyhow!(format_skill_error(
-                    "SKILL_DIR_NOT_FOUND",
-                    &[("path", &missing)],
-                    Some("checkRepoUrl"),
-                ))
-            })?;
+            let source =
+                Self::resolve_skill_source_dir(&temp_dir, &skill.directory).ok_or_else(|| {
+                    let missing = temp_dir.join(&source_rel).display().to_string();
+                    let _ = fs::remove_dir_all(&temp_dir);
+                    anyhow!(format_skill_error(
+                        "SKILL_DIR_NOT_FOUND",
+                        &[("path", &missing)],
+                        Some("checkRepoUrl"),
+                    ))
+                })?;
 
             let canonical_temp = temp_dir.canonicalize().unwrap_or_else(|_| temp_dir.clone());
             let canonical_source = source.canonicalize().map_err(|_| {
@@ -3024,9 +3025,8 @@ mod tests {
         let nested = temp.path().join("skills").join("nested-skill");
         write_skill(&nested, "Nested Skill");
 
-        let resolved =
-            SkillService::resolve_skill_source_dir(temp.path(), "skills/nested-skill")
-                .expect("nested skill should resolve from its relative source path");
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "skills/nested-skill")
+            .expect("nested skill should resolve from its relative source path");
 
         assert_eq!(resolved, nested);
     }
