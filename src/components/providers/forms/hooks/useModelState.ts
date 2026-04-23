@@ -62,6 +62,8 @@ export function useModelState({
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);
   const latestConfigRef = useRef(settingsConfig);
+  
+  latestConfigRef.current = settingsConfig;
 
   // 初始化读取：读新键；若缺失，按兼容优先级回退
   // Haiku: DEFAULT_HAIKU || SMALL_FAST || MODEL
@@ -69,8 +71,6 @@ export function useModelState({
   // Opus: DEFAULT_OPUS || MODEL || SMALL_FAST
   // 仅在 settingsConfig 变化时同步一次（表单加载/切换预设时）
   useEffect(() => {
-    latestConfigRef.current = settingsConfig;
-
     if (lastConfigRef.current === settingsConfig) {
       return;
     }
