@@ -360,10 +360,20 @@ impl StreamCheckService {
             .as_ref()
             .and_then(|m| m.provider_type.as_deref())
             == Some("codex_oauth");
+        let codex_fast_mode = provider
+            .meta
+            .as_ref()
+            .map(|m| m.codex_fast_mode_enabled())
+            .unwrap_or(false);
 
         let body = if is_openai_responses {
-            anthropic_to_responses(anthropic_body, Some(&provider.id), is_codex_oauth)
-                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+            anthropic_to_responses(
+                anthropic_body,
+                Some(&provider.id),
+                is_codex_oauth,
+                codex_fast_mode,
+            )
+            .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_gemini_native {
             anthropic_to_gemini(anthropic_body)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
