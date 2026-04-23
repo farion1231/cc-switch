@@ -172,17 +172,59 @@ fn format_subscription_summary(
     Some(format!("{emoji} {body}"))
 }
 
+fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
+    match (data.used, data.total) {
+        (Some(used), Some(total)) if total > 0.0 => Some(used / total * 100.0),
+        _ => None,
+    }
+}
+
 fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String> {
+    use crate::services::subscription::{TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT};
+
     if !result.success {
         return None;
     }
-    let data = result.data.as_ref()?.first()?;
-    let pct = match (data.used, data.total) {
-        (Some(used), Some(total)) if total > 0.0 => used / total * 100.0,
-        _ => return None,
-    };
+    let data = result.data.as_ref()?;
+    if data.is_empty() {
+        return None;
+    }
+
+    // commands::provider 的 token_plan 分支把 SubscriptionQuota 的每个 tier
+    // 扁平化为一条 UsageData（plan_name 承载 tier 名），所以这里按 plan_name
+    // 识别双桶形态，其余 usage 结果（Copilot / balance / 自定义脚本）走 fallback。
+    const TOKEN_PLAN_LABELS: &[(&str, &str)] = &[(TIER_FIVE_HOUR, "h"), (TIER_WEEKLY_LIMIT, "w")];
+
+    let mut parts: Vec<(&'static str, f64)> = Vec::new();
+    for &(tier_name, label) in TOKEN_PLAN_LABELS {
+        let Some(d) = data
+            .iter()
+            .find(|d| d.plan_name.as_deref() == Some(tier_name))
+        else {
+            continue;
+        };
+        if let Some(u) = tier_pct(d) {
+            parts.push((label, u));
+        }
+    }
+    if !parts.is_empty() {
+        let worst = parts
+            .iter()
+            .map(|(_, u)| *u)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let emoji = emoji_for_utilization(worst);
+        let body = parts
+            .iter()
+            .map(|(label, u)| format!("{label}{}%", u.round() as i64))
+            .collect::<Vec<_>>()
+            .join(" ");
+        return Some(format!("{emoji} {body}"));
+    }
+
+    let first = data.first()?;
+    let pct = tier_pct(first)?;
     let emoji = emoji_for_utilization(pct);
-    let plan = data.plan_name.as_deref().unwrap_or("");
+    let plan = first.plan_name.as_deref().unwrap_or("");
     let rounded = pct.round() as i64;
     if plan.is_empty() {
         Some(format!("{} {}%", emoji, rounded))
@@ -805,8 +847,11 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_subscription_summary, TRAY_ID};
-    use crate::services::subscription::{CredentialStatus, QuotaTier, SubscriptionQuota};
+    use super::{format_script_summary, format_subscription_summary, TRAY_ID};
+    use crate::provider::{UsageData, UsageResult};
+    use crate::services::subscription::{
+        CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT,
+    };
 
     #[test]
     fn tray_id_is_unique_to_app() {
@@ -933,5 +978,103 @@ mod tests {
         // 完全没有 pro/flash/flash_lite 三种 tier 的退化响应 → None。
         let quota = make_quota("gemini", true, vec![tier("some_future_tier", 80.0)]);
         assert!(format_subscription_summary(&quota).is_none());
+    }
+
+    fn usage_data(plan_name: Option<&str>, utilization: f64) -> UsageData {
+        UsageData {
+            plan_name: plan_name.map(String::from),
+            extra: None,
+            is_valid: Some(true),
+            invalid_message: None,
+            total: Some(100.0),
+            used: Some(utilization),
+            remaining: Some(100.0 - utilization),
+            unit: Some("%".to_string()),
+        }
+    }
+
+    fn usage_result(success: bool, data: Vec<UsageData>) -> UsageResult {
+        UsageResult {
+            success,
+            data: if data.is_empty() { None } else { Some(data) },
+            error: None,
+        }
+    }
+
+    #[test]
+    fn script_summary_token_plan_two_tiers() {
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 12.0),
+                usage_data(Some(TIER_WEEKLY_LIMIT), 80.0),
+            ],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("h12%"), "expected h12% in {s}");
+        assert!(s.contains("w80%"), "expected w80% in {s}");
+        assert!(s.starts_with("\u{1F7E0}"), "expected orange emoji in {s}");
+    }
+
+    #[test]
+    fn script_summary_token_plan_worst_drives_emoji() {
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 20.0),
+                usage_data(Some(TIER_WEEKLY_LIMIT), 95.0),
+            ],
+        );
+        let s = format_script_summary(&r).unwrap();
+        assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
+    }
+
+    #[test]
+    fn script_summary_token_plan_five_hour_only() {
+        let r = usage_result(true, vec![usage_data(Some(TIER_FIVE_HOUR), 8.0)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("h8%"), "expected h8% in {s}");
+        assert!(
+            !s.contains("plan_name"),
+            "plan_name should not leak into label: {s}"
+        );
+    }
+
+    #[test]
+    fn script_summary_token_plan_weekly_only() {
+        let r = usage_result(true, vec![usage_data(Some(TIER_WEEKLY_LIMIT), 50.0)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("w50%"), "expected w50% in {s}");
+    }
+
+    #[test]
+    fn script_summary_single_bucket_fallback_with_plan_name() {
+        let r = usage_result(true, vec![usage_data(Some("Copilot Pro"), 40.0)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("Copilot Pro"), "expected plan name in {s}");
+        assert!(s.contains("40%"), "expected 40% in {s}");
+        assert!(
+            !s.contains("h40%"),
+            "must not relabel non-token-plan data as h: {s}"
+        );
+    }
+
+    #[test]
+    fn script_summary_single_bucket_fallback_without_plan_name() {
+        let r = usage_result(true, vec![usage_data(None, 15.0)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert_eq!(s, "\u{1F7E2} 15%", "expected emoji + pct only, got {s}");
+    }
+
+    #[test]
+    fn script_summary_failure_returns_none() {
+        let r = usage_result(false, vec![usage_data(Some(TIER_FIVE_HOUR), 12.0)]);
+        assert!(format_script_summary(&r).is_none());
+    }
+
+    #[test]
+    fn script_summary_empty_data_returns_none() {
+        let r = usage_result(true, vec![]);
+        assert!(format_script_summary(&r).is_none());
     }
 }

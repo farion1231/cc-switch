@@ -297,6 +297,10 @@ pub const TIER_SEVEN_DAY: &str = "seven_day";
 pub const TIER_SEVEN_DAY_OPUS: &str = "seven_day_opus";
 pub const TIER_SEVEN_DAY_SONNET: &str = "seven_day_sonnet";
 
+/// Coding Plan（Kimi / MiniMax）的周窗口 tier 名。与 `coding_plan::query_*`
+/// 写入、tray 渲染、commands::provider 扁平化三处共用同一标识。
+pub const TIER_WEEKLY_LIMIT: &str = "weekly_limit";
+
 /// Gemini 用量分组名称（按模型而非时间窗口）。`classify_gemini_model` 输出。
 pub const TIER_GEMINI_PRO: &str = "gemini_pro";
 pub const TIER_GEMINI_FLASH: &str = "gemini_flash";
