@@ -869,7 +869,8 @@ fn should_write_temp_claude_config(
     env_vars: &[(String, String)],
     claude_profile_dir: Option<&str>,
 ) -> bool {
-    claude_profile_dir.is_none() && !env_vars.is_empty()
+    let _ = claude_profile_dir;
+    !env_vars.is_empty()
 }
 
 /// 创建临时配置文件并启动 claude 终端
@@ -968,18 +969,36 @@ fn build_unix_claude_launch_script(
     let script_path = shell_single_quote(&script_file.to_string_lossy());
 
     if let Some(profile_dir) = claude_profile_dir {
+        let config_fragment = config_file
+            .map(|config_file| {
+                let config_path = shell_single_quote(&config_file.to_string_lossy());
+                format!(
+                    r#"echo "Using provider-specific claude config:"
+echo {config_path}
+claude --settings {config_path}
+"#,
+                    config_path = config_path,
+                )
+            })
+            .unwrap_or_else(|| "claude\n".to_string());
+        let cleanup = config_file
+            .map(|config_file| {
+                let config_path = shell_single_quote(&config_file.to_string_lossy());
+                format!("trap 'rm -f {config_path} {script_path}' EXIT")
+            })
+            .unwrap_or_else(|| format!("trap 'rm -f {script_path}' EXIT"));
         return format!(
             r#"#!/bin/bash
-trap 'rm -f {script_path}' EXIT
+{cleanup}
 {cd_command}export CLAUDE_CONFIG_DIR={profile_dir}
 echo "Using Claude profile dir:"
 echo "$CLAUDE_CONFIG_DIR"
-claude
-exec bash --norc --noprofile
+{config_fragment}exec bash --norc --noprofile
 "#,
-            script_path = script_path,
+            cleanup = cleanup,
             cd_command = cd_command,
             profile_dir = shell_single_quote(profile_dir),
+            config_fragment = config_fragment,
         );
     }
 
@@ -1278,17 +1297,31 @@ fn launch_windows_terminal(
 
     let content = if let Some(profile_dir) = claude_profile_dir {
         let escaped_profile_dir = escape_windows_batch_value(profile_dir);
+        let config_fragment = if let Some(config_file) = config_file {
+            let config_path_for_batch =
+                escape_windows_batch_value(&config_file.to_string_lossy());
+            format!(
+"echo Using provider-specific claude config:
+echo {config_path_for_batch}
+claude --settings \"{config_path_for_batch}\"
+del \"{config_path_for_batch}\" >nul 2>&1
+",
+                config_path_for_batch = config_path_for_batch,
+            )
+        } else {
+            "claude\n".to_string()
+        };
         format!(
             "@echo off
 {cwd_command}
 set \"CLAUDE_CONFIG_DIR={escaped_profile_dir}\"
 echo Using Claude profile dir:
 echo %CLAUDE_CONFIG_DIR%
-claude
-del \"%~f0\" >nul 2>&1
+{config_fragment}del \"%~f0\" >nul 2>&1
 ",
             cwd_command = cwd_command,
             escaped_profile_dir = escaped_profile_dir,
+            config_fragment = config_fragment,
         )
     } else if let Some(config_file) = config_file {
         let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
@@ -1671,18 +1704,18 @@ mod tests {
     }
 
     #[test]
-    fn profile_dir_mode_skips_temp_claude_config_file() {
+    fn profile_dir_mode_still_writes_temp_claude_config_file_when_env_exists() {
         let env_vars = vec![(
             "ANTHROPIC_AUTH_TOKEN".to_string(),
             "secret-token".to_string(),
         )];
 
         assert!(
-            !should_write_temp_claude_config(
+            should_write_temp_claude_config(
                 &env_vars,
                 Some(r"C:\Users\test\.claude-profiles\api")
             ),
-            "profile-dir launches should not leave temporary provider config files behind"
+            "profile-dir launches should still create a temporary provider config when provider env exists"
         );
     }
 
@@ -1709,6 +1742,20 @@ mod tests {
         assert!(script.contains("claude\n"));
         assert!(!script.contains("--settings"));
         assert!(!script.contains("claude_"));
+    }
+
+    #[test]
+    fn unix_profile_dir_mode_can_overlay_provider_settings_file() {
+        let script = build_unix_claude_launch_script(
+            Some(Path::new("/tmp/claude_provider.json")),
+            Path::new("/tmp/launcher.sh"),
+            Some(Path::new("/tmp/project")),
+            Some("/tmp/.claude-profiles/api"),
+        );
+
+        assert!(script.contains("export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api'"));
+        assert!(script.contains("claude --settings '/tmp/claude_provider.json'"));
+        assert!(script.contains("rm -f '/tmp/claude_provider.json' '/tmp/launcher.sh'"));
     }
 
     #[test]

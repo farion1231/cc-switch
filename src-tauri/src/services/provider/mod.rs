@@ -728,6 +728,52 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn startup_sync_rejects_missing_profile_only_directory() {
+        with_test_home(|state, home| {
+            let broken_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token",
+                "https://provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(
+                        home.join(".claude-profiles")
+                            .join("missing-official")
+                            .to_string_lossy()
+                            .to_string(),
+                    ),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &broken_provider)
+                .expect("save broken provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-official"))
+                .expect("set local current provider");
+
+            let err = ProviderService::sync_current_claude_profile_env(state)
+                .expect_err("startup sync should fail when profile-only dir is missing");
+
+            assert!(
+                err.to_string().contains("profile"),
+                "expected missing profile error, got {err:?}"
+            );
+            assert!(
+                crate::settings::get_claude_override_dir().is_none(),
+                "failed startup sync should not mutate the Claude override dir"
+            );
+        });
+    }
+
+    #[test]
     fn extract_credentials_returns_expected_values() {
         let provider = Provider::with_id(
             "claude".into(),
@@ -1470,6 +1516,23 @@ impl ProviderService {
         .map_err(AppError::Message)
     }
 
+    fn validate_claude_runtime_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
+        if matches!(plan.activation_mode, ClaudeActivationMode::ProfileOnly) {
+            let profile_dir = plan.override_dir.as_deref().ok_or_else(|| {
+                AppError::Message(
+                    "Claude profile switching requires a profile directory".to_string(),
+                )
+            })?;
+            if !PathBuf::from(profile_dir).exists() {
+                return Err(AppError::Message(format!(
+                    "Claude profile directory does not exist: {profile_dir}"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     fn rollback_claude_switch(
         state: &AppState,
         rollback: &ClaudeRollbackState,
@@ -2176,20 +2239,8 @@ impl ProviderService {
 
         let switch_result = (|| -> Result<(), AppError> {
             if let Some(plan) = claude_switch_plan.as_ref() {
+                Self::validate_claude_runtime_switch_plan(plan)?;
                 Self::apply_claude_switch_plan(plan)?;
-
-                if matches!(plan.activation_mode, ClaudeActivationMode::ProfileOnly) {
-                    let profile_dir = plan.override_dir.as_ref().ok_or_else(|| {
-                        AppError::Message(
-                            "Claude profile switching requires a profile directory".to_string(),
-                        )
-                    })?;
-                    if !PathBuf::from(profile_dir).exists() {
-                        return Err(AppError::Message(format!(
-                            "Claude profile directory does not exist: {profile_dir}"
-                        )));
-                    }
-                }
             }
 
             // Additive mode apps skip setting is_current (no such concept)
@@ -2358,6 +2409,7 @@ impl ProviderService {
         };
 
         let plan = Self::claude_switch_plan(provider);
+        Self::validate_claude_runtime_switch_plan(&plan)?;
         Self::apply_claude_switch_plan(&plan)
     }
 
