@@ -528,7 +528,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["model"], "gpt-4o");
         assert_eq!(result["max_output_tokens"], 1024);
         assert_eq!(result["input"][0]["role"], "user");
@@ -547,7 +547,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["instructions"], "You are a helpful assistant.");
         // system should not appear in input
         assert_eq!(result["input"].as_array().unwrap().len(), 1);
@@ -565,7 +565,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["instructions"], "Part 1\n\nPart 2");
     }
 
@@ -582,7 +582,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["name"], "get_weather");
         assert!(result["tools"][0].get("parameters").is_some());
@@ -599,7 +599,7 @@ mod tests {
             "tool_choice": {"type": "any"}
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"], "required");
     }
 
@@ -612,7 +612,7 @@ mod tests {
             "tool_choice": {"type": "tool", "name": "get_weather"}
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"]["type"], "function");
         assert_eq!(result["tool_choice"]["name"], "get_weather");
     }
@@ -631,7 +631,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         let input_arr = result["input"].as_array().unwrap();
 
         // Should produce: assistant message (text) + function_call item
@@ -661,7 +661,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         let input_arr = result["input"].as_array().unwrap();
 
         // Should produce: function_call_output item (lifted)
@@ -685,7 +685,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         let input_arr = result["input"].as_array().unwrap();
 
         // thinking should be discarded, only text remains
@@ -708,7 +708,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         let content = result["input"][0]["content"].as_array().unwrap();
 
         assert_eq!(content[0]["type"], "input_text");
@@ -866,7 +866,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["model"], "o3-mini");
     }
 
@@ -878,7 +878,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, Some("my-provider-id"), false, true).unwrap();
+        let result = anthropic_to_responses(input, Some("my-provider-id"), false, false).unwrap();
         assert_eq!(result["prompt_cache_key"], "my-provider-id");
     }
 
@@ -896,7 +896,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert!(result["tools"][0].get("cache_control").is_none());
     }
 
@@ -913,7 +913,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert!(result["input"][0]["content"][0]
             .get("cache_control")
             .is_none());
@@ -975,7 +975,7 @@ mod tests {
             "max_tokens": 4096,
             "messages": [{"role": "user", "content": "Hello"}]
         });
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["max_output_tokens"], 4096);
         assert!(result.get("max_completion_tokens").is_none());
     }
@@ -989,7 +989,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
     }
 
@@ -1003,7 +1003,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "low");
     }
 
@@ -1016,7 +1016,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "low");
     }
 
@@ -1029,7 +1029,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "medium");
     }
 
@@ -1042,7 +1042,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "high");
     }
 
@@ -1055,7 +1055,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
     }
 
@@ -1068,7 +1068,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert!(result.get("reasoning").is_none());
     }
 
@@ -1102,7 +1102,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert!(result.get("store").is_none());
         assert!(result.get("service_tier").is_none());
@@ -1184,7 +1184,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert_eq!(result["max_output_tokens"], json!(1024));
     }
@@ -1316,7 +1316,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert_eq!(result["temperature"], json!(0.7));
         assert_eq!(result["top_p"], json!(0.9));
@@ -1332,7 +1332,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, None, false, true).unwrap();
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
 
         assert!(
             result.get("parallel_tool_calls").is_none(),

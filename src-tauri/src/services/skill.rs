@@ -940,10 +940,6 @@ impl SkillService {
                     None => continue,
                 };
 
-                if !remote_skill_dir.is_dir() {
-                    continue;
-                }
-
                 let remote_hash = match Self::compute_dir_hash(&remote_skill_dir) {
                     Ok(h) => h,
                     Err(e) => {

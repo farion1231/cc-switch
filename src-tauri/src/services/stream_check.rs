@@ -355,16 +355,8 @@ impl StreamCheckService {
         });
         // Codex OAuth (ChatGPT Plus/Pro 反代) 需要 store:false + include 标记，
         // 否则 Stream Check 会和生产路径一样被服务端 400 拒绝。
-        let is_codex_oauth = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("codex_oauth");
-        let codex_fast_mode = provider
-            .meta
-            .as_ref()
-            .map(|m| m.codex_fast_mode_enabled())
-            .unwrap_or(false);
+        let is_codex_oauth = provider.is_codex_oauth();
+        let codex_fast_mode = provider.codex_fast_mode_enabled();
 
         let body = if is_openai_responses {
             anthropic_to_responses(
