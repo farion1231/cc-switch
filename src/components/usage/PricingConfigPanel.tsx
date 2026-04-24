@@ -363,6 +363,17 @@ export function PricingConfigPanel() {
             </Alert>
           ) : (
             <div className="rounded-md bg-card/60 shadow-sm">
+              {isSearchOpen && (
+                <div className="p-3 border-b">
+                  <Input
+                    placeholder={t("usage.searchModelPlaceholder")}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="h-8"
+                    autoFocus
+                  />
+                </div>
+              )}
               <Table>
                 <TableHeader>
                   <TableRow>
