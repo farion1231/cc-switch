@@ -822,6 +822,11 @@
     "fillConfigContent": "設定内容を入力してください",
     "fillParameter": "{{label}} を入力してください",
     "fillTemplateValue": "{{label}} を入力してください",
+    "templateHints": {
+      "cloudflareAccountId": "Cloudflare ダッシュボード → AI Gateway ページ上部で Account ID を確認できます",
+      "cloudflareGatewayName": "AI Gateway の名前。Cloudflare のデフォルトは \"default\"",
+      "cloudflareAigToken": "任意。AI Gateway → アクセス制御 で作成し、ゲートウェイへのアクセスを制限します"
+    },
     "endpointRequired": "公式以外は API エンドポイントが必須です",
     "apiKeyRequired": "公式以外は API Key が必須です",
     "configJsonError": "Config JSON の形式が正しくありません。構文を確認してください",

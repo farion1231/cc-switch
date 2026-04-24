@@ -428,6 +428,21 @@ impl StreamCheckService {
                 .header("content-type", "application/json")
                 .header("accept", "text/event-stream")
                 .header("accept-encoding", "identity");
+        } else if auth.strategy == AuthStrategy::XApiKey {
+            request_builder = request_builder.header("x-api-key", &auth.api_key);
+            if let Some(cf_token) = &auth.access_token {
+                request_builder = request_builder
+                    .header("cf-aig-authorization", format!("Bearer {cf_token}"));
+            }
+            request_builder = request_builder
+                .header("anthropic-version", "2023-06-01")
+                .header(
+                    "anthropic-beta",
+                    "claude-code-20250219,interleaved-thinking-2025-05-14",
+                )
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .header("accept-encoding", "identity");
         } else {
             // Anthropic native: full Claude CLI headers
             let os_name = Self::get_os_name();

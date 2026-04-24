@@ -274,6 +274,35 @@ impl ClaudeAdapter {
         get_claude_api_format(provider)
     }
 
+    /// 检测是否为 Cloudflare AI Gateway 或需要 x-api-key 的代理
+    fn is_x_api_key_mode(&self, provider: &Provider) -> bool {
+        if let Some(auth_mode) = provider
+            .settings_config
+            .get("auth_mode")
+            .and_then(|v| v.as_str())
+        {
+            if auth_mode == "x_api_key" {
+                return true;
+            }
+        }
+
+        if let Some(env) = provider.settings_config.get("env") {
+            if let Some(auth_mode) = env.get("AUTH_MODE").and_then(|v| v.as_str()) {
+                if auth_mode == "x_api_key" {
+                    return true;
+                }
+            }
+        }
+
+        if let Ok(base_url) = self.extract_base_url(provider) {
+            if base_url.contains("gateway.ai.cloudflare.com") {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// 检测是否为仅 Bearer 认证模式
     fn is_bearer_only_mode(&self, provider: &Provider) -> bool {
         // 检查 settings_config 中的 auth_mode
@@ -439,6 +468,23 @@ impl ProviderAdapter for ClaudeAdapter {
 
         let key = self.extract_key(provider)?;
 
+        if self.is_x_api_key_mode(provider) {
+            let cf_aig_token = provider
+                .settings_config
+                .get("env")
+                .and_then(|e| {
+                    e.get("CF_AIG_TOKEN")
+                        .or_else(|| e.get("CLOUDFLARE_AIG_TOKEN"))
+                })
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let mut auth_info = AuthInfo::new(key, AuthStrategy::XApiKey);
+            auth_info.access_token = cf_aig_token;
+            return Some(auth_info);
+        }
+
         match provider_type {
             ProviderType::GeminiCli => {
                 // Parse stored OAuth JSON and only attach access_token when
@@ -514,6 +560,23 @@ impl ProviderAdapter for ClaudeAdapter {
                     HeaderName::from_static("authorization"),
                     HeaderValue::from_str(&bearer).unwrap(),
                 )]
+            }
+            AuthStrategy::XApiKey => {
+                let mut headers = vec![(
+                    HeaderName::from_static("x-api-key"),
+                    HeaderValue::from_str(&auth.api_key).unwrap(),
+                )];
+                if let Some(cf_token) = &auth.access_token {
+                    if let Ok(hv) =
+                        HeaderValue::from_str(&format!("Bearer {cf_token}"))
+                    {
+                        headers.push((
+                            HeaderName::from_static("cf-aig-authorization"),
+                            hv,
+                        ));
+                    }
+                }
+                headers
             }
             AuthStrategy::Google => vec![(
                 HeaderName::from_static("x-goog-api-key"),
@@ -1452,5 +1515,111 @@ mod tests {
                 .unwrap();
 
         assert_eq!(transformed["prompt_cache_key"], "claude-cache-route");
+    }
+
+    #[test]
+    fn test_cloudflare_ai_gateway_auto_detected_by_url() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://gateway.ai.cloudflare.com/v1/abc/claude-code/anthropic",
+                "ANTHROPIC_API_KEY": "sk-ant-test"
+            }
+        }));
+
+        assert!(adapter.is_x_api_key_mode(&provider));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::XApiKey);
+        assert_eq!(auth.api_key, "sk-ant-test");
+        assert!(auth.access_token.is_none());
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "x-api-key");
+        assert_eq!(headers[0].1.to_str().unwrap(), "sk-ant-test");
+    }
+
+    #[test]
+    fn test_cloudflare_ai_gateway_with_cf_aig_token() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://gateway.ai.cloudflare.com/v1/abc/claude-code/anthropic",
+                "ANTHROPIC_API_KEY": "sk-ant-real-key",
+                "CF_AIG_TOKEN": "cfut_test_token"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::XApiKey);
+        assert_eq!(auth.api_key, "sk-ant-real-key");
+        assert_eq!(auth.access_token.as_deref(), Some("cfut_test_token"));
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 2);
+
+        let x_api_key = headers.iter().find(|(k, _)| k.as_str() == "x-api-key").unwrap();
+        assert_eq!(x_api_key.1.to_str().unwrap(), "sk-ant-real-key");
+
+        let cf_auth = headers.iter().find(|(k, _)| k.as_str() == "cf-aig-authorization").unwrap();
+        assert_eq!(cf_auth.1.to_str().unwrap(), "Bearer cfut_test_token");
+    }
+
+    #[test]
+    fn test_x_api_key_mode_via_auth_mode_setting() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://some-proxy.example.com",
+                "ANTHROPIC_API_KEY": "sk-test-key"
+            },
+            "auth_mode": "x_api_key"
+        }));
+
+        assert!(adapter.is_x_api_key_mode(&provider));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::XApiKey);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers[0].0.as_str(), "x-api-key");
+    }
+
+    #[test]
+    fn test_cloudflare_ai_gateway_does_not_send_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://gateway.ai.cloudflare.com/v1/abc/my-gateway/anthropic",
+                "ANTHROPIC_API_KEY": "sk-ant-real"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        let headers = adapter.get_auth_headers(&auth);
+
+        let has_authorization = headers.iter().any(|(k, _)| k.as_str() == "authorization");
+        let has_x_api_key = headers.iter().any(|(k, _)| k.as_str() == "x-api-key");
+        assert!(!has_authorization, "CF AI Gateway must not send Authorization: Bearer");
+        assert!(has_x_api_key, "CF AI Gateway must send x-api-key");
+    }
+
+    #[test]
+    fn test_non_cf_url_still_uses_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_API_KEY": "sk-ant-test"
+            }
+        }));
+
+        assert!(!adapter.is_x_api_key_mode(&provider));
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers[0].0.as_str(), "authorization");
     }
 }
