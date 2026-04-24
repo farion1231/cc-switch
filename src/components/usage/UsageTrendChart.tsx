@@ -89,7 +89,7 @@ function normalizeModel(stat: ModelStats) {
     cacheCreationTokens,
     cacheReadTokens,
     totalTokens,
-    promptTokens: inputTokens + cacheCreationTokens,
+    promptTokens: inputTokens + cacheCreationTokens + cacheReadTokens,
   };
 }
 
@@ -179,10 +179,7 @@ export function UsageTrendChart({
     return (trends ?? []).map((stat) => {
       const pointDate = new Date(stat.date);
       const tokens =
-        stat.totalInputTokens +
-        stat.totalOutputTokens +
-        stat.totalCacheCreationTokens +
-        stat.totalCacheReadTokens;
+        stat.totalTokens ?? stat.totalInputTokens + stat.totalOutputTokens;
 
       return {
         rawDate: stat.date,
@@ -212,10 +209,7 @@ export function UsageTrendChart({
       (heatmapTrends ?? []).map((stat) => {
         const pointDate = new Date(stat.date);
         const tokens =
-          stat.totalInputTokens +
-          stat.totalOutputTokens +
-          stat.totalCacheCreationTokens +
-          stat.totalCacheReadTokens;
+          stat.totalTokens ?? stat.totalInputTokens + stat.totalOutputTokens;
 
         return {
           rawDate: stat.date,
@@ -243,8 +237,7 @@ export function UsageTrendChart({
     const outputTokens = summary?.totalOutputTokens ?? 0;
     const cacheCreationTokens = summary?.totalCacheCreationTokens ?? 0;
     const cacheReadTokens = summary?.totalCacheReadTokens ?? 0;
-    const totalTokens =
-      inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens;
+    const totalTokens = inputTokens + outputTokens;
     const promptTokens = inputTokens + cacheCreationTokens + cacheReadTokens;
     const activePeriods = trendData.filter((item) => item.tokens > 0).length;
     const peak = trendData.reduce(
