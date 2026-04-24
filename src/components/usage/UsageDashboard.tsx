@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { UsageSummaryCards } from "./UsageSummaryCards";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
-import type { AppTypeFilter, UsageRangeSelection } from "@/types/usage";
+import type { AppTypeFilter, UsageRangeSelection, UsageRangePreset } from "@/types/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
@@ -37,10 +37,65 @@ const APP_FILTER_OPTIONS: AppTypeFilter[] = [
   "gemini",
 ];
 
+const STORAGE_KEY = "cc-switch-last-usage-range";
+
+function loadSavedRange(): UsageRangeSelection {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return { preset: "today" };
+
+    const parsed = JSON.parse(saved) as unknown;
+
+    // Validate structure
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "preset" in parsed &&
+      typeof parsed.preset === "string"
+    ) {
+      const preset = parsed.preset as UsageRangePreset;
+      const validPresets: UsageRangePreset[] = [
+        "today",
+        "1d",
+        "7d",
+        "14d",
+        "30d",
+        "custom",
+      ];
+
+      if (validPresets.includes(preset)) {
+        if (preset === "custom") {
+          if (
+            "customStartDate" in parsed &&
+            typeof parsed.customStartDate === "number" &&
+            "customEndDate" in parsed &&
+            typeof parsed.customEndDate === "number"
+          ) {
+            return {
+              preset: "custom",
+              customStartDate: parsed.customStartDate,
+              customEndDate: parsed.customEndDate,
+            };
+          }
+          // Invalid custom range, fall back to today
+          return { preset: "today" };
+        }
+        return { preset };
+      }
+    }
+
+    // Invalid format, fall back
+    return { preset: "today" };
+  } catch {
+    // Ignore errors, fall back to default
+    return { preset: "today" };
+  }
+}
+
 export function UsageDashboard() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<UsageRangeSelection>({ preset: "today" });
+  const [range, setRange] = useState<UsageRangeSelection>(loadSavedRange());
   const [appType, setAppType] = useState<AppTypeFilter>("all");
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
 
@@ -68,6 +123,14 @@ export function UsageDashboard() {
       resolvedRange.endDate * 1000,
     ).toLocaleString(locale)}`;
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(range));
+    } catch {
+      // Ignore storage errors (e.g., private browsing mode where storage is disabled)
+    }
+  }, [range]);
 
   return (
     <motion.div
