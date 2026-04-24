@@ -421,13 +421,6 @@ impl StreamCheckService {
                     .header("accept", "text/event-stream")
                     .header("accept-encoding", "identity"),
             };
-        } else if is_openai_chat || is_openai_responses {
-            // OpenAI-compatible targets: Bearer auth + SSE headers only
-            request_builder = request_builder
-                .header("authorization", format!("Bearer {}", auth.api_key))
-                .header("content-type", "application/json")
-                .header("accept", "text/event-stream")
-                .header("accept-encoding", "identity");
         } else if auth.strategy == AuthStrategy::XApiKey {
             request_builder = request_builder.header("x-api-key", &auth.api_key);
             if let Some(cf_token) = &auth.access_token {
@@ -442,6 +435,13 @@ impl StreamCheckService {
                 )
                 .header("content-type", "application/json")
                 .header("accept", "application/json")
+                .header("accept-encoding", "identity");
+        } else if is_openai_chat || is_openai_responses {
+            // OpenAI-compatible targets: Bearer auth + SSE headers only
+            request_builder = request_builder
+                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
                 .header("accept-encoding", "identity");
         } else {
             // Anthropic native: full Claude CLI headers

@@ -9,6 +9,7 @@ export interface TemplateValueConfig {
   defaultValue?: string;
   editorValue: string;
   hint?: string;
+  optional?: boolean;
 }
 
 /**
@@ -1040,6 +1041,7 @@ export const providerPresets: ProviderPreset[] = [
         placeholder: "cfut_...",
         editorValue: "",
         hint: "providerForm.templateHints.cloudflareAigToken",
+        optional: true,
       },
     },
     icon: "cloudflare",

@@ -281,16 +281,12 @@ impl ClaudeAdapter {
             .get("auth_mode")
             .and_then(|v| v.as_str())
         {
-            if auth_mode == "x_api_key" {
-                return true;
-            }
+            return auth_mode == "x_api_key";
         }
 
         if let Some(env) = provider.settings_config.get("env") {
             if let Some(auth_mode) = env.get("AUTH_MODE").and_then(|v| v.as_str()) {
-                if auth_mode == "x_api_key" {
-                    return true;
-                }
+                return auth_mode == "x_api_key";
             }
         }
 
