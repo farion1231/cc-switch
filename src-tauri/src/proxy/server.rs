@@ -51,6 +51,8 @@ pub struct ProxyServer {
     shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
     /// 服务器任务句柄，用于等待服务器实际关闭
     server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
+    /// failback manager 注入任务，等待完成后 proxy 才接受请求
+    pub settle_join: Option<JoinHandle<()>>,
 }
 
 impl ProxyServer {
@@ -62,7 +64,15 @@ impl ProxyServer {
         // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
         // 创建故障转移切换管理器
-        let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
+        let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone(), app_handle.clone()));
+        // [FO-BACK] 异步注入回切管理器，写入完成后 caller 应 await settle_join
+        let provider_router_clone = provider_router.clone();
+        let failover_manager_clone = failover_manager.clone();
+        let settle_join = tokio::spawn(async move {
+            provider_router_clone
+                .set_failover_switch_manager(failover_manager_clone)
+                .await;
+        });
 
         let state = ProxyState {
             db,
@@ -81,6 +91,7 @@ impl ProxyServer {
             state,
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
+            settle_join: Some(settle_join),
         }
     }
 

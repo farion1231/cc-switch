@@ -231,15 +231,14 @@ impl RequestForwarder {
                         if should_switch {
                             status.failover_count += 1;
 
-                            // 异步触发供应商切换，更新 UI/托盘，并把“当前供应商”同步为实际使用的 provider
+                            // 异步触发供应商切换，更新 UI/托盘，并把”当前供应商”同步为实际使用的 provider
                             let fm = self.failover_manager.clone();
-                            let ah = self.app_handle.clone();
                             let pid = provider.id.clone();
                             let pname = provider.name.clone();
                             let at = app_type_str.to_string();
 
                             tokio::spawn(async move {
-                                let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
+                                let _ = fm.try_switch(&at, &pid, &pname).await;
                             });
                         }
                         // 重新计算成功率
@@ -366,14 +365,13 @@ impl RequestForwarder {
 
                                                 // 异步触发供应商切换，更新 UI/托盘
                                                 let fm = self.failover_manager.clone();
-                                                let ah = self.app_handle.clone();
                                                 let pid = provider.id.clone();
                                                 let pname = provider.name.clone();
                                                 let at = app_type_str.to_string();
 
                                                 tokio::spawn(async move {
                                                     let _ = fm
-                                                        .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                        .try_switch(&at, &pid, &pname)
                                                         .await;
                                                 });
                                             }
@@ -560,14 +558,11 @@ impl RequestForwarder {
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
-                                            let ah = self.app_handle.clone();
                                             let pid = provider.id.clone();
                                             let pname = provider.name.clone();
                                             let at = app_type_str.to_string();
                                             tokio::spawn(async move {
-                                                let _ = fm
-                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
-                                                    .await;
+                                                let _ = fm.try_switch(&at, &pid, &pname).await;
                                             });
                                         }
                                         if status.total_requests > 0 {

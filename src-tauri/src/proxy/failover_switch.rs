@@ -20,13 +20,16 @@ pub struct FailoverSwitchManager {
     /// 正在处理中的切换（key = "app_type:provider_id"）
     pending_switches: Arc<RwLock<HashSet<String>>>,
     db: Arc<Database>,
+    /// AppHandle，用于 UI 更新和事件发射
+    app_handle: Option<Arc<tauri::AppHandle>>,
 }
 
 impl FailoverSwitchManager {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(db: Arc<Database>, app_handle: Option<tauri::AppHandle>) -> Self {
         Self {
             pending_switches: Arc::new(RwLock::new(HashSet::new())),
             db,
+            app_handle: app_handle.map(Arc::new),
         }
     }
 
@@ -40,7 +43,6 @@ impl FailoverSwitchManager {
     /// - `Err(e)` - 切换过程中发生错误
     pub async fn try_switch(
         &self,
-        app_handle: Option<&tauri::AppHandle>,
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
@@ -59,7 +61,7 @@ impl FailoverSwitchManager {
 
         // 执行切换（确保最后清理 pending 标记）
         let result = self
-            .do_switch(app_handle, app_type, provider_id, provider_name)
+            .do_switch(app_type, provider_id, provider_name)
             .await;
 
         // 清理 pending 标记
@@ -73,7 +75,6 @@ impl FailoverSwitchManager {
 
     async fn do_switch(
         &self,
-        app_handle: Option<&tauri::AppHandle>,
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
@@ -97,7 +98,7 @@ impl FailoverSwitchManager {
 
         let mut switched = false;
 
-        if let Some(app) = app_handle {
+        if let Some(app) = self.app_handle.as_ref().map(|a| a.as_ref()) {
             if let Some(app_state) = app.try_state::<crate::store::AppState>() {
                 switched = app_state
                     .proxy_service
