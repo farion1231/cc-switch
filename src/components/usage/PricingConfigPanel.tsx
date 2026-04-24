@@ -329,7 +329,13 @@ export function PricingConfigPanel() {
       setEditingInlineModelId(null);
       setInlineFormData(null);
     } catch (error) {
-      toast.error(String(error));
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "Unknown error";
+      toast.error(message);
     }
   };
 
