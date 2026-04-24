@@ -115,16 +115,16 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "deepseek-chat",
-          name: "DeepSeek V3.2",
-          contextWindow: 128000,
-          cost: { input: 0.0005, output: 0.002 },
+          id: "deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          contextWindow: 1000000,
+          cost: { input: 1.68, output: 3.36 },
         },
         {
-          id: "deepseek-reasoner",
-          name: "DeepSeek R1",
-          contextWindow: 128000,
-          cost: { input: 0.0005, output: 0.002 },
+          id: "deepseek-v4-flash",
+          name: "DeepSeek V4 Flash",
+          contextWindow: 1000000,
+          cost: { input: 0.14, output: 0.28 },
         },
       ],
     },
@@ -140,12 +140,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "deepseek/deepseek-chat",
-        fallbacks: ["deepseek/deepseek-reasoner"],
+        primary: "deepseek/deepseek-v4-flash",
+        fallbacks: ["deepseek/deepseek-v4-pro"],
       },
       modelCatalog: {
-        "deepseek/deepseek-chat": { alias: "DeepSeek" },
-        "deepseek/deepseek-reasoner": { alias: "R1" },
+        "deepseek/deepseek-v4-flash": { alias: "Flash" },
+        "deepseek/deepseek-v4-pro": { alias: "Pro" },
       },
     },
   },
