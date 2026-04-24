@@ -422,20 +422,9 @@ impl StreamCheckService {
                     .header("accept-encoding", "identity"),
             };
         } else if auth.strategy == AuthStrategy::XApiKey {
-            request_builder = request_builder.header("x-api-key", &auth.api_key);
-            if let Some(cf_token) = &auth.access_token {
-                request_builder = request_builder
-                    .header("cf-aig-authorization", format!("Bearer {cf_token}"));
+            for (name, value) in Self::x_api_key_stream_headers(&auth) {
+                request_builder = request_builder.header(name, value);
             }
-            request_builder = request_builder
-                .header("anthropic-version", "2023-06-01")
-                .header(
-                    "anthropic-beta",
-                    "claude-code-20250219,interleaved-thinking-2025-05-14",
-                )
-                .header("content-type", "application/json")
-                .header("accept", "application/json")
-                .header("accept-encoding", "identity");
         } else if is_openai_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
             request_builder = request_builder
@@ -1518,6 +1507,24 @@ impl StreamCheckService {
         }
     }
 
+    fn x_api_key_stream_headers(auth: &AuthInfo) -> Vec<(&'static str, String)> {
+        let mut headers = vec![("x-api-key", auth.api_key.clone())];
+        if let Some(cf_token) = &auth.access_token {
+            headers.push(("cf-aig-authorization", format!("Bearer {cf_token}")));
+        }
+        headers.extend([
+            ("anthropic-version", "2023-06-01".to_string()),
+            (
+                "anthropic-beta",
+                "claude-code-20250219,interleaved-thinking-2025-05-14".to_string(),
+            ),
+            ("content-type", "application/json".to_string()),
+            ("accept", "application/json".to_string()),
+            ("accept-encoding", "identity".to_string()),
+        ]);
+        headers
+    }
+
     pub(crate) fn resolve_effective_test_model(
         app_type: &AppType,
         provider: &Provider,
@@ -1968,5 +1975,41 @@ mod tests {
                 "https://api.openai.com/v1/responses",
             ]
         );
+    }
+
+    #[test]
+    fn test_x_api_key_stream_headers_without_cf_token() {
+        let auth = AuthInfo::new("sk-ant-test".to_string(), AuthStrategy::XApiKey);
+        let headers = StreamCheckService::x_api_key_stream_headers(&auth);
+
+        let get = |name: &str| {
+            headers
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.as_str())
+        };
+
+        assert_eq!(get("x-api-key"), Some("sk-ant-test"));
+        assert_eq!(get("anthropic-version"), Some("2023-06-01"));
+        assert_eq!(get("content-type"), Some("application/json"));
+        assert!(get("cf-aig-authorization").is_none());
+    }
+
+    #[test]
+    fn test_x_api_key_stream_headers_with_cf_token() {
+        let mut auth = AuthInfo::new("sk-ant-key".to_string(), AuthStrategy::XApiKey);
+        auth.access_token = Some("cfut_abc123".to_string());
+        let headers = StreamCheckService::x_api_key_stream_headers(&auth);
+
+        let get = |name: &str| {
+            headers
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.as_str())
+        };
+
+        assert_eq!(get("x-api-key"), Some("sk-ant-key"));
+        assert_eq!(get("cf-aig-authorization"), Some("Bearer cfut_abc123"));
+        assert_eq!(get("anthropic-version"), Some("2023-06-01"));
     }
 }

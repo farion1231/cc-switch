@@ -425,7 +425,7 @@ export function ClaudeFormFields({
                 <Input
                   id={`template-${key}`}
                   type="text"
-                  required
+                  required={!config.optional}
                   value={
                     templateValues[key]?.editorValue ??
                     config.editorValue ??

@@ -85,9 +85,7 @@ impl AuthInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthStrategy {
     /// Anthropic 认证方式
-    /// - Header: `x-api-key: <api_key>`
     /// - Header: `Authorization: Bearer <api_key>`
-    /// - Header: `anthropic-version: 2023-06-01`
     Anthropic,
 
     /// Claude 中转服务认证方式（仅 Bearer，无 x-api-key）
