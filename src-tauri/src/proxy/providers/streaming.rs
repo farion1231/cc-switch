@@ -83,7 +83,10 @@ struct ToolBlockState {
     anthropic_index: u32,
     id: String,
     name: String,
-    started: bool,
+    /// Whether we've ever emitted a content_block_start for this tool call.
+    ever_started: bool,
+    /// Whether the tool block is currently open in the Anthropic event stream.
+    is_open: bool,
     pending_args: String,
     /// 连续空白字符计数 — 用于检测 Copilot 无限换行 bug
     /// 当 function call 参数中出现连续 20+ 空白字符时，强制终止流
@@ -94,6 +97,25 @@ struct ToolBlockState {
 
 /// 无限空白 bug 的连续空白字符阈值
 const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
+
+fn close_open_tool_blocks(
+    open_tool_block_indices: &mut HashSet<u32>,
+    tool_blocks_by_index: &mut HashMap<usize, ToolBlockState>,
+) -> Vec<u32> {
+    let mut closed_indices: Vec<u32> = open_tool_block_indices.iter().copied().collect();
+    closed_indices.sort_unstable();
+
+    for closed_index in &closed_indices {
+        for state in tool_blocks_by_index.values_mut() {
+            if state.anthropic_index == *closed_index {
+                state.is_open = false;
+            }
+        }
+    }
+
+    open_tool_block_indices.clear();
+    closed_indices
+}
 
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
@@ -301,7 +323,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                                 anthropic_index: index,
                                                                 id: String::new(),
                                                                 name: String::new(),
-                                                                started: false,
+                                                                ever_started: false,
+                                                                is_open: false,
                                                                 pending_args: String::new(),
                                                                 consecutive_whitespace: 0,
                                                                 aborted: false,
@@ -322,17 +345,24 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                         }
                                                     }
 
-                                                    let should_start =
-                                                        !state.started
-                                                            && !state.id.is_empty()
-                                                            && !state.name.is_empty();
+                                                    let args_delta = tool_call
+                                                        .function
+                                                        .as_ref()
+                                                        .and_then(|f| f.arguments.clone());
+                                                    let should_start = !state.is_open
+                                                        && !state.id.is_empty()
+                                                        && !state.name.is_empty()
+                                                        && (!state.ever_started
+                                                            || !state.pending_args.is_empty()
+                                                            || args_delta.is_some());
 
                                                     // 当新 tool block 开始时，需要关闭前一个已打开的 tool block
                                                     let should_close_previous = should_start
                                                         && !open_tool_block_indices.is_empty();
 
                                                     if should_start {
-                                                        state.started = true;
+                                                        state.ever_started = true;
+                                                        state.is_open = true;
                                                     }
                                                     let pending_after_start = if should_start
                                                         && !state.pending_args.is_empty()
@@ -341,10 +371,6 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                     } else {
                                                         None
                                                     };
-                                                    let args_delta = tool_call
-                                                        .function
-                                                        .as_ref()
-                                                        .and_then(|f| f.arguments.clone());
                                                     let immediate_delta = if let Some(args) = args_delta {
                                                         // 无限空白 bug 检测：跟踪连续空白字符
                                                         for ch in args.chars() {
@@ -360,8 +386,9 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                                 state.name
                                                             );
                                                             state.aborted = true;
+                                                            state.is_open = false;
                                                             None
-                                                        } else if state.started {
+                                                        } else if state.is_open {
                                                             Some(args)
                                                         } else {
                                                             state.pending_args.push_str(&args);
@@ -383,10 +410,10 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                                 // 关闭前一个已打开的 tool block（Anthropic 协议要求顺序关闭）
                                                 if should_close_previous {
-                                                    let mut prev_indices: Vec<u32> =
-                                                        open_tool_block_indices.iter().copied().collect();
-                                                    prev_indices.sort_unstable();
-                                                    for prev_index in prev_indices {
+                                                    for prev_index in close_open_tool_blocks(
+                                                        &mut open_tool_block_indices,
+                                                        &mut tool_blocks_by_index,
+                                                    ) {
                                                         let event = json!({
                                                             "type": "content_block_stop",
                                                             "index": prev_index
@@ -395,7 +422,6 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                             serde_json::to_string(&event).unwrap_or_default());
                                                         yield Ok(Bytes::from(sse_data));
                                                     }
-                                                    open_tool_block_indices.clear();
                                                 }
 
                                                 if should_start {
@@ -461,7 +487,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             let mut late_tool_starts: Vec<(u32, String, String, String)> =
                                                 Vec::new();
                                             for (tool_idx, state) in tool_blocks_by_index.iter_mut() {
-                                                if state.started {
+                                                if state.ever_started {
                                                     continue;
                                                 }
                                                 let has_payload = !state.pending_args.is_empty()
@@ -480,7 +506,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 } else {
                                                     state.name.clone()
                                                 };
-                                                state.started = true;
+                                                state.ever_started = true;
+                                                state.is_open = true;
                                                 let pending = std::mem::take(&mut state.pending_args);
                                                 late_tool_starts.push((
                                                     state.anthropic_index,
@@ -493,10 +520,10 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             for (index, id, name, pending) in late_tool_starts {
                                                 // 关闭前一个已打开的 tool block（顺序关闭）
                                                 if !open_tool_block_indices.is_empty() {
-                                                    let mut prev_indices: Vec<u32> =
-                                                        open_tool_block_indices.iter().copied().collect();
-                                                    prev_indices.sort_unstable();
-                                                    for prev_index in prev_indices {
+                                                    for prev_index in close_open_tool_blocks(
+                                                        &mut open_tool_block_indices,
+                                                        &mut tool_blocks_by_index,
+                                                    ) {
                                                         let event = json!({
                                                             "type": "content_block_stop",
                                                             "index": prev_index
@@ -505,7 +532,6 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                             serde_json::to_string(&event).unwrap_or_default());
                                                         yield Ok(Bytes::from(sse_data));
                                                     }
-                                                    open_tool_block_indices.clear();
                                                 }
 
                                                 let event = json!({
@@ -538,10 +564,10 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                             // 关闭最后一个打开的 tool block
                                             if !open_tool_block_indices.is_empty() {
-                                                let mut tool_indices: Vec<u32> =
-                                                    open_tool_block_indices.iter().copied().collect();
-                                                tool_indices.sort_unstable();
-                                                for index in tool_indices {
+                                                for index in close_open_tool_blocks(
+                                                    &mut open_tool_block_indices,
+                                                    &mut tool_blocks_by_index,
+                                                ) {
                                                     let event = json!({
                                                         "type": "content_block_stop",
                                                         "index": index
@@ -550,7 +576,6 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                         serde_json::to_string(&event).unwrap_or_default());
                                                     yield Ok(Bytes::from(sse_data));
                                                 }
-                                                open_tool_block_indices.clear();
                                             }
 
                                             let stop_reason = map_stop_reason(Some(finish_reason));
@@ -821,6 +846,89 @@ mod tests {
             .collect();
         assert!(deltas.contains(&"{\"a\":"));
         assert!(deltas.contains(&"1}"));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_reopens_closed_tool_block_for_late_delta_without_empty_restart() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_3\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_0\",\"type\":\"function\",\"function\":{\"name\":\"first_tool\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_3\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"second_tool\",\"arguments\":\"{\\\"b\\\":2}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_3\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"1}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_3\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        let merged = chunks
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        let events: Vec<Value> = merged
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
+                serde_json::from_str::<Value>(data).ok()
+            })
+            .collect();
+
+        let call_0_starts: Vec<usize> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, event)| {
+                (event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
+                    && event.get("index").and_then(|v| v.as_u64()) == Some(0)
+                    && event.pointer("/content_block/id").and_then(|v| v.as_str()) == Some("call_0"))
+                .then_some(pos)
+            })
+            .collect();
+        assert_eq!(call_0_starts.len(), 2);
+
+        let call_0_deltas: Vec<(usize, &str)> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, event)| {
+                (event.get("type").and_then(|v| v.as_str()) == Some("content_block_delta")
+                    && event.get("index").and_then(|v| v.as_u64()) == Some(0)
+                    && event.pointer("/delta/type").and_then(|v| v.as_str()) == Some("input_json_delta"))
+                .then(|| {
+                    Some((
+                        pos,
+                        event.pointer("/delta/partial_json").and_then(|v| v.as_str())?,
+                    ))
+                })
+                .flatten()
+            })
+            .collect();
+        assert_eq!(call_0_deltas.len(), 2);
+        assert_eq!(call_0_deltas[0].1, "{\"a\":");
+        assert_eq!(call_0_deltas[1].1, "1}");
+        assert!(call_0_starts[0] < call_0_deltas[0].0);
+        assert!(call_0_starts[1] < call_0_deltas[1].0);
+
+        let call_0_second_start = call_0_starts[1];
+        assert!(
+            events
+                .iter()
+                .enumerate()
+                .skip(call_0_second_start + 1)
+                .take_while(|(_, event)| {
+                    !(event.get("type").and_then(|v| v.as_str()) == Some("content_block_stop")
+                        && event.get("index").and_then(|v| v.as_u64()) == Some(0))
+                })
+                .any(|(_, event)| {
+                    event.get("type").and_then(|v| v.as_str()) == Some("content_block_delta")
+                        && event.get("index").and_then(|v| v.as_u64()) == Some(0)
+                        && event.pointer("/delta/partial_json").and_then(|v| v.as_str()) == Some("1}")
+                }),
+            "second reopen for call_0 must be followed by a delta before stop"
+        );
     }
 
     #[tokio::test]
