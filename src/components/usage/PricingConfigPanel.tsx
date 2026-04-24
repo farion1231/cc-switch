@@ -293,7 +293,7 @@ export function PricingConfigPanel() {
 
     return (
       <div className="rounded-md bg-card/60 shadow-sm">
-        {isSearchOpen && activeTab && (
+        {isSearchOpen && (
           <div className="p-3 border-b">
             <Input
               placeholder={t("usage.searchModelPlaceholder")}
@@ -544,13 +544,13 @@ export function PricingConfigPanel() {
           <TabsList className="mb-4">
             <TabsTrigger value="used" className="gap-1">
               {t("usage.usedModels", "Used")}
-              <span className="ml-1 rounded-full bg-muted px-1.5 text-xs">
+              <span className="ml-1 rounded-full bg-background/60 px-1.5 text-xs">
                 {groupedModels.used.length}
               </span>
             </TabsTrigger>
             <TabsTrigger value="unused" className="gap-1">
               {t("usage.unusedModels", "Unused")}
-              <span className="ml-1 rounded-full bg-muted px-1.5 text-xs">
+              <span className="ml-1 rounded-full bg-background/60 px-1.5 text-xs">
                 {groupedModels.unused.length}
               </span>
             </TabsTrigger>
