@@ -58,7 +58,9 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     "github.com" | "enterprise"
   >("github.com");
   const [enterpriseDomain, setEnterpriseDomain] = React.useState("");
-  const [pendingRemoveId, setPendingRemoveId] = React.useState<string | null>(null);
+  const [pendingRemoveId, setPendingRemoveId] = React.useState<string | null>(
+    null,
+  );
   const prevAccountsLen = React.useRef(0);
 
   // 根据部署类型计算实际的 GitHub 域名
@@ -312,7 +314,10 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         >
           <Github className="mr-2 h-4 w-4" />
           {deploymentType === "enterprise"
-            ? t("copilot.loginWithGitHubEnterprise", "使用 GitHub Enterprise 登录")
+            ? t(
+                "copilot.loginWithGitHubEnterprise",
+                "使用 GitHub Enterprise 登录",
+              )
             : t("copilot.loginWithGitHub", "使用 GitHub 登录")}
         </Button>
       )}
@@ -434,7 +439,9 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       {/* 删除账号确认对话框 */}
       <Dialog
         open={pendingRemoveId !== null}
-        onOpenChange={(open) => { if (!open) setPendingRemoveId(null); }}
+        onOpenChange={(open) => {
+          if (!open) setPendingRemoveId(null);
+        }}
       >
         <DialogContent zIndex="alert">
           <DialogHeader>
@@ -451,10 +458,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
             >
               {t("common.cancel")}
             </Button>
-            <Button
-              type="button"
-              onClick={handleConfirmRemove}
-            >
+            <Button type="button" onClick={handleConfirmRemove}>
               {t("common.confirm")}
             </Button>
           </DialogFooter>
