@@ -288,7 +288,7 @@ winget upgrade farion1231.CC-Switch
 
 **方法 2：手動ダウンロード**
 
-[Releases](../../releases) ページから最新版の `CC-Switch-v{version}-Windows.msi` インストーラー、またはポータブル版 `CC-Switch-v{version}-Windows-Portable.zip` をダウンロード。
+[Releases](https://github.com/farion1231/cc-switch/releases) ページから最新版の `CC-Switch-v{version}-Windows.msi` インストーラー、またはポータブル版 `CC-Switch-v{version}-Windows-Portable.zip` をダウンロード。
 
 ### macOS ユーザー
 
