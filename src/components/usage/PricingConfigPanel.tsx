@@ -54,6 +54,19 @@ export function PricingConfigPanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
+  const filteredPricing = useMemo(() => {
+    if (!pricing) return [];
+    return searchQuery.trim()
+      ? pricing.filter((model) => {
+          const query = searchQuery.toLowerCase().trim();
+          return (
+            model.modelId.toLowerCase().includes(query) ||
+            model.displayName.toLowerCase().includes(query)
+          );
+        })
+      : pricing;
+  }, [pricing, searchQuery]);
+
   // 三个应用的配置状态
   const [appConfigs, setAppConfigs] = useState<AppConfigState>({
     claude: { multiplier: "1", source: "response" },
@@ -216,19 +229,6 @@ export function PricingConfigPanel() {
       </Alert>
     );
   }
-
-  const filteredPricing = useMemo(() => {
-    if (!pricing) return [];
-    return searchQuery.trim()
-      ? pricing.filter((model) => {
-          const query = searchQuery.toLowerCase().trim();
-          return (
-            model.modelId.toLowerCase().includes(query) ||
-            model.displayName.toLowerCase().includes(query)
-          );
-        })
-      : pricing;
-  }, [pricing, searchQuery]);
 
   return (
     <div className="space-y-6">
