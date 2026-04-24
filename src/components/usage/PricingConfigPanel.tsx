@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Table,
@@ -217,6 +217,19 @@ export function PricingConfigPanel() {
     );
   }
 
+  const filteredPricing = useMemo(() => {
+    if (!pricing) return [];
+    return searchQuery.trim()
+      ? pricing.filter((model) => {
+          const query = searchQuery.toLowerCase().trim();
+          return (
+            model.modelId.toLowerCase().includes(query) ||
+            model.displayName.toLowerCase().includes(query)
+          );
+        })
+      : pricing;
+  }, [pricing, searchQuery]);
+
   return (
     <div className="space-y-6">
       {/* 全局计费默认配置 - 紧凑表格布局 */}
@@ -409,19 +422,8 @@ export function PricingConfigPanel() {
                     </TableHead>
                   </TableRow>
                 </TableHeader>
-                {(() => {
-                  const filteredPricing = searchQuery.trim()
-                    ? pricing.filter((model) => {
-                        const query = searchQuery.toLowerCase().trim();
-                        return (
-                          model.modelId.toLowerCase().includes(query) ||
-                          model.displayName.toLowerCase().includes(query)
-                        );
-                      })
-                    : pricing;
-                  return (
-                    <TableBody>
-                      {filteredPricing.map((model) => (
+                <TableBody>
+                  {filteredPricing.map((model) => (
                     <TableRow key={model.modelId}>
                       <TableCell className="font-mono text-sm">
                         {model.modelId}
@@ -465,9 +467,7 @@ export function PricingConfigPanel() {
                       </TableCell>
                     </TableRow>
                   ))}
-                    </TableBody>
-                  );
-                })()}
+                </TableBody>
               </Table>
             </div>
           )}
