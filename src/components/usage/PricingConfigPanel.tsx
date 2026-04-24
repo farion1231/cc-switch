@@ -26,12 +26,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
+import { useModelPricing, useDeleteModelPricing, useModelStats } from "@/lib/query/usage";
 import { PricingEditModal } from "./PricingEditModal";
 import type { ModelPricing } from "@/types/usage";
 import { Plus, Pencil, Trash2, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const PRICING_APPS = ["claude", "codex", "gemini"] as const;
 type PricingApp = (typeof PRICING_APPS)[number];
@@ -47,12 +48,18 @@ type AppConfigState = Record<PricingApp, AppConfig>;
 export function PricingConfigPanel() {
   const { t } = useTranslation();
   const { data: pricing, isLoading, error } = useModelPricing();
+  const { data: modelStats } = useModelStats(
+    { preset: "30d" }, // 30-day window to capture recently used models
+    undefined,
+    { refetchInterval: false }
+  );
   const deleteMutation = useDeleteModelPricing();
   const [editingModel, setEditingModel] = useState<ModelPricing | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"used" | "unused">("used");
 
   const filteredPricing = useMemo(() => {
     if (!pricing) return [];
