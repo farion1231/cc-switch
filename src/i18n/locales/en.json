@@ -738,7 +738,7 @@
     "expandContent": "Expand full content",
     "collapseContent": "Collapse",
     "codexProviderGroup": "Codex session group",
-    "codexProviderGroupHint": "After switching, this session appears in the matching Codex history group.",
+    "codexProviderGroupHint": "Use OpenAI for official OpenAI subscriptions and Custom for custom providers so this session appears in the matching Codex history list.",
     "codexProviderSwitchSuccess": "Codex session group updated",
     "codexProviderSwitchFailed": "Failed to update Codex session group: {{error}}"
   },

@@ -738,7 +738,7 @@
     "expandContent": "展开完整内容",
     "collapseContent": "收起",
     "codexProviderGroup": "Codex 会话分组",
-    "codexProviderGroupHint": "切换后，此会话会出现在 Codex 对应分组的历史列表中。",
+    "codexProviderGroupHint": "切换会话显示的分组：官方订阅选 OpenAI，自定义订阅选 Custom。",
     "codexProviderSwitchSuccess": "Codex 会话分组已更新",
     "codexProviderSwitchFailed": "Codex 会话分组更新失败: {{error}}"
   },
