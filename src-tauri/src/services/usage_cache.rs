@@ -13,6 +13,7 @@ use crate::services::subscription::SubscriptionQuota;
 #[derive(Default)]
 pub struct UsageCache {
     subscription: RwLock<HashMap<AppType, SubscriptionQuota>>,
+    provider_subscription: RwLock<HashMap<(AppType, String), SubscriptionQuota>>,
     script: RwLock<HashMap<(AppType, String), UsageResult>>,
 }
 
@@ -24,6 +25,17 @@ impl UsageCache {
     pub fn put_subscription(&self, app_type: AppType, quota: SubscriptionQuota) {
         if let Ok(mut w) = self.subscription.write() {
             w.insert(app_type, quota);
+        }
+    }
+
+    pub fn put_provider_subscription(
+        &self,
+        app_type: AppType,
+        provider_id: String,
+        quota: SubscriptionQuota,
+    ) {
+        if let Ok(mut w) = self.provider_subscription.write() {
+            w.insert((app_type, provider_id), quota);
         }
     }
 
@@ -43,6 +55,20 @@ impl UsageCache {
             .read()
             .ok()
             .and_then(|r| r.get(app_type).map(f))
+    }
+
+    /// 以 provider 为粒度暴露订阅快照。Codex 官方多账号每张卡片都有独立
+    /// `settings_config.auth`，不能共享 app 级订阅缓存。
+    pub fn with_provider_subscription<R>(
+        &self,
+        app_type: &AppType,
+        provider_id: &str,
+        f: impl FnOnce(&SubscriptionQuota) -> R,
+    ) -> Option<R> {
+        self.provider_subscription
+            .read()
+            .ok()
+            .and_then(|r| r.get(&(app_type.clone(), provider_id.to_string())).map(f))
     }
 
     /// 以借用形式暴露脚本型用量结果，同上。
@@ -110,6 +136,21 @@ mod tests {
         assert!(got);
         assert!(cache
             .with_subscription(&AppType::Codex, |q| q.success)
+            .is_none());
+    }
+
+    #[test]
+    fn provider_subscription_keys_are_isolated() {
+        let cache = UsageCache::new();
+        cache.put_provider_subscription(AppType::Codex, "a".to_string(), fake_quota());
+        assert!(cache
+            .with_provider_subscription(&AppType::Codex, "a", |q| q.success)
+            .is_some());
+        assert!(cache
+            .with_provider_subscription(&AppType::Codex, "b", |q| q.success)
+            .is_none());
+        assert!(cache
+            .with_provider_subscription(&AppType::Claude, "a", |q| q.success)
             .is_none());
     }
 

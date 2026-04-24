@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
 import { copyText } from "@/lib/clipboard";
+import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 
 interface CodexOAuthSectionProps {
   className?: string;
@@ -194,7 +195,12 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                     </Badge>
                   )}
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-3">
+                  <CodexOauthQuotaFooter
+                    accountId={account.id}
+                    inline={true}
+                    isCurrent={true}
+                  />
                   {defaultAccountId !== account.id && (
                     <Button
                       type="button"

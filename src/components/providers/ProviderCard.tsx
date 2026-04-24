@@ -393,6 +393,7 @@ export function ProviderCard({
               ) : isOfficial ? (
                 <SubscriptionQuotaFooter
                   appId={appId}
+                  providerId={appId === "codex" ? provider.id : undefined}
                   inline={true}
                   isCurrent={isCurrent}
                 />

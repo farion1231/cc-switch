@@ -10,6 +10,12 @@ import type {
 
 type PollingState = "idle" | "polling" | "success" | "error";
 
+function quotaQueryKeyForAuthProvider(authProvider: ManagedAuthProvider) {
+  if (authProvider === "codex_oauth") return ["codex_oauth", "quota"] as const;
+  if (authProvider === "github_copilot") return ["copilot", "quota"] as const;
+  return null;
+}
+
 export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
@@ -97,6 +103,10 @@ export function useManagedAuth(
             setPollingState("success");
             await refetchStatus();
             await queryClient.invalidateQueries({ queryKey });
+            const quotaQueryKey = quotaQueryKeyForAuthProvider(authProvider);
+            if (quotaQueryKey) {
+              await queryClient.invalidateQueries({ queryKey: quotaQueryKey });
+            }
             setPollingState("idle");
             setDeviceCode(null);
           }
@@ -140,6 +150,10 @@ export function useManagedAuth(
         accounts: [],
       });
       await queryClient.invalidateQueries({ queryKey });
+      const quotaQueryKey = quotaQueryKeyForAuthProvider(authProvider);
+      if (quotaQueryKey) {
+        await queryClient.invalidateQueries({ queryKey: quotaQueryKey });
+      }
     },
     onError: async (e) => {
       console.error("[ManagedAuth] Failed to logout:", e);
@@ -157,6 +171,10 @@ export function useManagedAuth(
       setError(null);
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
+      const quotaQueryKey = quotaQueryKeyForAuthProvider(authProvider);
+      if (quotaQueryKey) {
+        await queryClient.invalidateQueries({ queryKey: quotaQueryKey });
+      }
     },
     onError: (e) => {
       console.error("[ManagedAuth] Failed to remove account:", e);
@@ -170,6 +188,10 @@ export function useManagedAuth(
     onSuccess: async () => {
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
+      const quotaQueryKey = quotaQueryKeyForAuthProvider(authProvider);
+      if (quotaQueryKey) {
+        await queryClient.invalidateQueries({ queryKey: quotaQueryKey });
+      }
     },
     onError: (e) => {
       console.error("[ManagedAuth] Failed to set default account:", e);
