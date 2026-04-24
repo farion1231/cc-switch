@@ -68,6 +68,15 @@ pub struct DiscoverableSkill {
     /// 分支名称
     #[serde(rename = "repoBranch")]
     pub repo_branch: String,
+    /// 仓库来源（"github" | "gitee" | "gitlab" | "zipUrl"）
+    #[serde(rename = "repoSource")]
+    pub repo_source: String,
+    /// 仓库 ZIP 下载地址（用于安装时下载，避免二次查询数据库）
+    #[serde(rename = "repoZipUrl", default)]
+    pub repo_zip_url: Option<String>,
+    /// 仓库官网链接（可选）
+    #[serde(rename = "repoWebsiteUrl", default)]
+    pub repo_website_url: Option<String>,
 }
 
 /// 技能对象（兼容旧 API，内部使用 DiscoverableSkill）
@@ -97,17 +106,40 @@ pub struct Skill {
     pub repo_branch: Option<String>,
 }
 
+/// 仓库来源（字符串类型，支持："github" | "gitee" | "gitlab" | "zipUrl"）
+/// 注意：不自动检测，由用户明确选择
+pub type RepoSource = String;
+
+/// 判断来源是否相等（忽略大小写）
+pub fn repo_source_eq(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
+}
+
 /// 仓库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillRepo {
-    /// GitHub 用户/组织名
+    /// 仓库所有者（用户/组织名）
     pub owner: String,
     /// 仓库名称
     pub name: String,
-    /// 分支 (默认 "main")
-    pub branch: String,
+    /// ZIP 下载地址
+    #[serde(rename = "zipUrl")]
+    pub zip_url: Option<String>,
+    /// 官网链接（可选）
+    #[serde(rename = "websiteUrl")]
+    pub website_url: Option<String>,
     /// 是否启用
     pub enabled: bool,
+    /// 分支 (默认 "main")
+    #[serde(default = "default_branch")]
+    pub branch: String,
+    /// 仓库来源 (默认 github)
+    #[serde(default, rename = "source")]
+    pub source: RepoSource,
+}
+
+fn default_branch() -> String {
+    "main".to_string()
 }
 
 /// 技能安装状态（旧版兼容）
@@ -138,25 +170,37 @@ impl Default for SkillStore {
                     owner: "anthropics".to_string(),
                     name: "skills".to_string(),
                     branch: "main".to_string(),
+                    zip_url: None,
+                    website_url: None,
                     enabled: true,
+                    source: "github".to_string(),
                 },
                 SkillRepo {
                     owner: "ComposioHQ".to_string(),
                     name: "awesome-claude-skills".to_string(),
                     branch: "master".to_string(),
+                    zip_url: None,
+                    website_url: None,
                     enabled: true,
+                    source: "github".to_string(),
                 },
                 SkillRepo {
                     owner: "cexll".to_string(),
                     name: "myclaude".to_string(),
                     branch: "master".to_string(),
+                    zip_url: None,
+                    website_url: None,
                     enabled: true,
+                    source: "github".to_string(),
                 },
                 SkillRepo {
                     owner: "JimLiu".to_string(),
                     name: "baoyu-skills".to_string(),
                     branch: "main".to_string(),
+                    zip_url: None,
+                    website_url: None,
                     enabled: true,
+                    source: "github".to_string(),
                 },
             ],
         }
@@ -451,8 +495,27 @@ impl SkillService {
     }
 
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
-    fn build_skill_doc_url(owner: &str, repo: &str, branch: &str, doc_path: &str) -> String {
-        format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+    /// 根据 repo_source 分支处理 GitHub、Gitee、GitLab 或自定义 URL
+    fn build_skill_doc_url(
+        owner: &str,
+        repo: &str,
+        branch: &str,
+        doc_path: &str,
+        source: &str,
+        website_url: Option<&str>,
+    ) -> String {
+        if repo_source_eq(source, "gitee") {
+            format!("https://gitee.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+        } else if repo_source_eq(source, "gitlab") {
+            format!("https://gitlab.com/{owner}/{repo}/-/blob/{branch}/{doc_path}")
+        } else if repo_source_eq(source, "zipUrl") {
+            // 自定义 ZIP 源：使用 website_url（如果提供）
+            // website_url 应由用户在添加仓库时明确指定
+            website_url.unwrap_or("").to_string()
+        } else {
+            // 默认 GitHub
+            format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+        }
     }
 
     /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
@@ -622,11 +685,13 @@ impl SkillService {
                             ("directory", &install_name),
                             (
                                 "existing_repo",
-                                &format!(
-                                    "{}/{}",
-                                    existing.repo_owner.as_deref().unwrap_or("unknown"),
-                                    existing.repo_name.as_deref().unwrap_or("unknown")
-                                )
+                                &format!("{}", existing.name)
+                                // 下面是原来的逻辑，会出现 “unknown/unknown” 不存在的不友好提示
+                                // &format!(
+                                //     "{}/{}",
+                                //     existing.repo_owner.as_deref().unwrap_or("unknown"),
+                                //     existing.repo_name.as_deref().unwrap_or("unknown")
+                                // )
                             ),
                             (
                                 "new_repo",
@@ -649,7 +714,11 @@ impl SkillService {
                 owner: skill.repo_owner.clone(),
                 name: skill.repo_name.clone(),
                 branch: skill.repo_branch.clone(),
+                zip_url: skill.repo_zip_url.clone(),
+                website_url: skill.repo_website_url.clone(),
                 enabled: true,
+                // 从 DiscoverableSkill 继承来源
+                source: skill.repo_source.clone(),
             };
 
             // 下载仓库
@@ -733,6 +802,8 @@ impl SkillService {
             &skill.repo_name,
             &repo_branch,
             &doc_path,
+            &skill.repo_source,
+            skill.repo_website_url.as_deref(),
         ));
 
         // 创建 InstalledSkill 记录
@@ -1511,7 +1582,7 @@ impl SkillService {
 
             // 从 lock 文件提取仓库信息
             let (id, repo_owner, repo_name, repo_branch, readme_url) =
-                build_repo_info_from_lock(&agents_lock, &dir_name);
+                build_repo_info_from_lock(&agents_lock, &dir_name, Some("github"));
 
             // 计算内容哈希
             let ssot_skill_dir = ssot_dir.join(&dir_name);
@@ -1949,10 +2020,15 @@ impl SkillService {
                 &repo.name,
                 &repo.branch,
                 doc_path,
+                &repo.source,
+                repo.website_url.as_deref(),
             )),
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
+            repo_source: repo.source.clone(),
+            repo_zip_url: repo.zip_url.clone(),
+            repo_website_url: repo.website_url.clone(),
         })
     }
 
@@ -2144,6 +2220,15 @@ impl SkillService {
         let temp_path = temp_dir.path().to_path_buf();
         let _ = temp_dir.keep();
 
+        // 优先使用 zip_url（用户明确添加的自定义 ZIP URL）
+        if let Some(ref zip_url) = repo.zip_url {
+            if !zip_url.is_empty() {
+                self.download_and_extract(zip_url, &temp_path).await?;
+                return Ok((temp_path, String::new()));
+            }
+        }
+
+        // 根据仓库来源构建下载 URL
         let mut branches = Vec::new();
         if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
             branches.push(repo.branch.as_str());
@@ -2157,10 +2242,26 @@ impl SkillService {
 
         let mut last_error = None;
         for branch in branches {
-            let url = format!(
-                "https://github.com/{}/{}/archive/refs/heads/{}.zip",
-                repo.owner, repo.name, branch
-            );
+            // 根据 source 判断使用哪个平台的下载 URL
+            let url = if repo_source_eq(&repo.source, "gitee") {
+                // Gitee 格式：https://gitee.com/{owner}/{repo}/archive/refs/heads/{branch}.zip
+                format!(
+                    "https://gitee.com/{}/{}/archive/refs/heads/{}.zip",
+                    repo.owner, repo.name, branch
+                )
+            } else if repo_source_eq(&repo.source, "gitlab") {
+                // GitLab 格式：https://gitlab.com/{owner}/{repo}/-/archive/{branch}/{repo}-{branch}.zip?ref_type=heads
+                format!(
+                    "https://gitlab.com/{}/{}/-/archive/{}/{}-{}.zip?ref_type=heads",
+                    repo.owner, repo.name, branch, repo.name, branch
+                )
+            } else {
+                // GitHub 格式（默认）：https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip
+                format!(
+                    "https://github.com/{}/{}/archive/refs/heads/{}.zip",
+                    repo.owner, repo.name, branch
+                )
+            };
 
             match self.download_and_extract(&url, &temp_path).await {
                 Ok(_) => {
@@ -2800,6 +2901,7 @@ impl SkillService {
 fn build_repo_info_from_lock(
     lock: &HashMap<String, LockRepoInfo>,
     dir_name: &str,
+    source: Option<&str>,
 ) -> (
     String,
     Option<String>,
@@ -2810,16 +2912,26 @@ fn build_repo_info_from_lock(
     match lock.get(dir_name) {
         Some(info) => {
             let branch = info.branch.clone();
-            let url_branch = branch.clone().unwrap_or_else(|| "HEAD".to_string());
+            // 当 branch 为 None 或 "HEAD" 时，使用 "main" 作为文档 URL 的分支
+            // 因为 HEAD 不是有效的 GitHub/Gitee 文档链接分支
+            let url_branch = branch
+                .as_deref()
+                .filter(|b| !b.is_empty() && !b.eq_ignore_ascii_case("HEAD"))
+                .unwrap_or("main");
             // 优先使用 lock 文件中的 skillPath，否则回退到 dir_name/SKILL.md
             let fallback = format!("{dir_name}/SKILL.md");
             let doc_path = info.skill_path.as_deref().unwrap_or(&fallback);
-            let url = Some(SkillService::build_skill_doc_url(
-                &info.owner,
-                &info.repo,
-                &url_branch,
-                doc_path,
-            ));
+            let url = source.and_then(|src| {
+                let url = SkillService::build_skill_doc_url(
+                    &info.owner,
+                    &info.repo,
+                    url_branch,
+                    doc_path,
+                    src,
+                    None,
+                );
+                if url.is_empty() { None } else { Some(url) }
+            });
             (
                 format!("{}/{}:{dir_name}", info.owner, info.repo),
                 Some(info.owner.clone()),
@@ -2850,12 +2962,21 @@ fn save_repos_from_lock(
         if let Some(info) = lock.get(dir_name.as_ref()) {
             let key = (info.owner.clone(), info.repo.clone());
             if !existing_repos.contains(&key) && added.insert(key) {
+                // 当 branch 为 None 或 "HEAD" 时，使用 "main" 作为默认值
+                // "HEAD" 不是有效的分支名，下载时会尝试 main/master
+                let branch = info
+                    .branch
+                    .clone()
+                    .filter(|b| !b.is_empty() && !b.eq_ignore_ascii_case("HEAD"))
+                    .unwrap_or_else(|| "main".to_string());
                 let skill_repo = SkillRepo {
                     owner: info.owner.clone(),
                     name: info.repo.clone(),
-                    // 未知分支时使用 HEAD 语义，后续下载会回退到 main/master。
-                    branch: info.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
+                    branch,
                     enabled: true,
+                    website_url: None,
+                    zip_url: None,
+                    source: "github".to_string(),
                 };
                 if let Err(e) = db.save_skill_repo(&skill_repo) {
                     log::warn!("保存 skill 仓库 {}/{} 失败: {}", info.owner, info.repo, e);
@@ -2960,7 +3081,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
         let (name, description) = SkillService::read_skill_name_desc(&skill_md, &directory);
 
         let (id, repo_owner, repo_name, repo_branch, readme_url) =
-            build_repo_info_from_lock(&agents_lock, &directory);
+            build_repo_info_from_lock(&agents_lock, &directory, Some("github"));
 
         let content_hash = SkillService::compute_dir_hash(&ssot_path).ok();
 
