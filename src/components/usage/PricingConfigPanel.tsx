@@ -29,7 +29,7 @@ import {
 import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
 import { PricingEditModal } from "./PricingEditModal";
 import type { ModelPricing } from "@/types/usage";
-import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
 
@@ -51,6 +51,8 @@ export function PricingConfigPanel() {
   const [editingModel, setEditingModel] = useState<ModelPricing | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // 三个应用的配置状态
   const [appConfigs, setAppConfigs] = useState<AppConfigState>({
