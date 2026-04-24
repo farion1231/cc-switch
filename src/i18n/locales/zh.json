@@ -802,6 +802,7 @@
     },
     "presets": {
       "ucloud": "优云智算",
+      "ucloudCoding": "优云智算Coding Plan",
       "shengsuanyun": "胜算云",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",

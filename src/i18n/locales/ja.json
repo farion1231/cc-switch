@@ -802,6 +802,7 @@
     },
     "presets": {
       "ucloud": "Compshare",
+      "ucloudCoding": "Compshare Coding Plan",
       "shengsuanyun": "Shengsuanyun",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",

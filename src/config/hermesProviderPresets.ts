@@ -873,6 +873,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Compshare Coding Plan",
+    nameKey: "providerForm.presets.ucloudCoding",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    settingsConfig: {
+      name: "compshare_coding",
+      base_url: "https://cp.compshare.cn/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ucloud",
+    icon: "ucloud",
+    iconColor: "#000000",
+    suggestedDefaults: {
+      model: { default: "gpt-5.4", provider: "compshare_coding" },
+    },
+  },
+  {
     name: "Micu",
     websiteUrl: "https://www.openclaudecode.cn",
     apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",

@@ -670,6 +670,25 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "Compshare Coding Plan",
+    nameKey: "providerForm.presets.ucloudCoding",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://cp.compshare.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://cp.compshare.cn"],
+    category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "ucloud", // 促销信息 i18n key（复用）
+    icon: "ucloud",
+    iconColor: "#000000",
+  },
+  {
     name: "Micu",
     websiteUrl: "https://www.openclaudecode.cn",
     apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",

@@ -1520,6 +1520,46 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Compshare Coding Plan",
+    nameKey: "providerForm.presets.ucloudCoding",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    settingsConfig: {
+      baseUrl: "https://cp.compshare.cn/v1",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-7",
+          name: "Claude Opus 4.7",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "ucloud", // 促销信息 i18n key（复用）
+    icon: "ucloud",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "compshare-coding/claude-opus-4-7",
+      },
+      modelCatalog: {
+        "compshare-coding/claude-opus-4-7": { alias: "Opus" },
+      },
+    },
+  },
+  {
     name: "Micu",
     websiteUrl: "https://www.openclaudecode.cn",
     apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
