@@ -353,10 +353,23 @@ impl TokenUsage {
         let prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_u64())?;
         let completion_tokens = usage.get("completion_tokens").and_then(|v| v.as_u64())?;
 
-        // 获取 cached_tokens (可能在 prompt_tokens_details 中)
-        let cached_tokens = usage
-            .get("prompt_tokens_details")
-            .and_then(|d| d.get("cached_tokens"))
+        // 获取缓存读取 tokens，按优先级尝试多个来源：
+        // 1. cache_read_input_tokens（部分代理服务器添加的 Anthropic 风格字段）
+        // 2. prompt_tokens_details.cached_tokens（OpenAI 原生字段）
+        let cache_read = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+            .or_else(|| {
+                usage
+                    .get("prompt_tokens_details")
+                    .and_then(|d| d.get("cached_tokens"))
+                    .and_then(|v| v.as_u64())
+            })
+            .unwrap_or(0) as u32;
+
+        // 获取缓存创建 tokens（部分代理服务器添加的字段，OpenAI 原生 API 不返回）
+        let cache_creation = usage
+            .get("cache_creation_input_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
 
@@ -369,8 +382,8 @@ impl TokenUsage {
         Some(Self {
             input_tokens: prompt_tokens as u32,
             output_tokens: completion_tokens as u32,
-            cache_read_tokens: cached_tokens,
-            cache_creation_tokens: 0,
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
             model,
             message_id: None,
         })

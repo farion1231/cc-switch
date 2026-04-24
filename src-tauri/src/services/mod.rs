@@ -34,6 +34,6 @@ pub use speedtest::{EndpointLatency, SpeedtestService};
 pub use usage_cache::UsageCache;
 #[allow(unused_imports)]
 pub use usage_stats::{
-    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary,
+    DailyStats, LogFilters, ModelStats, ModelTrendStats, PaginatedLogs, ProviderLimitStatus,
+    ProviderStats, RequestLogDetail, UsageSummary,
 };

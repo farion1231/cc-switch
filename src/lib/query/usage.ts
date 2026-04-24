@@ -59,6 +59,20 @@ export const usageKeys = {
       customEndDate ?? 0,
       appType ?? "all",
     ] as const,
+  modelTrends: (
+    preset: UsageRangeSelection["preset"],
+    customStartDate: number | undefined,
+    customEndDate: number | undefined,
+    appType?: string,
+  ) =>
+    [
+      ...usageKeys.all,
+      "model-trends",
+      preset,
+      customStartDate ?? 0,
+      customEndDate ?? 0,
+      appType ?? "all",
+    ] as const,
   providerStats: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
@@ -149,6 +163,28 @@ export function useUsageTrends(
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
       return usageApi.getUsageTrends(startDate, endDate, effectiveAppType);
+    },
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useModelTrends(
+  range: UsageRangeSelection,
+  appType?: string,
+  options?: UsageQueryOptions,
+) {
+  const effectiveAppType = appType === "all" ? undefined : appType;
+  return useQuery({
+    queryKey: usageKeys.modelTrends(
+      range.preset,
+      range.customStartDate,
+      range.customEndDate,
+      appType,
+    ),
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getModelTrends(startDate, endDate, effectiveAppType);
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
