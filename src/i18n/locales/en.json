@@ -824,6 +824,11 @@
     "fillTemplateValue": "Please fill in {{label}}",
     "endpointRequired": "API endpoint is required for non-official providers",
     "apiKeyRequired": "API Key is required for non-official providers",
+    "softValidation": {
+      "title": "Configuration has the following issues",
+      "hint": "Save anyway? Switching to this provider may fail; you can fill these in later.",
+      "saveAnyway": "Save anyway"
+    },
     "configJsonError": "Config JSON format error, please check syntax",
     "authJsonRequired": "auth.json must be a JSON object",
     "authJsonError": "auth.json format error, please check JSON syntax",
