@@ -288,6 +288,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                     id,
                                                     name,
                                                     should_start,
+                                                    should_close_previous,
                                                     pending_after_start,
                                                     immediate_delta,
                                                 ) = {
@@ -325,6 +326,11 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                         !state.started
                                                             && !state.id.is_empty()
                                                             && !state.name.is_empty();
+
+                                                    // 当新 tool block 开始时，需要关闭前一个已打开的 tool block
+                                                    let should_close_previous = should_start
+                                                        && !open_tool_block_indices.is_empty();
+
                                                     if should_start {
                                                         state.started = true;
                                                     }
@@ -369,10 +375,28 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                         state.id.clone(),
                                                         state.name.clone(),
                                                         should_start,
+                                                        should_close_previous,
                                                         pending_after_start,
                                                         immediate_delta,
                                                     )
                                                 };
+
+                                                // 关闭前一个已打开的 tool block（Anthropic 协议要求顺序关闭）
+                                                if should_close_previous {
+                                                    let mut prev_indices: Vec<u32> =
+                                                        open_tool_block_indices.iter().copied().collect();
+                                                    prev_indices.sort_unstable();
+                                                    for prev_index in prev_indices {
+                                                        let event = json!({
+                                                            "type": "content_block_stop",
+                                                            "index": prev_index
+                                                        });
+                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
+                                                    open_tool_block_indices.clear();
+                                                }
 
                                                 if should_start {
                                                     let event = json!({
@@ -467,6 +491,23 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             }
                                             late_tool_starts.sort_unstable_by_key(|(index, _, _, _)| *index);
                                             for (index, id, name, pending) in late_tool_starts {
+                                                // 关闭前一个已打开的 tool block（顺序关闭）
+                                                if !open_tool_block_indices.is_empty() {
+                                                    let mut prev_indices: Vec<u32> =
+                                                        open_tool_block_indices.iter().copied().collect();
+                                                    prev_indices.sort_unstable();
+                                                    for prev_index in prev_indices {
+                                                        let event = json!({
+                                                            "type": "content_block_stop",
+                                                            "index": prev_index
+                                                        });
+                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
+                                                    open_tool_block_indices.clear();
+                                                }
+
                                                 let event = json!({
                                                     "type": "content_block_start",
                                                     "index": index,
@@ -495,6 +536,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 }
                                             }
 
+                                            // 关闭最后一个打开的 tool block
                                             if !open_tool_block_indices.is_empty() {
                                                 let mut tool_indices: Vec<u32> =
                                                     open_tool_block_indices.iter().copied().collect();
@@ -525,7 +567,10 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                     uj["cache_creation_input_tokens"] = json!(created);
                                                 }
                                                 uj
-                                            });
+                                            }).unwrap_or_else(|| json!({
+                                                "input_tokens": 0,
+                                                "output_tokens": 0
+                                            }));
                                             let event = json!({
                                                 "type": "message_delta",
                                                 "delta": {
