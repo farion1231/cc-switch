@@ -409,8 +409,19 @@ export function PricingConfigPanel() {
                     </TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody>
-                  {pricing.map((model) => (
+                {(() => {
+                  const filteredPricing = searchQuery.trim()
+                    ? pricing.filter((model) => {
+                        const query = searchQuery.toLowerCase().trim();
+                        return (
+                          model.modelId.toLowerCase().includes(query) ||
+                          model.displayName.toLowerCase().includes(query)
+                        );
+                      })
+                    : pricing;
+                  return (
+                    <TableBody>
+                      {filteredPricing.map((model) => (
                     <TableRow key={model.modelId}>
                       <TableCell className="font-mono text-sm">
                         {model.modelId}
@@ -454,7 +465,9 @@ export function PricingConfigPanel() {
                       </TableCell>
                     </TableRow>
                   ))}
-                </TableBody>
+                    </TableBody>
+                  );
+                })()}
               </Table>
             </div>
           )}
