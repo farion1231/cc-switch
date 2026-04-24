@@ -340,14 +340,6 @@ export function PricingConfigPanel() {
   };
 
   const renderModelTable = (models: ModelPricing[]) => {
-    if (models.length === 0) {
-      return (
-        <Alert>
-          <AlertDescription>{t("usage.noPricingData")}</AlertDescription>
-        </Alert>
-      );
-    }
-
     return (
       <div className="rounded-md bg-card/60 shadow-sm">
         {isSearchOpen && (
@@ -397,14 +389,24 @@ export function PricingConfigPanel() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {models.map((model) => {
-              const isEditing = editingInlineModelId === model.modelId;
-              // Check if this is an auto-added entry with all zeros (unknown price)
-              const isUnknownPrice =
-                model.inputCostPerMillion === "0" &&
-                model.outputCostPerMillion === "0" &&
-                model.cacheReadCostPerMillion === "0" &&
-                model.cacheCreationCostPerMillion === "0";
+            {models.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={7}
+                  className="text-center text-muted-foreground py-8"
+                >
+                  {t("usage.noPricingData")}
+                </TableCell>
+              </TableRow>
+            ) : (
+              models.map((model) => {
+                const isEditing = editingInlineModelId === model.modelId;
+                // Check if this is an auto-added entry with all zeros (unknown price)
+                const isUnknownPrice =
+                  model.inputCostPerMillion === "0" &&
+                  model.outputCostPerMillion === "0" &&
+                  model.cacheReadCostPerMillion === "0" &&
+                  model.cacheCreationCostPerMillion === "0";
 
               if (isEditing && inlineFormData) {
                 return (
@@ -555,7 +557,8 @@ export function PricingConfigPanel() {
                   </TableCell>
                 </TableRow>
               );
-            })}
+            })
+          )}
           </TableBody>
         </Table>
       </div>
