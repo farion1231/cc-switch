@@ -26,10 +26,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useModelPricing, useDeleteModelPricing, useModelStats } from "@/lib/query/usage";
+import { useModelPricing, useDeleteModelPricing, useModelStats, useUpdateModelPricing } from "@/lib/query/usage";
 import { PricingEditModal } from "./PricingEditModal";
 import type { ModelPricing } from "@/types/usage";
-import { Plus, Pencil, Trash2, Loader2, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Search, Save, X } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -54,12 +54,16 @@ export function PricingConfigPanel() {
     { refetchInterval: false }
   );
   const deleteMutation = useDeleteModelPricing();
+  const updateMutation = useUpdateModelPricing();
   const [editingModel, setEditingModel] = useState<ModelPricing | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"used" | "unused">("used");
+  // Inline editing state
+  const [editingInlineModelId, setEditingInlineModelId] = useState<string | null>(null);
+  const [inlineFormData, setInlineFormData] = useState<ModelPricing | null>(null);
 
   // Group models into used/unused
   const groupedModels = useMemo(() => {
@@ -282,6 +286,53 @@ export function PricingConfigPanel() {
     );
   }
 
+  const startInlineEdit = (model: ModelPricing) => {
+    setInlineFormData({ ...model });
+    setEditingInlineModelId(model.modelId);
+  };
+
+  const cancelInlineEdit = () => {
+    setEditingInlineModelId(null);
+    setInlineFormData(null);
+  };
+
+  const saveInlineEdit = async () => {
+    if (!inlineFormData) return;
+
+    // Validate all costs are non-negative numbers
+    const values = [
+      inlineFormData.inputCostPerMillion,
+      inlineFormData.outputCostPerMillion,
+      inlineFormData.cacheReadCostPerMillion,
+      inlineFormData.cacheCreationCostPerMillion,
+    ];
+
+    for (const value of values) {
+      const num = parseFloat(value);
+      if (isNaN(num) || num < 0) {
+        toast.error(t("usage.invalidPrice", "价格必须为非负数"));
+        return;
+      }
+    }
+
+    try {
+      await updateMutation.mutateAsync({
+        modelId: inlineFormData.modelId,
+        displayName: inlineFormData.displayName,
+        inputCost: inlineFormData.inputCostPerMillion,
+        outputCost: inlineFormData.outputCostPerMillion,
+        cacheReadCost: inlineFormData.cacheReadCostPerMillion,
+        cacheCreationCost: inlineFormData.cacheCreationCostPerMillion,
+      });
+
+      toast.success(t("usage.pricingUpdated", "定价已更新"), { closeButton: true });
+      setEditingInlineModelId(null);
+      setInlineFormData(null);
+    } catch (error) {
+      toast.error(String(error));
+    }
+  };
+
   const renderModelTable = (models: ModelPricing[]) => {
     if (models.length === 0) {
       return (
@@ -341,12 +392,119 @@ export function PricingConfigPanel() {
           </TableHeader>
           <TableBody>
             {models.map((model) => {
+              const isEditing = editingInlineModelId === model.modelId;
               // Check if this is an auto-added entry with all zeros (unknown price)
               const isUnknownPrice =
                 model.inputCostPerMillion === "0" &&
                 model.outputCostPerMillion === "0" &&
                 model.cacheReadCostPerMillion === "0" &&
                 model.cacheCreationCostPerMillion === "0";
+
+              if (isEditing && inlineFormData) {
+                return (
+                  <TableRow key={model.modelId}>
+                    <TableCell className="font-mono text-sm">
+                      {model.modelId}
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        value={inlineFormData.displayName}
+                        onChange={(e) =>
+                          setInlineFormData({ ...inlineFormData, displayName: e.target.value })
+                        }
+                        className="h-8 text-sm"
+                        placeholder={t("usage.displayNamePlaceholder")}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={inlineFormData.inputCostPerMillion}
+                        onChange={(e) =>
+                          setInlineFormData({ ...inlineFormData, inputCostPerMillion: e.target.value })
+                        }
+                        className="h-8 text-sm text-right font-mono w-24 ml-auto"
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={inlineFormData.outputCostPerMillion}
+                        onChange={(e) =>
+                          setInlineFormData({ ...inlineFormData, outputCostPerMillion: e.target.value })
+                        }
+                        className="h-8 text-sm text-right font-mono w-24 ml-auto"
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={inlineFormData.cacheReadCostPerMillion}
+                        onChange={(e) =>
+                          setInlineFormData({ ...inlineFormData, cacheReadCostPerMillion: e.target.value })
+                        }
+                        className="h-8 text-sm text-right font-mono w-24 ml-auto"
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={inlineFormData.cacheCreationCostPerMillion}
+                        onChange={(e) =>
+                          setInlineFormData({ ...inlineFormData, cacheCreationCostPerMillion: e.target.value })
+                        }
+                        className="h-8 text-sm text-right font-mono w-24 ml-auto"
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={saveInlineEdit}
+                          disabled={updateMutation.isPending}
+                          title={t("common.save")}
+                          className="text-green-600 hover:text-green-700"
+                        >
+                          {updateMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Save className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={cancelInlineEdit}
+                          disabled={updateMutation.isPending}
+                          title={t("common.cancel")}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                        {pricing?.some(p => p.modelId === model.modelId) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setDeleteConfirm(model.modelId)}
+                            title={t("common.delete")}
+                            className="text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              }
 
               return (
                 <TableRow key={model.modelId}>
@@ -371,10 +529,7 @@ export function PricingConfigPanel() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => {
-                          setIsAddingNew(false);
-                          setEditingModel(model);
-                        }}
+                        onClick={() => startInlineEdit(model)}
                         title={t("common.edit")}
                       >
                         <Pencil className="h-4 w-4" />
