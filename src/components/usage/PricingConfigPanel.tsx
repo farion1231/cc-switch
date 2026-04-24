@@ -61,19 +61,6 @@ export function PricingConfigPanel() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"used" | "unused">("used");
 
-  const filteredPricing = useMemo(() => {
-    if (!pricing) return [];
-    return searchQuery.trim()
-      ? pricing.filter((model) => {
-          const query = searchQuery.toLowerCase().trim();
-          return (
-            model.modelId.toLowerCase().includes(query) ||
-            model.displayName.toLowerCase().includes(query)
-          );
-        })
-      : pricing;
-  }, [pricing, searchQuery]);
-
   // Group models into used/unused
   const groupedModels = useMemo(() => {
     if (!pricing) {
@@ -295,6 +282,125 @@ export function PricingConfigPanel() {
     );
   }
 
+  const renderModelTable = (models: ModelPricing[]) => {
+    if (models.length === 0) {
+      return (
+        <Alert>
+          <AlertDescription>{t("usage.noPricingData")}</AlertDescription>
+        </Alert>
+      );
+    }
+
+    return (
+      <div className="rounded-md bg-card/60 shadow-sm">
+        {isSearchOpen && activeTab && (
+          <div className="p-3 border-b">
+            <Input
+              placeholder={t("usage.searchModelPlaceholder")}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-8"
+              autoFocus
+            />
+          </div>
+        )}
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>
+                <div className="flex items-center justify-between gap-2">
+                  {t("usage.model")}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsSearchOpen(!isSearchOpen)}
+                    className="h-6 w-6"
+                    title={t("usage.searchModel")}
+                  >
+                    <Search className={`h-3.5 w-3.5 ${isSearchOpen ? "text-primary" : "text-muted-foreground"}`} />
+                  </Button>
+                </div>
+              </TableHead>
+              <TableHead>{t("usage.displayName")}</TableHead>
+              <TableHead className="text-right">
+                {t("usage.inputCost")}
+              </TableHead>
+              <TableHead className="text-right">
+                {t("usage.outputCost")}
+              </TableHead>
+              <TableHead className="text-right">
+                {t("usage.cacheReadCost")}
+              </TableHead>
+              <TableHead className="text-right">
+                {t("usage.cacheWriteCost")}
+              </TableHead>
+              <TableHead className="text-right">
+                {t("common.actions")}
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {models.map((model) => {
+              // Check if this is an auto-added entry with all zeros (unknown price)
+              const isUnknownPrice =
+                model.inputCostPerMillion === "0" &&
+                model.outputCostPerMillion === "0" &&
+                model.cacheReadCostPerMillion === "0" &&
+                model.cacheCreationCostPerMillion === "0";
+
+              return (
+                <TableRow key={model.modelId}>
+                  <TableCell className="font-mono text-sm">
+                    {model.modelId}
+                  </TableCell>
+                  <TableCell>{model.displayName}</TableCell>
+                  <TableCell className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}>
+                    ${model.inputCostPerMillion}
+                  </TableCell>
+                  <TableCell className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}>
+                    ${model.outputCostPerMillion}
+                  </TableCell>
+                  <TableCell className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}>
+                    ${model.cacheReadCostPerMillion}
+                  </TableCell>
+                  <TableCell className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}>
+                    ${model.cacheCreationCostPerMillion}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                          setIsAddingNew(false);
+                          setEditingModel(model);
+                        }}
+                        title={t("common.edit")}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      {pricing?.some(p => p.modelId === model.modelId) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleteConfirm(model.modelId)}
+                          title={t("common.delete")}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* 全局计费默认配置 - 紧凑表格布局 */}
@@ -434,109 +540,30 @@ export function PricingConfigPanel() {
           </Button>
         </div>
 
-        <div className="space-y-4">
-          {!pricing || pricing.length === 0 ? (
-            <Alert>
-              <AlertDescription>{t("usage.noPricingData")}</AlertDescription>
-            </Alert>
-          ) : (
-            <div className="rounded-md bg-card/60 shadow-sm">
-              {isSearchOpen && (
-                <div className="p-3 border-b">
-                  <Input
-                    placeholder={t("usage.searchModelPlaceholder")}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="h-8"
-                    autoFocus
-                  />
-                </div>
-              )}
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>
-                      <div className="flex items-center justify-between gap-2">
-                        {t("usage.model")}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setIsSearchOpen(!isSearchOpen)}
-                          className="h-6 w-6"
-                          title={t("usage.searchModel")}
-                        >
-                          <Search className={`h-3.5 w-3.5 ${isSearchOpen ? "text-primary" : "text-muted-foreground"}`} />
-                        </Button>
-                      </div>
-                    </TableHead>
-                    <TableHead>{t("usage.displayName")}</TableHead>
-                    <TableHead className="text-right">
-                      {t("usage.inputCost")}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t("usage.outputCost")}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t("usage.cacheReadCost")}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t("usage.cacheWriteCost")}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {t("common.actions")}
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredPricing.map((model) => (
-                    <TableRow key={model.modelId}>
-                      <TableCell className="font-mono text-sm">
-                        {model.modelId}
-                      </TableCell>
-                      <TableCell>{model.displayName}</TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        ${model.inputCostPerMillion}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        ${model.outputCostPerMillion}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        ${model.cacheReadCostPerMillion}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        ${model.cacheCreationCostPerMillion}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setIsAddingNew(false);
-                              setEditingModel(model);
-                            }}
-                            title={t("common.edit")}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setDeleteConfirm(model.modelId)}
-                            title={t("common.delete")}
-                            className="text-destructive hover:text-destructive"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </div>
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "used" | "unused")}>
+          <TabsList className="mb-4">
+            <TabsTrigger value="used" className="gap-1">
+              {t("usage.usedModels", "Used")}
+              <span className="ml-1 rounded-full bg-muted px-1.5 text-xs">
+                {groupedModels.used.length}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="unused" className="gap-1">
+              {t("usage.unusedModels", "Unused")}
+              <span className="ml-1 rounded-full bg-muted px-1.5 text-xs">
+                {groupedModels.unused.length}
+              </span>
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="used" className="mt-0">
+            {renderModelTable(groupedModels.used)}
+          </TabsContent>
+
+          <TabsContent value="unused" className="mt-0">
+            {renderModelTable(groupedModels.unused)}
+          </TabsContent>
+        </Tabs>
       </div>
 
       {editingModel && (

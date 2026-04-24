@@ -1167,6 +1167,8 @@
     "statusCode": "状态码",
     "searchProviderPlaceholder": "搜索供应商...",
     "searchModelPlaceholder": "搜索模型...",
+    "usedModels": "已使用",
+    "unusedModels": "未使用",
     "timeRange": "时间范围",
     "customRange": "日历筛选",
     "customRangeHint": "支持日期与时间",
