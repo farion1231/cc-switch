@@ -273,6 +273,20 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 
 ### Windows 用户
 
+**方法一：通过 WinGet 安装（推荐）**
+
+```bash
+winget install farion1231.CC-Switch
+```
+
+更新：
+
+```bash
+winget upgrade farion1231.CC-Switch
+```
+
+**方法二：手动下载**
+
 从 [Releases](../../releases) 页面下载最新版本的 `CC-Switch-v{版本号}-Windows.msi` 安装包或 `CC-Switch-v{版本号}-Windows-Portable.zip` 绿色版。
 
 ### macOS 用户
@@ -280,7 +294,6 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 **方式一：通过 Homebrew 安装（推荐）**
 
 ```bash
-brew tap farion1231/ccswitch
 brew install --cask cc-switch
 ```
 
