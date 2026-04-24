@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AreaChart,
@@ -38,6 +39,40 @@ export function UsageTrendChart({
   const { data: trends, isLoading } = useUsageTrends(range, appType, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
+
+  // Initialize visibility state - all visible by default
+  const [visibility, setVisibility] = useState<Record<string, boolean>>({
+    inputTokens: true,
+    outputTokens: true,
+    cacheCreationTokens: true,
+    cacheReadTokens: true,
+    cost: true,
+  });
+
+  const handleLegendClick = (data: { dataKey: string }) => {
+    const dataKey = data.dataKey;
+    setVisibility(prev => ({
+      ...prev,
+      [dataKey]: !prev[dataKey],
+    }));
+  };
+
+  const CustomLegend = ({ payload }: any) => (
+    <div className="flex flex-wrap gap-4 justify-center">
+      {payload.map((entry: any) => (
+        <div
+          key={entry.dataKey}
+          className={`flex items-center gap-2 cursor-pointer ${
+            !visibility[entry.dataKey] ? 'opacity-40' : ''
+          }`}
+          onClick={() => handleLegendClick(entry)}
+        >
+          <div className="w-3 h-3" style={{ backgroundColor: entry.color }} />
+          <span className="text-sm">{entry.value}</span>
+        </div>
+      ))}
+    </div>
+  );
 
   if (isLoading) {
     return (
@@ -176,7 +211,7 @@ export function UsageTrendChart({
               tickFormatter={(value) => `$${value}`}
             />
             <Tooltip content={<CustomTooltip />} />
-            <Legend />
+            <Legend content={<CustomLegend />} />
             <Area
               yAxisId="tokens"
               type="monotone"
@@ -186,6 +221,7 @@ export function UsageTrendChart({
               fillOpacity={1}
               fill="url(#colorInput)"
               strokeWidth={2}
+              hide={!visibility.inputTokens}
             />
             <Area
               yAxisId="tokens"
@@ -196,6 +232,7 @@ export function UsageTrendChart({
               fillOpacity={1}
               fill="url(#colorOutput)"
               strokeWidth={2}
+              hide={!visibility.outputTokens}
             />
             <Area
               yAxisId="tokens"
@@ -206,6 +243,7 @@ export function UsageTrendChart({
               fillOpacity={1}
               fill="url(#colorCacheCreation)"
               strokeWidth={2}
+              hide={!visibility.cacheCreationTokens}
             />
             <Area
               yAxisId="tokens"
@@ -216,6 +254,7 @@ export function UsageTrendChart({
               fillOpacity={1}
               fill="url(#colorCacheRead)"
               strokeWidth={2}
+              hide={!visibility.cacheReadTokens}
             />
             <Area
               yAxisId="cost"
@@ -226,6 +265,7 @@ export function UsageTrendChart({
               fill="none"
               strokeWidth={2}
               strokeDasharray="4 4"
+              hide={!visibility.cost}
             />
           </AreaChart>
         </ResponsiveContainer>
