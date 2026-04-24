@@ -122,7 +122,7 @@ export function UsageTrendChart({
   const queryOptions = {
     refetchInterval,
   };
-  const yearHeatmapRange = useMemo<UsageRangeSelection>(() => {
+  const yearHeatmapRange: UsageRangeSelection = (() => {
     const now = new Date();
     const yearStart = new Date(now.getFullYear(), 0, 1);
     const todayEnd = new Date(
@@ -139,7 +139,7 @@ export function UsageTrendChart({
       customStartDate: Math.floor(yearStart.getTime() / 1000),
       customEndDate: Math.floor(todayEnd.getTime() / 1000),
     };
-  }, []);
+  })();
   const { data: summary, isLoading: isSummaryLoading } = useUsageSummary(
     range,
     appType,
@@ -814,11 +814,20 @@ function Heatmap({
   isLoading: boolean;
 }) {
   const dataByDate = useMemo(() => {
-    const map = new Map<string, (typeof trendData)[number]>();
+    const map = new Map<string, { tokens: number; requestCount: number }>();
     for (const item of trendData) {
       const date = new Date(item.rawDate);
       const key = dateKey(date);
-      map.set(key, item);
+      const existing = map.get(key);
+      if (existing) {
+        existing.tokens += item.tokens;
+        existing.requestCount += item.requestCount;
+      } else {
+        map.set(key, {
+          tokens: item.tokens,
+          requestCount: item.requestCount,
+        });
+      }
     }
     return map;
   }, [trendData]);
