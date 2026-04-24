@@ -74,6 +74,64 @@ export function PricingConfigPanel() {
       : pricing;
   }, [pricing, searchQuery]);
 
+  // Group models into used/unused
+  const groupedModels = useMemo(() => {
+    if (!pricing) {
+      return { used: [], unused: [] };
+    }
+
+    const usedModelIds = new Set(modelStats?.map(s => s.model) ?? []);
+
+    // Used models: all models from stats, merge with pricing when available
+    const used: ModelPricing[] = [];
+
+    // Add models from stats
+    for (const stat of modelStats ?? []) {
+      const existing = pricing.find(p => p.modelId === stat.model);
+      if (existing) {
+        used.push(existing);
+      } else {
+        // No pricing configured, create entry with all zeros
+        used.push({
+          modelId: stat.model,
+          displayName: stat.model,
+          inputCostPerMillion: "0",
+          outputCostPerMillion: "0",
+          cacheReadCostPerMillion: "0",
+          cacheCreationCostPerMillion: "0",
+        });
+      }
+    }
+
+    // Apply search filter to used models
+    const filteredUsed = searchQuery.trim()
+      ? used.filter((model) => {
+          const query = searchQuery.toLowerCase().trim();
+          return (
+            model.modelId.toLowerCase().includes(query) ||
+            model.displayName.toLowerCase().includes(query)
+          );
+        })
+      : used;
+
+    // Unused models: pricing entries not in stats, filtered by search
+    const filteredUnused = pricing
+      .filter(p => !usedModelIds.has(p.modelId))
+      .filter((model) => {
+        if (!searchQuery.trim()) return true;
+        const query = searchQuery.toLowerCase().trim();
+        return (
+          model.modelId.toLowerCase().includes(query) ||
+          model.displayName.toLowerCase().includes(query)
+        );
+      });
+
+    return {
+      used: filteredUsed,
+      unused: filteredUnused,
+    };
+  }, [pricing, modelStats, searchQuery]);
+
   // 三个应用的配置状态
   const [appConfigs, setAppConfigs] = useState<AppConfigState>({
     claude: { multiplier: "1", source: "response" },
