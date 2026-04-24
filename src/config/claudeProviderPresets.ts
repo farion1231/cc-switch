@@ -66,6 +66,10 @@ export interface ProviderPreset {
 
   // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
   hidden?: boolean;
+
+  // 获取模型列表使用的完整 URL（覆写自动候选逻辑）
+  // 缺省时后端基于 baseURL 自动尝试 /v1/models、/models 以及剥离已知兼容子路径后的变体。
+  modelsUrl?: string;
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -136,6 +140,8 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    // Anthropic 兼容层挂在 /anthropic 子路径；/models 是根上独立端点
+    modelsUrl: "https://api.deepseek.com/models",
     icon: "deepseek",
     iconColor: "#1E88E5",
   },

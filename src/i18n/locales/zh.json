@@ -874,6 +874,7 @@
     "fetchModelsNeedConfig": "请先填写 API 端点和 API Key",
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
+    "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
     "fetchModelsTimeout": "请求超时，请检查网络连接"
   },
   "copilot": {
