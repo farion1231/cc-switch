@@ -276,13 +276,13 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 **方法一：通过 WinGet 安装（推荐）**
 
 ```bash
-winget install farion1231.CC-Switch
+winget install -e --id farion1231.CC-Switch
 ```
 
 更新：
 
 ```bash
-winget upgrade farion1231.CC-Switch
+winget upgrade -e --id farion1231.CC-Switch
 ```
 
 **方法二：手动下载**

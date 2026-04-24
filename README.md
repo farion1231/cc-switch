@@ -275,13 +275,13 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 **Method 1: Install via WinGet (Recommended)**
 
 ```bash
-winget install farion1231.CC-Switch
+winget install -e --id farion1231.CC-Switch
 ```
 
 Update:
 
 ```bash
-winget upgrade farion1231.CC-Switch
+winget upgrade -e --id farion1231.CC-Switch
 ```
 
 **Method 2: Manual Download**
