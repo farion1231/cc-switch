@@ -308,19 +308,66 @@ mod tests {
 
     fn seed_codex_threads(home: &Path, provider: &str) {
         let codex_dir = home.join(".codex");
+        let rollout_dir = codex_dir
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("24");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::create_dir_all(&rollout_dir).expect("create rollout dir");
         let conn = rusqlite::Connection::open(codex_dir.join("state_5.sqlite"))
             .expect("open codex state db");
         conn.execute(
-            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL)",
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, rollout_path TEXT NOT NULL)",
             [],
         )
         .expect("create threads table");
+        let rollout_1 = rollout_dir.join("rollout-thread-1.jsonl");
+        let rollout_2 = rollout_dir.join("rollout-thread-2.jsonl");
+        for (id, path) in [("thread-1", &rollout_1), ("thread-2", &rollout_2)] {
+            fs::write(
+                path,
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"model_provider\":\"{provider}\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{}}}}\n"
+                ),
+            )
+            .expect("write rollout metadata");
+        }
         conn.execute(
-            "INSERT INTO threads (id, model_provider) VALUES ('thread-1', ?1), ('thread-2', ?1)",
-            [provider],
+            "INSERT INTO threads (id, model_provider, rollout_path) VALUES ('thread-1', ?1, ?2), ('thread-2', ?1, ?3)",
+            rusqlite::params![provider, rollout_1.to_string_lossy(), rollout_2.to_string_lossy()],
         )
         .expect("seed threads");
+    }
+
+    fn codex_rollout_providers(home: &Path) -> Vec<(String, Option<String>)> {
+        let conn = rusqlite::Connection::open(home.join(".codex").join("state_5.sqlite"))
+            .expect("open codex state db");
+        let mut stmt = conn
+            .prepare("SELECT id, rollout_path FROM threads ORDER BY id")
+            .expect("prepare rollout query");
+        stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("query rollouts")
+        .map(|row| {
+            let (id, path) = row.expect("rollout row");
+            let first_line = fs::read_to_string(path)
+                .expect("read rollout")
+                .lines()
+                .next()
+                .expect("rollout first line")
+                .to_string();
+            let value: serde_json::Value =
+                serde_json::from_str(&first_line).expect("parse rollout first line");
+            let provider = value
+                .get("payload")
+                .and_then(|payload| payload.get("model_provider"))
+                .and_then(|provider| provider.as_str())
+                .map(str::to_string);
+            (id, provider)
+        })
+        .collect()
     }
 
     fn codex_thread_providers(home: &Path) -> Vec<(String, i64)> {
@@ -372,6 +419,14 @@ mod tests {
                 vec![("openai".to_string(), 2)],
                 "OAuth login should make Codex Desktop history visible under the openai provider key"
             );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("openai".to_string())),
+                    ("thread-2".to_string(), Some("openai".to_string())),
+                ],
+                "OAuth login should update Codex rollout session metadata"
+            );
         });
     }
 
@@ -409,6 +464,14 @@ mod tests {
                 codex_thread_providers(home),
                 vec![("OpenAI".to_string(), 2)],
                 "API login should make Codex Desktop history visible under the configured provider key"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("OpenAI".to_string())),
+                    ("thread-2".to_string(), Some("OpenAI".to_string())),
+                ],
+                "API login should update Codex rollout session metadata"
             );
         });
     }
@@ -1602,6 +1665,66 @@ impl ProviderService {
         Ok(false)
     }
 
+    fn codex_threads_have_rollout_path(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+        let mut stmt = conn.prepare("PRAGMA table_info(threads)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let column_name: String = row.get(1)?;
+            if column_name == "rollout_path" {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn sync_codex_rollout_session_meta(
+        rollout_path: &Path,
+        target_provider: &str,
+    ) -> Result<bool, AppError> {
+        let text = match std::fs::read_to_string(rollout_path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => return Err(AppError::io(rollout_path, err)),
+        };
+
+        let Some(first_newline) = text.find('\n') else {
+            return Ok(false);
+        };
+        let first_line = &text[..first_newline];
+        let rest = &text[first_newline..];
+        let mut value: serde_json::Value = match serde_json::from_str(first_line) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+
+        if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+            return Ok(false);
+        }
+
+        let Some(payload) = value.get_mut("payload").and_then(Value::as_object_mut) else {
+            return Ok(false);
+        };
+        if payload.get("model_provider").and_then(Value::as_str) == Some(target_provider) {
+            return Ok(false);
+        }
+
+        payload.insert(
+            "model_provider".to_string(),
+            Value::String(target_provider.to_string()),
+        );
+
+        let updated_first_line = serde_json::to_string(&value).map_err(|err| {
+            AppError::Message(format!(
+                "Failed to serialize Codex rollout metadata {}: {err}",
+                rollout_path.display()
+            ))
+        })?;
+        crate::config::write_text_file(rollout_path, &format!("{updated_first_line}{rest}"))?;
+
+        Ok(true)
+    }
+
     fn sync_codex_desktop_threads(provider: &Provider) -> Result<usize, AppError> {
         let target_provider = Self::codex_desktop_provider_key(provider)?;
         let db_path = crate::codex_config::get_codex_config_dir().join("state_5.sqlite");
@@ -1624,10 +1747,38 @@ impl ProviderService {
             return Ok(0);
         }
 
+        let rollout_paths = if Self::codex_threads_have_rollout_path(&conn)? {
+            let mut stmt = conn.prepare(
+                "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider <> ?1",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![target_provider.as_str()], |row| {
+                row.get(0)
+            })?;
+            rows.collect::<Result<Vec<String>, _>>()?
+        } else {
+            Vec::new()
+        };
+
         let updated = conn.execute(
             "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider <> ?1",
-            rusqlite::params![target_provider],
+            rusqlite::params![target_provider.as_str()],
         )?;
+
+        let mut rollout_updated = 0usize;
+        for rollout_path in rollout_paths {
+            match Self::sync_codex_rollout_session_meta(Path::new(&rollout_path), &target_provider)
+            {
+                Ok(true) => rollout_updated += 1,
+                Ok(false) => {}
+                Err(err) => log::warn!(
+                    "Codex rollout session metadata sync failed for {}: {err}",
+                    rollout_path
+                ),
+            }
+        }
+        if rollout_updated > 0 {
+            log::info!("Codex rollout session metadata sync updated {rollout_updated} files");
+        }
 
         Ok(updated)
     }
