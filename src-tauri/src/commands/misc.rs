@@ -1298,10 +1298,9 @@ fn launch_windows_terminal(
     let content = if let Some(profile_dir) = claude_profile_dir {
         let escaped_profile_dir = escape_windows_batch_value(profile_dir);
         let config_fragment = if let Some(config_file) = config_file {
-            let config_path_for_batch =
-                escape_windows_batch_value(&config_file.to_string_lossy());
+            let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
             format!(
-"echo Using provider-specific claude config:
+                "echo Using provider-specific claude config:
 echo {config_path_for_batch}
 claude --settings \"{config_path_for_batch}\"
 del \"{config_path_for_batch}\" >nul 2>&1
