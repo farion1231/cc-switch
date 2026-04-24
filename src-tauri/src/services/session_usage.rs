@@ -13,6 +13,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -347,16 +348,23 @@ fn insert_session_log_entry(
     let conn = lock_conn!(db.conn);
 
     // 检查是否已存在
-    let exists: bool = conn
+    let existing: Option<(i64, i64)> = conn
         .query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = ?1",
+            "SELECT input_tokens, output_tokens FROM proxy_request_logs WHERE request_id = ?1",
             rusqlite::params![request_id],
-            |row| row.get::<_, i64>(0).map(|c| c > 0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .unwrap_or(false);
+        .optional()
+        .unwrap_or(None);
 
-    if exists {
-        return Ok(false);
+    let mut is_update = false;
+    if let Some((existing_input, existing_output)) = existing {
+        if existing_input == 0 && existing_output == 0 && (msg.input_tokens > 0 || msg.output_tokens > 0) {
+            log::debug!("[SESSION-SYNC] 代理日志中存在空 usage，将用通过会话解析的 usage 覆盖 ({})", request_id);
+            is_update = true;
+        } else {
+            return Ok(false);
+        }
     }
 
     // 解析时间戳
@@ -409,42 +417,57 @@ fn insert_session_log_entry(
         ),
     };
 
-    conn.execute(
-        "INSERT OR IGNORE INTO proxy_request_logs (
-            request_id, provider_id, app_type, model, request_model,
-            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-            input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-            latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
-        rusqlite::params![
-            request_id,
-            "_session",         // provider_id: 标记为会话来源
-            "claude",           // app_type
-            msg.model,
-            msg.model,          // request_model = model
-            msg.input_tokens,
-            msg.output_tokens,
-            msg.cache_read_tokens,
-            msg.cache_creation_tokens,
-            input_cost,
-            output_cost,
-            cache_read_cost,
-            cache_creation_cost,
-            total_cost,
-            0i64,               // latency_ms: 会话日志无此数据
-            Option::<i64>::None, // first_token_ms
-            200i64,             // status_code: 有 stop_reason 说明请求成功
-            Option::<String>::None, // error_message
-            msg.session_id,
-            Some("session_log"), // provider_type
-            1i64,               // is_streaming: Claude Code 通常使用流式
-            "1.0",              // cost_multiplier
-            created_at,
-            "session_log",      // data_source
-        ],
-    )
-    .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
+    if is_update {
+        conn.execute(
+            "UPDATE proxy_request_logs SET
+                input_tokens = ?1, output_tokens = ?2, cache_read_tokens = ?3, cache_creation_tokens = ?4,
+                input_cost_usd = ?5, output_cost_usd = ?6, cache_read_cost_usd = ?7, cache_creation_cost_usd = ?8, total_cost_usd = ?9
+             WHERE request_id = ?10",
+            rusqlite::params![
+                msg.input_tokens, msg.output_tokens, msg.cache_read_tokens, msg.cache_creation_tokens,
+                input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost,
+                request_id
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("更新会话日志失败: {e}")))?;
+    } else {
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                latency_ms, first_token_ms, status_code, error_message, session_id,
+                provider_type, is_streaming, cost_multiplier, created_at, data_source
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            rusqlite::params![
+                request_id,
+                "_session",         // provider_id: 标记为会话来源
+                "claude",           // app_type
+                msg.model,
+                msg.model,          // request_model = model
+                msg.input_tokens,
+                msg.output_tokens,
+                msg.cache_read_tokens,
+                msg.cache_creation_tokens,
+                input_cost,
+                output_cost,
+                cache_read_cost,
+                cache_creation_cost,
+                total_cost,
+                0i64,               // latency_ms: 会话日志无此数据
+                Option::<i64>::None, // first_token_ms
+                200i64,             // status_code: 有 stop_reason 说明请求成功
+                Option::<String>::None, // error_message
+                msg.session_id,
+                Some("session_log"), // provider_type
+                1i64,               // is_streaming: Claude Code 通常使用流式
+                "1.0",              // cost_multiplier
+                created_at,
+                "session_log",      // data_source
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
+    }
 
     Ok(true)
 }
