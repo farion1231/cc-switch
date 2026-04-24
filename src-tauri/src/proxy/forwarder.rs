@@ -1090,7 +1090,28 @@ impl RequestForwarder {
                 }
             }
 
-            adapter.get_auth_headers(&auth)
+            // 通用自定义认证 Header：从 provider.meta.api_key_header_name 注入（覆盖适配器默认策略）
+            if let Some(ref meta) = provider.meta {
+                if let Some(ref header_name) = meta.api_key_header_name {
+                    if !header_name.is_empty() {
+                        auth.custom_auth_header = Some(header_name.clone());
+                    }
+                }
+            }
+
+            if let Some(ref header_name) = auth.custom_auth_header {
+                use http::{HeaderName, HeaderValue};
+                if let (Ok(name), Ok(value)) = (
+                    HeaderName::from_bytes(header_name.as_bytes()),
+                    HeaderValue::from_str(&auth.api_key),
+                ) {
+                    vec![(name, value)]
+                } else {
+                    adapter.get_auth_headers(&auth)
+                }
+            } else {
+                adapter.get_auth_headers(&auth)
+            }
         } else {
             Vec::new()
         };

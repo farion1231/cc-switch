@@ -32,7 +32,12 @@ import {
   Wand2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import {
+  ApiKeySection,
+  ApiKeyHeaderSection,
+  EndpointField,
+  ModelInputWithFetch,
+} from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import {
@@ -128,6 +133,10 @@ interface ClaudeFormFieldsProps {
   // Full URL mode
   isFullUrl: boolean;
   onFullUrlChange: (value: boolean) => void;
+
+  // Custom API Key Header
+  apiKeyHeaderName?: string;
+  onApiKeyHeaderNameChange: (name: string | undefined) => void;
 }
 
 export function ClaudeFormFields({
@@ -173,6 +182,8 @@ export function ClaudeFormFields({
   onApiKeyFieldChange,
   isFullUrl,
   onFullUrlChange,
+  apiKeyHeaderName,
+  onApiKeyHeaderNameChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasAnyAdvancedValue = !!(
@@ -389,6 +400,11 @@ export function ClaudeFormFields({
           partnerPromotionKey={partnerPromotionKey}
         />
       )}
+
+      <ApiKeyHeaderSection
+        apiKeyHeaderName={apiKeyHeaderName}
+        onApiKeyHeaderNameChange={onApiKeyHeaderNameChange}
+      />
 
       {/* 模板变量输入 */}
       {templateValueEntries.length > 0 && (

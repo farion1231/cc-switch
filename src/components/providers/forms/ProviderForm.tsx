@@ -339,6 +339,10 @@ export function ProviderForm({
     return initialData?.meta?.apiFormat ?? "anthropic";
   });
 
+  const [localApiKeyHeaderName, setLocalApiKeyHeaderName] = useState<
+    string | undefined
+  >(() => initialData?.meta?.apiKeyHeaderName);
+
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
     setLocalApiFormat(format);
   }, []);
@@ -1168,6 +1172,10 @@ export function ProviderForm({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      apiKeyHeaderName:
+        category !== "official" && localApiKeyHeaderName?.trim()
+          ? localApiKeyHeaderName.trim()
+          : undefined,
     };
 
     await onSubmit(payload);
@@ -1762,6 +1770,8 @@ export function ProviderForm({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              apiKeyHeaderName={localApiKeyHeaderName}
+              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
@@ -1791,6 +1801,8 @@ export function ProviderForm({
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}
               speedTestEndpoints={speedTestEndpoints}
+              apiKeyHeaderName={localApiKeyHeaderName}
+              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
@@ -1820,6 +1832,8 @@ export function ProviderForm({
               model={geminiModel}
               onModelChange={handleGeminiModelChange}
               speedTestEndpoints={speedTestEndpoints}
+              apiKeyHeaderName={localApiKeyHeaderName}
+              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
@@ -1842,6 +1856,8 @@ export function ProviderForm({
               onExtraOptionsChange={
                 opencodeForm.handleOpencodeExtraOptionsChange
               }
+              apiKeyHeaderName={localApiKeyHeaderName}
+              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
@@ -1883,6 +1899,8 @@ export function ProviderForm({
               onModelsChange={openclawForm.handleOpenclawModelsChange}
               userAgent={openclawForm.openclawUserAgent}
               onUserAgentChange={openclawForm.handleOpenclawUserAgentChange}
+              apiKeyHeaderName={localApiKeyHeaderName}
+              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
@@ -1906,6 +1924,8 @@ export function ProviderForm({
               onRateLimitDelayChange={
                 hermesForm.handleHermesRateLimitDelayChange
               }
+              apiKeyHeaderName={localApiKeyHeaderName}
+              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 

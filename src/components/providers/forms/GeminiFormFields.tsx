@@ -5,7 +5,7 @@ import { Download, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import { ApiKeySection, EndpointField, ModelInputWithFetch, ApiKeyHeaderSection } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -46,6 +46,10 @@ interface GeminiFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // Custom API Key Header
+  apiKeyHeaderName?: string;
+  onApiKeyHeaderNameChange: (name: string | undefined) => void;
 }
 
 export function GeminiFormFields({
@@ -70,6 +74,8 @@ export function GeminiFormFields({
   model,
   onModelChange,
   speedTestEndpoints,
+  apiKeyHeaderName,
+  onApiKeyHeaderNameChange,
 }: GeminiFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -143,6 +149,12 @@ export function GeminiFormFields({
           partnerPromotionKey={partnerPromotionKey}
         />
       )}
+
+      {/* API Key Header 自定义 */}
+      <ApiKeyHeaderSection
+        apiKeyHeaderName={apiKeyHeaderName}
+        onApiKeyHeaderNameChange={onApiKeyHeaderNameChange}
+      />
 
       {/* Base URL 输入框（统一使用与 Codex 相同的样式与交互） */}
       {shouldShowSpeedTest && (

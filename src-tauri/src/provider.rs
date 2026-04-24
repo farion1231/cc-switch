@@ -273,6 +273,9 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// 自定义 API Key Header 名称（设置后将以原始 key 值替代默认的 Bearer 认证）
+    #[serde(rename = "apiKeyHeaderName", skip_serializing_if = "Option::is_none")]
+    pub api_key_header_name: Option<String>,
 }
 
 impl ProviderMeta {
