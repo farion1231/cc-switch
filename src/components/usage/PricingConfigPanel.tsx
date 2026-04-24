@@ -366,7 +366,20 @@ export function PricingConfigPanel() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>{t("usage.model")}</TableHead>
+                    <TableHead>
+                      <div className="flex items-center justify-between gap-2">
+                        {t("usage.model")}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setIsSearchOpen(!isSearchOpen)}
+                          className="h-6 w-6"
+                          title={t("usage.searchModel")}
+                        >
+                          <Search className={`h-3.5 w-3.5 ${isSearchOpen ? "text-primary" : "text-muted-foreground"}`} />
+                        </Button>
+                      </div>
+                    </TableHead>
                     <TableHead>{t("usage.displayName")}</TableHead>
                     <TableHead className="text-right">
                       {t("usage.inputCost")}
