@@ -83,3 +83,30 @@ pub async fn delete_sessions(
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
 }
+
+#[tauri::command]
+pub async fn get_codex_session_provider(
+    sessionId: String,
+    sourcePath: String,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::get_codex_session_provider(&sessionId, &sourcePath)
+    })
+    .await
+    .map_err(|e| format!("Failed to get Codex session provider: {e}"))?
+}
+
+#[tauri::command]
+pub async fn switch_codex_session_provider(
+    request: session_manager::SwitchCodexSessionProviderRequest,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::switch_codex_session_provider(
+            &request.session_id,
+            &request.source_path,
+            &request.target_provider,
+        )
+    })
+    .await
+    .map_err(|e| format!("Failed to switch Codex session provider: {e}"))?
+}

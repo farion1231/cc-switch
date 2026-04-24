@@ -736,7 +736,11 @@
     "messageCopied": "Message copied",
     "conversationHistory": "Conversation History",
     "expandContent": "Expand full content",
-    "collapseContent": "Collapse"
+    "collapseContent": "Collapse",
+    "codexProviderGroup": "Codex session group",
+    "codexProviderGroupHint": "After switching, this session appears in the matching Codex history group.",
+    "codexProviderSwitchSuccess": "Codex session group updated",
+    "codexProviderSwitchFailed": "Failed to update Codex session group: {{error}}"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",

@@ -736,7 +736,11 @@
     "messageCopied": "メッセージがコピーされました",
     "conversationHistory": "会話履歴",
     "expandContent": "全文を表示",
-    "collapseContent": "折りたたむ"
+    "collapseContent": "折りたたむ",
+    "codexProviderGroup": "Codex セッショングループ",
+    "codexProviderGroupHint": "切り替えると、このセッションは対応する Codex 履歴グループに表示されます。",
+    "codexProviderSwitchSuccess": "Codex セッショングループを更新しました",
+    "codexProviderSwitchFailed": "Codex セッショングループの更新に失敗しました: {{error}}"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",

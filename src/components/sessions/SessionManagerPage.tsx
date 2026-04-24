@@ -47,6 +47,7 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import { SessionItem } from "./SessionItem";
 import { SessionMessageItem } from "./SessionMessageItem";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
+import { CodexSessionProviderSwitch } from "./CodexSessionProviderSwitch";
 import {
   formatSessionTitle,
   formatTimestamp,
@@ -981,6 +982,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </Tooltip>
                       </div>
                     )}
+
+                    <CodexSessionProviderSwitch session={selectedSession} />
                   </CardHeader>
 
                   {/* 消息列表区域 */}
