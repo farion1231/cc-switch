@@ -59,7 +59,7 @@ export function UsageTrendChart({
 
   const CustomLegend = ({ payload }: any) => (
     <div className="flex flex-wrap gap-4 justify-center">
-      {payload.map((entry: any) => (
+      {payload?.map((entry: any) => (
         <div
           key={entry.dataKey}
           className={`flex items-center gap-2 cursor-pointer ${
