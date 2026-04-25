@@ -297,9 +297,16 @@ export function ProviderForm({
     },
   );
 
+  // 软校验：收集"业务约束"类问题（空值/缺项），由用户决定是否仍要保存
+  const [softIssues, setSoftIssues] = useState<string[] | null>(null);
+  const [pendingFormValues, setPendingFormValues] =
+    useState<ProviderFormData | null>(null);
+  // 确认框走的提交路径绕过了 react-hook-form 的 isSubmitting，单独追踪
+  const [isConfirmSubmitting, setIsConfirmSubmitting] = useState(false);
+
   useEffect(() => {
-    onSubmittingChange?.(isSubmitting);
-  }, [isSubmitting, onSubmittingChange]);
+    onSubmittingChange?.(isSubmitting || isConfirmSubmitting);
+  }, [isSubmitting, isConfirmSubmitting, onSubmittingChange]);
 
   const {
     apiKey,
@@ -765,11 +772,6 @@ export function ProviderForm({
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
-  // 软校验：收集"业务约束"类问题（空值/缺项），由用户决定是否仍要保存
-  const [softIssues, setSoftIssues] = useState<string[] | null>(null);
-  const [pendingFormValues, setPendingFormValues] =
-    useState<ProviderFormData | null>(null);
-
   const handleSubmit = async (values: ProviderFormData) => {
     // 软性问题（业务约束，用户可选择仍要保存）
     const issues: string[] = [];
@@ -801,10 +803,13 @@ export function ProviderForm({
     const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
     if (appId === "opencode" && !isAnyOmoCategory) {
+      // providerKey 是 opencode / openclaw / hermes 的主键 ID，空或格式不合法
+      // 都属于完整性约束，保留硬拒绝（mutations 层也会 throw，软化只会让错误更晦涩）
       if (!opencodeForm.opencodeProviderKey.trim()) {
-        issues.push(t("opencode.providerKeyRequired"));
-      } else if (!keyPattern.test(opencodeForm.opencodeProviderKey)) {
-        // B 类：格式错会造成文件路径问题，硬拒绝
+        toast.error(t("opencode.providerKeyRequired"));
+        return;
+      }
+      if (!keyPattern.test(opencodeForm.opencodeProviderKey)) {
         toast.error(t("opencode.providerKeyInvalid"));
         return;
       }
@@ -817,11 +822,9 @@ export function ProviderForm({
         return;
       }
       if (
-        opencodeForm.opencodeProviderKey.trim() &&
         !isProviderKeyLocked &&
         additiveExistingProviderKeys.includes(opencodeForm.opencodeProviderKey)
       ) {
-        // B 类：重复会覆盖其它供应商，硬拒绝
         toast.error(t("opencode.providerKeyDuplicate"));
         return;
       }
@@ -832,8 +835,10 @@ export function ProviderForm({
 
     if (appId === "openclaw") {
       if (!openclawForm.openclawProviderKey.trim()) {
-        issues.push(t("openclaw.providerKeyRequired"));
-      } else if (!keyPattern.test(openclawForm.openclawProviderKey)) {
+        toast.error(t("openclaw.providerKeyRequired"));
+        return;
+      }
+      if (!keyPattern.test(openclawForm.openclawProviderKey)) {
         toast.error(t("openclaw.providerKeyInvalid"));
         return;
       }
@@ -846,7 +851,6 @@ export function ProviderForm({
         return;
       }
       if (
-        openclawForm.openclawProviderKey.trim() &&
         !isProviderKeyLocked &&
         additiveExistingProviderKeys.includes(openclawForm.openclawProviderKey)
       ) {
@@ -857,8 +861,10 @@ export function ProviderForm({
 
     if (appId === "hermes") {
       if (!hermesForm.hermesProviderKey.trim()) {
-        issues.push(t("hermes.form.providerKeyRequired"));
-      } else if (!keyPattern.test(hermesForm.hermesProviderKey)) {
+        toast.error(t("hermes.form.providerKeyRequired"));
+        return;
+      }
+      if (!keyPattern.test(hermesForm.hermesProviderKey)) {
         toast.error(t("hermes.form.providerKeyInvalid"));
         return;
       }
@@ -871,7 +877,6 @@ export function ProviderForm({
         return;
       }
       if (
-        hermesForm.hermesProviderKey.trim() &&
         !isProviderKeyLocked &&
         additiveExistingProviderKeys.includes(hermesForm.hermesProviderKey)
       ) {
@@ -2110,7 +2115,10 @@ export function ProviderForm({
               <Button variant="outline" type="button" onClick={onCancel}>
                 {t("common.cancel")}
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
+              <Button
+                type="submit"
+                disabled={isSubmitting || isConfirmSubmitting}
+              >
                 {submitLabel}
               </Button>
             </div>
@@ -2146,15 +2154,27 @@ export function ProviderForm({
           defaultValue: "仍要保存",
         })}
         cancelText={t("common.cancel")}
-        onConfirm={() => {
+        onConfirm={async () => {
+          if (isConfirmSubmitting) return;
           const values = pendingFormValues;
-          setSoftIssues(null);
-          setPendingFormValues(null);
-          if (values) {
-            void performSubmit(values);
+          if (!values) {
+            setSoftIssues(null);
+            return;
+          }
+          setIsConfirmSubmitting(true);
+          try {
+            await performSubmit(values);
+            setSoftIssues(null);
+            setPendingFormValues(null);
+          } catch (error) {
+            console.error("[ProviderForm] soft-confirm submit failed:", error);
+            // 保留确认框和 pending values，让用户可以重试或取消
+          } finally {
+            setIsConfirmSubmitting(false);
           }
         }}
         onCancel={() => {
+          if (isConfirmSubmitting) return;
           setSoftIssues(null);
           setPendingFormValues(null);
         }}
