@@ -51,7 +51,7 @@ export function UsageTrendChart({
 
   const handleLegendClick = (data: { dataKey: string }) => {
     const dataKey = data.dataKey;
-    setVisibility(prev => ({
+    setVisibility((prev) => ({
       ...prev,
       [dataKey]: !prev[dataKey],
     }));
@@ -63,7 +63,7 @@ export function UsageTrendChart({
         <div
           key={entry.dataKey}
           className={`flex items-center gap-2 cursor-pointer ${
-            !visibility[entry.dataKey] ? 'opacity-40' : ''
+            !visibility[entry.dataKey] ? "opacity-40" : ""
           }`}
           onClick={() => handleLegendClick(entry)}
         >
