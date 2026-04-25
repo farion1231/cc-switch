@@ -373,12 +373,21 @@ export function PricingConfigPanel() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => setIsSearchOpen(!isSearchOpen)}
+                    onClick={() => {
+                      if (isSearchOpen) {
+                        setSearchQuery("");
+                      }
+                      setIsSearchOpen(!isSearchOpen);
+                    }}
                     className="h-6 w-6"
                     title={t("usage.searchModel")}
                   >
                     <Search
-                      className={`h-3.5 w-3.5 ${isSearchOpen ? "text-primary" : "text-muted-foreground"}`}
+                      className={`h-3.5 w-3.5 ${
+                        isSearchOpen || searchQuery
+                          ? "text-primary"
+                          : "text-muted-foreground"
+                      }`}
                     />
                   </Button>
                 </div>
@@ -749,13 +758,13 @@ export function PricingConfigPanel() {
           <TabsList className="mb-4">
             <TabsTrigger value="used" className="gap-1">
               {t("usage.usedModels", "Used")}
-              <span className="ml-1 rounded-full bg-background/60 px-1.5 text-xs">
+              <span className="ml-1 rounded-full bg-black/10 dark:bg-white/15 px-1.5 text-xs">
                 {groupedModels.used.length}
               </span>
             </TabsTrigger>
             <TabsTrigger value="unused" className="gap-1">
               {t("usage.unusedModels", "Unused")}
-              <span className="ml-1 rounded-full bg-background/60 px-1.5 text-xs">
+              <span className="ml-1 rounded-full bg-black/10 dark:bg-white/15 px-1.5 text-xs">
                 {groupedModels.unused.length}
               </span>
             </TabsTrigger>
