@@ -1065,7 +1065,13 @@
     "modelExtraFieldKeyPlaceholder": "variants",
     "sdkOptions": "SDK Options",
     "modelOptionKeyPlaceholder": "provider",
-    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}",
+    "tokenLimits": "Token Limits",
+    "limitContext": "Context Window",
+    "limitOutput": "Max Output",
+    "limitContextPlaceholder": "e.g. 128000",
+    "limitOutputPlaceholder": "e.g. 4096",
+    "tokenLimitsHint": "Set context window and max output token limits for this model"
   },
   "providerPreset": {
     "label": "Provider Preset",

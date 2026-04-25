@@ -466,6 +466,53 @@ export function OpenCodeFormFields({
     });
   };
 
+  // Model limit handlers (limit.context and limit.output)
+  const handleModelLimitContextChange = (modelKey: string, value: string) => {
+    const model = models[modelKey];
+    const numValue = value.trim() ? Number(value) : undefined;
+    if (numValue !== undefined && !Number.isFinite(numValue)) return;
+    const currentLimit = model.limit || {};
+    // If both context and output are undefined, remove limit entirely
+    if (numValue === undefined && currentLimit.output === undefined) {
+      const { limit: _, ...rest } = model;
+      onModelsChange({
+        ...models,
+        [modelKey]: rest as OpenCodeModel,
+      });
+    } else {
+      onModelsChange({
+        ...models,
+        [modelKey]: {
+          ...model,
+          limit: { ...currentLimit, context: numValue },
+        },
+      });
+    }
+  };
+
+  const handleModelLimitOutputChange = (modelKey: string, value: string) => {
+    const model = models[modelKey];
+    const numValue = value.trim() ? Number(value) : undefined;
+    if (numValue !== undefined && !Number.isFinite(numValue)) return;
+    const currentLimit = model.limit || {};
+    // If both context and output are undefined, remove limit entirely
+    if (currentLimit.context === undefined && numValue === undefined) {
+      const { limit: _, ...rest } = model;
+      onModelsChange({
+        ...models,
+        [modelKey]: rest as OpenCodeModel,
+      });
+    } else {
+      onModelsChange({
+        ...models,
+        [modelKey]: {
+          ...model,
+          limit: { ...currentLimit, output: numValue },
+        },
+      });
+    }
+  };
+
   // Extra Options handlers
   const handleAddExtraOption = () => {
     const newKey = `option-${Date.now()}`;
@@ -825,6 +872,59 @@ export function OpenCodeFormFields({
                           ),
                         )
                       )}
+                    </div>
+
+                    {/* Token Limits (model.limit) */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t("opencode.tokenLimits", {
+                          defaultValue: "Token Limits",
+                        })}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground w-24 shrink-0">
+                          {t("opencode.limitContext", {
+                            defaultValue: "Context Window",
+                          })}
+                        </span>
+                        <Input
+                          type="number"
+                          value={model.limit?.context ?? ""}
+                          onChange={(e) =>
+                            handleModelLimitContextChange(key, e.target.value)
+                          }
+                          placeholder={t("opencode.limitContextPlaceholder", {
+                            defaultValue: "e.g. 128000",
+                          })}
+                          className="flex-1"
+                          min={1}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground w-24 shrink-0">
+                          {t("opencode.limitOutput", {
+                            defaultValue: "Max Output",
+                          })}
+                        </span>
+                        <Input
+                          type="number"
+                          value={model.limit?.output ?? ""}
+                          onChange={(e) =>
+                            handleModelLimitOutputChange(key, e.target.value)
+                          }
+                          placeholder={t("opencode.limitOutputPlaceholder", {
+                            defaultValue: "e.g. 4096",
+                          })}
+                          className="flex-1"
+                          min={1}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {t("opencode.tokenLimitsHint", {
+                          defaultValue:
+                            "Set context window and max output token limits for this model",
+                        })}
+                      </p>
                     </div>
 
                     {/* SDK Options (model.options) */}
