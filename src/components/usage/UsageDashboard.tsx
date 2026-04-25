@@ -53,13 +53,18 @@ function loadSavedRange(): UsageRangeSelection {
       "preset" in parsed &&
       typeof parsed.preset === "string"
     ) {
-      const preset = parsed.preset;
-      // Check if preset is one of the valid values
-      const isPresetValid = (["today", "1d", "7d", "14d", "30d", "custom"] as const).includes(preset as any);
+      const preset = parsed.preset as UsageRangePreset;
+      const validPresets: UsageRangePreset[] = [
+        "today",
+        "1d",
+        "7d",
+        "14d",
+        "30d",
+        "custom",
+      ];
 
-      if (isPresetValid) {
-        const validPreset = preset as UsageRangePreset;
-        if (validPreset === "custom") {
+      if (validPresets.includes(preset)) {
+        if (preset === "custom") {
           if (
             "customStartDate" in parsed &&
             typeof parsed.customStartDate === "number" &&
@@ -75,7 +80,7 @@ function loadSavedRange(): UsageRangeSelection {
           // Invalid custom range, fall back to today
           return { preset: "today" };
         }
-        return { preset: validPreset };
+        return { preset };
       }
     }
 
