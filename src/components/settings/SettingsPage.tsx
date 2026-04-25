@@ -9,6 +9,7 @@ import {
   ScrollText,
   HardDriveDownload,
   FlaskConical,
+  Monitor,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -44,9 +45,11 @@ import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import { ClaudeDesktopSettingsSection } from "@/components/settings/ClaudeDesktopSettingsSection";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
+import { isLinux, isMac, isWindows } from "@/lib/platform";
 import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
 
@@ -64,6 +67,13 @@ export function SettingsPage({
   defaultTab = "general",
 }: SettingsDialogProps) {
   const { t } = useTranslation();
+  const claudeDesktopDescription = isLinux()
+    ? t("settings.claudeDesktop.platformUnsupportedDescription")
+    : isMac()
+      ? t("settings.claudeDesktop.macosDescription")
+      : isWindows()
+        ? t("settings.claudeDesktop.windowsDescription")
+        : t("settings.claudeDesktop.description");
   const {
     settings,
     isLoading,
@@ -321,6 +331,31 @@ export function SettingsPage({
                             onDirectoryChange={updateDirectory}
                             onBrowseDirectory={browseDirectory}
                             onResetDirectory={resetDirectory}
+                          />
+                        </AccordionContent>
+                      </AccordionItem>
+
+                      <AccordionItem
+                        value="claudeDesktop"
+                        className="rounded-xl glass-card overflow-hidden"
+                      >
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                          <div className="flex items-center gap-3">
+                            <Monitor className="h-5 w-5 text-violet-500" />
+                            <div className="text-left">
+                              <h3 className="text-base font-semibold">
+                                {t("settings.claudeDesktop.title")}
+                              </h3>
+                              <p className="text-sm text-muted-foreground font-normal">
+                                {claudeDesktopDescription}
+                              </p>
+                            </div>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                          <ClaudeDesktopSettingsSection
+                            settings={settings}
+                            onAutoSave={handleAutoSave}
                           />
                         </AccordionContent>
                       </AccordionItem>

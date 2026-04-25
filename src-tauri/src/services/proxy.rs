@@ -908,6 +908,11 @@ impl ProxyService {
         Ok((proxy_url, proxy_codex_base_url))
     }
 
+    pub async fn get_loopback_origin(&self) -> Result<String, String> {
+        let (proxy_url, _) = self.build_proxy_urls().await?;
+        Ok(proxy_url)
+    }
+
     /// 接管各应用的 Live 配置（写入代理地址）
     ///
     /// 代理服务器的路由已经根据 API 端点自动区分应用类型：

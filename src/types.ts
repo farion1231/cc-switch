@@ -283,6 +283,16 @@ export interface Settings {
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
+  // Claude Desktop 官方 3P gateway 鉴权方式
+  claudeDesktopGatewayAuthScheme?: "auto" | "x-api-key" | "bearer";
+  // 额外的 Claude Desktop gateway 请求头，一行一个 `Name: Value`
+  claudeDesktopGatewayHeaders?: string[];
+  // 是否为 Claude Desktop 打开 Code Tab
+  claudeDesktopCodeTabEnabled?: boolean;
+  // 是否允许 Claude Desktop 用户自行添加本地 MCP
+  claudeDesktopLocalMcpEnabled?: boolean;
+  // 是否将当前 Claude 远程 MCP 转换进 managedMcpServers
+  claudeDesktopIncludeManagedMcp?: boolean;
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
@@ -330,6 +340,43 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+}
+
+export interface ClaudeDesktopPreview {
+  domain: string;
+  registryPath: string;
+  currentProviderId?: string | null;
+  currentProviderName?: string | null;
+  gatewayBaseUrl: string;
+  gatewayApiKey: string;
+  gatewayAuthScheme: string;
+  inferenceModels: string[];
+  managedMcpCount: number;
+  proxyRunning: boolean;
+  localProxyEnabled: boolean;
+  configJson: string;
+  mobileconfig: string;
+  windowsReg: string;
+  warnings: string[];
+}
+
+export interface ClaudeDesktopModeStatus {
+  platform: string;
+  supported: boolean;
+  appInstalled: boolean;
+  managedConfigPath?: string | null;
+  managedConfigExists: boolean;
+  thirdPartyModeEnabled: boolean;
+  gatewayModeEnabled: boolean;
+  currentInferenceProvider?: string | null;
+  currentGatewayBaseUrl?: string | null;
+  currentGatewayAuthScheme?: string | null;
+  currentCodeTabEnabled?: boolean | null;
+  currentLocalMcpEnabled?: boolean | null;
+  currentManagedMcpCount?: number | null;
+  expectedGatewayBaseUrl: string;
+  matchesExpectedGateway: boolean;
+  warnings: string[];
 }
 
 export interface SessionMeta {
