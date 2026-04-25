@@ -2,7 +2,6 @@
  * 预设供应商配置模板
  */
 import { ProviderCategory } from "../types";
-import { BAIDU_QIANFAN_CODING_PLAN } from "./baiduQianfanCodingPlan";
 
 export interface TemplateValueConfig {
   label: string;
@@ -183,23 +182,24 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#0F62FE",
   },
   {
-    name: BAIDU_QIANFAN_CODING_PLAN.name,
-    websiteUrl: BAIDU_QIANFAN_CODING_PLAN.websiteUrl,
-    apiKeyUrl: BAIDU_QIANFAN_CODING_PLAN.apiKeyUrl,
+    name: "Baidu Qianfan Coding Plan",
+    websiteUrl: "https://cloud.baidu.com/product/qianfan_modelbuilder",
+    apiKeyUrl:
+      "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: BAIDU_QIANFAN_CODING_PLAN.anthropicBaseUrl,
+        ANTHROPIC_BASE_URL: "https://qianfan.baidubce.com/anthropic/coding",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: BAIDU_QIANFAN_CODING_PLAN.defaultModel,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: BAIDU_QIANFAN_CODING_PLAN.defaultModel,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: BAIDU_QIANFAN_CODING_PLAN.defaultModel,
-        ANTHROPIC_DEFAULT_OPUS_MODEL: BAIDU_QIANFAN_CODING_PLAN.defaultModel,
+        ANTHROPIC_MODEL: "qianfan-code-latest",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qianfan-code-latest",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qianfan-code-latest",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qianfan-code-latest",
       },
     },
-    category: BAIDU_QIANFAN_CODING_PLAN.category,
-    endpointCandidates: [BAIDU_QIANFAN_CODING_PLAN.anthropicBaseUrl],
-    icon: BAIDU_QIANFAN_CODING_PLAN.icon,
-    iconColor: BAIDU_QIANFAN_CODING_PLAN.iconColor,
+    category: "cn_official",
+    endpointCandidates: ["https://qianfan.baidubce.com/anthropic/coding"],
+    icon: "baidu",
+    iconColor: "#2932E1",
   },
   {
     name: "Bailian",

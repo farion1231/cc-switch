@@ -8,7 +8,6 @@ import type {
   OpenClawDefaultModel,
 } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
-import { BAIDU_QIANFAN_CODING_PLAN } from "./baiduQianfanCodingPlan";
 
 /** Suggested default model configuration for a preset */
 export interface OpenClawSuggestedDefaults {
@@ -227,11 +226,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: BAIDU_QIANFAN_CODING_PLAN.name,
-    websiteUrl: BAIDU_QIANFAN_CODING_PLAN.websiteUrl,
-    apiKeyUrl: BAIDU_QIANFAN_CODING_PLAN.apiKeyUrl,
+    name: "Baidu Qianfan Coding Plan",
+    websiteUrl: "https://cloud.baidu.com/product/qianfan_modelbuilder",
+    apiKeyUrl:
+      "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
     settingsConfig: {
-      baseUrl: BAIDU_QIANFAN_CODING_PLAN.openaiBaseUrl,
+      baseUrl: "https://qianfan.baidubce.com/v2/coding",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -273,10 +273,16 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         },
       ],
     },
-    category: BAIDU_QIANFAN_CODING_PLAN.category,
-    icon: BAIDU_QIANFAN_CODING_PLAN.icon,
-    iconColor: BAIDU_QIANFAN_CODING_PLAN.iconColor,
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
     templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://qianfan.baidubce.com/v2/coding",
+        defaultValue: "https://qianfan.baidubce.com/v2/coding",
+        editorValue: "",
+      },
       apiKey: {
         label: "API Key",
         placeholder: "bce-v3/...",

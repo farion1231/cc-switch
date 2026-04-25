@@ -1,9 +1,5 @@
 import type { ProviderCategory, OpenCodeProviderConfig } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
-import {
-  BAIDU_QIANFAN_CODING_PLAN,
-  BAIDU_QIANFAN_CODING_PLAN_MODELS,
-} from "./baiduQianfanCodingPlan";
 
 export interface OpenCodeProviderPreset {
   name: string;
@@ -424,23 +420,37 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: BAIDU_QIANFAN_CODING_PLAN.name,
-    websiteUrl: BAIDU_QIANFAN_CODING_PLAN.websiteUrl,
-    apiKeyUrl: BAIDU_QIANFAN_CODING_PLAN.apiKeyUrl,
+    name: "Baidu Qianfan Coding Plan",
+    websiteUrl: "https://cloud.baidu.com/product/qianfan_modelbuilder",
+    apiKeyUrl:
+      "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: BAIDU_QIANFAN_CODING_PLAN.name,
+      name: "Baidu Qianfan Coding Plan",
       options: {
-        baseURL: BAIDU_QIANFAN_CODING_PLAN.openaiBaseUrl,
+        baseURL: "https://qianfan.baidubce.com/v2/coding",
         apiKey: "",
         setCacheKey: true,
       },
-      models: BAIDU_QIANFAN_CODING_PLAN_MODELS,
+      models: {
+        "qianfan-code-latest": { name: "Qianfan Code Latest" },
+        "ernie-4.5-turbo-20260402": { name: "ERNIE 4.5 Turbo" },
+        "kimi-k2.5": { name: "Kimi K2.5" },
+        "deepseek-v3.2": { name: "DeepSeek V3.2" },
+        "glm-5": { name: "GLM 5" },
+        "minimax-m2.5": { name: "MiniMax M2.5" },
+      },
     },
-    category: BAIDU_QIANFAN_CODING_PLAN.category,
-    icon: BAIDU_QIANFAN_CODING_PLAN.icon,
-    iconColor: BAIDU_QIANFAN_CODING_PLAN.iconColor,
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
     templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://qianfan.baidubce.com/v2/coding",
+        defaultValue: "https://qianfan.baidubce.com/v2/coding",
+        editorValue: "",
+      },
       apiKey: {
         label: "API Key",
         placeholder: "bce-v3/...",
