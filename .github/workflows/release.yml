@@ -229,6 +229,24 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm tauri build --bundles appimage,deb,rpm
 
+      - name: Build CLI Binary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            cargo build --manifest-path src-tauri/Cargo.toml --release --bin cc-switch-cli --target aarch64-apple-darwin
+            cargo build --manifest-path src-tauri/Cargo.toml --release --bin cc-switch-cli --target x86_64-apple-darwin
+            mkdir -p src-tauri/target/universal-apple-darwin/release
+            lipo -create \
+              src-tauri/target/aarch64-apple-darwin/release/cc-switch-cli \
+              src-tauri/target/x86_64-apple-darwin/release/cc-switch-cli \
+              -output src-tauri/target/universal-apple-darwin/release/cc-switch-cli
+            codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" \
+              src-tauri/target/universal-apple-darwin/release/cc-switch-cli
+          else
+            cargo build --manifest-path src-tauri/Cargo.toml --release --bin cc-switch-cli
+          fi
+
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
         shell: bash
@@ -303,6 +321,17 @@ jobs:
 
           rm -rf "$DMG_STAGE_DIR"
           echo "✅ Styled DMG created: $NEW_DMG"
+
+          # 4) Collect CLI binary as a separate artifact
+          CLI_BIN="src-tauri/target/universal-apple-darwin/release/cc-switch-cli"
+          if [ -f "$CLI_BIN" ]; then
+            CLI_ZIP="CC-Switch-${VERSION}-macOS-CLI.zip"
+            ditto -c -k "$CLI_BIN" "release-assets/$CLI_ZIP"
+            echo "macOS CLI zip ready: $CLI_ZIP"
+          else
+            echo "❌ CLI binary not found: $CLI_BIN" >&2
+            exit 1
+          fi
 
       - name: Notarize macOS DMG
         if: runner.os == 'macOS'
@@ -441,6 +470,23 @@ jobs:
           } else {
             Write-Warning 'Portable exe not found'
           }
+          # 命令行独立二进制：不参与 Tauri updater，仅作为 Release 附件
+          $cliCandidates = @(
+            'src-tauri/target/release/cc-switch-cli.exe',
+            'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch-cli.exe'
+          )
+          $cliPath = $cliCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($null -ne $cliPath) {
+            $cliDir = 'release-assets/CC-Switch-CLI'
+            New-Item -ItemType Directory -Force -Path $cliDir | Out-Null
+            Copy-Item $cliPath $cliDir
+            $cliZip = "release-assets/CC-Switch-$VERSION-Windows-CLI.zip"
+            Compress-Archive -Path "$cliDir/*" -DestinationPath $cliZip -Force
+            Remove-Item -Recurse -Force $cliDir
+            Write-Host "Windows CLI zip created: CC-Switch-$VERSION-Windows-CLI.zip"
+          } else {
+            Write-Warning 'CLI exe not found'
+          }
 
       - name: Prepare Linux Assets
         if: runner.os == 'Linux'
@@ -475,6 +521,16 @@ jobs:
             echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
           else
             echo "No .rpm found (optional)"
+          fi
+          # 命令行独立二进制：不参与 Tauri updater，仅作为 Release 附件
+          CLI_BIN="src-tauri/target/release/cc-switch-cli"
+          if [ -f "$CLI_BIN" ]; then
+            CLI_TAR="release-assets/CC-Switch-${VERSION}-Linux-${ARCH}-CLI.tar.gz"
+            tar -czf "$CLI_TAR" -C "$(dirname "$CLI_BIN")" cc-switch-cli
+            echo "CLI tarball created: $(basename "$CLI_TAR")"
+          else
+            echo "CLI binary not found: $CLI_BIN" >&2
+            exit 1
           fi
 
       - name: List prepared assets
@@ -551,6 +607,7 @@ jobs:
             - **Windows**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
             - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
             - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
+            - **CLI**: `CC-Switch-${{ github.ref_name }}-*-CLI.*`（独立命令行二进制 `cc-switch-cli`）
 
             > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
 
