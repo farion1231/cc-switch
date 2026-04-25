@@ -1167,6 +1167,7 @@
     "statusCode": "ステータスコード",
     "searchProviderPlaceholder": "プロバイダーを検索...",
     "searchModelPlaceholder": "モデルを検索...",
+    "searchModel": "モデルを検索",
     "timeRange": "期間",
     "customRange": "カレンダーフィルター",
     "customRangeHint": "日付と時刻の両方に対応",

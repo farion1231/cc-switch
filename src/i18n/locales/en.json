@@ -1167,6 +1167,7 @@
     "statusCode": "Status Code",
     "searchProviderPlaceholder": "Search provider...",
     "searchModelPlaceholder": "Search model...",
+    "searchModel": "Search model",
     "usedModels": "Used",
     "unusedModels": "Unused",
     "timeRange": "Time Range",

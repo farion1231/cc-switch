@@ -74,32 +74,46 @@ export function PricingConfigPanel() {
     null,
   );
 
+  // Normalize model ID the same way as backend does in find_model_pricing_row
+  // - Remove everything before the last / (provider prefix)
+  // - Take everything before the first : (variant suffix)
+  // - Replace @ with -
+  const normalizeModelId = (modelId: string): string => {
+    const withoutPrefix = modelId.split("/").pop() || modelId;
+    return withoutPrefix.split(":")[0].trim().replace("@", "-");
+  };
+
   // Group models into used/unused
   const groupedModels = useMemo(() => {
     if (!pricing) {
       return { used: [], unused: [] };
     }
 
-    const usedModelIds = new Set(modelStats?.map((s) => s.model) ?? []);
-
     // Used models: all models from stats, merge with pricing when available
     const used: ModelPricing[] = [];
+    const usedModelIds = new Set<string>();
 
     // Add models from stats
     for (const stat of modelStats ?? []) {
-      const existing = pricing.find((p) => p.modelId === stat.model);
+      const normalizedStatModel = normalizeModelId(stat.model);
+      const existing = pricing.find(
+        (p) => normalizeModelId(p.modelId) === normalizedStatModel,
+      );
       if (existing) {
         used.push(existing);
+        usedModelIds.add(existing.modelId);
       } else {
         // No pricing configured, create entry with all zeros
-        used.push({
+        const synthetic = {
           modelId: stat.model,
           displayName: stat.model,
           inputCostPerMillion: "0",
           outputCostPerMillion: "0",
           cacheReadCostPerMillion: "0",
           cacheCreationCostPerMillion: "0",
-        });
+        };
+        used.push(synthetic);
+        usedModelIds.add(synthetic.modelId);
       }
     }
 
@@ -114,7 +128,9 @@ export function PricingConfigPanel() {
         })
       : used;
 
-    // Unused models: pricing entries not in stats, filtered by search
+    // Unused models: pricing entries not already in used, filtered by search
+    // Only exclude the specific modelIds that are already in used - preserve distinct
+    // pricing entries that normalize to the same base ID but are configured separately
     const filteredUnused = pricing
       .filter((p) => !usedModelIds.has(p.modelId))
       .filter((model) => {
