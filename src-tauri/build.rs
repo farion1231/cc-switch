@@ -1,3 +1,5 @@
+use std::path::Path;
+
 fn main() {
     tauri_build::build();
     generate_webui_assets();
@@ -31,7 +33,7 @@ fn main() {
 fn generate_webui_assets() {
     use std::fs;
     use std::io::Write;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     let manifest_dir =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("missing CARGO_MANIFEST_DIR"));
@@ -55,19 +57,23 @@ fn generate_webui_assets() {
         "pub const ASSET_COUNT: usize = {};\n\n",
         assets.len()
     ));
-    output.push_str("pub fn get(path: &str) -> Option<WebUiAsset> {\n    match path {\n");
+    if assets.is_empty() {
+        output.push_str("pub fn get(_path: &str) -> Option<WebUiAsset> {\n    None\n}\n");
+    } else {
+        output.push_str("pub fn get(path: &str) -> Option<WebUiAsset> {\n    match path {\n");
 
-    for (relative_path, full_path) in &assets {
-        output.push_str(&format!(
-            "        {:?} => Some(WebUiAsset {{ path: {:?}, mime: {:?}, bytes: include_bytes!({:?}) }}),\n",
-            relative_path,
-            relative_path,
-            mime_for_path(relative_path),
-            full_path.to_string_lossy()
-        ));
+        for (relative_path, full_path) in &assets {
+            output.push_str(&format!(
+                "        {:?} => Some(WebUiAsset {{ path: {:?}, mime: {:?}, bytes: include_bytes!({:?}) }}),\n",
+                relative_path,
+                relative_path,
+                mime_for_path(relative_path),
+                full_path.to_string_lossy()
+            ));
+        }
+
+        output.push_str("        _ => None,\n    }\n}\n");
     }
-
-    output.push_str("        _ => None,\n    }\n}\n");
 
     let mut file = fs::File::create(output_path).expect("create webui_assets.rs");
     file.write_all(output.as_bytes())

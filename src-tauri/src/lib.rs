@@ -50,8 +50,8 @@ pub use mcp::{
 pub use provider::{Provider, ProviderMeta, UniversalProvider};
 pub use services::{
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
-    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
-    SkillService, SpeedtestService,
+    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProviderSortUpdate,
+    ProxyService, SkillService, SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
