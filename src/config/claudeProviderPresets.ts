@@ -2,6 +2,7 @@
  * 预设供应商配置模板
  */
 import { ProviderCategory } from "../types";
+import { BAIDU_QIANFAN_CODING_PLAN } from "./baiduQianfanCodingPlan";
 
 export interface TemplateValueConfig {
   label: string;
@@ -180,6 +181,25 @@ export const providerPresets: ProviderPreset[] = [
     category: "cn_official",
     icon: "zhipu",
     iconColor: "#0F62FE",
+  },
+  {
+    name: BAIDU_QIANFAN_CODING_PLAN.name,
+    websiteUrl: BAIDU_QIANFAN_CODING_PLAN.websiteUrl,
+    apiKeyUrl: BAIDU_QIANFAN_CODING_PLAN.apiKeyUrl,
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: BAIDU_QIANFAN_CODING_PLAN.anthropicBaseUrl,
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: BAIDU_QIANFAN_CODING_PLAN.defaultModel,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: BAIDU_QIANFAN_CODING_PLAN.defaultModel,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: BAIDU_QIANFAN_CODING_PLAN.defaultModel,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: BAIDU_QIANFAN_CODING_PLAN.defaultModel,
+      },
+    },
+    category: BAIDU_QIANFAN_CODING_PLAN.category,
+    endpointCandidates: [BAIDU_QIANFAN_CODING_PLAN.anthropicBaseUrl],
+    icon: BAIDU_QIANFAN_CODING_PLAN.icon,
+    iconColor: BAIDU_QIANFAN_CODING_PLAN.iconColor,
   },
   {
     name: "Bailian",

@@ -1,5 +1,9 @@
 import type { ProviderCategory, OpenCodeProviderConfig } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
+import {
+  BAIDU_QIANFAN_CODING_PLAN,
+  BAIDU_QIANFAN_CODING_PLAN_MODELS,
+} from "./baiduQianfanCodingPlan";
 
 export interface OpenCodeProviderPreset {
   name: string;
@@ -415,6 +419,31 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: BAIDU_QIANFAN_CODING_PLAN.name,
+    websiteUrl: BAIDU_QIANFAN_CODING_PLAN.websiteUrl,
+    apiKeyUrl: BAIDU_QIANFAN_CODING_PLAN.apiKeyUrl,
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: BAIDU_QIANFAN_CODING_PLAN.name,
+      options: {
+        baseURL: BAIDU_QIANFAN_CODING_PLAN.openaiBaseUrl,
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: BAIDU_QIANFAN_CODING_PLAN_MODELS,
+    },
+    category: BAIDU_QIANFAN_CODING_PLAN.category,
+    icon: BAIDU_QIANFAN_CODING_PLAN.icon,
+    iconColor: BAIDU_QIANFAN_CODING_PLAN.iconColor,
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "bce-v3/...",
         editorValue: "",
       },
     },

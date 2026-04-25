@@ -8,6 +8,7 @@ import type {
   OpenClawDefaultModel,
 } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
+import { BAIDU_QIANFAN_CODING_PLAN } from "./baiduQianfanCodingPlan";
 
 /** Suggested default model configuration for a preset */
 export interface OpenClawSuggestedDefaults {
@@ -223,6 +224,74 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     suggestedDefaults: {
       model: { primary: "zhipu-en/glm-5" },
       modelCatalog: { "zhipu-en/glm-5": { alias: "GLM" } },
+    },
+  },
+  {
+    name: BAIDU_QIANFAN_CODING_PLAN.name,
+    websiteUrl: BAIDU_QIANFAN_CODING_PLAN.websiteUrl,
+    apiKeyUrl: BAIDU_QIANFAN_CODING_PLAN.apiKeyUrl,
+    settingsConfig: {
+      baseUrl: BAIDU_QIANFAN_CODING_PLAN.openaiBaseUrl,
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "qianfan-code-latest",
+          name: "Qianfan Code Latest",
+          contextWindow: 128000,
+          cost: { input: 0, output: 0 },
+        },
+        {
+          id: "ernie-4.5-turbo-20260402",
+          name: "ERNIE 4.5 Turbo",
+          contextWindow: 128000,
+          cost: { input: 0, output: 0 },
+        },
+        {
+          id: "kimi-k2.5",
+          name: "Kimi K2.5",
+          contextWindow: 262144,
+          cost: { input: 0, output: 0 },
+        },
+        {
+          id: "deepseek-v3.2",
+          name: "DeepSeek V3.2",
+          contextWindow: 128000,
+          cost: { input: 0, output: 0 },
+        },
+        {
+          id: "glm-5",
+          name: "GLM 5",
+          contextWindow: 128000,
+          cost: { input: 0, output: 0 },
+        },
+        {
+          id: "minimax-m2.5",
+          name: "MiniMax M2.5",
+          contextWindow: 128000,
+          cost: { input: 0, output: 0 },
+        },
+      ],
+    },
+    category: BAIDU_QIANFAN_CODING_PLAN.category,
+    icon: BAIDU_QIANFAN_CODING_PLAN.icon,
+    iconColor: BAIDU_QIANFAN_CODING_PLAN.iconColor,
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "bce-v3/...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "baidu/qianfan-code-latest",
+        fallbacks: ["baidu/ernie-4.5-turbo-20260402"],
+      },
+      modelCatalog: {
+        "baidu/qianfan-code-latest": { alias: "Qianfan" },
+        "baidu/ernie-4.5-turbo-20260402": { alias: "ERNIE" },
+      },
     },
   },
   {
