@@ -211,7 +211,7 @@ export function SettingsPage({
 
           <div className="flex-1 min-h-0 flex flex-col">
             <div className="flex-1 overflow-y-auto overflow-x-hidden pr-2">
-              <TabsContent value="general" className="space-y-6 mt-0">
+              <TabsContent value="general" className="space-y-6 mt-0" forceMount>
                 {settings ? (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
@@ -255,7 +255,7 @@ export function SettingsPage({
                 ) : null}
               </TabsContent>
 
-              <TabsContent value="proxy" className="space-y-6 mt-0 pb-4">
+              <TabsContent value="proxy" className="space-y-6 mt-0 pb-4" forceMount>
                 {settings ? (
                   <ProxyTabContent
                     settings={settings}
@@ -264,7 +264,7 @@ export function SettingsPage({
                 ) : null}
               </TabsContent>
 
-              <TabsContent value="auth" className="space-y-6 mt-0 pb-4">
+              <TabsContent value="auth" className="space-y-6 mt-0 pb-4" forceMount>
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -275,7 +275,7 @@ export function SettingsPage({
                 </motion.div>
               </TabsContent>
 
-              <TabsContent value="advanced" className="space-y-6 mt-0 pb-4">
+              <TabsContent value="advanced" className="space-y-6 mt-0 pb-4" forceMount>
                 {settings ? (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
@@ -464,7 +464,7 @@ export function SettingsPage({
                 ) : null}
               </TabsContent>
 
-              <TabsContent value="about" className="mt-0">
+              <TabsContent value="about" className="mt-0" forceMount>
                 <AboutSection isPortable={isPortable} />
               </TabsContent>
 
