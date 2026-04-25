@@ -425,7 +425,7 @@ export function ClaudeFormFields({
                 <Input
                   id={`template-${key}`}
                   type="text"
-                  required
+                  required={!config.optional}
                   value={
                     templateValues[key]?.editorValue ??
                     config.editorValue ??
@@ -436,6 +436,11 @@ export function ClaudeFormFields({
                   placeholder={config.placeholder || config.label}
                   autoComplete="off"
                 />
+                {config.hint && (
+                  <p className="text-xs text-muted-foreground">
+                    {t(config.hint)}
+                  </p>
+                )}
               </div>
             ))}
           </div>

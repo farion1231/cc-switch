@@ -8,6 +8,8 @@ export interface TemplateValueConfig {
   placeholder: string;
   defaultValue?: string;
   editorValue: string;
+  hint?: string;
+  optional?: boolean;
 }
 
 /**
@@ -1005,5 +1007,44 @@ export const providerPresets: ProviderPreset[] = [
     },
     icon: "aws",
     iconColor: "#FF9900",
+  },
+  {
+    name: "Cloudflare AI Gateway",
+    websiteUrl: "https://developers.cloudflare.com/ai-gateway/",
+    apiKeyUrl: "https://dash.cloudflare.com/",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://gateway.ai.cloudflare.com/v1/${ACCOUNT_ID}/${GATEWAY_NAME}/anthropic",
+        ANTHROPIC_API_KEY: "",
+        CF_AIG_TOKEN: "${CF_AIG_TOKEN}",
+      },
+    },
+    category: "cloud_provider",
+    templateValues: {
+      ACCOUNT_ID: {
+        label: "Account ID",
+        placeholder: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+        editorValue: "",
+        hint: "providerForm.templateHints.cloudflareAccountId",
+      },
+      GATEWAY_NAME: {
+        label: "Gateway Name",
+        placeholder: "default",
+        defaultValue: "default",
+        editorValue: "default",
+        hint: "providerForm.templateHints.cloudflareGatewayName",
+      },
+      CF_AIG_TOKEN: {
+        label: "CF AIG Token (optional)",
+        placeholder: "cfut_...",
+        editorValue: "",
+        hint: "providerForm.templateHints.cloudflareAigToken",
+        optional: true,
+      },
+    },
+    icon: "cloudflare",
+    iconColor: "#F38020",
   },
 ];

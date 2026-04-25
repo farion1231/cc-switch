@@ -263,6 +263,9 @@ export function useTemplateValues({
     }
 
     for (const [key, config] of templateValueEntries) {
+      if (config.optional) {
+        continue;
+      }
       const entry = templateValues[key];
       const resolvedValue = (
         entry?.editorValue ??

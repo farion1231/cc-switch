@@ -822,6 +822,11 @@
     "fillConfigContent": "Please fill in configuration content",
     "fillParameter": "Please fill in {{label}}",
     "fillTemplateValue": "Please fill in {{label}}",
+    "templateHints": {
+      "cloudflareAccountId": "Find your Account ID at the top of the Cloudflare Dashboard → AI Gateway page",
+      "cloudflareGatewayName": "The name of your AI Gateway; Cloudflare's default is \"default\"",
+      "cloudflareAigToken": "Optional. Create one in AI Gateway → Access Control to restrict gateway access"
+    },
     "endpointRequired": "API endpoint is required for non-official providers",
     "apiKeyRequired": "API Key is required for non-official providers",
     "softValidation": {

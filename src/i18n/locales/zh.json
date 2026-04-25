@@ -822,6 +822,11 @@
     "fillConfigContent": "请填写配置内容",
     "fillParameter": "请填写 {{label}}",
     "fillTemplateValue": "请填写 {{label}}",
+    "templateHints": {
+      "cloudflareAccountId": "在 Cloudflare 控制台 → AI Gateway 页面顶部可以找到 Account ID",
+      "cloudflareGatewayName": "创建 AI Gateway 时填写的名称，Cloudflare 默认为 default",
+      "cloudflareAigToken": "可选。在 AI Gateway → 访问控制中创建，用于保护网关访问"
+    },
     "endpointRequired": "非官方供应商请填写 API 端点",
     "apiKeyRequired": "非官方供应商请填写 API Key",
     "softValidation": {
