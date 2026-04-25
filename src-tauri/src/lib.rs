@@ -1211,6 +1211,7 @@ pub fn run() {
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_trends,
+            commands::get_model_trends,
             commands::get_provider_stats,
             commands::get_model_stats,
             commands::get_request_logs,

@@ -31,6 +31,19 @@ pub fn get_usage_trends(
         .get_daily_trends(start_date, end_date, app_type.as_deref())
 }
 
+/// 获取模型趋势
+#[tauri::command]
+pub fn get_model_trends(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    app_type: Option<String>,
+) -> Result<Vec<ModelTrendStats>, AppError> {
+    state
+        .db
+        .get_model_trends(start_date, end_date, app_type.as_deref())
+}
+
 /// 获取 Provider 统计
 #[tauri::command]
 pub fn get_provider_stats(

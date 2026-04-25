@@ -84,6 +84,17 @@ export interface DailyStats {
   totalCacheReadTokens: number;
 }
 
+export interface ModelTrendStats {
+  date: string;
+  model: string;
+  requestCount: number;
+  totalTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
+}
+
 export interface ProviderStats {
   providerId: string;
   providerName: string;
@@ -98,6 +109,10 @@ export interface ModelStats {
   model: string;
   requestCount: number;
   totalTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
   totalCost: string;
   avgCostPerRequest: string;
 }
