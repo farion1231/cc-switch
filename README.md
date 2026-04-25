@@ -272,14 +272,27 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 
 ### Windows Users
 
-Download the latest `CC-Switch-v{version}-Windows.msi` installer or `CC-Switch-v{version}-Windows-Portable.zip` portable version from the [Releases](../../releases) page.
+**Method 1: Install via WinGet (Recommended)**
+
+```bash
+winget install -e --id farion1231.CC-Switch
+```
+
+Update:
+
+```bash
+winget upgrade -e --id farion1231.CC-Switch
+```
+
+**Method 2: Manual Download**
+
+Download the latest `CC-Switch-v{version}-Windows.msi` installer or `CC-Switch-v{version}-Windows-Portable.zip` portable version from the [Releases](https://github.com/farion1231/cc-switch/releases) page.
 
 ### macOS Users
 
 **Method 1: Install via Homebrew (Recommended)**
 
 ```bash
-brew tap farion1231/ccswitch
 brew install --cask cc-switch
 ```
 
