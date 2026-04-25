@@ -1409,16 +1409,7 @@ impl StreamCheckService {
             .settings_config
             .get("config")
             .and_then(|value| value.as_str())?;
-        if config_text.trim().is_empty() {
-            return None;
-        }
-
-        let table = toml::from_str::<toml::Table>(config_text).ok()?;
-        table
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|value| !value.is_empty())
+        crate::codex_config::extract_codex_model(config_text)
     }
 
     /// 获取操作系统名称（映射为 Claude CLI 使用的格式）
@@ -1686,6 +1677,24 @@ mod tests {
         let (model, effort) = StreamCheckService::parse_model_with_effort("gpt-4o-mini");
         assert_eq!(model, "gpt-4o-mini");
         assert_eq!(effort, None);
+    }
+
+    #[test]
+    fn test_extract_codex_model_when_model_provider_is_first_line() {
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            serde_json::json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\nreview_model = \"gpt-5.4\"\n"
+            }),
+            None,
+        );
+
+        assert_eq!(
+            StreamCheckService::extract_codex_model(&provider).as_deref(),
+            Some("gpt-5.4")
+        );
     }
 
     #[test]

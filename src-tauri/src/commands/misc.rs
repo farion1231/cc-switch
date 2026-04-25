@@ -2,6 +2,7 @@
 
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
+use crate::provider::ClaudeActivationMode;
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -750,15 +751,32 @@ pub async fn open_provider_terminal(
 
     let provider = providers
         .get(&providerId)
-        .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
+        .ok_or_else(|| format!("provider {providerId} not found"))?;
+    let claude_profile_dir = if matches!(app_type, AppType::Claude) {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| match meta.claude_activation_mode {
+                Some(ClaudeActivationMode::ProfileOnly)
+                | Some(ClaudeActivationMode::ProfileAndConfig) => {
+                    meta.claude_profile_dir.as_ref().cloned()
+                }
+                _ => None,
+            })
+    } else {
+        None
+    };
 
-    // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
-    // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
-        .map_err(|e| format!("启动终端失败: {e}"))?;
+    launch_terminal_with_env(
+        env_vars,
+        &providerId,
+        launch_cwd.as_deref(),
+        claude_profile_dir.as_deref(),
+    )
+    .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
 }
@@ -850,38 +868,73 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     Ok(Some(resolved))
 }
 
+fn should_write_temp_claude_config(
+    env_vars: &[(String, String)],
+    claude_profile_dir: Option<&str>,
+) -> bool {
+    let _ = claude_profile_dir;
+    !env_vars.is_empty()
+}
+
 /// 创建临时配置文件并启动 claude 终端
 /// 使用 --settings 参数传入提供商特定的 API 配置
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
     cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
 ) -> Result<(), String> {
-    let temp_dir = std::env::temp_dir();
-    let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
-        std::process::id()
-    ));
-
-    // 创建并写入配置文件
-    write_claude_config(&config_file, &env_vars)?;
-
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd)?;
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join(format!(
+            "claude_{}_{}.json",
+            provider_id,
+            std::process::id()
+        ));
+        let config_file = if should_write_temp_claude_config(&env_vars, claude_profile_dir) {
+            write_claude_config(&config_file, &env_vars)?;
+            Some(config_file)
+        } else {
+            None
+        };
+        launch_macos_terminal(config_file.as_deref(), cwd, claude_profile_dir)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd)?;
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join(format!(
+            "claude_{}_{}.json",
+            provider_id,
+            std::process::id()
+        ));
+        let config_file = if should_write_temp_claude_config(&env_vars, claude_profile_dir) {
+            write_claude_config(&config_file, &env_vars)?;
+            Some(config_file)
+        } else {
+            None
+        };
+        launch_linux_terminal(config_file.as_deref(), cwd, claude_profile_dir)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
+        let temp_dir = std::env::temp_dir();
+        let config_file = if should_write_temp_claude_config(&env_vars, claude_profile_dir) {
+            let path = temp_dir.join(format!(
+                "claude_{}_{}.json",
+                provider_id,
+                std::process::id()
+            ));
+            write_claude_config(&path, &env_vars)?;
+            Some(path)
+        } else {
+            None
+        };
+        launch_windows_terminal(&temp_dir, config_file.as_deref(), cwd, claude_profile_dir)?;
         return Ok(());
     }
 
@@ -909,9 +962,83 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
+fn build_unix_claude_launch_script(
+    config_file: Option<&std::path::Path>,
+    script_file: &std::path::Path,
+    cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
+) -> String {
+    let cd_command = build_shell_cd_command(cwd);
+    let script_path = shell_single_quote(&script_file.to_string_lossy());
+
+    if let Some(profile_dir) = claude_profile_dir {
+        let config_fragment = config_file
+            .map(|config_file| {
+                let config_path = shell_single_quote(&config_file.to_string_lossy());
+                format!(
+                    r#"echo "Using provider-specific claude config:"
+echo {config_path}
+claude --settings {config_path}
+"#,
+                    config_path = config_path,
+                )
+            })
+            .unwrap_or_else(|| "claude\n".to_string());
+        let cleanup = config_file
+            .map(|config_file| {
+                let config_path = shell_single_quote(&config_file.to_string_lossy());
+                format!("trap 'rm -f {config_path} {script_path}' EXIT")
+            })
+            .unwrap_or_else(|| format!("trap 'rm -f {script_path}' EXIT"));
+        return format!(
+            r#"#!/bin/bash
+{cleanup}
+{cd_command}export CLAUDE_CONFIG_DIR={profile_dir}
+echo "Using Claude profile dir:"
+echo "$CLAUDE_CONFIG_DIR"
+{config_fragment}exec bash --norc --noprofile
+"#,
+            cleanup = cleanup,
+            cd_command = cd_command,
+            profile_dir = shell_single_quote(profile_dir),
+            config_fragment = config_fragment,
+        );
+    }
+
+    if let Some(config_file) = config_file {
+        let config_path = shell_single_quote(&config_file.to_string_lossy());
+        return format!(
+            r#"#!/bin/bash
+trap 'rm -f {config_path} {script_path}' EXIT
+{cd_command}echo "Using provider-specific claude config:"
+echo {config_path}
+claude --settings {config_path}
+exec bash --norc --noprofile
+"#,
+            config_path = config_path,
+            script_path = script_path,
+            cd_command = cd_command,
+        );
+    }
+
+    format!(
+        r#"#!/bin/bash
+trap 'rm -f {script_path}' EXIT
+{cd_command}claude
+exec bash --norc --noprofile
+"#,
+        script_path = script_path,
+        cd_command = cd_command,
+    )
+}
+
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -919,23 +1046,8 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
-
-    // Write the shell script to a temp file
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
+    let script_content =
+        build_unix_claude_launch_script(config_file, &script_file, cwd, claude_profile_dir);
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
 
@@ -1071,7 +1183,11 @@ fn launch_macos_open_app(
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -1092,22 +1208,8 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     // Create temp script file
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
-
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
+    let script_content =
+        build_unix_claude_launch_script(config_file, &script_file, cwd, claude_profile_dir);
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
 
@@ -1165,7 +1267,9 @@ exec bash --norc --noprofile
 
     // Clean up on failure
     let _ = std::fs::remove_file(&script_file);
-    let _ = std::fs::remove_file(config_file);
+    if let Some(config_file) = config_file {
+        let _ = std::fs::remove_file(config_file);
+    }
     Err(last_error)
 }
 
@@ -1184,18 +1288,47 @@ fn which_command(cmd: &str) -> bool {
 #[cfg(target_os = "windows")]
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
-    config_file: &std::path::Path,
+    config_file: Option<&std::path::Path>,
     cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
-    let content = format!(
-        "@echo off
+    let content = if let Some(profile_dir) = claude_profile_dir {
+        let escaped_profile_dir = escape_windows_batch_value(profile_dir);
+        let config_fragment = if let Some(config_file) = config_file {
+            let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
+            format!(
+                "echo Using provider-specific claude config:
+echo {config_path_for_batch}
+claude --settings \"{config_path_for_batch}\"
+del \"{config_path_for_batch}\" >nul 2>&1
+",
+                config_path_for_batch = config_path_for_batch,
+            )
+        } else {
+            "claude\n".to_string()
+        };
+        format!(
+            "@echo off
+{cwd_command}
+set \"CLAUDE_CONFIG_DIR={escaped_profile_dir}\"
+echo Using Claude profile dir:
+echo %CLAUDE_CONFIG_DIR%
+{config_fragment}del \"%~f0\" >nul 2>&1
+",
+            cwd_command = cwd_command,
+            escaped_profile_dir = escaped_profile_dir,
+            config_fragment = config_fragment,
+        )
+    } else if let Some(config_file) = config_file {
+        let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
+        format!(
+            "@echo off
 {cwd_command}
 echo Using provider-specific claude config:
 echo {}
@@ -1203,11 +1336,21 @@ claude --settings \"{}\"
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
 ",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
-        cwd_command = cwd_command,
-    );
+            config_path_for_batch,
+            config_path_for_batch,
+            config_path_for_batch,
+            cwd_command = cwd_command,
+        )
+    } else {
+        format!(
+            "@echo off
+{cwd_command}
+claude
+del \"%~f0\" >nul 2>&1
+",
+            cwd_command = cwd_command,
+        )
+    };
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
@@ -1520,6 +1663,121 @@ mod tests {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
         assert_eq!(extract_version("no version here"), "no version here");
+    }
+
+    #[test]
+    fn empty_claude_env_config_is_detected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("claude-empty.json");
+        std::fs::write(&config_path, "{\n  \"env\": {}\n}").expect("write empty config");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read config"))
+                .expect("parse config");
+        assert_eq!(
+            value
+                .get("env")
+                .and_then(|env| env.as_object())
+                .map(|env| env.is_empty()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn non_empty_claude_env_config_is_not_detected_as_empty() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("claude-config.json");
+        std::fs::write(
+            &config_path,
+            "{\n  \"env\": {\n    \"ANTHROPIC_BASE_URL\": \"https://example.com\"\n  }\n}",
+        )
+        .expect("write non-empty config");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read config"))
+                .expect("parse config");
+        assert_eq!(
+            value
+                .get("env")
+                .and_then(|env| env.as_object())
+                .map(|env| env.is_empty()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn profile_dir_mode_still_writes_temp_claude_config_file_when_env_exists() {
+        let env_vars = vec![(
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            "secret-token".to_string(),
+        )];
+
+        assert!(
+            should_write_temp_claude_config(
+                &env_vars,
+                Some(r"C:\Users\test\.claude-profiles\api")
+            ),
+            "profile-dir launches should still create a temporary provider config when provider env exists"
+        );
+    }
+
+    #[test]
+    fn empty_claude_env_launch_skips_temp_claude_config_file() {
+        let env_vars: Vec<(String, String)> = Vec::new();
+
+        assert!(
+            !should_write_temp_claude_config(&env_vars, None),
+            "legacy launches without provider env should not create empty temp config files"
+        );
+    }
+
+    #[test]
+    fn unix_profile_dir_mode_uses_claude_config_dir_without_settings_file() {
+        let script = build_unix_claude_launch_script(
+            None,
+            Path::new("/tmp/launcher.sh"),
+            Some(Path::new("/tmp/project")),
+            Some("/tmp/.claude-profiles/api"),
+        );
+
+        assert!(script.contains("export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api'"));
+        assert!(script.contains("claude\n"));
+        assert!(!script.contains("--settings"));
+        assert!(!script.contains("claude_"));
+    }
+
+    #[test]
+    fn unix_profile_dir_mode_can_overlay_provider_settings_file() {
+        let script = build_unix_claude_launch_script(
+            Some(Path::new("/tmp/claude_provider.json")),
+            Path::new("/tmp/launcher.sh"),
+            Some(Path::new("/tmp/project")),
+            Some("/tmp/.claude-profiles/api"),
+        );
+
+        assert!(script.contains("export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api'"));
+        assert!(script.contains("claude --settings '/tmp/claude_provider.json'"));
+        assert!(script.contains("rm -f '/tmp/claude_provider.json' '/tmp/launcher.sh'"));
+    }
+
+    #[test]
+    fn japanese_restart_hint_is_not_placeholder_garbage() {
+        let ja = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../src/i18n/locales/ja.json"
+        ));
+        let value: serde_json::Value =
+            serde_json::from_str(ja).expect("ja locale should be valid JSON");
+        let hint = value
+            .get("providerForm")
+            .and_then(|form| form.get("claudeProfileDirRestartHint"))
+            .and_then(serde_json::Value::as_str)
+            .expect("ja restart hint should exist");
+
+        assert!(
+            !hint.contains("???"),
+            "Japanese restart hint should contain readable text instead of placeholder characters"
+        );
     }
 
     #[cfg(target_os = "windows")]

@@ -11,10 +11,12 @@ use indexmap::IndexMap;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 use crate::app_config::AppType;
+use crate::config::{get_claude_settings_path, write_json_file};
 use crate::error::AppError;
-use crate::provider::{Provider, UsageResult};
+use crate::provider::{ClaudeActivationMode, Provider, UsageResult};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -43,6 +45,21 @@ use usage::validate_usage_script;
 /// Provider business logic service
 pub struct ProviderService;
 
+#[derive(Debug, Clone)]
+struct ClaudeSwitchPlan {
+    activation_mode: ClaudeActivationMode,
+    override_dir: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ClaudeRollbackState {
+    previous_provider_override_dir: Option<String>,
+    previous_local_current: Option<String>,
+    previous_db_current: Option<String>,
+    previous_live_settings: Option<Value>,
+    previous_config_env: Option<String>,
+}
+
 /// Result of a provider switch operation, including any non-fatal warnings
 #[derive(Debug, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -55,7 +72,7 @@ mod tests {
     use super::*;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
-    use crate::provider::ProviderMeta;
+    use crate::provider::{ClaudeActivationMode, ProviderMeta};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -125,13 +142,18 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let old_home = std::env::var_os("HOME");
+        let old_app_config_override = crate::app_store::get_app_config_dir_override();
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
+        crate::app_store::set_app_config_dir_override_for_tests(None);
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
         let result = test(&state, temp.path());
 
+        crate::app_store::set_app_config_dir_override_for_tests(old_app_config_override);
         match old_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
@@ -236,6 +258,246 @@ mod tests {
         }
     }
 
+    fn claude_provider(
+        id: &str,
+        name: &str,
+        token: &str,
+        base_url: &str,
+        meta: Option<ProviderMeta>,
+    ) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: name.to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": token,
+                    "ANTHROPIC_BASE_URL": base_url
+                }
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn codex_provider(id: &str, name: &str, config: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: name.to_string(),
+            settings_config: json!({
+                "auth": {},
+                "config": config,
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn seed_codex_threads(home: &Path, provider: &str) {
+        let codex_dir = home.join(".codex");
+        let rollout_dir = codex_dir
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("24");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::create_dir_all(&rollout_dir).expect("create rollout dir");
+        let conn = rusqlite::Connection::open(codex_dir.join("state_5.sqlite"))
+            .expect("open codex state db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, rollout_path TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads table");
+        let rollout_1 = rollout_dir.join("rollout-thread-1.jsonl");
+        let rollout_2 = rollout_dir.join("rollout-thread-2.jsonl");
+        for (id, path) in [("thread-1", &rollout_1), ("thread-2", &rollout_2)] {
+            fs::write(
+                path,
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"model_provider\":\"{provider}\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{}}}}\n"
+                ),
+            )
+            .expect("write rollout metadata");
+        }
+        conn.execute(
+            "INSERT INTO threads (id, model_provider, rollout_path) VALUES ('thread-1', ?1, ?2), ('thread-2', ?1, ?3)",
+            rusqlite::params![provider, rollout_1.to_string_lossy(), rollout_2.to_string_lossy()],
+        )
+        .expect("seed threads");
+    }
+
+    fn codex_rollout_providers(home: &Path) -> Vec<(String, Option<String>)> {
+        let conn = rusqlite::Connection::open(home.join(".codex").join("state_5.sqlite"))
+            .expect("open codex state db");
+        let mut stmt = conn
+            .prepare("SELECT id, rollout_path FROM threads ORDER BY id")
+            .expect("prepare rollout query");
+        stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("query rollouts")
+        .map(|row| {
+            let (id, path) = row.expect("rollout row");
+            let first_line = fs::read_to_string(path)
+                .expect("read rollout")
+                .lines()
+                .next()
+                .expect("rollout first line")
+                .to_string();
+            let value: serde_json::Value =
+                serde_json::from_str(&first_line).expect("parse rollout first line");
+            let provider = value
+                .get("payload")
+                .and_then(|payload| payload.get("model_provider"))
+                .and_then(|provider| provider.as_str())
+                .map(str::to_string);
+            (id, provider)
+        })
+        .collect()
+    }
+
+    fn codex_thread_providers(home: &Path) -> Vec<(String, i64)> {
+        let conn = rusqlite::Connection::open(home.join(".codex").join("state_5.sqlite"))
+            .expect("open codex state db");
+        let mut stmt = conn
+            .prepare(
+                "SELECT model_provider, COUNT(*) FROM threads GROUP BY model_provider ORDER BY model_provider",
+            )
+            .expect("prepare provider query");
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query providers")
+            .map(|row| row.expect("provider row"))
+            .collect()
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_to_official_syncs_desktop_threads_to_openai_provider() {
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+            seed_codex_threads(home, "OpenAI");
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official codex provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("openai".to_string(), 2)],
+                "OAuth login should make Codex Desktop history visible under the openai provider key"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("openai".to_string())),
+                    ("thread-2".to_string(), Some("openai".to_string())),
+                ],
+                "OAuth login should update Codex rollout session metadata"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_to_api_syncs_desktop_threads_to_config_model_provider() {
+        with_test_home(|state, home| {
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-official"))
+                .expect("set local current provider");
+            seed_codex_threads(home, "openai");
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to api codex provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("OpenAI".to_string(), 2)],
+                "API login should make Codex Desktop history visible under the configured provider key"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("OpenAI".to_string())),
+                    ("thread-2".to_string(), Some("OpenAI".to_string())),
+                ],
+                "API login should update Codex rollout session metadata"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn sync_current_claude_profile_env_preserves_external_override_without_active_provider() {
+        with_test_home(|state, home| {
+            let external_dir = home.join(".external-claude");
+            fs::create_dir_all(&external_dir).expect("create external claude dir");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &external_dir.to_string_lossy(),
+            ))
+            .expect("set external override dir");
+
+            ProviderService::sync_current_claude_profile_env(state)
+                .expect("sync without active provider should succeed");
+
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(external_dir.as_path()),
+                "passive sync should not clear an externally configured Claude override when CC Switch has no active Claude provider"
+            );
+        });
+    }
+
     fn omo_config_path(home: &Path, category: &str) -> PathBuf {
         home.join(".config").join("opencode").join(match category {
             "omo" => crate::services::omo::STANDARD.preferred_filename,
@@ -258,6 +520,320 @@ mod tests {
             err.to_string().contains("auth"),
             "expected auth error, got {err:?}"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn switch_claude_profile_only_reuses_profile_dir_without_overwriting_live_settings() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let official_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&official_dir).expect("create official profile dir");
+            write_json_file(
+                &official_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed official profile settings");
+
+            let default_provider = claude_provider(
+                "default",
+                "Default",
+                "default-provider-token",
+                "https://default-provider.example",
+                None,
+            );
+            let official_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token-should-not-write",
+                "https://provider-should-not-write.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(official_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &default_provider)
+                .expect("save default provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "default")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("default"))
+                .expect("set local current provider");
+
+            ProviderService::switch(state, AppType::Claude, "claude-official")
+                .expect("switch to official profile");
+
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+                Some("claude-official"),
+                "local current provider should switch"
+            );
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .as_deref(),
+                Some("claude-official"),
+                "effective current provider should switch"
+            );
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(official_dir.as_path()),
+                "claude override dir should point to the profile"
+            );
+
+            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+            assert_eq!(
+                live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("official-live-token".to_string()),
+                "profile-only mode should preserve the existing auth profile contents"
+            );
+            assert_eq!(
+                live["env"]["ANTHROPIC_BASE_URL"],
+                Value::String("https://official-live.example".to_string()),
+                "profile-only mode should keep the existing base URL"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_claude_profile_and_config_writes_to_target_profile_without_touching_default_live() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let api_dir = home.join(".claude-profiles").join("api");
+
+            let default_provider = claude_provider(
+                "default",
+                "Default",
+                "default-provider-token",
+                "https://default-provider.example",
+                None,
+            );
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &default_provider)
+                .expect("save default provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "default")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("default"))
+                .expect("set local current provider");
+
+            ProviderService::switch(state, AppType::Claude, "claude-api")
+                .expect("switch to api profile");
+
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(api_dir.as_path()),
+                "claude override dir should point to the api profile"
+            );
+
+            let api_live: Value =
+                read_json_file(&api_dir.join("settings.json")).expect("read api profile");
+            assert_eq!(
+                api_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("api-provider-token".to_string()),
+                "profile-and-config mode should write provider settings into the target profile"
+            );
+
+            let default_live: Value =
+                read_json_file(&default_dir.join("settings.json")).expect("read default profile");
+            assert_eq!(
+                default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("default-live-token".to_string()),
+                "switching api profiles must not mutate the default live settings"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_claude_profile_mode_rolls_back_current_provider_and_override_on_failure() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let default_provider = claude_provider(
+                "default",
+                "Default",
+                "default-provider-token",
+                "https://default-provider.example",
+                None,
+            );
+            let broken_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token-should-not-write",
+                "https://provider-should-not-write.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(
+                        home.join(".claude-profiles")
+                            .join("missing-official")
+                            .to_string_lossy()
+                            .to_string(),
+                    ),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &default_provider)
+                .expect("save default provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &broken_provider)
+                .expect("save broken provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "default")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("default"))
+                .expect("set local current provider");
+
+            let err = ProviderService::switch(state, AppType::Claude, "claude-official")
+                .expect_err("switch should fail when profile-only dir is missing");
+
+            assert!(
+                err.to_string().contains("profile"),
+                "expected missing profile error, got {err:?}"
+            );
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+                Some("default"),
+                "failed switch should restore local current provider"
+            );
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .as_deref(),
+                Some("default"),
+                "failed switch should restore effective current provider"
+            );
+            assert!(
+                crate::settings::get_claude_override_dir().is_none(),
+                "failed switch should restore the previous claude override dir"
+            );
+
+            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+            assert_eq!(
+                live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("default-live-token".to_string()),
+                "failed switch should leave default live settings untouched"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn startup_sync_rejects_missing_profile_only_directory() {
+        with_test_home(|state, home| {
+            let broken_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token",
+                "https://provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(
+                        home.join(".claude-profiles")
+                            .join("missing-official")
+                            .to_string_lossy()
+                            .to_string(),
+                    ),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &broken_provider)
+                .expect("save broken provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-official"))
+                .expect("set local current provider");
+
+            let err = ProviderService::sync_current_claude_profile_env(state)
+                .expect_err("startup sync should fail when profile-only dir is missing");
+
+            assert!(
+                err.to_string().contains("profile"),
+                "expected missing profile error, got {err:?}"
+            );
+            assert!(
+                crate::settings::get_claude_override_dir().is_none(),
+                "failed startup sync should not mutate the Claude override dir"
+            );
+        });
     }
 
     #[test]
@@ -931,6 +1507,296 @@ base_url = "http://localhost:8080"
 }
 
 impl ProviderService {
+    fn claude_switch_plan(provider: &Provider) -> ClaudeSwitchPlan {
+        let activation_mode = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.claude_activation_mode.clone())
+            .unwrap_or(ClaudeActivationMode::Legacy);
+        let override_dir = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.claude_profile_dir.as_ref())
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+
+        ClaudeSwitchPlan {
+            activation_mode,
+            override_dir,
+        }
+    }
+
+    fn validate_claude_switch_plan(provider: &Provider) -> Result<(), AppError> {
+        let plan = Self::claude_switch_plan(provider);
+        if matches!(plan.activation_mode, ClaudeActivationMode::Legacy) {
+            return Ok(());
+        }
+
+        let Some(raw_dir) = plan.override_dir.as_deref() else {
+            return Err(AppError::Message(
+                "Claude profile switching requires a profile directory".to_string(),
+            ));
+        };
+
+        if !Path::new(raw_dir).is_absolute() {
+            return Err(AppError::Message(
+                "Claude profile directory must be an absolute path".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn capture_claude_rollback_state(state: &AppState) -> Result<ClaudeRollbackState, AppError> {
+        let settings = crate::settings::get_settings();
+        let previous_live_settings = read_live_settings(AppType::Claude).ok();
+
+        Ok(ClaudeRollbackState {
+            previous_provider_override_dir: settings.claude_provider_config_dir,
+            previous_local_current: crate::settings::get_current_provider(&AppType::Claude),
+            previous_db_current: state.db.get_current_provider(AppType::Claude.as_str())?,
+            previous_live_settings,
+            previous_config_env: crate::services::env_manager::get_user_env_var(
+                "CLAUDE_CONFIG_DIR",
+            )
+            .ok()
+            .flatten(),
+        })
+    }
+
+    fn apply_claude_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
+        crate::settings::set_claude_provider_override_dir(plan.override_dir.as_deref())?;
+        crate::services::env_manager::set_user_env_var(
+            "CLAUDE_CONFIG_DIR",
+            match plan.activation_mode {
+                ClaudeActivationMode::Legacy => None,
+                ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig => {
+                    plan.override_dir.as_deref()
+                }
+            },
+        )
+        .map_err(AppError::Message)
+    }
+
+    fn validate_claude_runtime_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
+        if matches!(plan.activation_mode, ClaudeActivationMode::ProfileOnly) {
+            let profile_dir = plan.override_dir.as_deref().ok_or_else(|| {
+                AppError::Message(
+                    "Claude profile switching requires a profile directory".to_string(),
+                )
+            })?;
+            if !PathBuf::from(profile_dir).exists() {
+                return Err(AppError::Message(format!(
+                    "Claude profile directory does not exist: {profile_dir}"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn rollback_claude_switch(
+        state: &AppState,
+        rollback: &ClaudeRollbackState,
+    ) -> Result<(), AppError> {
+        crate::settings::set_claude_provider_override_dir(
+            rollback.previous_provider_override_dir.as_deref(),
+        )?;
+        crate::services::env_manager::set_user_env_var(
+            "CLAUDE_CONFIG_DIR",
+            rollback.previous_config_env.as_deref(),
+        )
+        .map_err(AppError::Message)?;
+        crate::settings::set_current_provider(
+            &AppType::Claude,
+            rollback.previous_local_current.as_deref(),
+        )?;
+
+        match rollback.previous_db_current.as_deref() {
+            Some(id) => state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), id)?,
+            None => state.db.clear_current_provider(AppType::Claude.as_str())?,
+        }
+
+        if let Some(previous_live_settings) = rollback.previous_live_settings.as_ref() {
+            write_json_file(&get_claude_settings_path(), previous_live_settings)?;
+        }
+
+        Ok(())
+    }
+
+    fn codex_desktop_provider_key(provider: &Provider) -> Result<String, AppError> {
+        let config = provider
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+
+        if config.is_empty() {
+            return Ok("openai".to_string());
+        }
+
+        Ok(crate::codex_config::extract_codex_model_provider(config)
+            .unwrap_or_else(|| "openai".to_string()))
+    }
+
+    fn codex_threads_have_model_provider(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+        let table_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'threads'",
+            [],
+            |row| row.get(0),
+        )?;
+        if table_count == 0 {
+            return Ok(false);
+        }
+
+        let mut stmt = conn.prepare("PRAGMA table_info(threads)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let column_name: String = row.get(1)?;
+            if column_name == "model_provider" {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn codex_threads_have_rollout_path(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+        let mut stmt = conn.prepare("PRAGMA table_info(threads)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let column_name: String = row.get(1)?;
+            if column_name == "rollout_path" {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn sync_codex_rollout_session_meta(
+        rollout_path: &Path,
+        target_provider: &str,
+    ) -> Result<bool, AppError> {
+        let text = match std::fs::read_to_string(rollout_path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => return Err(AppError::io(rollout_path, err)),
+        };
+
+        let Some(first_newline) = text.find('\n') else {
+            return Ok(false);
+        };
+        let first_line = &text[..first_newline];
+        let rest = &text[first_newline..];
+        let mut value: serde_json::Value = match serde_json::from_str(first_line) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+
+        if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+            return Ok(false);
+        }
+
+        let Some(payload) = value.get_mut("payload").and_then(Value::as_object_mut) else {
+            return Ok(false);
+        };
+        if payload.get("model_provider").and_then(Value::as_str) == Some(target_provider) {
+            return Ok(false);
+        }
+
+        payload.insert(
+            "model_provider".to_string(),
+            Value::String(target_provider.to_string()),
+        );
+
+        let updated_first_line = serde_json::to_string(&value).map_err(|err| {
+            AppError::Message(format!(
+                "Failed to serialize Codex rollout metadata {}: {err}",
+                rollout_path.display()
+            ))
+        })?;
+        crate::config::write_text_file(rollout_path, &format!("{updated_first_line}{rest}"))?;
+
+        Ok(true)
+    }
+
+    fn sync_codex_desktop_threads(provider: &Provider) -> Result<usize, AppError> {
+        let target_provider = Self::codex_desktop_provider_key(provider)?;
+        let db_path = crate::codex_config::get_codex_config_dir().join("state_5.sqlite");
+        if !db_path.exists() {
+            return Ok(0);
+        }
+
+        let conn = rusqlite::Connection::open_with_flags(
+            &db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )
+        .map_err(|err| {
+            AppError::Message(format!(
+                "Failed to open Codex desktop state database {}: {err}",
+                db_path.display()
+            ))
+        })?;
+
+        if !Self::codex_threads_have_model_provider(&conn)? {
+            return Ok(0);
+        }
+
+        let rollout_paths = if Self::codex_threads_have_rollout_path(&conn)? {
+            let mut stmt = conn.prepare(
+                "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider <> ?1",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![target_provider.as_str()], |row| {
+                row.get(0)
+            })?;
+            rows.collect::<Result<Vec<String>, _>>()?
+        } else {
+            Vec::new()
+        };
+
+        let updated = conn.execute(
+            "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider <> ?1",
+            rusqlite::params![target_provider.as_str()],
+        )?;
+
+        let mut rollout_updated = 0usize;
+        for rollout_path in rollout_paths {
+            match Self::sync_codex_rollout_session_meta(Path::new(&rollout_path), &target_provider)
+            {
+                Ok(true) => rollout_updated += 1,
+                Ok(false) => {}
+                Err(err) => log::warn!(
+                    "Codex rollout session metadata sync failed for {}: {err}",
+                    rollout_path
+                ),
+            }
+        }
+        if rollout_updated > 0 {
+            log::info!("Codex rollout session metadata sync updated {rollout_updated} files");
+        }
+
+        Ok(updated)
+    }
+
+    fn sync_codex_desktop_threads_after_switch(provider: &Provider, result: &mut SwitchResult) {
+        match Self::sync_codex_desktop_threads(provider) {
+            Ok(updated) => {
+                log::info!("Codex desktop thread model_provider sync updated {updated} rows");
+            }
+            Err(err) => {
+                log::warn!("Codex desktop thread model_provider sync failed: {err}");
+                result
+                    .warnings
+                    .push("codex_thread_provider_sync_failed".to_string());
+            }
+        }
+    }
+
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
         if matches!(app_type, AppType::Claude) {
             let mut v = provider.settings_config.clone();
@@ -1439,7 +2305,11 @@ impl ProviderService {
 
             // Note: No Live config write, no MCP sync
             // The proxy server will route requests to the new provider via is_current
-            return Ok(SwitchResult::default());
+            let mut result = SwitchResult::default();
+            if matches!(app_type, AppType::Codex) {
+                Self::sync_codex_desktop_threads_after_switch(_provider, &mut result);
+            }
+            return Ok(result);
         }
 
         // Normal mode: full switch with Live config write
@@ -1477,6 +2347,13 @@ impl ProviderService {
         }
 
         let mut result = SwitchResult::default();
+        let claude_switch_plan =
+            matches!(app_type, AppType::Claude).then(|| Self::claude_switch_plan(provider));
+        let claude_rollback = if matches!(app_type, AppType::Claude) {
+            Some(Self::capture_claude_rollback_state(state)?)
+        } else {
+            None
+        };
 
         // Backfill: Backfill current live config to current provider
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
@@ -1511,74 +2388,109 @@ impl ProviderService {
             }
         }
 
-        // Additive mode apps skip setting is_current (no such concept)
-        if !app_type.is_additive_mode() {
-            // Update local settings (device-level, takes priority)
-            crate::settings::set_current_provider(&app_type, Some(id))?;
-
-            // Update database is_current (as default for new devices)
-            state.db.set_current_provider(app_type.as_str(), id)?;
-        }
-
-        // Sync to live (write_gemini_live handles security flag internally for Gemini)
-        write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
-
-        // Hermes is additive, so "switching" doesn't overwrite a live config file
-        // — we instead update the top-level `model:` section to point at this
-        // provider's first declared model. Without this, clicking "switch" would
-        // only shuffle entries in custom_providers[] while Hermes keeps using
-        // whatever `model.provider` was set before.
-        if matches!(app_type, AppType::Hermes) {
-            if let Err(e) =
-                crate::hermes_config::apply_switch_defaults(&provider.id, &provider.settings_config)
-            {
-                log::warn!(
-                    "Failed to update Hermes model defaults after switching to '{}': {e}",
-                    provider.id
-                );
-                result
-                    .warnings
-                    .push(format!("hermes_model_defaults_failed:{}", provider.id));
+        let switch_result = (|| -> Result<(), AppError> {
+            if let Some(plan) = claude_switch_plan.as_ref() {
+                Self::validate_claude_runtime_switch_plan(plan)?;
+                Self::apply_claude_switch_plan(plan)?;
             }
-        }
 
-        // For additive-mode providers that were DB-only (live_config_managed == Some(false)),
-        // flip the flag to true now that the provider has been successfully written to the live
-        // file. This ensures sync_all_providers_to_live() will include it on future syncs.
-        //
-        // If persisting the marker fails, roll back the just-written live config so we don't leave
-        // the provider in a silent inconsistent state (present in live, but still marked DB-only).
-        if app_type.is_additive_mode() && Self::provider_live_config_managed(provider) != Some(true)
-        {
-            let mut updated = provider.clone();
-            Self::set_provider_live_config_managed(&mut updated, true);
-            if let Err(e) = state.db.save_provider(app_type.as_str(), &updated) {
-                let rollback_result = match app_type {
-                    AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
-                    AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
-                    AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
-                    _ => Ok(()),
-                };
+            // Additive mode apps skip setting is_current (no such concept)
+            if !app_type.is_additive_mode() {
+                // Update local settings (device-level, takes priority)
+                crate::settings::set_current_provider(&app_type, Some(id))?;
 
-                match rollback_result {
-                    Ok(()) => {
-                        return Err(AppError::Message(format!(
-                            "Failed to persist live_config_managed for '{}' after writing live config; live changes were rolled back: {e}",
-                            provider.id
-                        )));
-                    }
-                    Err(rollback_err) => {
-                        return Err(AppError::Message(format!(
-                            "Failed to persist live_config_managed for '{}' after writing live config: {e}; additionally failed to roll back live config: {rollback_err}",
-                            provider.id
-                        )));
+                // Update database is_current (as default for new devices)
+                state.db.set_current_provider(app_type.as_str(), id)?;
+            }
+
+            let should_write_live = !matches!(
+                claude_switch_plan
+                    .as_ref()
+                    .map(|plan| &plan.activation_mode),
+                Some(ClaudeActivationMode::ProfileOnly)
+            );
+
+            if should_write_live {
+                // Sync to live (write_gemini_live handles security flag internally for Gemini)
+                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+            }
+
+            // Hermes is additive, so "switching" doesn't overwrite a live config file
+            // — we instead update the top-level `model:` section to point at this
+            // provider's first declared model. Without this, clicking "switch" would
+            // only shuffle entries in custom_providers[] while Hermes keeps using
+            // whatever `model.provider` was set before.
+            if matches!(app_type, AppType::Hermes) {
+                if let Err(e) = crate::hermes_config::apply_switch_defaults(
+                    &provider.id,
+                    &provider.settings_config,
+                ) {
+                    log::warn!(
+                        "Failed to update Hermes model defaults after switching to '{}': {e}",
+                        provider.id
+                    );
+                    result
+                        .warnings
+                        .push(format!("hermes_model_defaults_failed:{}", provider.id));
+                }
+            }
+
+            // For additive-mode providers that were DB-only (live_config_managed == Some(false)),
+            // flip the flag to true now that the provider has been successfully written to the live
+            // file. This ensures sync_all_providers_to_live() will include it on future syncs.
+            //
+            // If persisting the marker fails, roll back the just-written live config so we don't leave
+            // the provider in a silent inconsistent state (present in live, but still marked DB-only).
+            if app_type.is_additive_mode()
+                && Self::provider_live_config_managed(provider) != Some(true)
+            {
+                let mut updated = provider.clone();
+                Self::set_provider_live_config_managed(&mut updated, true);
+                if let Err(e) = state.db.save_provider(app_type.as_str(), &updated) {
+                    let rollback_result = match app_type {
+                        AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
+                        AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
+                        AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                        _ => Ok(()),
+                    };
+
+                    match rollback_result {
+                        Ok(()) => {
+                            return Err(AppError::Message(format!(
+                                "Failed to persist live_config_managed for '{}' after writing live config; live changes were rolled back: {e}",
+                                provider.id
+                            )));
+                        }
+                        Err(rollback_err) => {
+                            return Err(AppError::Message(format!(
+                                "Failed to persist live_config_managed for '{}' after writing live config: {e}; additionally failed to roll back live config: {rollback_err}",
+                                provider.id
+                            )));
+                        }
                     }
                 }
             }
+
+            // Sync MCP
+            McpService::sync_all_enabled(state)?;
+
+            Ok(())
+        })();
+
+        if let Err(err) = switch_result {
+            if let Some(rollback) = claude_rollback.as_ref() {
+                if let Err(rollback_err) = Self::rollback_claude_switch(state, rollback) {
+                    return Err(AppError::Message(format!(
+                        "{err}; additionally failed to roll back Claude switch state: {rollback_err}"
+                    )));
+                }
+            }
+            return Err(err);
         }
 
-        // Sync MCP
-        McpService::sync_all_enabled(state)?;
+        if matches!(app_type, AppType::Codex) {
+            Self::sync_codex_desktop_threads_after_switch(provider, &mut result);
+        }
 
         Ok(result)
     }
@@ -1633,6 +2545,23 @@ impl ProviderService {
         }
 
         sync_current_provider_for_app_to_live(state, &app_type)
+    }
+
+    pub fn sync_current_claude_profile_env(state: &AppState) -> Result<(), AppError> {
+        let current_id =
+            match crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)? {
+                Some(id) => id,
+                None => return Ok(()),
+            };
+
+        let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
+        let Some(provider) = providers.get(&current_id) else {
+            return Ok(());
+        };
+
+        let plan = Self::claude_switch_plan(provider);
+        Self::validate_claude_runtime_switch_plan(&plan)?;
+        Self::apply_claude_switch_plan(&plan)
     }
 
     pub fn migrate_legacy_common_config_usage(
@@ -2047,6 +2976,7 @@ impl ProviderService {
                         "Claude configuration must be a JSON object",
                     ));
                 }
+                Self::validate_claude_switch_plan(provider)?;
             }
             AppType::Codex => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {

@@ -881,7 +881,16 @@
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
     "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
-    "fetchModelsTimeout": "请求超时，请检查网络连接"
+    "fetchModelsTimeout": "请求超时，请检查网络连接",
+    "claudeActivationMode": "Claude 切换模式",
+    "claudeActivationModeLegacy": "Legacy / 系统默认",
+    "claudeActivationModeProfileOnly": "Profile only（高级）",
+    "claudeActivationModeProfileAndConfig": "Profile + Config",
+    "claudeActivationModeHint": "Official/Auth 使用 Legacy；API provider 使用 Profile + Config。",
+    "claudeProfileDir": "Claude profile 目录",
+    "claudeProfileDirPlaceholder": "C:\\Users\\<user>\\.claude-profiles\\api",
+    "claudeProfileDirHint": "仅对 Claude 生效。Legacy 保持默认 profile 位置。Profile only 适用于已有的独立完整 profile，且不会写入 provider 配置。",
+    "claudeProfileDirRestartHint": "切换只影响新启动的终端。切换后请关闭并重新打开 PowerShell、cmd 或 Windows Terminal。对于 API provider，也建议从 CC Switch 重新打开终端，避免旧会话继续沿用之前的环境。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",

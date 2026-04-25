@@ -125,6 +125,11 @@ export interface ProviderTestConfig {
 
 export type AuthBindingSource = "provider_config" | "managed_account";
 
+export type ClaudeActivationMode =
+  | "legacy"
+  | "profile-only"
+  | "profile-and-config";
+
 export interface AuthBinding {
   source: AuthBindingSource;
   authProvider?: string;
@@ -175,6 +180,8 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  claudeProfileDir?: string;
+  claudeActivationMode?: ClaudeActivationMode;
 }
 
 // Skill 同步方式

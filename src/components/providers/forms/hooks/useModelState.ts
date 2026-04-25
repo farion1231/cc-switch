@@ -14,6 +14,11 @@ function parseModelsFromConfig(settingsConfig: string) {
     const env = cfg?.env || {};
     const model =
       typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
+    const explicitReasoning =
+      typeof env.ANTHROPIC_REASONING_MODEL === "string"
+        ? env.ANTHROPIC_REASONING_MODEL
+        : "";
+    const reasoning = explicitReasoning || model;
     const small =
       typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
         ? env.ANTHROPIC_SMALL_FAST_MODEL
@@ -31,15 +36,15 @@ function parseModelsFromConfig(settingsConfig: string) {
         ? env.ANTHROPIC_DEFAULT_OPUS_MODEL
         : model || small;
 
-    return { model, haiku, sonnet, opus };
+    return { model, reasoning, haiku, sonnet, opus };
   } catch {
-    return { model: "", haiku: "", sonnet: "", opus: "" };
+    return { model: "", reasoning: "", haiku: "", sonnet: "", opus: "" };
   }
 }
 
 /**
  * 管理模型选择状态
- * 支持 ANTHROPIC_MODEL 和各类型默认模型
+ * 支持 ANTHROPIC_MODEL, ANTHROPIC_REASONING_MODEL 和各类型默认模型
  */
 export function useModelState({
   settingsConfig,
@@ -48,6 +53,9 @@ export function useModelState({
   // Initialize state by parsing config directly (fixes edit mode backfill)
   const [claudeModel, setClaudeModel] = useState(
     () => parseModelsFromConfig(settingsConfig).model,
+  );
+  const [reasoningModel, setReasoningModel] = useState(
+    () => parseModelsFromConfig(settingsConfig).reasoning,
   );
   const [defaultHaikuModel, setDefaultHaikuModel] = useState(
     () => parseModelsFromConfig(settingsConfig).haiku,
@@ -88,6 +96,11 @@ export function useModelState({
       const env = cfg?.env || {};
       const model =
         typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
+      const explicitReasoning =
+        typeof env.ANTHROPIC_REASONING_MODEL === "string"
+          ? env.ANTHROPIC_REASONING_MODEL
+          : "";
+      const reasoning = explicitReasoning || model;
       const small =
         typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
           ? env.ANTHROPIC_SMALL_FAST_MODEL
@@ -106,6 +119,7 @@ export function useModelState({
           : model || small;
 
       setClaudeModel(model || "");
+      setReasoningModel(reasoning || "");
       setDefaultHaikuModel(haiku || "");
       setDefaultSonnetModel(sonnet || "");
       setDefaultOpusModel(opus || "");
@@ -118,6 +132,7 @@ export function useModelState({
     (
       field:
         | "ANTHROPIC_MODEL"
+        | "ANTHROPIC_REASONING_MODEL"
         | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
         | "ANTHROPIC_DEFAULT_SONNET_MODEL"
         | "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -126,6 +141,7 @@ export function useModelState({
       isUserEditingRef.current = true;
 
       if (field === "ANTHROPIC_MODEL") setClaudeModel(value);
+      if (field === "ANTHROPIC_REASONING_MODEL") setReasoningModel(value);
       if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL")
         setDefaultHaikuModel(value);
       if (field === "ANTHROPIC_DEFAULT_SONNET_MODEL")
@@ -162,6 +178,8 @@ export function useModelState({
   return {
     claudeModel,
     setClaudeModel,
+    reasoningModel,
+    setReasoningModel,
     defaultHaikuModel,
     setDefaultHaikuModel,
     defaultSonnetModel,
