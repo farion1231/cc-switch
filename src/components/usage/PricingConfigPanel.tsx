@@ -26,7 +26,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useModelPricing, useDeleteModelPricing, useModelStats, useUpdateModelPricing } from "@/lib/query/usage";
+import {
+  useModelPricing,
+  useDeleteModelPricing,
+  useModelStats,
+  useUpdateModelPricing,
+} from "@/lib/query/usage";
 import { PricingEditModal } from "./PricingEditModal";
 import type { ModelPricing } from "@/types/usage";
 import { Plus, Pencil, Trash2, Loader2, Search, Save, X } from "lucide-react";
@@ -51,7 +56,7 @@ export function PricingConfigPanel() {
   const { data: modelStats } = useModelStats(
     { preset: "30d" }, // 30-day window to capture recently used models
     undefined,
-    { refetchInterval: false }
+    { refetchInterval: false },
   );
   const deleteMutation = useDeleteModelPricing();
   const updateMutation = useUpdateModelPricing();
@@ -62,8 +67,12 @@ export function PricingConfigPanel() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"used" | "unused">("used");
   // Inline editing state
-  const [editingInlineModelId, setEditingInlineModelId] = useState<string | null>(null);
-  const [inlineFormData, setInlineFormData] = useState<ModelPricing | null>(null);
+  const [editingInlineModelId, setEditingInlineModelId] = useState<
+    string | null
+  >(null);
+  const [inlineFormData, setInlineFormData] = useState<ModelPricing | null>(
+    null,
+  );
 
   // Group models into used/unused
   const groupedModels = useMemo(() => {
@@ -71,14 +80,14 @@ export function PricingConfigPanel() {
       return { used: [], unused: [] };
     }
 
-    const usedModelIds = new Set(modelStats?.map(s => s.model) ?? []);
+    const usedModelIds = new Set(modelStats?.map((s) => s.model) ?? []);
 
     // Used models: all models from stats, merge with pricing when available
     const used: ModelPricing[] = [];
 
     // Add models from stats
     for (const stat of modelStats ?? []) {
-      const existing = pricing.find(p => p.modelId === stat.model);
+      const existing = pricing.find((p) => p.modelId === stat.model);
       if (existing) {
         used.push(existing);
       } else {
@@ -107,7 +116,7 @@ export function PricingConfigPanel() {
 
     // Unused models: pricing entries not in stats, filtered by search
     const filteredUnused = pricing
-      .filter(p => !usedModelIds.has(p.modelId))
+      .filter((p) => !usedModelIds.has(p.modelId))
       .filter((model) => {
         if (!searchQuery.trim()) return true;
         const query = searchQuery.toLowerCase().trim();
@@ -325,7 +334,9 @@ export function PricingConfigPanel() {
         cacheCreationCost: inlineFormData.cacheCreationCostPerMillion,
       });
 
-      toast.success(t("usage.pricingUpdated", "定价已更新"), { closeButton: true });
+      toast.success(t("usage.pricingUpdated", "定价已更新"), {
+        closeButton: true,
+      });
       setEditingInlineModelId(null);
       setInlineFormData(null);
     } catch (error) {
@@ -366,7 +377,9 @@ export function PricingConfigPanel() {
                     className="h-6 w-6"
                     title={t("usage.searchModel")}
                   >
-                    <Search className={`h-3.5 w-3.5 ${isSearchOpen ? "text-primary" : "text-muted-foreground"}`} />
+                    <Search
+                      className={`h-3.5 w-3.5 ${isSearchOpen ? "text-primary" : "text-muted-foreground"}`}
+                    />
                   </Button>
                 </div>
               </TableHead>
@@ -408,96 +421,166 @@ export function PricingConfigPanel() {
                   model.cacheReadCostPerMillion === "0" &&
                   model.cacheCreationCostPerMillion === "0";
 
-              if (isEditing && inlineFormData) {
+                if (isEditing && inlineFormData) {
+                  return (
+                    <TableRow key={model.modelId}>
+                      <TableCell className="font-mono text-sm">
+                        {model.modelId}
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          value={inlineFormData.displayName}
+                          onChange={(e) =>
+                            setInlineFormData({
+                              ...inlineFormData,
+                              displayName: e.target.value,
+                            })
+                          }
+                          className="h-8 text-sm"
+                          placeholder={t("usage.displayNamePlaceholder")}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={inlineFormData.inputCostPerMillion}
+                          onChange={(e) =>
+                            setInlineFormData({
+                              ...inlineFormData,
+                              inputCostPerMillion: e.target.value,
+                            })
+                          }
+                          className="h-8 text-sm text-right font-mono w-24 ml-auto"
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={inlineFormData.outputCostPerMillion}
+                          onChange={(e) =>
+                            setInlineFormData({
+                              ...inlineFormData,
+                              outputCostPerMillion: e.target.value,
+                            })
+                          }
+                          className="h-8 text-sm text-right font-mono w-24 ml-auto"
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={inlineFormData.cacheReadCostPerMillion}
+                          onChange={(e) =>
+                            setInlineFormData({
+                              ...inlineFormData,
+                              cacheReadCostPerMillion: e.target.value,
+                            })
+                          }
+                          className="h-8 text-sm text-right font-mono w-24 ml-auto"
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={inlineFormData.cacheCreationCostPerMillion}
+                          onChange={(e) =>
+                            setInlineFormData({
+                              ...inlineFormData,
+                              cacheCreationCostPerMillion: e.target.value,
+                            })
+                          }
+                          className="h-8 text-sm text-right font-mono w-24 ml-auto"
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={saveInlineEdit}
+                            disabled={updateMutation.isPending}
+                            title={t("common.save")}
+                            className="text-green-600 hover:text-green-700"
+                          >
+                            {updateMutation.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Save className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={cancelInlineEdit}
+                            disabled={updateMutation.isPending}
+                            title={t("common.cancel")}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                          {pricing?.some(
+                            (p) => p.modelId === model.modelId,
+                          ) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setDeleteConfirm(model.modelId)}
+                              title={t("common.delete")}
+                              className="text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                }
+
                 return (
                   <TableRow key={model.modelId}>
                     <TableCell className="font-mono text-sm">
                       {model.modelId}
                     </TableCell>
-                    <TableCell>
-                      <Input
-                        value={inlineFormData.displayName}
-                        onChange={(e) =>
-                          setInlineFormData({ ...inlineFormData, displayName: e.target.value })
-                        }
-                        className="h-8 text-sm"
-                        placeholder={t("usage.displayNamePlaceholder")}
-                      />
+                    <TableCell>{model.displayName}</TableCell>
+                    <TableCell
+                      className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}
+                    >
+                      ${model.inputCostPerMillion}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={inlineFormData.inputCostPerMillion}
-                        onChange={(e) =>
-                          setInlineFormData({ ...inlineFormData, inputCostPerMillion: e.target.value })
-                        }
-                        className="h-8 text-sm text-right font-mono w-24 ml-auto"
-                      />
+                    <TableCell
+                      className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}
+                    >
+                      ${model.outputCostPerMillion}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={inlineFormData.outputCostPerMillion}
-                        onChange={(e) =>
-                          setInlineFormData({ ...inlineFormData, outputCostPerMillion: e.target.value })
-                        }
-                        className="h-8 text-sm text-right font-mono w-24 ml-auto"
-                      />
+                    <TableCell
+                      className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}
+                    >
+                      ${model.cacheReadCostPerMillion}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={inlineFormData.cacheReadCostPerMillion}
-                        onChange={(e) =>
-                          setInlineFormData({ ...inlineFormData, cacheReadCostPerMillion: e.target.value })
-                        }
-                        className="h-8 text-sm text-right font-mono w-24 ml-auto"
-                      />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={inlineFormData.cacheCreationCostPerMillion}
-                        onChange={(e) =>
-                          setInlineFormData({ ...inlineFormData, cacheCreationCostPerMillion: e.target.value })
-                        }
-                        className="h-8 text-sm text-right font-mono w-24 ml-auto"
-                      />
+                    <TableCell
+                      className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}
+                    >
+                      ${model.cacheCreationCostPerMillion}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={saveInlineEdit}
-                          disabled={updateMutation.isPending}
-                          title={t("common.save")}
-                          className="text-green-600 hover:text-green-700"
+                          onClick={() => startInlineEdit(model)}
+                          title={t("common.edit")}
                         >
-                          {updateMutation.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Save className="h-4 w-4" />
-                          )}
+                          <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={cancelInlineEdit}
-                          disabled={updateMutation.isPending}
-                          title={t("common.cancel")}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                        {pricing?.some(p => p.modelId === model.modelId) && (
+                        {pricing?.some((p) => p.modelId === model.modelId) && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -512,53 +595,8 @@ export function PricingConfigPanel() {
                     </TableCell>
                   </TableRow>
                 );
-              }
-
-              return (
-                <TableRow key={model.modelId}>
-                  <TableCell className="font-mono text-sm">
-                    {model.modelId}
-                  </TableCell>
-                  <TableCell>{model.displayName}</TableCell>
-                  <TableCell className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}>
-                    ${model.inputCostPerMillion}
-                  </TableCell>
-                  <TableCell className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}>
-                    ${model.outputCostPerMillion}
-                  </TableCell>
-                  <TableCell className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}>
-                    ${model.cacheReadCostPerMillion}
-                  </TableCell>
-                  <TableCell className={`text-right font-mono text-sm ${isUnknownPrice ? "text-muted-foreground" : ""}`}>
-                    ${model.cacheCreationCostPerMillion}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => startInlineEdit(model)}
-                        title={t("common.edit")}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      {pricing?.some(p => p.modelId === model.modelId) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setDeleteConfirm(model.modelId)}
-                          title={t("common.delete")}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })
-          )}
+              })
+            )}
           </TableBody>
         </Table>
       </div>
@@ -704,7 +742,10 @@ export function PricingConfigPanel() {
           </Button>
         </div>
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "used" | "unused")}>
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setActiveTab(v as "used" | "unused")}
+        >
           <TabsList className="mb-4">
             <TabsTrigger value="used" className="gap-1">
               {t("usage.usedModels", "Used")}
