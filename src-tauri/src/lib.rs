@@ -247,24 +247,36 @@ pub fn run() {
     let builder = builder
         // 注册 deep-link 插件（处理 macOS AppleEvent 和其他平台的深链接）
         .plugin(tauri_plugin_deep_link::init())
-        // 拦截窗口关闭：根据设置决定是否最小化到托盘
+        // 拦截窗口关闭：根据设置决定关闭行为
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use crate::settings::CloseBehavior;
                 let settings = crate::settings::get_settings();
 
-                if settings.minimize_to_tray_on_close {
-                    api.prevent_close();
-                    let _ = window.hide();
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = window.set_skip_taskbar(true);
+                match settings.close_behavior {
+                    CloseBehavior::Close => {
+                        window.app_handle().exit(0);
                     }
-                    #[cfg(target_os = "macos")]
-                    {
-                        tray::apply_tray_policy(window.app_handle(), false);
+                    CloseBehavior::Tray => {
+                        // 隐藏窗口到托盘
+                        api.prevent_close();
+                        let _ = window.hide();
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = window.set_skip_taskbar(true);
+                        }
+                        #[cfg(target_os = "macos")]
+                        {
+                            tray::apply_tray_policy(window.app_handle(), false);
+                        }
                     }
-                } else {
-                    window.app_handle().exit(0);
+                    CloseBehavior::Lightweight => {
+                        // 进入轻量模式
+                        api.prevent_close();
+                        if let Err(e) = lightweight::enter_lightweight_mode(window.app_handle()) {
+                            log::error!("进入轻量模式失败: {}", e);
+                        }
+                    }
                 }
             }
         })
