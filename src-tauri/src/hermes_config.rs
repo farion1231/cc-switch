@@ -795,8 +795,9 @@ pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome,
 /// still have a runnable configuration (Hermes will surface a clear error
 /// if the default no longer belongs to the active provider).
 ///
-/// Existing fields in `model:` (`context_length` / `max_tokens` / `base_url`
-/// / `extra`) are preserved via struct-update.
+/// `model.base_url` is updated from the new provider's `settings_config` if
+/// present, keeping it in sync with the active provider. Other fields
+/// (`context_length` / `max_tokens` / `extra`) are preserved via struct-update.
 pub fn apply_switch_defaults(
     provider_id: &str,
     settings_config: &serde_json::Value,
@@ -810,10 +811,18 @@ pub fn apply_switch_defaults(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
+    // Extract base_url from new provider's settings if present.
+    let base_url = settings_config
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let current = get_model_config()?.unwrap_or_default();
     let merged = HermesModelConfig {
         default: first_model_id.or(current.default.clone()),
         provider: Some(provider_id.to_string()),
+        base_url: base_url.or(current.base_url.clone()),
         ..current
     };
     set_model_config(&merged)
@@ -1747,13 +1756,44 @@ custom_providers:
             let model = get_model_config().unwrap().unwrap();
             assert_eq!(model.default.as_deref(), Some("new-model"));
             assert_eq!(model.provider.as_deref(), Some("new-provider"));
-            // User-customized fields must survive the switch.
+            // User-customized fields survive when settings has no base_url.
             assert_eq!(
                 model.base_url.as_deref(),
                 Some("https://user-override.example.com")
             );
             assert_eq!(model.context_length, Some(131072));
             assert_eq!(model.max_tokens, Some(16384));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_updates_base_url_from_settings() {
+        with_test_home(|| {
+            // Seed an existing model section with a previous base_url.
+            let initial = HermesModelConfig {
+                default: Some("old-model".to_string()),
+                provider: Some("old-provider".to_string()),
+                base_url: Some("https://old.example.com".to_string()),
+                ..Default::default()
+            };
+            set_model_config(&initial).unwrap();
+
+            // New provider's settings include base_url — it should be applied.
+            let settings = serde_json::json!({
+                "base_url": "https://new.example.com/v1",
+                "models": [{ "id": "new-model" }]
+            });
+            apply_switch_defaults("new-provider", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.default.as_deref(), Some("new-model"));
+            assert_eq!(model.provider.as_deref(), Some("new-provider"));
+            // base_url from settings_config should override the old one.
+            assert_eq!(
+                model.base_url.as_deref(),
+                Some("https://new.example.com/v1")
+            );
         });
     }
 
