@@ -175,6 +175,8 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // 自定义 API Key Header 名称（未设置时使用默认 Authorization: Bearer 认证）
+  apiKeyHeaderName?: string;
 }
 
 // Skill 同步方式

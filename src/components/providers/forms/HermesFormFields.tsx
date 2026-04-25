@@ -39,7 +39,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ApiKeySection } from "./shared";
+import { ApiKeySection, ApiKeyHeaderSection } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -68,6 +68,10 @@ interface HermesFormFieldsProps {
   onModelsChange: (models: HermesModel[]) => void;
   rateLimitDelay: number | undefined;
   onRateLimitDelayChange: (delay: number | undefined) => void;
+
+  // Custom API Key Header
+  apiKeyHeaderName?: string;
+  onApiKeyHeaderNameChange: (name: string | undefined) => void;
 }
 
 type BaseUrlErrorCode = "empty" | "invalid" | "scheme";
@@ -155,6 +159,8 @@ export function HermesFormFields({
   onModelsChange,
   rateLimitDelay,
   onRateLimitDelayChange,
+  apiKeyHeaderName,
+  onApiKeyHeaderNameChange,
 }: HermesFormFieldsProps) {
   const { t } = useTranslation();
   const [expandedModels, setExpandedModels] = useState<Record<number, boolean>>(
@@ -335,6 +341,11 @@ export function HermesFormFields({
         websiteUrl={websiteUrl}
         isPartner={isPartner}
         partnerPromotionKey={partnerPromotionKey}
+      />
+
+      <ApiKeyHeaderSection
+        apiKeyHeaderName={apiKeyHeaderName}
+        onApiKeyHeaderNameChange={onApiKeyHeaderNameChange}
       />
 
       <div className="space-y-3">

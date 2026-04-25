@@ -439,7 +439,7 @@ impl ProviderAdapter for ClaudeAdapter {
 
         let key = self.extract_key(provider)?;
 
-        match provider_type {
+        let mut auth_info = match provider_type {
             ProviderType::GeminiCli => {
                 // Parse stored OAuth JSON and only attach access_token when
                 // it's actually usable. `parse_oauth_credentials` accepts
@@ -455,7 +455,7 @@ impl ProviderAdapter for ClaudeAdapter {
                 // their `~/.gemini/oauth_creds.json`.
                 match super::gemini::GeminiAdapter::new().parse_oauth_credentials(&key) {
                     Some(creds) if !creds.access_token.is_empty() => {
-                        Some(AuthInfo::with_access_token(key, creds.access_token))
+                        AuthInfo::with_access_token(key, creds.access_token)
                     }
                     Some(_) => {
                         log::warn!(
@@ -464,16 +464,27 @@ impl ProviderAdapter for ClaudeAdapter {
                              ~/.gemini/oauth_creds.json via the gemini CLI to obtain a new token.",
                             provider.id
                         );
-                        Some(AuthInfo::new(key, AuthStrategy::GoogleOAuth))
+                        AuthInfo::new(key, AuthStrategy::GoogleOAuth)
                     }
-                    None => Some(AuthInfo::new(key, AuthStrategy::GoogleOAuth)),
+                    None => AuthInfo::new(key, AuthStrategy::GoogleOAuth),
                 }
             }
-            ProviderType::Gemini => Some(AuthInfo::new(key, AuthStrategy::Google)),
-            ProviderType::OpenRouter => Some(AuthInfo::new(key, AuthStrategy::Bearer)),
-            ProviderType::ClaudeAuth => Some(AuthInfo::new(key, AuthStrategy::ClaudeAuth)),
-            _ => Some(AuthInfo::new(key, AuthStrategy::Anthropic)),
+            ProviderType::Gemini => AuthInfo::new(key, AuthStrategy::Google),
+            ProviderType::OpenRouter => AuthInfo::new(key, AuthStrategy::Bearer),
+            ProviderType::ClaudeAuth => AuthInfo::new(key, AuthStrategy::ClaudeAuth),
+            _ => AuthInfo::new(key, AuthStrategy::Anthropic),
+        };
+
+        // 自定义 API Key Header：从 meta 中读取，优先级高于默认策略
+        if let Some(ref meta) = provider.meta {
+            if let Some(ref header) = meta.api_key_header_name {
+                if !header.is_empty() {
+                    auth_info.custom_auth_header = Some(header.clone());
+                }
+            }
         }
+
+        Some(auth_info)
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
@@ -507,6 +518,17 @@ impl ProviderAdapter for ClaudeAdapter {
     fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
         use http::{HeaderName, HeaderValue};
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
+
+        // 自定义 Header：直接以原始 key 值发送，不加 Bearer 前缀
+        if let Some(ref header_name) = auth.custom_auth_header {
+            if let (Ok(name), Ok(value)) = (
+                HeaderName::from_bytes(header_name.as_bytes()),
+                HeaderValue::from_str(&auth.api_key),
+            ) {
+                return vec![(name, value)];
+            }
+        }
+
         let bearer = format!("Bearer {}", auth.api_key);
         match auth.strategy {
             AuthStrategy::Anthropic | AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
