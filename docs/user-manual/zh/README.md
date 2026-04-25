@@ -79,7 +79,7 @@
 | 文件 | 内容 |
 |------|------|
 | [4.1-service.md](./4-proxy/4.1-service.md) | 启动代理、配置项、运行状态 |
-| [4.2-takeover.md](./4-proxy/4.2-takeover.md) | 应用接管、配置修改、状态指示 |
+| [4.2-routing.md](./4-proxy/4.2-routing.md) | 应用路由、配置修改、状态指示 |
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | 故障转移队列、熔断器、健康状态 |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | 用量统计、趋势图表、定价配置 |
 | [4.5-model-test.md](./4-proxy/4.5-model-test.md) | 模型检查、健康检测、延迟测试 |

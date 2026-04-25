@@ -10,15 +10,21 @@ export interface FetchedModel {
 /**
  * 从供应商获取可用模型列表
  *
- * 使用 OpenAI 兼容的 GET /v1/models 端点。
- * 主要面向第三方聚合站（硅基流动、OpenRouter 等）。
+ * 使用 OpenAI 兼容的 GET /v1/models 端点。优先用 `modelsUrl` 精确覆写；
+ * 否则后端会对 baseURL 生成候选列表并按序尝试（含"剥离 /anthropic 等兼容子路径"兜底）。
  */
 export async function fetchModelsForConfig(
   baseUrl: string,
   apiKey: string,
   isFullUrl?: boolean,
+  modelsUrl?: string,
 ): Promise<FetchedModel[]> {
-  return invoke("fetch_models_for_config", { baseUrl, apiKey, isFullUrl });
+  return invoke("fetch_models_for_config", {
+    baseUrl,
+    apiKey,
+    isFullUrl,
+    modelsUrl,
+  });
 }
 
 /**
@@ -50,8 +56,13 @@ export function showFetchModelsError(
     toast.error(t("providerForm.fetchModelsAuthFailed"));
     return;
   }
+  // 所有候选端点均返回 404/405：供应商可能未开放 /models 接口，或 Base URL 有误
+  if (msg.includes("All candidates failed")) {
+    toast.error(t("providerForm.fetchModelsEndpointNotFound"));
+    return;
+  }
   if (msg.includes("HTTP 404") || msg.includes("HTTP 405")) {
-    toast.error(t("providerForm.fetchModelsNotSupported"));
+    toast.error(t("providerForm.fetchModelsEndpointNotFound"));
     return;
   }
   if (msg.includes("timeout") || msg.includes("timed out")) {

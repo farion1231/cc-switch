@@ -11,7 +11,6 @@ pub struct ModelMapping {
     pub sonnet_model: Option<String>,
     pub opus_model: Option<String>,
     pub default_model: Option<String>,
-    pub reasoning_model: Option<String>,
 }
 
 impl ModelMapping {
@@ -40,11 +39,6 @@ impl ModelMapping {
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(String::from),
-            reasoning_model: env
-                .and_then(|e| e.get("ANTHROPIC_REASONING_MODEL"))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(String::from),
         }
     }
 
@@ -54,21 +48,13 @@ impl ModelMapping {
             || self.sonnet_model.is_some()
             || self.opus_model.is_some()
             || self.default_model.is_some()
-            || self.reasoning_model.is_some()
     }
 
     /// 根据原始模型名称获取映射后的模型
-    pub fn map_model(&self, original_model: &str, has_thinking: bool) -> String {
+    pub fn map_model(&self, original_model: &str) -> String {
         let model_lower = original_model.to_lowercase();
 
-        // 1. thinking 模式优先使用推理模型
-        if has_thinking {
-            if let Some(ref m) = self.reasoning_model {
-                return m.clone();
-            }
-        }
-
-        // 2. 按模型类型匹配
+        // 1. 按模型类型匹配
         if model_lower.contains("haiku") {
             if let Some(ref m) = self.haiku_model {
                 return m.clone();
@@ -85,32 +71,13 @@ impl ModelMapping {
             }
         }
 
-        // 3. 默认模型
+        // 2. 默认模型
         if let Some(ref m) = self.default_model {
             return m.clone();
         }
 
-        // 4. 无映射，保持原样
+        // 3. 无映射，保持原样
         original_model.to_string()
-    }
-}
-
-/// 检测请求是否启用了 thinking 模式
-pub fn has_thinking_enabled(body: &Value) -> bool {
-    match body
-        .get("thinking")
-        .and_then(|v| v.as_object())
-        .and_then(|o| o.get("type"))
-        .and_then(|t| t.as_str())
-    {
-        Some("enabled") | Some("adaptive") => true,
-        Some("disabled") | None => false,
-        Some(other) => {
-            log::warn!(
-                "[ModelMapper] 未知 thinking.type='{other}'，按 disabled 处理以避免误路由 reasoning 模型"
-            );
-            false
-        }
     }
 }
 
@@ -133,8 +100,7 @@ pub fn apply_model_mapping(
     let original_model = body.get("model").and_then(|m| m.as_str()).map(String::from);
 
     if let Some(ref original) = original_model {
-        let has_thinking = has_thinking_enabled(&body);
-        let mapped = mapping.map_model(original, has_thinking);
+        let mapped = mapping.map_model(original);
 
         if mapped != *original {
             log::debug!("[ModelMapper] 模型映射: {original} → {mapped}");
@@ -160,8 +126,7 @@ mod tests {
                     "ANTHROPIC_MODEL": "default-model",
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-mapped",
                     "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-mapped",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped",
-                    "ANTHROPIC_REASONING_MODEL": "reasoning-model"
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped"
                 }
             }),
             website_url: None,
@@ -181,27 +146,6 @@ mod tests {
             id: "test".to_string(),
             name: "Test".to_string(),
             settings_config: json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: None,
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        }
-    }
-
-    fn create_provider_with_reasoning_only() -> Provider {
-        Provider {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            settings_config: json!({
-                "env": {
-                    "ANTHROPIC_REASONING_MODEL": "reasoning-only-model"
-                }
-            }),
             website_url: None,
             category: None,
             created_at: None,
@@ -243,40 +187,29 @@ mod tests {
     }
 
     #[test]
-    fn test_thinking_mode() {
+    fn test_thinking_does_not_affect_model_mapping() {
+        // Issue #2081: thinking 参数不应影响模型映射
         let provider = create_provider_with_mapping();
         let body = json!({
             "model": "claude-sonnet-4-5",
             "thinking": {"type": "enabled"}
         });
         let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "reasoning-model");
-        assert_eq!(mapped, Some("reasoning-model".to_string()));
+        assert_eq!(result["model"], "sonnet-mapped");
+        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
     }
 
     #[test]
-    fn test_reasoning_only_mapping_in_thinking_mode() {
-        let provider = create_provider_with_reasoning_only();
+    fn test_thinking_adaptive_does_not_affect_model_mapping() {
+        // Issue #2081: adaptive thinking 也不应影响模型映射
+        let provider = create_provider_with_mapping();
         let body = json!({
             "model": "claude-sonnet-4-5",
-            "thinking": {"type": "enabled"}
+            "thinking": {"type": "adaptive"}
         });
         let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "reasoning-only-model");
-        assert_eq!(mapped, Some("reasoning-only-model".to_string()));
-    }
-
-    #[test]
-    fn test_reasoning_only_mapping_does_not_affect_non_thinking() {
-        let provider = create_provider_with_reasoning_only();
-        let body = json!({
-            "model": "claude-sonnet-4-5",
-            "thinking": {"type": "disabled"}
-        });
-        let (result, original, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "claude-sonnet-4-5");
-        assert_eq!(original, Some("claude-sonnet-4-5".to_string()));
-        assert!(mapped.is_none());
+        assert_eq!(result["model"], "sonnet-mapped");
+        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
     }
 
     #[test]
@@ -308,30 +241,6 @@ mod tests {
         assert_eq!(result["model"], "claude-sonnet-4-5");
         assert_eq!(original, Some("claude-sonnet-4-5".to_string()));
         assert!(mapped.is_none());
-    }
-
-    #[test]
-    fn test_thinking_adaptive() {
-        let provider = create_provider_with_mapping();
-        let body = json!({
-            "model": "claude-sonnet-4-5",
-            "thinking": {"type": "adaptive"}
-        });
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "reasoning-model");
-        assert_eq!(mapped, Some("reasoning-model".to_string()));
-    }
-
-    #[test]
-    fn test_thinking_unknown_type() {
-        let provider = create_provider_with_mapping();
-        let body = json!({
-            "model": "claude-sonnet-4-5",
-            "thinking": {"type": "some_future_type"}
-        });
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "sonnet-mapped");
-        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
     }
 
     #[test]

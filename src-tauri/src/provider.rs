@@ -65,6 +65,25 @@ impl Provider {
             in_failover_queue: false,
         }
     }
+
+    pub fn is_codex_oauth(&self) -> bool {
+        self.meta.as_ref().and_then(|m| m.provider_type.as_deref()) == Some("codex_oauth")
+    }
+
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| m.codex_fast_mode_enabled())
+            .unwrap_or(false)
+    }
+
+    pub fn has_usage_script_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.usage_script.as_ref())
+            .map(|s| s.enabled)
+            .unwrap_or(false)
+    }
 }
 
 /// 供应商管理器
@@ -172,29 +191,6 @@ pub struct ProviderTestConfig {
     pub max_retries: Option<u32>,
 }
 
-/// 供应商单独的代理配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProviderProxyConfig {
-    /// 是否启用单独配置（false 时使用全局/系统代理）
-    #[serde(default)]
-    pub enabled: bool,
-    /// 代理类型：http, https, socks5
-    #[serde(rename = "proxyType", skip_serializing_if = "Option::is_none")]
-    pub proxy_type: Option<String>,
-    /// 代理主机
-    #[serde(rename = "proxyHost", skip_serializing_if = "Option::is_none")]
-    pub proxy_host: Option<String>,
-    /// 代理端口
-    #[serde(rename = "proxyPort", skip_serializing_if = "Option::is_none")]
-    pub proxy_port: Option<u16>,
-    /// 代理用户名（可选）
-    #[serde(rename = "proxyUsername", skip_serializing_if = "Option::is_none")]
-    pub proxy_username: Option<String>,
-    /// 代理密码（可选）
-    #[serde(rename = "proxyPassword", skip_serializing_if = "Option::is_none")]
-    pub proxy_password: Option<String>,
-}
-
 /// 认证绑定来源
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -262,9 +258,6 @@ pub struct ProviderMeta {
     /// 供应商单独的模型测试配置
     #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
     pub test_config: Option<ProviderTestConfig>,
-    /// 供应商单独的代理配置
-    #[serde(rename = "proxyConfig", skip_serializing_if = "Option::is_none")]
-    pub proxy_config: Option<ProviderProxyConfig>,
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
@@ -282,11 +275,15 @@ pub struct ProviderMeta {
     /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
     #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
     pub is_full_url: Option<bool>,
-    /// Prompt cache key for OpenAI-compatible endpoints.
-    /// When set, injected into converted requests to improve cache hit rate.
-    /// If not set, provider ID is used automatically during format conversion.
+    /// Prompt cache key for OpenAI Responses-compatible endpoints.
+    /// When set, injected into converted Responses requests to improve cache hit rate.
+    /// If not set, Codex OAuth uses the current session ID; other Claude -> Responses
+    /// conversions fall back to provider ID.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
+    #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
+    pub codex_fast_mode: Option<bool>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -302,6 +299,12 @@ pub struct ProviderMeta {
 }
 
 impl ProviderMeta {
+    /// Codex OAuth FAST mode 是否启用。默认关闭，因为 `service_tier="priority"`
+    /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.codex_fast_mode.unwrap_or(false)
+    }
+
     /// 解析指定托管认证供应商绑定的账号 ID。
     ///
     /// 新版优先读取 authBinding，旧版继续兼容 githubAccountId。
