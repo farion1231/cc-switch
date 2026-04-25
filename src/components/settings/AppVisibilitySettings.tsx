@@ -20,6 +20,7 @@ const APP_CONFIG: Array<{
   { id: "codex", icon: "openai", nameKey: "apps.codex" },
   { id: "gemini", icon: "gemini", nameKey: "apps.gemini" },
   { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
+  { id: "qwen", icon: "qwen", nameKey: "apps.qwen" },
   { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
 ];
@@ -35,6 +36,7 @@ export function AppVisibilitySettings({
     codex: true,
     gemini: true,
     opencode: true,
+    qwen: true,
     openclaw: true,
     hermes: true,
   };

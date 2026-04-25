@@ -36,7 +36,7 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_opencode_provider_from_live, write_gemini_live, write_qwen_live,
 };
 use usage::validate_usage_script;
 
@@ -1346,6 +1346,9 @@ impl ProviderService {
             AppType::OpenClaw => {
                 remove_openclaw_provider_from_live(id)?;
             }
+            AppType::Qwen => {
+                crate::qwen_config::clear_qwen_live()?;
+            }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
             }
@@ -1732,6 +1735,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
+            AppType::Qwen => Self::extract_qwen_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
@@ -1747,6 +1751,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
+            AppType::Qwen => Self::extract_qwen_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
@@ -1879,6 +1884,68 @@ impl ProviderService {
         }
 
         serde_json::to_string_pretty(&Value::Object(snippet))
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// Extract common config for Qwen (JSON format)
+    ///
+    /// Qwen provider storage uses `{ env, config }` where:
+    /// - `env` contains OpenAI-compatible auth/endpoint/model fields
+    /// - `config` contains provider-owned Qwen settings
+    ///
+    /// Common config should keep only shared app-level settings and strip provider-specific
+    /// fields so the snippet can be merged across Qwen providers.
+    fn extract_qwen_common_config(settings: &Value) -> Result<String, AppError> {
+        let mut config = settings.clone();
+
+        if let Some(env) = config.get_mut("env").and_then(Value::as_object_mut) {
+            env.remove("OPENAI_API_KEY");
+            env.remove("OPENAI_BASE_URL");
+            env.remove("OPENAI_MODEL");
+            if env.is_empty() {
+                config.as_object_mut().map(|obj| obj.remove("env"));
+            }
+        }
+
+        if let Some(provider_config) = config.get_mut("config").and_then(Value::as_object_mut) {
+            provider_config.remove("modelProviders");
+
+            if let Some(security) = provider_config
+                .get_mut("security")
+                .and_then(Value::as_object_mut)
+            {
+                if let Some(auth) = security.get_mut("auth").and_then(Value::as_object_mut) {
+                    auth.remove("selectedType");
+                    if auth.is_empty() {
+                        security.remove("auth");
+                    }
+                }
+
+                if security.is_empty() {
+                    provider_config.remove("security");
+                }
+            }
+
+            if let Some(model) = provider_config
+                .get_mut("model")
+                .and_then(Value::as_object_mut)
+            {
+                model.remove("name");
+                if model.is_empty() {
+                    provider_config.remove("model");
+                }
+            }
+
+            if provider_config.is_empty() {
+                config.as_object_mut().map(|obj| obj.remove("config"));
+            }
+        }
+
+        if config.as_object().is_none_or(|obj| obj.is_empty()) {
+            return Ok("{}".to_string());
+        }
+
+        serde_json::to_string_pretty(&config)
             .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
     }
 
@@ -2037,6 +2104,10 @@ impl ProviderService {
         write_gemini_live(provider)
     }
 
+    pub(crate) fn write_qwen_live(provider: &Provider) -> Result<(), AppError> {
+        write_qwen_live(provider)
+    }
+
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
         match app_type {
             AppType::Claude => {
@@ -2100,6 +2171,17 @@ impl ProviderService {
                         "provider.opencode.settings.not_object",
                         "OpenCode 配置必须是 JSON 对象",
                         "OpenCode configuration must be a JSON object",
+                    ));
+                }
+            }
+            AppType::Qwen => {
+                // Qwen uses env format with OPENAI_API_KEY and OPENAI_BASE_URL
+                // Basic validation - must be an object
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.qwen.settings.not_object",
+                        "Qwen 配置必须是 JSON 对象",
+                        "Qwen configuration must be a JSON object",
                     ));
                 }
             }
@@ -2295,8 +2377,42 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes => {
-                // OpenClaw/Hermes use apiKey and baseUrl directly on the object
+            AppType::Qwen => {
+                // Qwen uses env.OPENAI_API_KEY and env.OPENAI_BASE_URL
+                let env = provider
+                    .settings_config
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.qwen.env.missing",
+                            "配置格式错误: 缺少 env",
+                            "Invalid configuration: missing env section",
+                        )
+                    })?;
+
+                let api_key = env
+                    .get("OPENAI_API_KEY")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.qwen.api_key.missing",
+                            "缺少 OPENAI_API_KEY",
+                            "Missing OPENAI_API_KEY",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = env
+                    .get("OPENAI_BASE_URL")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::OpenClaw => {
+                // OpenClaw uses apiKey and baseUrl directly on the object
                 let api_key = provider
                     .settings_config
                     .get("apiKey")
@@ -2313,6 +2429,30 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Hermes => {
+                // Hermes uses snake_case YAML-native fields.
+                let api_key = provider
+                    .settings_config
+                    .get("api_key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.hermes.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("base_url")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

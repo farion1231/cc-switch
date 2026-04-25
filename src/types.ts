@@ -203,6 +203,7 @@ export interface VisibleApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
+  qwen: boolean;
   openclaw: boolean;
   hermes: boolean;
 }
@@ -296,6 +297,8 @@ export interface Settings {
   geminiConfigDir?: string;
   // 覆盖 OpenCode 配置目录（可选）
   opencodeConfigDir?: string;
+  // 覆盖 Qwen 配置目录（可选）
+  qwenConfigDir?: string;
   // 覆盖 OpenClaw 配置目录（可选）
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
@@ -372,7 +375,7 @@ export interface McpApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
-  openclaw: boolean;
+  qwen: boolean;
   hermes: boolean;
 }
 
@@ -417,6 +420,7 @@ export interface UniversalProviderApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  qwen: boolean;
 }
 
 // Claude 模型配置
@@ -438,11 +442,17 @@ export interface GeminiModelConfig {
   model?: string;
 }
 
+// Qwen 模型配置
+export interface QwenModelConfig {
+  model?: string;
+}
+
 // 各应用的模型配置
 export interface UniversalProviderModels {
   claude?: ClaudeModelConfig;
   codex?: CodexModelConfig;
   gemini?: GeminiModelConfig;
+  qwen?: QwenModelConfig;
 }
 
 // 统一供应商（跨应用共享配置）

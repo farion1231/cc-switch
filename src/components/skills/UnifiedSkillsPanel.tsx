@@ -118,7 +118,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       codex: 0,
       gemini: 0,
       opencode: 0,
-      openclaw: 0,
+      qwen: 0,
       hermes: 0,
     };
     if (!skills) return counts;
@@ -745,7 +745,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           codex: skill.foundIn.includes("codex"),
           gemini: skill.foundIn.includes("gemini"),
           opencode: skill.foundIn.includes("opencode"),
-          openclaw: false,
+          qwen: skill.foundIn.includes("qwen"),
           hermes: skill.foundIn.includes("hermes"),
         },
       ]),
@@ -771,7 +771,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           codex: false,
           gemini: false,
           opencode: false,
-          openclaw: false,
+          qwen: false,
           hermes: false,
         },
       })),
@@ -814,7 +814,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           codex: false,
                           gemini: false,
                           opencode: false,
-                          openclaw: false,
+                          qwen: false,
                           hermes: false,
                         }
                       }
@@ -827,7 +827,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                               codex: false,
                               gemini: false,
                               opencode: false,
-                              openclaw: false,
+                              qwen: false,
                               hermes: false,
                             }),
                             [app]: enabled,

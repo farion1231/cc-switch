@@ -10,7 +10,10 @@ import type {
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
 type McpConfigState = Record<AppId, Record<string, McpServer>>;
-type LiveProviderIdsByApp = Record<"opencode" | "openclaw" | "hermes", string[]>;
+type LiveProviderIdsByApp = Record<
+  "opencode" | "openclaw" | "hermes",
+  string[]
+>;
 
 const createDefaultProviders = (): ProvidersByApp => ({
   claude: {
@@ -65,6 +68,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
     },
   },
   opencode: {},
+  qwen: {},
   openclaw: {},
   hermes: {},
 });
@@ -74,6 +78,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   codex: "codex-1",
   gemini: "gemini-1",
   opencode: "",
+  qwen: "",
   openclaw: "",
   hermes: "",
 });
@@ -155,7 +160,7 @@ let mcpConfigs: McpConfigState = {
         codex: false,
         gemini: false,
         opencode: false,
-        openclaw: false,
+        qwen: false,
         hermes: false,
       },
       server: {
@@ -174,7 +179,7 @@ let mcpConfigs: McpConfigState = {
         codex: true,
         gemini: false,
         opencode: false,
-        openclaw: false,
+        qwen: false,
         hermes: false,
       },
       server: {
@@ -185,6 +190,7 @@ let mcpConfigs: McpConfigState = {
   },
   gemini: {},
   opencode: {},
+  qwen: {},
   openclaw: {},
   hermes: {},
 };
@@ -222,7 +228,7 @@ export const resetProviderState = () => {
           codex: false,
           gemini: false,
           opencode: false,
-          openclaw: false,
+          qwen: false,
           hermes: false,
         },
         server: {
@@ -241,7 +247,7 @@ export const resetProviderState = () => {
           codex: true,
           gemini: false,
           opencode: false,
-          openclaw: false,
+          qwen: false,
           hermes: false,
         },
         server: {
@@ -252,6 +258,7 @@ export const resetProviderState = () => {
     },
     gemini: {},
     opencode: {},
+    qwen: {},
     openclaw: {},
     hermes: {},
   };
@@ -262,9 +269,9 @@ export const getProviders = (appType: AppId) =>
 
 export const getCurrentProviderId = (appType: AppId) => current[appType] ?? "";
 
-export const getLiveProviderIds = (appType: "opencode" | "openclaw" | "hermes") => [
-  ...liveProviderIds[appType],
-];
+export const getLiveProviderIds = (
+  appType: "opencode" | "openclaw" | "hermes",
+) => [...liveProviderIds[appType]];
 
 export const setLiveProviderIds = (
   appType: "opencode" | "openclaw" | "hermes",
