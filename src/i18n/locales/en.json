@@ -155,6 +155,7 @@
     "writeCommonConfig": "Write common config",
     "editCommonConfigButton": "Edit common config",
     "configJsonHint": "Please fill in complete Claude Code configuration",
+    "enabledPluginsOverrideWarning": "Plugin override is disabled: enabledPlugins in this provider config will not take effect, and local Claude enabledPlugins will be kept.",
     "editCommonConfigTitle": "Edit common config snippet",
     "editCommonConfigHint": "Common config snippet will be merged into all providers that enable it",
     "addProvider": "Add Provider",
@@ -508,6 +509,8 @@
     "useAppWindowControlsDescription": "Use built-in minimize, maximize/restore, and close buttons in the app header.",
     "enableClaudePluginIntegration": "Apply to Claude Code extension",
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
+    "overrideClaudeEnabledPlugins": "Override Claude enabled plugins",
+    "overrideClaudeEnabledPluginsDescription": "When enabled, provider switching will overwrite enabledPlugins in Claude settings.json",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "When enabled, Claude Code will skip the first-run confirmation",
     "appVisibility": {

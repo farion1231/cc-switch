@@ -155,6 +155,7 @@
     "writeCommonConfig": "共通設定を書き込む",
     "editCommonConfigButton": "共通設定を編集",
     "configJsonHint": "Claude Code の設定をすべて入力してください",
+    "enabledPluginsOverrideWarning": "プラグイン上書きが無効です。現在のプロバイダー設定の enabledPlugins は反映されず、ローカル設定の enabledPlugins が引き続き使用されます。",
     "editCommonConfigTitle": "共通設定スニペットを編集",
     "editCommonConfigHint": "共通設定スニペットは、この機能をオンにしたすべてのプロバイダーへマージされます",
     "addProvider": "プロバイダーを追加",
@@ -508,6 +509,8 @@
     "useAppWindowControlsDescription": "有効にすると、アプリヘッダーに最小化・最大化/復元・閉じるボタンを表示します。",
     "enableClaudePluginIntegration": "Claude Code 拡張に適用",
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
+    "overrideClaudeEnabledPlugins": "Claude 有効プラグインを上書き",
+    "overrideClaudeEnabledPluginsDescription": "有効にすると、プロバイダー切り替え時に Claude settings.json の enabledPlugins が上書きされます",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
     "appVisibility": {

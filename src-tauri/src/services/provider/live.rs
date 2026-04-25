@@ -33,6 +33,28 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
+pub(crate) fn preserve_local_claude_enabled_plugins(settings: &mut Value) -> Result<(), AppError> {
+    let Some(target_obj) = settings.as_object_mut() else {
+        return Ok(());
+    };
+
+    target_obj.remove("enabledPlugins");
+
+    let path = get_claude_settings_path();
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let local_config: Value = read_json_file(&path)?;
+    let Some(enabled_plugins) = local_config.get("enabledPlugins").cloned() else {
+        return Ok(());
+    };
+
+    // 覆盖模式关闭时，始终保留本地现有 enabledPlugins（存在则覆盖，不存在则新增）
+    target_obj.insert("enabledPlugins".to_string(), enabled_plugins);
+    Ok(())
+}
+
 pub(crate) fn provider_exists_in_live_config(
     app_type: &AppType,
     provider_id: &str,
@@ -668,7 +690,15 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
+
+            // 覆盖模式关闭时，保留本地现有 enabledPlugins（存在则覆盖，不存在则新增）
+            if !crate::settings::get_settings().override_claude_enabled_plugins {
+                if let Err(e) = preserve_local_claude_enabled_plugins(&mut settings) {
+                    log::warn!("保留 Claude enabledPlugins 失败（将继续写入其他配置）: {e}");
+                }
+            }
+
             write_json_file(&path, &settings)?;
         }
         AppType::Codex => {
@@ -1426,6 +1456,56 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use std::env;
+    use tempfile::TempDir;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
@@ -1548,5 +1628,93 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    #[test]
+    #[serial]
+    fn write_live_snapshot_keeps_local_enabled_plugins_when_override_disabled() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let mut settings = crate::settings::get_settings();
+        settings.override_claude_enabled_plugins = false;
+        crate::settings::update_settings(settings).expect("disable override setting");
+
+        let path = get_claude_settings_path();
+        write_json_file(
+            &path,
+            &json!({
+                "enabledPlugins": ["plugin-local-1", "plugin-local-2"],
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "local-token"
+                }
+            }),
+        )
+        .expect("seed local claude settings");
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "enabledPlugins": ["plugin-provider"],
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "provider-token"
+                }
+            }),
+            None,
+        );
+
+        write_live_snapshot(&AppType::Claude, &provider).expect("write claude live snapshot");
+
+        let live: Value = read_json_file(&path).expect("read live");
+        assert_eq!(
+            live.get("enabledPlugins"),
+            Some(&json!(["plugin-local-1", "plugin-local-2"])),
+            "enabledPlugins should be preserved from local settings when override is disabled"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn write_live_snapshot_overwrites_enabled_plugins_when_override_enabled() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let mut settings = crate::settings::get_settings();
+        settings.override_claude_enabled_plugins = true;
+        crate::settings::update_settings(settings).expect("enable override setting");
+
+        let path = get_claude_settings_path();
+        write_json_file(
+            &path,
+            &json!({
+                "enabledPlugins": ["plugin-local"],
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "local-token"
+                }
+            }),
+        )
+        .expect("seed local claude settings");
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "enabledPlugins": ["plugin-provider"],
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "provider-token"
+                }
+            }),
+            None,
+        );
+
+        write_live_snapshot(&AppType::Claude, &provider).expect("write claude live snapshot");
+
+        let live: Value = read_json_file(&path).expect("read live");
+        assert_eq!(
+            live.get("enabledPlugins"),
+            Some(&json!(["plugin-provider"])),
+            "enabledPlugins should keep overwrite behavior when override is enabled"
+        );
     }
 }

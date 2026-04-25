@@ -84,6 +84,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       useAppWindowControls: data.useAppWindowControls ?? false,
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
+      overrideClaudeEnabledPlugins: data.overrideClaudeEnabledPlugins ?? true,
       silentStartup: data.silentStartup ?? false,
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
@@ -109,6 +110,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             minimizeToTrayOnClose: true,
             useAppWindowControls: false,
             enableClaudePluginIntegration: false,
+            overrideClaudeEnabledPlugins: true,
             skipClaudeOnboarding: false,
             language: readPersistedLanguage(),
           } as SettingsFormState);
@@ -145,6 +147,8 @@ export function useSettingsForm(): UseSettingsFormResult {
         useAppWindowControls: serverData.useAppWindowControls ?? false,
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
+        overrideClaudeEnabledPlugins:
+          serverData.overrideClaudeEnabledPlugins ?? true,
         silentStartup: serverData.silentStartup ?? false,
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
