@@ -1006,4 +1006,22 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aws",
     iconColor: "#FF9900",
   },
+  {
+    name: "BurnCloud",
+    websiteUrl: "https://ai.burncloud.com",
+    apiKeyUrl: "https://ai.burncloud.com/register?aff=V2Zt",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://ai.burncloud.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-6",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-6",
+      },
+    },
+    category: "aggregator",
+    icon: "burncloud",
+    iconColor: "#ed6e19",
+  },
 ];

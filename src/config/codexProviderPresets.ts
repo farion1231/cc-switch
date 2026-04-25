@@ -489,4 +489,18 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
   },
+  {
+    name: "BurnCloud",
+    websiteUrl: "https://ai.burncloud.com",
+    apiKeyUrl: "https://ai.burncloud.com/register?aff=V2Zt",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "burncloud",
+      "https://ai.burncloud.com",
+      "gpt-5.4",
+    ),
+    category: "aggregator",
+    icon: "burncloud",
+    iconColor: "#ed6e19",
+  },
 ];
