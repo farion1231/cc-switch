@@ -5,7 +5,11 @@ import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
-import type { AppTypeFilter, UsageRangeSelection, UsageRangePreset } from "@/types/usage";
+import type {
+  AppTypeFilter,
+  UsageRangeSelection,
+  UsageRangePreset,
+} from "@/types/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
@@ -95,7 +99,9 @@ function loadSavedRange(): UsageRangeSelection {
 export function UsageDashboard() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<UsageRangeSelection>(loadSavedRange());
+  const [range, setRange] = useState<UsageRangeSelection>(() =>
+    loadSavedRange(),
+  );
   const [appType, setAppType] = useState<AppTypeFilter>("all");
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
 

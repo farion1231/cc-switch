@@ -468,7 +468,7 @@ export function SettingsPage({
                 <AboutSection isPortable={isPortable} />
               </TabsContent>
 
-              <TabsContent value="usage" className="mt-0" forceMount>
+              <TabsContent value="usage" className="mt-0">
                 <UsageDashboard />
               </TabsContent>
             </div>
