@@ -192,7 +192,7 @@ fn truncate_body(body: String) -> String {
         body
     } else {
         let mut s: String = body.chars().take(ERROR_BODY_MAX_CHARS).collect();
-        s.push_str("…");
+        s.push('…');
         s
     }
 }
