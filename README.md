@@ -253,6 +253,20 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 3. **Takes Effect**: Restart your terminal or the corresponding CLI tool to apply changes (Claude Code does not require a restart)
 4. **Back to Official**: Add an "Official Login" preset, restart the CLI tool, then follow its login/OAuth flow
 
+### Command Line Mode
+
+The desktop WebUI is still launched by `cc-switch`; command-line operations are provided by the separate `cc-switch-cli` binary:
+
+```bash
+cc-switch-cli webui
+cc-switch-cli webui --port 9990
+cc-switch-cli providers list --app claude
+cc-switch-cli providers current --app codex
+cc-switch-cli providers switch --app claude --id my-provider
+```
+
+`cc-switch-cli webui` reuses the same frontend build output as the desktop app and listens on `127.0.0.1:9990` by default.
+
 ### MCP, Prompts, Skills & Sessions
 
 - **MCP**: Click the "MCP" button → Add servers via templates or custom config → Toggle per-app sync

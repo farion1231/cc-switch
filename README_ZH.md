@@ -254,6 +254,20 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 3. **生效方式**：重启终端或对应的 CLI 工具以应用更改（CLaude Code 无需重启）
 4. **恢复官方登录**：添加"官方登录"预设，重启 CLI 工具后按照其登录/OAuth 流程操作
 
+### 命令行模式
+
+桌面端仍由 `cc-switch` 启动 WebUI；命令行操作由独立二进制 `cc-switch-cli` 提供：
+
+```bash
+cc-switch-cli webui
+cc-switch-cli webui --port 9990
+cc-switch-cli providers list --app claude
+cc-switch-cli providers current --app codex
+cc-switch-cli providers switch --app claude --id my-provider
+```
+
+`cc-switch-cli webui` 会复用桌面端同一份前端构建产物，默认监听 `127.0.0.1:9990`。
+
 ### MCP、Prompts、Skills 与会话
 
 - **MCP**：点击"MCP"按钮 → 通过模板或自定义配置添加服务器 → 切换各应用同步开关
