@@ -353,16 +353,16 @@ impl TokenUsage {
         let prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_u64())?;
         let completion_tokens = usage.get("completion_tokens").and_then(|v| v.as_u64())?;
 
-        // 获取缓存读取 tokens，按优先级尝试多个来源：
-        // 1. cache_read_input_tokens（部分代理服务器添加的 Anthropic 风格字段）
-        // 2. prompt_tokens_details.cached_tokens（OpenAI 原生字段）
+        // 获取缓存读取 tokens，优先使用 OpenAI 原生字段。
+        // 部分兼容服务会在 cache_read_input_tokens 中混入缓存创建 tokens，
+        // 因此直接字段只作为没有原生明细时的回退。
         let cache_read = usage
-            .get("cache_read_input_tokens")
+            .get("prompt_tokens_details")
+            .and_then(|d| d.get("cached_tokens"))
             .and_then(|v| v.as_u64())
             .or_else(|| {
                 usage
-                    .get("prompt_tokens_details")
-                    .and_then(|d| d.get("cached_tokens"))
+                    .get("cache_read_input_tokens")
                     .and_then(|v| v.as_u64())
             })
             .unwrap_or(0) as u32;
@@ -757,6 +757,27 @@ mod tests {
         assert_eq!(usage.input_tokens, 800);
         assert_eq!(usage.output_tokens, 500);
         assert_eq!(usage.cache_read_tokens, 200);
+    }
+
+    #[test]
+    fn test_openai_response_prefers_native_cached_tokens() {
+        let response = json!({
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+                "cache_read_input_tokens": 600,
+                "cache_creation_input_tokens": 400,
+                "prompt_tokens_details": {
+                    "cached_tokens": 200
+                }
+            }
+        });
+
+        let usage = TokenUsage::from_openai_response(&response).unwrap();
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.cache_read_tokens, 200);
+        assert_eq!(usage.cache_creation_tokens, 400);
     }
 
     #[test]
