@@ -173,10 +173,7 @@ async fn run_worker_loop(
         let started_at = Instant::now();
         let mut merged_count = 1usize;
 
-        loop {
-            let Some(wait_for) = auto_sync_wait_duration(started_at, Instant::now()) else {
-                break;
-            };
+        while let Some(wait_for) = auto_sync_wait_duration(started_at, Instant::now()) {
             let timeout = tokio::time::timeout(wait_for, rx.recv()).await;
 
             match timeout {

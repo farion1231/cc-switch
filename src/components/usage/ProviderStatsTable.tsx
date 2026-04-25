@@ -9,18 +9,21 @@ import {
 } from "@/components/ui/table";
 import { useProviderStats } from "@/lib/query/usage";
 import { fmtUsd } from "./format";
+import type { UsageRangeSelection } from "@/types/usage";
 
 interface ProviderStatsTableProps {
+  range: UsageRangeSelection;
   appType?: string;
   refreshIntervalMs: number;
 }
 
 export function ProviderStatsTable({
+  range,
   appType,
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t } = useTranslation();
-  const { data: stats, isLoading } = useProviderStats(appType, {
+  const { data: stats, isLoading } = useProviderStats(range, appType, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 

@@ -278,7 +278,11 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             continue;
         }
 
-        let request_id = format!("session:{}", msg.message_id);
+        let request_id = format!(
+            "{}{}",
+            crate::proxy::usage::parser::SESSION_REQUEST_ID_PREFIX,
+            msg.message_id
+        );
 
         // 跳过 output_tokens 为 0 的无意义条目
         if msg.output_tokens == 0 {
@@ -379,6 +383,7 @@ fn insert_session_log_entry(
         cache_read_tokens: msg.cache_read_tokens,
         cache_creation_tokens: msg.cache_creation_tokens,
         model: Some(msg.model.clone()),
+        message_id: None,
     };
 
     let pricing = find_model_pricing_for_session(&conn, &msg.model);

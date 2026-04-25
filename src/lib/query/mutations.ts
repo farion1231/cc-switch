@@ -8,6 +8,7 @@ import type { Provider, SessionMeta, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
+import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -22,7 +23,7 @@ export const useAddProviderMutation = (appId: AppId) => {
     ) => {
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw") {
+      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -73,6 +74,10 @@ export const useAddProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
         });
+      }
+
+      if (appId === "hermes") {
+        await invalidateHermesProviderCaches(queryClient);
       }
 
       try {
@@ -127,6 +132,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
           queryKey: openclawKeys.health,
         });
       }
+      if (appId === "hermes") {
+        await invalidateHermesProviderCaches(queryClient);
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -178,6 +186,10 @@ export const useDeleteProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
         });
+      }
+
+      if (appId === "hermes") {
+        await invalidateHermesProviderCaches(queryClient);
       }
 
       try {
@@ -243,6 +255,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
         });
+      }
+      if (appId === "hermes") {
+        await invalidateHermesProviderCaches(queryClient);
       }
 
       try {

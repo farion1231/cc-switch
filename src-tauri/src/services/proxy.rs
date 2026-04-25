@@ -15,6 +15,7 @@ use crate::services::provider::{
 use serde_json::{json, Value};
 use std::str::FromStr;
 use std::sync::Arc;
+use tauri::Emitter;
 use tokio::sync::RwLock;
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
@@ -26,7 +27,7 @@ const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 /// Claude Code 会继续以旧模型名发起请求，导致新供应商不支持时失败。
 const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 6] = [
     "ANTHROPIC_MODEL",
-    "ANTHROPIC_REASONING_MODEL",
+    "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -382,6 +383,26 @@ impl ProxyService {
 
             // 7) 兼容旧逻辑：写入 any-of 标志（失败不影响功能）
             let _ = self.db.set_live_takeover_active(true).await;
+
+            // 8) Warn if the current provider is official (risk of account ban via proxy)
+            if let Ok(Some(current_id)) =
+                crate::settings::get_effective_current_provider(&self.db, &app)
+            {
+                if let Ok(Some(provider)) = self.db.get_provider_by_id(&current_id, app_type_str) {
+                    if provider.category.as_deref() == Some("official") {
+                        if let Some(handle) = self.app_handle.read().await.as_ref() {
+                            let _ = handle.emit(
+                                "proxy-official-warning",
+                                serde_json::json!({
+                                    "appType": app_type_str,
+                                    "providerName": provider.name,
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+
             return Ok(());
         }
 
@@ -460,6 +481,10 @@ impl ProxyService {
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features
                 return Err("OpenClaw 不支持代理功能".to_string());
+            }
+            AppType::Hermes => {
+                // These apps don't support proxy features
+                return Err("该应用不支持代理功能".to_string());
             }
         };
 
@@ -731,6 +756,9 @@ impl ProxyService {
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features, skip silently
             }
+            AppType::Hermes => {
+                // These apps don't support proxy features, skip silently
+            }
         }
 
         Ok(())
@@ -933,6 +961,10 @@ impl ProxyService {
                 // OpenClaw doesn't support proxy features
                 return Err("OpenClaw 不支持代理功能".to_string());
             }
+            AppType::Hermes => {
+                // These apps don't support proxy features
+                return Err("该应用不支持代理功能".to_string());
+            }
         };
 
         let json_str = serde_json::to_string(&config)
@@ -1112,6 +1144,10 @@ impl ProxyService {
                 // OpenClaw doesn't support proxy features
                 return Err("OpenClaw 不支持代理功能".to_string());
             }
+            AppType::Hermes => {
+                // These apps don't support proxy features
+                return Err("该应用不支持代理功能".to_string());
+            }
         }
 
         Ok(())
@@ -1182,6 +1218,9 @@ impl ProxyService {
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features, skip silently
             }
+            AppType::Hermes => {
+                // These apps don't support proxy features, skip silently
+            }
         }
 
         Ok(())
@@ -1232,6 +1271,9 @@ impl ProxyService {
             }
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features, skip silently
+            }
+            AppType::Hermes => {
+                // These apps don't support proxy features, skip silently
             }
         }
 
@@ -1335,6 +1377,10 @@ impl ProxyService {
                 // OpenClaw doesn't support proxy features
                 Err("OpenClaw 不支持代理功能".to_string())
             }
+            AppType::Hermes => {
+                // These apps don't support proxy features
+                Err("该应用不支持代理功能".to_string())
+            }
         }
     }
 
@@ -1362,6 +1408,10 @@ impl ProxyService {
             }
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy takeover
+                false
+            }
+            AppType::Hermes => {
+                // These apps don't support proxy takeover
                 false
             }
         }
@@ -1410,6 +1460,10 @@ impl ProxyService {
             }
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features
+                Ok(())
+            }
+            AppType::Hermes => {
+                // These apps don't support proxy features
                 Ok(())
             }
         }
@@ -1699,7 +1753,7 @@ impl ProxyService {
             }
             AppType::Qwen => serde_json::to_string(&effective_settings)
                 .map_err(|e| format!("序列化 Qwen 配置失败: {e}"))?,
-            AppType::OpenCode | AppType::OpenClaw => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
                 return Err(format!("未知的应用类型: {app_type}"));
             }
         };
@@ -1727,6 +1781,14 @@ impl ProxyService {
             .get_provider_by_id(provider_id, app_type)
             .map_err(|e| format!("读取供应商失败: {e}"))?
             .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
+
+        // Defense-in-depth: block official providers during proxy takeover
+        if provider.category.as_deref() == Some("official") {
+            return Err(
+                "代理接管模式下不能切换到官方供应商 (Cannot switch to official provider during proxy takeover)"
+                    .to_string(),
+            );
+        }
 
         let logical_target_changed =
             crate::settings::get_effective_current_provider(&self.db, &app_type_enum)

@@ -17,6 +17,7 @@ pub struct McpApps {
     pub opencode: bool,
     #[serde(default)]
     pub qwen: bool,
+    pub hermes: bool,
 }
 
 impl McpApps {
@@ -29,6 +30,7 @@ impl McpApps {
             AppType::OpenCode => self.opencode,
             AppType::Qwen => self.qwen,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
+            AppType::Hermes => self.hermes,
         }
     }
 
@@ -41,6 +43,7 @@ impl McpApps {
             AppType::OpenCode => self.opencode = enabled,
             AppType::Qwen => self.qwen = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
+            AppType::Hermes => self.hermes = enabled,
         }
     }
 
@@ -62,12 +65,15 @@ impl McpApps {
         if self.qwen {
             apps.push(AppType::Qwen);
         }
+        if self.hermes {
+            apps.push(AppType::Hermes);
+        }
         apps
     }
 
     /// 检查是否所有应用都未启用
     pub fn is_empty(&self) -> bool {
-        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.qwen
+        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.qwen && !self.hermes
     }
 }
 
@@ -84,6 +90,7 @@ pub struct SkillApps {
     pub opencode: bool,
     #[serde(default)]
     pub qwen: bool,
+    pub hermes: bool,
 }
 
 impl SkillApps {
@@ -95,6 +102,7 @@ impl SkillApps {
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::Qwen => self.qwen,
+            AppType::Hermes => self.hermes,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
         }
     }
@@ -107,6 +115,7 @@ impl SkillApps {
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::Qwen => self.qwen = enabled,
+            AppType::Hermes => self.hermes = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
         }
     }
@@ -129,12 +138,15 @@ impl SkillApps {
         if self.qwen {
             apps.push(AppType::Qwen);
         }
+        if self.hermes {
+            apps.push(AppType::Hermes);
+        }
         apps
     }
 
     /// 检查是否所有应用都未启用
     pub fn is_empty(&self) -> bool {
-        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.qwen
+        !self.claude && !self.codex && !self.gemini && !self.opencode && !self.qwen && !self.hermes
     }
 
     /// 仅启用指定应用（其他应用设为禁用）
@@ -268,6 +280,9 @@ pub struct McpRoot {
     /// OpenClaw MCP 配置（v4.1.0+，实际使用 openclaw.json）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub openclaw: McpConfig,
+    /// Hermes MCP 配置（实际使用 config.yaml）
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub hermes: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -282,6 +297,7 @@ impl Default for McpRoot {
             opencode: McpConfig::default(),
             qwen: McpConfig::default(),
             openclaw: McpConfig::default(),
+            hermes: McpConfig::default(),
         }
     }
 }
@@ -307,6 +323,8 @@ pub struct PromptRoot {
     #[serde(default)]
     pub qwen: PromptConfig,
     pub openclaw: PromptConfig,
+    #[serde(default)]
+    pub hermes: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -315,7 +333,7 @@ use crate::prompt_files::prompt_file_path;
 use crate::provider::ProviderManager;
 
 /// 应用类型
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AppType {
     Claude,
@@ -324,6 +342,7 @@ pub enum AppType {
     OpenCode,
     Qwen,
     OpenClaw,
+    Hermes,
 }
 
 impl AppType {
@@ -335,15 +354,19 @@ impl AppType {
             AppType::OpenCode => "opencode",
             AppType::Qwen => "qwen",
             AppType::OpenClaw => "openclaw",
+            AppType::Hermes => "hermes",
         }
     }
 
     /// Check if this app uses additive mode
     ///
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
-    /// - Additive mode (true): All providers are written to live config (OpenCode, OpenClaw)
+    /// - Additive mode (true): All providers are written to live config (OpenCode, OpenClaw, Hermes)
     pub fn is_additive_mode(&self) -> bool {
-        matches!(self, AppType::OpenCode | AppType::OpenClaw)
+        matches!(
+            self,
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+        )
     }
 
     /// Return an iterator over all app types
@@ -355,6 +378,7 @@ impl AppType {
             AppType::OpenCode,
             AppType::Qwen,
             AppType::OpenClaw,
+            AppType::Hermes,
         ]
         .into_iter()
     }
@@ -372,10 +396,11 @@ impl FromStr for AppType {
             "opencode" => Ok(AppType::OpenCode),
             "qwen" => Ok(AppType::Qwen),
             "openclaw" => Ok(AppType::OpenClaw),
+            "hermes" => Ok(AppType::Hermes),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, qwen, openclaw。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, qwen, openclaw."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, qwen, openclaw, hermes。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, qwen, openclaw, hermes."),
             )),
         }
     }
@@ -399,6 +424,9 @@ pub struct CommonConfigSnippets {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qwen: Option<String>,
     pub openclaw: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hermes: Option<String>,
 }
 
 impl CommonConfigSnippets {
@@ -411,6 +439,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::Qwen => self.qwen.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
+            AppType::Hermes => self.hermes.as_ref(),
         }
     }
 
@@ -423,6 +452,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::Qwen => self.qwen = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
+            AppType::Hermes => self.hermes = snippet,
         }
     }
 }
@@ -465,6 +495,7 @@ impl Default for MultiAppConfig {
         apps.insert("opencode".to_string(), ProviderManager::default());
         apps.insert("qwen".to_string(), ProviderManager::default());
         apps.insert("openclaw".to_string(), ProviderManager::default());
+        apps.insert("hermes".to_string(), ProviderManager::default());
 
         Self {
             version: 2,
@@ -626,6 +657,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &self.mcp.opencode,
             AppType::Qwen => &self.mcp.qwen,
             AppType::OpenClaw => &self.mcp.openclaw,
+            AppType::Hermes => &self.mcp.hermes,
         }
     }
 
@@ -638,6 +670,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::Qwen => &mut self.mcp.qwen,
             AppType::OpenClaw => &mut self.mcp.openclaw,
+            AppType::Hermes => &mut self.mcp.hermes,
         }
     }
 
@@ -654,6 +687,7 @@ impl MultiAppConfig {
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenCode)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::Qwen)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenClaw)?;
+        Self::auto_import_prompt_if_exists(&mut config, AppType::Hermes)?;
 
         Ok(config)
     }
@@ -677,6 +711,7 @@ impl MultiAppConfig {
             || !self.prompts.qwen.prompts.is_empty()
             || !self.prompts.qwen.prompts.is_empty()
             || !self.prompts.openclaw.prompts.is_empty()
+            || !self.prompts.hermes.prompts.is_empty()
         {
             return Ok(false);
         }
@@ -691,6 +726,7 @@ impl MultiAppConfig {
             AppType::OpenCode,
             AppType::Qwen,
             AppType::OpenClaw,
+            AppType::Hermes,
         ] {
             // 复用已有的单应用导入逻辑
             if Self::auto_import_prompt_if_exists(self, app)? {
@@ -763,6 +799,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::Qwen => &mut config.prompts.qwen.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
+            AppType::Hermes => &mut config.prompts.hermes.prompts,
         };
 
         prompts.insert(id, prompt);
@@ -805,6 +842,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::Qwen => &self.mcp.qwen.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
+                AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

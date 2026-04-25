@@ -23,7 +23,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-                        enabled_qwen, installed_at, content_hash, updated_at
+                        enabled_qwen, enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -45,10 +45,11 @@ impl Database {
                         gemini: row.get(10)?,
                         opencode: row.get(11)?,
                         qwen: row.get(12)?,
+                        hermes: row.get(13)?,
                     },
-                    installed_at: row.get(13)?,
-                    content_hash: row.get(14)?,
-                    updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                    installed_at: row.get(14)?,
+                    content_hash: row.get(15)?,
+                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -68,7 +69,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-                        enabled_qwen, installed_at, content_hash, updated_at
+                        enabled_qwen, enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -89,10 +90,11 @@ impl Database {
                     gemini: row.get(10)?,
                     opencode: row.get(11)?,
                     qwen: row.get(12)?,
+                    hermes: row.get(13)?,
                 },
-                installed_at: row.get(13)?,
-                content_hash: row.get(14)?,
-                updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                installed_at: row.get(14)?,
+                content_hash: row.get(15)?,
+                updated_at: row.get::<_, i64>(16).unwrap_or(0),
             })
         });
 
@@ -110,8 +112,9 @@ impl Database {
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-              enabled_qwen, installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+              enabled_qwen, enabled_hermes,
+              installed_at, content_hash, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 skill.id,
                 skill.name,
@@ -126,6 +129,7 @@ impl Database {
                 skill.apps.gemini,
                 skill.apps.opencode,
                 skill.apps.qwen,
+                skill.apps.hermes,
                 skill.installed_at,
                 skill.content_hash,
                 skill.updated_at,
@@ -157,8 +161,16 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_opencode = ?4, enabled_qwen = ?5 WHERE id = ?6",
-                params![apps.claude, apps.codex, apps.gemini, apps.opencode, apps.qwen, id],
+                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_opencode = ?4, enabled_qwen = ?5, enabled_hermes = ?6 WHERE id = ?7",
+                params![
+                    apps.claude,
+                    apps.codex,
+                    apps.gemini,
+                    apps.opencode,
+                    apps.qwen,
+                    apps.hermes,
+                    id
+                ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)

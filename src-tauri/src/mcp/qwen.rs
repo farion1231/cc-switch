@@ -49,6 +49,7 @@ pub fn import_from_qwen(config: &mut MultiAppConfig) -> Result<usize, AppError> 
                         gemini: false,
                         opencode: false,
                         qwen: true,
+                        hermes: false,
                     },
                     description: None,
                     homepage: None,

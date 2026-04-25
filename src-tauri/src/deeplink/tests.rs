@@ -449,6 +449,7 @@ fn test_import_mcp_deeplink_merges_qwen_and_opencode_for_existing_server() {
                 gemini: false,
                 opencode: false,
                 qwen: false,
+                hermes: false,
             },
             description: None,
             homepage: None,

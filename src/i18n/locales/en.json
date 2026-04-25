@@ -80,7 +80,7 @@
     "hideAttribution": "Hide AI Attribution",
     "enableTeammates": "Teammates Mode",
     "enableToolSearch": "Enable Tool Search",
-    "effortHigh": "High Effort Thinking",
+    "effortMax": "Max Effort Thinking",
     "disableAutoUpgrade": "Disable Auto-Upgrade"
   },
   "header": {
@@ -91,7 +91,11 @@
     "switchToChinese": "Switch to Chinese",
     "switchToEnglish": "Switch to English",
     "enterEditMode": "Enter Edit Mode",
-    "exitEditMode": "Exit Edit Mode"
+    "exitEditMode": "Exit Edit Mode",
+    "windowMinimize": "Minimize window",
+    "windowMaximize": "Maximize window",
+    "windowRestore": "Restore window",
+    "windowClose": "Close window"
   },
   "provider": {
     "tabProvider": "Provider",
@@ -104,6 +108,7 @@
     "currentlyUsing": "Currently Using",
     "enable": "Enable",
     "inUse": "In Use",
+    "blockedByProxy": "Blocked",
     "editProvider": "Edit Provider",
     "editProviderHint": "Configuration will be applied to the current provider immediately after update.",
     "deleteProvider": "Delete Provider",
@@ -136,6 +141,8 @@
     "sortUpdateFailed": "Failed to update sort order",
     "configureUsage": "Configure usage query",
     "officialPartner": "Official Partner",
+    "managedByHermes": "Hermes Managed",
+    "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
@@ -189,19 +196,22 @@
     "deleteFailed": "Failed to delete provider: {{error}}",
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
-    "proxyRequiredForSwitch": "This provider {{reason}}, requires the proxy service to work properly. Start the proxy first.",
+    "proxyRequiredForSwitch": "This provider {{reason}}, requires the routing service to work properly. Start routing first.",
     "proxyReasonCopilot": "uses GitHub Copilot as a Claude provider",
     "proxyReasonOpenAIChat": "uses OpenAI Chat API format",
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
     "proxyReasonFullUrl": "has full URL connection mode enabled",
-    "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the proxy service to be enabled",
-    "copilotProxyHint": "GitHub Copilot as a Claude provider always requires the local proxy; the proxy automatically selects Chat Completions or Responses based on the current model.",
+    "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the routing service to be enabled",
+    "copilotProxyHint": "GitHub Copilot as a Claude provider always requires local routing; routing automatically selects Chat Completions or Responses based on the current model.",
     "openLinkFailed": "Failed to open link",
     "openclawModelsRegistered": "Models have been registered to /model list",
     "openclawDefaultModelSet": "Set as default model",
     "openclawDefaultModelSetFailed": "Failed to set default model",
     "openclawNoModels": "No models configured",
-    "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider"
+    "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
+    "windowControlFailed": "Window control failed: {{error}}",
+    "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -209,8 +219,8 @@
     "removeProvider": "Remove Provider",
     "removeProviderMessage": "Are you sure you want to remove provider \"{{name}}\" from the configuration?\n\nAfter removal, this provider will no longer be active, but the configuration data will be retained in CC Switch. You can re-add it at any time.",
     "proxy": {
-      "title": "Enable Local Proxy",
-      "message": "Local proxy is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
+      "title": "Enable Local Routing",
+      "message": "Local routing is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
       "confirm": "I understand, enable"
     },
     "failover": {
@@ -245,7 +255,7 @@
     "tabGeneral": "General",
     "tabAuth": "Auth",
     "tabAdvanced": "Advanced",
-    "tabProxy": "Proxy",
+    "tabProxy": "Routing",
     "authCenter": {
       "title": "OAuth Authentication Center",
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
@@ -259,10 +269,10 @@
         "description": "Manage storage paths for Claude, Codex and Gemini configurations"
       },
       "proxy": {
-        "title": "Local Proxy",
-        "description": "Control proxy service toggle, view status and port info",
-        "enableFeature": "Show Proxy Toggle on Main Page",
-        "enableFeatureDescription": "When enabled, the proxy and failover toggles will appear at the top of the main page",
+        "title": "Local Routing",
+        "description": "Control routing service toggle, view status and port info",
+        "enableFeature": "Show Routing Toggle on Main Page",
+        "enableFeatureDescription": "When enabled, the routing and failover toggles will appear at the top of the main page",
         "enableFailoverToggle": "Show Failover Toggle on Main Page",
         "enableFailoverToggleDescription": "When enabled, the failover toggle will appear independently at the top of the main page",
         "running": "Running",
@@ -494,6 +504,8 @@
     "autoLaunchFailed": "Failed to set auto-launch",
     "minimizeToTray": "Minimize to tray on close",
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
+    "useAppWindowControls": "Enable app-level window controls",
+    "useAppWindowControlsDescription": "Use built-in minimize, maximize/restore, and close buttons in the app header.",
     "enableClaudePluginIntegration": "Apply to Claude Code extension",
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
@@ -567,10 +579,16 @@
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
     "opencodeConfigDir": "OpenCode Configuration Directory",
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json).",
+    "openclawConfigDir": "OpenClaw Configuration Directory",
+    "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
+    "hermesConfigDir": "Hermes Configuration Directory",
+    "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
+    "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
+    "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -612,7 +630,7 @@
     "saving": "Saving...",
     "globalProxy": {
       "label": "Global Proxy",
-      "hint": "Proxy all requests (API, Skills download, etc.). Leave empty for direct connection.",
+      "hint": "Proxy all requests (API, Skills download, etc.). When local routing is enabled, app traffic is also routed through this proxy. Leave empty for direct connection.",
       "username": "Username (optional)",
       "password": "Password (optional)",
       "test": "Test Connection",
@@ -645,11 +663,12 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes"
   },
   "sessionManager": {
     "title": "Session Manager",
-    "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw and Gemini CLI sessions",
+    "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw, Hermes and Gemini CLI sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",
@@ -715,7 +734,9 @@
     "copyCommand": "Copy Command",
     "copyMessage": "Copy Message",
     "messageCopied": "Message copied",
-    "conversationHistory": "Conversation History"
+    "conversationHistory": "Conversation History",
+    "expandContent": "Expand full content",
+    "collapseContent": "Collapse"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
@@ -773,14 +794,19 @@
       "siliconflow": "SiliconFlow is an official partner of CC Switch",
       "ucloud": "Compshare offers an exclusive bonus for CC Switch users — register via this link to get ¥5 platform trial credit!",
       "micu": "Micu is an official partner of CC Switch",
-      "x-code": "XCodeAPI offers a special bonus for CC Switch users — register via this link and get 10% extra credit on your first order (contact admin to claim)",
       "ctok": "Join the CTok community on the official website and subscribe to a plan.",
       "ddshub": "DDSHub offers a special bonus for CC Switch users — register via this link and get 10% extra credit on your first top-up (contact group admin to claim)!",
       "lionccapi": "LionCCAPI offers exclusive benefits for CC Switch users. After registration, add WeChat HSQBJ088888888 and mention 'cc-switch' to receive $10 free credits!",
-      "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!"
+      "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!",
+      "lemondata": "Lemon Code offers a special promotion for CC Switch users. Sign up via this link to receive $1 in free credits."
     },
     "presets": {
-      "ucloud": "Compshare"
+      "ucloud": "Compshare",
+      "ucloudCoding": "Compshare Coding Plan",
+      "shengsuanyun": "Shengsuanyun",
+      "openrouter": "OpenRouter",
+      "deepseek": "DeepSeek",
+      "together": "Together AI"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
@@ -790,6 +816,7 @@
     "modelHint": "💡 Leave blank to use provider's default model",
     "apiHint": "💡 Fill in Claude API compatible service endpoint, avoid trailing slash",
     "apiHintOAI": "💡 Fill in OpenAI Chat Completions compatible service endpoint, avoid trailing slash",
+    "apiHintGeminiNative": "💡 Prefer a Gemini Native base URL such as https://generativelanguage.googleapis.com or https://generativelanguage.googleapis.com/v1beta; the proxy will append models/*:generateContent automatically",
     "codexApiHint": "💡 Fill in service endpoint compatible with OpenAI Response format",
     "fillSupplierName": "Please fill in provider name",
     "fillConfigContent": "Please fill in configuration content",
@@ -797,6 +824,11 @@
     "fillTemplateValue": "Please fill in {{label}}",
     "endpointRequired": "API endpoint is required for non-official providers",
     "apiKeyRequired": "API Key is required for non-official providers",
+    "softValidation": {
+      "title": "Configuration has the following issues",
+      "hint": "Save anyway? Switching to this provider may fail; you can fill these in later.",
+      "saveAnyway": "Save anyway"
+    },
     "configJsonError": "Config JSON format error, please check syntax",
     "authJsonRequired": "auth.json must be a JSON object",
     "authJsonError": "auth.json format error, please check JSON syntax",
@@ -805,16 +837,17 @@
     "visitWebsite": "Visit {{url}}",
     "anthropicModel": "Main Model",
     "anthropicSmallFastModel": "Fast Model",
-    "anthropicReasoningModel": "Reasoning Model (Thinking)",
     "apiFormat": "API Format",
     "apiFormatHint": "Select the input format for the provider's API",
     "fullUrlLabel": "Full URL",
     "fullUrlEnabled": "Full URL Mode",
     "fullUrlDisabled": "Mark as Full URL",
-    "fullUrlHint": "💡 Enter the full request URL. This mode requires the proxy to be enabled, and the proxy will use the URL as-is without appending a path",
+    "fullUrlHint": "💡 Enter the full request URL. This mode requires routing to be enabled, and routing will use the URL as-is without appending a path",
+    "fullUrlHintGeminiNative": "💡 In Gemini Native full URL mode, two inputs are supported: 1. official/structured Gemini URLs, which will still be normalized to the requested model and streaming method; 2. opaque custom relay URLs, which will be used mostly as-is with only query parameters appended",
     "apiFormatAnthropic": "Anthropic Messages (Native)",
-    "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires proxy)",
-    "apiFormatOpenAIResponses": "OpenAI Responses API (Requires proxy)",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires routing)",
+    "apiFormatOpenAIResponses": "OpenAI Responses API (Requires routing)",
+    "apiFormatGeminiNative": "Gemini Native generateContent (Requires routing)",
     "authField": "Auth Field",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN (Default)",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
@@ -829,6 +862,8 @@
     "modelHelper": "Optional: Specify default Claude model to use, leave blank to use system default.",
     "modelMappingLabel": "Model Mapping",
     "modelMappingHint": "Usually not needed if the provider natively serves Claude models. Only configure when you need to map requests to different model names.",
+    "quickSetModels": "Quick Set",
+    "quickSetSuccess": "Model name applied to all fields",
     "advancedOptionsToggle": "Advanced Options",
     "advancedOptionsHint": "Includes API format, auth field, and model mapping. Defaults work for most use cases.",
     "categoryOfficial": "Official",
@@ -845,6 +880,7 @@
     "fetchModelsNeedConfig": "Please fill in API endpoint and API Key first",
     "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
     "fetchModelsNotSupported": "This provider does not support fetching model list",
+    "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
     "fetchModelsTimeout": "Request timed out, please check network connection"
   },
   "copilot": {
@@ -875,7 +911,11 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "migrationFailed": "Legacy auth migration failed: {{error}}",
-    "loadModelsFailed": "Failed to load Copilot models"
+    "loadModelsFailed": "Failed to load Copilot models",
+    "deploymentType": "GitHub Deployment Type",
+    "deploymentGitHubCom": "GitHub.com",
+    "deploymentEnterprise": "GitHub Enterprise Server",
+    "enterpriseDomainPlaceholder": "e.g. company.ghe.com"
   },
   "codexOauth": {
     "authStatus": "Auth status",
@@ -896,7 +936,9 @@
     "addAnotherAccount": "Add another account",
     "logoutAll": "Logout all accounts",
     "retry": "Retry",
-    "copyCode": "Copy code"
+    "copyCode": "Copy code",
+    "fastMode": "FAST mode",
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
   },
   "endpointTest": {
     "title": "API Endpoint Management",
@@ -934,11 +976,6 @@
     "testPrompt": "Test Prompt",
     "degradedThreshold": "Degraded Threshold (ms)",
     "maxRetries": "Max Retries",
-    "proxyConfig": "Proxy Config",
-    "useCustomProxy": "Use separate proxy",
-    "proxyConfigDesc": "Configure separate network proxy for this provider. Uses system proxy or global settings when disabled.",
-    "proxyUsername": "Username (optional)",
-    "proxyPassword": "Password (optional)",
     "pricingConfig": "Pricing Config",
     "useCustomPricing": "Use separate config",
     "pricingConfigDesc": "Configure separate pricing parameters for this provider. Uses global defaults when disabled.",
@@ -1042,6 +1079,11 @@
     "today": "24 Hours",
     "last7days": "7 Days",
     "last30days": "30 Days",
+    "presetToday": "Today",
+    "preset1d": "1d",
+    "preset7d": "7d",
+    "preset14d": "14d",
+    "preset30d": "30d",
     "totalRequests": "Total Requests",
     "totalCost": "Total Cost",
     "cost": "Cost",
@@ -1082,7 +1124,7 @@
     },
     "dataSources": "Data Sources",
     "dataSource": {
-      "proxy": "Proxy",
+      "proxy": "Routing",
       "session_log": "Session Log",
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
@@ -1097,6 +1139,8 @@
       "failed": "Session sync failed"
     },
     "totalRecords": "{{total}} records total",
+    "goToPage": "Go",
+    "pageInputPlaceholder": "Page",
     "modelPricing": "Model Pricing",
     "loadPricingError": "Failed to load pricing data",
     "modelPricingDesc": "Configure token costs for each model",
@@ -1131,6 +1175,10 @@
     "searchProviderPlaceholder": "Search provider...",
     "searchModelPlaceholder": "Search model...",
     "timeRange": "Time Range",
+    "customRange": "Calendar Filter",
+    "customRangeHint": "Supports both date and time",
+    "startTime": "Start Time",
+    "endTime": "End Time",
     "input": "Input",
     "output": "Output",
     "cacheWrite": "Creation",
@@ -1280,7 +1328,8 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
-        "openclaw": "OpenClaw"
+        "openclaw": "OpenClaw",
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -1599,6 +1648,69 @@
     },
     "primaryModel": "Primary Model",
     "fallbackModel": "Fallback Model"
+  },
+  "hermes": {
+    "form": {
+      "baseUrl": "API Endpoint",
+      "baseUrlHint": "The API endpoint URL for this provider.",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Used as the provider name in config.yaml.",
+      "providerKeyLockedHint": "This provider is in Hermes config; key is locked.",
+      "providerKeyRequired": "Provider key is required",
+      "providerKeyInvalid": "Provider key can only contain lowercase letters, numbers, and hyphens",
+      "providerKeyDuplicate": "This provider key already exists",
+      "apiMode": "API Mode",
+      "apiModeHint": "Provider API protocol. Choose the format that matches your endpoint.",
+      "apiModeChatCompletions": "OpenAI Chat Completions",
+      "apiModeAnthropicMessages": "Anthropic Messages",
+      "apiModeCodexResponses": "OpenAI Responses",
+      "apiModeBedrockConverse": "AWS Bedrock Converse",
+      "baseUrlRequired": "API endpoint is required",
+      "baseUrlScheme": "Use an http:// or https:// address",
+      "baseUrlInvalid": "API endpoint is not a valid URL",
+      "models": "Models",
+      "addModel": "Add model",
+      "noModels": "No models configured. Switching to this provider won't change the default model.",
+      "modelId": "Model ID",
+      "modelIdPlaceholder": "anthropic/claude-opus-4-7",
+      "modelName": "Display name",
+      "modelNamePlaceholder": "Claude Opus 4.7",
+      "contextLength": "Context length",
+      "advancedOptions": "Advanced options",
+      "modelsHint": "On switch, the first model is written to top-level model.default.",
+      "primaryModel": "Default",
+      "fallbackModel": "Alternate",
+      "providerAdvanced": "Provider advanced options",
+      "rateLimitDelay": "Rate limit delay (seconds)",
+      "rateLimitDelayHint": "Minimum delay in seconds between consecutive requests (optional). Leave empty for no limit."
+    },
+    "webui": {
+      "open": "Open Hermes Web UI",
+      "offline": "Hermes Web UI is not running. Start it with `hermes dashboard` first.",
+      "openFailed": "Failed to open Hermes Web UI",
+      "launchConfirmTitle": "Hermes Dashboard is not running",
+      "launchConfirmMessage": "Open a terminal and start it now with `hermes dashboard`?\n\nThe browser will open automatically once startup completes.\n\nIf the terminal reports that `hermes` cannot be found or the web extras are missing, run first:\npip install hermes-agent[web]",
+      "launchConfirmAction": "Open terminal & launch",
+      "launching": "Started `hermes dashboard` in a terminal.",
+      "launchFailed": "Failed to open terminal"
+    },
+    "memory": {
+      "title": "Memory",
+      "agentTab": "Agent Memory (MEMORY.md)",
+      "userTab": "User Profile (USER.md)",
+      "usage": "{{current}} / {{limit}} characters",
+      "overLimit": "Over budget — Hermes will truncate on next load",
+      "enableOn": "Enabled",
+      "enableOff": "Disabled",
+      "disabledHint": "Hermes will skip this memory until re-enabled",
+      "toggleFailed": "Failed to toggle memory",
+      "saveSuccess": "Memory saved",
+      "saveFailed": "Failed to save memory",
+      "loadFailed": "Failed to read memory file",
+      "openConfig": "Adjust limits in Hermes Web UI",
+      "runtimeNote": "Changes apply on Hermes restart or new session."
+    }
   },
   "env": {
     "warning": {
@@ -1932,9 +2044,9 @@
       "addressCopied": "Address copied",
       "currentProvider": "Current Provider:",
       "waitingFirstRequest": "Current Provider: Waiting for first request...",
-      "stoppedTitle": "Proxy Service Stopped",
+      "stoppedTitle": "Routing Service Stopped",
       "stoppedDescription": "Use the toggle above to start the service",
-      "openSettings": "Configure Proxy Service",
+      "openSettings": "Configure Routing Service",
       "stats": {
         "activeConnections": "Active Connections",
         "totalRequests": "Total Requests",
@@ -1943,14 +2055,14 @@
       }
     },
     "settings": {
-      "title": "Proxy Service Settings",
-      "description": "Configure local proxy server listening address, port and runtime parameters. Changes take effect immediately after saving.",
+      "title": "Routing Service Settings",
+      "description": "Configure local routing server listening address, port and runtime parameters. Changes take effect immediately after saving.",
       "alert": {
-        "autoApply": "Changes will be automatically synced to the running proxy service without manual restart."
+        "autoApply": "Changes will be automatically synced to the running routing service without manual restart."
       },
       "basic": {
         "title": "Basic Settings",
-        "description": "Configure proxy service listening address and port."
+        "description": "Configure routing service listening address and port."
       },
       "advanced": {
         "title": "Advanced Parameters",
@@ -1964,12 +2076,12 @@
         "listenAddress": {
           "label": "Listen Address",
           "placeholder": "127.0.0.1",
-          "description": "IP address the proxy server listens on (recommended: 127.0.0.1)"
+          "description": "IP address the routing server listens on (recommended: 127.0.0.1)"
         },
         "listenPort": {
           "label": "Listen Port",
           "placeholder": "15721",
-          "description": "Port number the proxy server listens on (1024 ~ 65535)"
+          "description": "Port number the routing server listens on (1024 ~ 65535)"
         },
         "maxRetries": {
           "label": "Max Retries",
@@ -1983,7 +2095,7 @@
         },
         "enableLogging": {
           "label": "Enable Logging",
-          "description": "Log all proxy requests for troubleshooting"
+          "description": "Log all routing requests for troubleshooting"
         },
         "streamingFirstByteTimeout": {
           "label": "Streaming First Byte Timeout (sec)",
@@ -2014,29 +2126,29 @@
         "save": "Save Configuration"
       },
       "toast": {
-        "saved": "Proxy configuration saved",
+        "saved": "Routing configuration saved",
         "saveFailed": "Save failed: {{error}}"
       },
       "invalidPort": "Invalid port, please enter a number between 1024-65535",
       "invalidAddress": "Invalid address, please enter a valid IP address (e.g. 127.0.0.1) or localhost",
-      "configSaved": "Proxy configuration saved",
+      "configSaved": "Routing configuration saved",
       "configSaveFailed": "Failed to save configuration",
-      "restartRequired": "Restart proxy service for address or port changes to take effect"
+      "restartRequired": "Restart routing service for address or port changes to take effect"
     },
     "switchFailed": "Switch failed: {{error}}",
     "takeover": {
-      "hint": "Select apps to take over — once enabled, requests from that app will be routed through the local proxy",
-      "enabled": "{{app}} takeover enabled",
-      "disabled": "{{app}} takeover disabled",
-      "failed": "Failed to toggle takeover",
+      "hint": "Select apps to route — once enabled, requests from that app will go through local routing",
+      "enabled": "{{app}} routing enabled",
+      "disabled": "{{app}} routing disabled",
+      "failed": "Failed to toggle routing: {{detail}}",
       "tooltip": {
-        "active": "{{appLabel}} is intercepting - {{address}}:{{port}}\nSwitch provider for hot switching",
-        "broken": "{{appLabel}} is intercepting, but proxy service is not running",
-        "inactive": "Intercept {{appLabel}}'s live config to route requests through local proxy"
+        "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitch provider for hot switching",
+        "broken": "{{appLabel}} is routing, but routing service is not running",
+        "inactive": "Route {{appLabel}}'s requests through local routing"
       }
     },
     "failover": {
-      "proxyRequired": "Proxy service must be started to configure failover",
+      "proxyRequired": "Routing service must be started to configure failover",
       "autoSwitch": "Auto Failover",
       "autoSwitchDescription": "When enabled, switches to queue P1 immediately and automatically tries the next provider in the queue on failures"
     },
@@ -2100,10 +2212,10 @@
       "failed": "Failed to toggle logging"
     },
     "server": {
-      "started": "Proxy service started - {{address}}:{{port}}",
-      "startFailed": "Failed to start proxy service: {{detail}}"
+      "started": "Routing service started - {{address}}:{{port}}",
+      "startFailed": "Failed to start routing service: {{detail}}"
     },
-    "stoppedWithRestore": "Proxy service stopped, all takeover configs restored",
+    "stoppedWithRestore": "Routing service stopped, all routing configs restored",
     "stopWithRestoreFailed": "Stop failed: {{detail}}"
   },
   "streamCheck": {
@@ -2121,11 +2233,23 @@
     "operational": "{{providerName}} is operational ({{responseTimeMs}}ms)",
     "degraded": "{{providerName}} is slow ({{responseTimeMs}}ms)",
     "failed": "{{providerName}} check failed: {{message}}",
-    "error": "{{providerName}} check error: {{error}}"
+    "rejected": "{{providerName}} check rejected: {{message}}",
+    "error": "{{providerName}} check error: {{error}}",
+    "modelNotFound": "{{providerName}} test model {{model}} does not exist or has been deprecated",
+    "modelNotFoundHint": "This model may have been retired by the provider. Update the default test model in \"Model Test Config\".",
+    "httpHint": {
+      "400": "Provider rejected request format. Health check probe may differ from actual usage.",
+      "401": "API key may be invalid, or provider uses OAuth auth. Check failure doesn't mean it's unusable.",
+      "402": "Account quota or billing issue.",
+      "403": "Provider blocked this request. Some verify client identity; may work fine in actual use.",
+      "404": "Endpoint not found. Check base URL and API path.",
+      "429": "Too many requests. Try again later.",
+      "5xx": "Provider internal error. Likely temporary."
+    }
   },
   "proxyConfig": {
-    "proxyEnabled": "Proxy Enabled",
-    "appTakeover": "Proxy Enabled",
+    "proxyEnabled": "Routing Master Switch",
+    "appTakeover": "Routing Enabled",
     "perAppConfig": "Per-App Config",
     "circuitBreaker": "Circuit Breaker",
     "circuitBreakerSettings": "Circuit Breaker Settings",
@@ -2348,7 +2472,7 @@
       "artistry": "Highly creative and artistic task category that inspires novel ideas and creative solutions. Defaults to Gemini 3 Pro max variant.",
       "quick": "Lightweight task category for single-file modifications, typo fixes, and simple adjustments. Defaults to Claude Haiku 4.5 fast model.",
       "unspecifiedLow": "Uncategorized low-effort task category for tasks that don't fit other categories with small workload. Defaults to Claude Sonnet 4.5.",
-      "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 4.6 max variant.",
+      "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 4.7 max variant.",
       "writing": "Writing category for documentation, prose and technical writing. Defaults to Gemini 3 Flash fast generation model."
     },
     "slimAgentDesc": {

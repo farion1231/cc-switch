@@ -8,8 +8,9 @@ use crate::error::AppError;
 use std::collections::HashMap;
 use url::Url;
 
-const SUPPORTED_DEEPLINK_APPS: &[&str] =
-    &["claude", "codex", "gemini", "opencode", "qwen", "openclaw"];
+const SUPPORTED_DEEPLINK_APPS: &[&str] = &[
+    "claude", "codex", "gemini", "opencode", "qwen", "openclaw", "hermes",
+];
 
 fn is_supported_deeplink_app(app: &str) -> bool {
     SUPPORTED_DEEPLINK_APPS.contains(&app)
@@ -17,13 +18,13 @@ fn is_supported_deeplink_app(app: &str) -> bool {
 
 fn invalid_app_type_error(app: &str) -> AppError {
     AppError::InvalidInput(format!(
-        "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', 'qwen', or 'openclaw', got '{app}'"
+        "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', 'qwen', 'openclaw', or 'hermes', got '{app}'"
     ))
 }
 
 fn invalid_apps_param_error(app: &str) -> AppError {
     AppError::InvalidInput(format!(
-        "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'opencode', 'qwen', or 'openclaw', got '{app}'"
+        "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'opencode', 'qwen', 'openclaw', or 'hermes', got '{app}'"
     ))
 }
 

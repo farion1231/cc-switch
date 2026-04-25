@@ -292,16 +292,26 @@ pub struct CopilotOptimizerConfig {
     /// 确定性 Request ID（默认开启，P3 优先级）
     #[serde(default = "default_true")]
     pub deterministic_request_id: bool,
-    /// Warmup 小模型降级（默认关闭，P4 优先级，opt-in）
-    #[serde(default)]
+    /// Subagent 检测（默认开启）— 识别 Claude Code 子代理请求，
+    /// 设置 x-initiator=agent + x-interaction-type=conversation-subagent，避免子代理计费
+    #[serde(default = "default_true")]
+    pub subagent_detection: bool,
+    /// Warmup 小模型降级（默认开启 — 与参考实现对齐，避免探针请求消耗 premium quota）
+    #[serde(default = "default_true")]
     pub warmup_downgrade: bool,
-    /// Warmup 降级使用的模型（默认 "gpt-4o-mini"）
+    /// Warmup 降级使用的模型（默认 "gpt-5-mini"）
     #[serde(default = "default_warmup_model")]
     pub warmup_model: String,
+    /// 请求前主动剥离 assistant 消息里的 thinking / redacted_thinking block
+    ///
+    /// Copilot 走 OpenAI 兼容端点，thinking block 会被上游拒绝并触发 rectifier 反应式
+    /// 重试，那时第一次请求已经消耗了一次 premium quota。主动剥离避免这次浪费。
+    #[serde(default = "default_true")]
+    pub strip_thinking: bool,
 }
 
 fn default_warmup_model() -> String {
-    "gpt-4o-mini".to_string()
+    "gpt-5-mini".to_string()
 }
 
 impl Default for CopilotOptimizerConfig {
@@ -312,8 +322,10 @@ impl Default for CopilotOptimizerConfig {
             tool_result_merging: true,
             compact_detection: true,
             deterministic_request_id: true,
-            warmup_downgrade: false,
-            warmup_model: "gpt-4o-mini".to_string(),
+            subagent_detection: true,
+            warmup_downgrade: true,
+            warmup_model: "gpt-5-mini".to_string(),
+            strip_thinking: true,
         }
     }
 }

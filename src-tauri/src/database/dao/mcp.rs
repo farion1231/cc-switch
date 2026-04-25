@@ -15,7 +15,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, server_config, description, homepage, docs, tags,
-                    enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_qwen
+                    enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_qwen, enabled_hermes
              FROM mcp_servers
              ORDER BY name ASC, id ASC",
             )
@@ -35,6 +35,7 @@ impl Database {
                 let enabled_gemini: bool = row.get(9)?;
                 let enabled_opencode: bool = row.get(10)?;
                 let enabled_qwen: bool = row.get(11)?;
+                let enabled_hermes: bool = row.get(12)?;
 
                 let server = serde_json::from_str(&server_config_str).unwrap_or_default();
                 let tags = serde_json::from_str(&tags_str).unwrap_or_default();
@@ -51,6 +52,7 @@ impl Database {
                             gemini: enabled_gemini,
                             opencode: enabled_opencode,
                             qwen: enabled_qwen,
+                            hermes: enabled_hermes,
                         },
                         description,
                         homepage,
@@ -75,8 +77,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_qwen
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_qwen, enabled_hermes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 server.id,
                 server.name,
@@ -93,6 +95,7 @@ impl Database {
                 server.apps.gemini,
                 server.apps.opencode,
                 server.apps.qwen,
+                server.apps.hermes,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

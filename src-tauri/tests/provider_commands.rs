@@ -76,6 +76,7 @@ command = "say"
                 gemini: false,
                 qwen: false,
                 opencode: false,
+                hermes: false,
             },
             description: None,
             homepage: None,

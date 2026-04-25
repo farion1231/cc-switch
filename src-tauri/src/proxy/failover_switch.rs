@@ -111,7 +111,7 @@ impl FailoverSwitchManager {
                 }
 
                 if let Ok(new_menu) = crate::tray::create_tray_menu(app, app_state.inner()) {
-                    if let Some(tray) = app.tray_by_id("main") {
+                    if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
                         if let Err(e) = tray.set_menu(Some(new_menu)) {
                             log::error!("[Failover] 更新托盘菜单失败: {e}");
                         }
