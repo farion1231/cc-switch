@@ -802,6 +802,7 @@
     },
     "presets": {
       "ucloud": "优云智算",
+      "ucloudCoding": "优云智算Coding Plan",
       "shengsuanyun": "胜算云",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
@@ -823,6 +824,11 @@
     "fillTemplateValue": "请填写 {{label}}",
     "endpointRequired": "非官方供应商请填写 API 端点",
     "apiKeyRequired": "非官方供应商请填写 API Key",
+    "softValidation": {
+      "title": "配置存在以下问题",
+      "hint": "仍要保存吗？保存后切换此供应商时可能失败，可以之后再补全。",
+      "saveAnyway": "仍要保存"
+    },
     "configJsonError": "配置JSON格式错误，请检查语法",
     "authJsonRequired": "auth.json 必须是 JSON 对象",
     "authJsonError": "auth.json 格式错误，请检查JSON语法",
@@ -874,6 +880,7 @@
     "fetchModelsNeedConfig": "请先填写 API 端点和 API Key",
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
+    "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
     "fetchModelsTimeout": "请求超时，请检查网络连接"
   },
   "copilot": {

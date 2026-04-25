@@ -205,14 +205,14 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         {
-          id: "deepseek-chat",
-          name: "DeepSeek V3.2",
-          context_length: 128000,
+          id: "deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          context_length: 1000000,
         },
         {
-          id: "deepseek-reasoner",
-          name: "DeepSeek R1",
-          context_length: 128000,
+          id: "deepseek-v4-flash",
+          name: "DeepSeek V4 Flash",
+          context_length: 1000000,
         },
       ],
     },
@@ -220,7 +220,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "deepseek",
     iconColor: "#4D6BFE",
     suggestedDefaults: {
-      model: { default: "deepseek-chat", provider: "deepseek" },
+      model: { default: "deepseek-v4-flash", provider: "deepseek" },
     },
   },
   {
@@ -870,6 +870,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "gpt-5.4", provider: "compshare" },
+    },
+  },
+  {
+    name: "Compshare Coding Plan",
+    nameKey: "providerForm.presets.ucloudCoding",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    settingsConfig: {
+      name: "compshare_coding",
+      base_url: "https://cp.compshare.cn/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ucloud",
+    icon: "ucloud",
+    iconColor: "#000000",
+    suggestedDefaults: {
+      model: { default: "gpt-5.4", provider: "compshare_coding" },
     },
   },
   {

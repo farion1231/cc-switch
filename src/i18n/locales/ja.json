@@ -802,6 +802,7 @@
     },
     "presets": {
       "ucloud": "Compshare",
+      "ucloudCoding": "Compshare Coding Plan",
       "shengsuanyun": "Shengsuanyun",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
@@ -823,6 +824,11 @@
     "fillTemplateValue": "{{label}} を入力してください",
     "endpointRequired": "公式以外は API エンドポイントが必須です",
     "apiKeyRequired": "公式以外は API Key が必須です",
+    "softValidation": {
+      "title": "設定に以下の問題があります",
+      "hint": "それでも保存しますか？保存後、このプロバイダーへの切り替えが失敗する可能性がありますが、後から補完できます。",
+      "saveAnyway": "それでも保存"
+    },
     "configJsonError": "Config JSON の形式が正しくありません。構文を確認してください",
     "authJsonRequired": "auth.json は JSON オブジェクトで入力してください",
     "authJsonError": "auth.json の形式が正しくありません。JSON を確認してください",
@@ -874,6 +880,7 @@
     "fetchModelsNeedConfig": "先に API エンドポイントと API Key を入力してください",
     "fetchModelsAuthFailed": "API Key が無効か、権限がありません",
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
+    "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
     "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください"
   },
   "copilot": {
