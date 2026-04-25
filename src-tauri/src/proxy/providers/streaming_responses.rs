@@ -670,9 +670,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                 }
                                 fallback_open_index = None;
 
-                                let usage_json = response_obj.get("usage").map(|u| {
-                                    build_anthropic_usage_from_responses(Some(u))
-                                });
+                                let usage_json = build_anthropic_usage_from_responses(response_obj.get("usage"));
 
                                 // Emit message_delta (with usage + stop_reason)
                                 let delta_event = json!({
