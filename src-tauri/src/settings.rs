@@ -8,6 +8,19 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::services::skill::{SkillStorageLocation, SyncMethod};
 
+/// 窗口关闭行为选项
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CloseBehavior {
+    /// 直接退出应用
+    Close,
+    /// 隐藏到系统托盘
+    #[default]
+    Tray,
+    /// 进入轻量模式（窗口销毁，仅托盘图标）
+    Lightweight,
+}
+
 /// 自定义端点配置（历史兼容，实际存储在 provider.meta.custom_endpoints）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,8 +190,9 @@ pub struct AppSettings {
     // ===== 设备级 UI 设置 =====
     #[serde(default = "default_show_in_tray")]
     pub show_in_tray: bool,
-    #[serde(default = "default_minimize_to_tray_on_close")]
-    pub minimize_to_tray_on_close: bool,
+    /// 窗口关闭行为：close=退出应用，tray=隐藏到托盘，lightweight=进入轻量模式
+    #[serde(default)]
+    pub close_behavior: CloseBehavior,
     #[serde(default)]
     pub use_app_window_controls: bool,
     /// 是否启用 Claude 插件联动
@@ -295,15 +309,11 @@ fn default_show_in_tray() -> bool {
     true
 }
 
-fn default_minimize_to_tray_on_close() -> bool {
-    true
-}
-
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             show_in_tray: true,
-            minimize_to_tray_on_close: true,
+            close_behavior: CloseBehavior::default(),
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
@@ -415,6 +425,8 @@ impl AppSettings {
             return Self::default();
         };
         if let Ok(content) = fs::read_to_string(&path) {
+            // 尝试从旧版本迁移（minimize_to_tray_on_close -> close_behavior）
+            let content = Self::migrate_old_settings(&content);
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(mut settings) => {
                     settings.normalize_paths();
@@ -431,6 +443,49 @@ impl AppSettings {
             }
         } else {
             Self::default()
+        }
+    }
+
+    /// 从旧版本设置迁移：minimize_to_tray_on_close (bool) -> close_behavior (enum)
+    ///
+    /// 四种情况：
+    /// 1. 旧字段存在，新字段不存在 → 执行迁移
+    /// 2. 旧字段存在，新字段也存在 → 保留新字段，不迁移
+    /// 3. 旧字段不存在，新字段存在 → 无需迁移
+    /// 4. 旧字段不存在，新字段也不存在 → 新安装，无需迁移
+    fn migrate_old_settings(content: &str) -> String {
+        let Ok(mut json) = serde_json::from_str::<serde_json::Value>(content) else {
+            return content.to_string();
+        };
+
+        let has_old = json.get("minimizeToTrayOnClose").is_some();
+        let has_new = json.get("closeBehavior").is_some();
+
+        // 情况 2/3/4：无需迁移
+        if !has_old || has_new {
+            return content.to_string();
+        }
+
+        // 情况 1：旧字段存在，新字段不存在，执行迁移
+        let minimize_to_tray = json["minimizeToTrayOnClose"].as_bool().unwrap_or(true);
+        let close_behavior = if minimize_to_tray { "tray" } else { "close" };
+
+        let obj = match json.as_object_mut() {
+            Some(obj) => obj,
+            None => return content.to_string(),
+        };
+        obj.insert(
+            "closeBehavior".to_string(),
+            serde_json::json!(close_behavior),
+        );
+        obj.remove("minimizeToTrayOnClose");
+
+        match serde_json::to_string(&json) {
+            Ok(s) => {
+                log::info!("设置已从旧版本迁移: minimizeToTrayOnClose -> closeBehavior");
+                s
+            }
+            Err(_) => content.to_string(),
         }
     }
 }

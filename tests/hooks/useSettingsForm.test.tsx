@@ -32,7 +32,7 @@ describe("useSettingsForm Hook", () => {
     useSettingsQueryMock.mockReturnValue({
       data: {
         showInTray: undefined,
-        minimizeToTrayOnClose: undefined,
+        closeBehavior: undefined,
         enableClaudePluginIntegration: undefined,
         claudeConfigDir: "  /Users/demo  ",
         codexConfigDir: "   ",
@@ -49,7 +49,7 @@ describe("useSettingsForm Hook", () => {
 
     const settings = result.current.settings!;
     expect(settings.showInTray).toBe(true);
-    expect(settings.minimizeToTrayOnClose).toBe(true);
+    expect(settings.closeBehavior).toBe("tray");
     expect(settings.enableClaudePluginIntegration).toBe(false);
     expect(settings.claudeConfigDir).toBe("/Users/demo");
     expect(settings.codexConfigDir).toBeUndefined();
@@ -62,7 +62,7 @@ describe("useSettingsForm Hook", () => {
     useSettingsQueryMock.mockReturnValue({
       data: {
         showInTray: true,
-        minimizeToTrayOnClose: true,
+        closeBehavior: "tray",
         enableClaudePluginIntegration: false,
         claudeConfigDir: "/Users/demo",
         codexConfigDir: null,
@@ -122,7 +122,7 @@ describe("useSettingsForm Hook", () => {
     useSettingsQueryMock.mockReturnValue({
       data: {
         showInTray: true,
-        minimizeToTrayOnClose: true,
+        closeBehavior: "tray",
         enableClaudePluginIntegration: false,
         claudeConfigDir: "/origin",
         codexConfigDir: null,
@@ -143,7 +143,7 @@ describe("useSettingsForm Hook", () => {
     act(() => {
       result.current.resetSettings({
         showInTray: false,
-        minimizeToTrayOnClose: false,
+        closeBehavior: "close",
         enableClaudePluginIntegration: true,
         claudeConfigDir: "  /reset  ",
         codexConfigDir: "   ",
@@ -153,7 +153,7 @@ describe("useSettingsForm Hook", () => {
 
     const settings = result.current.settings!;
     expect(settings.showInTray).toBe(false);
-    expect(settings.minimizeToTrayOnClose).toBe(false);
+    expect(settings.closeBehavior).toBe("close");
     expect(settings.enableClaudePluginIntegration).toBe(true);
     expect(settings.claudeConfigDir).toBe("/reset");
     expect(settings.codexConfigDir).toBeUndefined();
@@ -166,7 +166,7 @@ describe("useSettingsForm Hook", () => {
     useSettingsQueryMock.mockReturnValue({
       data: {
         showInTray: true,
-        minimizeToTrayOnClose: true,
+        closeBehavior: "tray",
         enableClaudePluginIntegration: false,
         claudeConfigDir: null,
         codexConfigDir: null,
