@@ -327,6 +327,12 @@ pub fn run() {
                 )?;
             }
 
+            // 一次性自愈：清理旧版本写入的 macOS 登录项
+            // 旧版本曾把 .app/Contents/MacOS/<exe> 注册为登录项，导致每次开机都会
+            // 弹出一个终端窗口。此调用会删除路径错误的旧条目并用正确的 .app bundle
+            // 路径重新注册（前提是删除前确实存在错误条目）。非 macOS 平台是 no-op。
+            crate::auto_launch::migrate_legacy_macos_login_items();
+
             // 初始化数据库
             let app_config_dir = crate::config::get_app_config_dir();
             let db_path = app_config_dir.join("cc-switch.db");
