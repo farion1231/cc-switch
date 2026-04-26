@@ -117,9 +117,11 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
 }
 
 /// Original tray icon PNG bytes.
+#[cfg(target_os = "macos")]
 const ICON_BASE_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
 
 /// Decoded RGBA pixels of the base icon — decoded once at first use.
+#[cfg(target_os = "macos")]
 static ICON_BASE_RGBA: Lazy<(Vec<u8>, u32, u32)> =
     Lazy::new(|| match tauri::image::Image::from_bytes(ICON_BASE_BYTES) {
         Ok(img) => {
@@ -984,11 +986,12 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     if needs_rebuild {
         // 此处调用安全：菜单重建只在"数据从无到有"时触发，通常发生在启动阶段，
         // 用户极少在此窗口期打开菜单。
+        // refresh_tray_menu 末尾已调用 update_tray_icon（macOS）。
         refresh_tray_menu(app);
-        return; // refresh_tray_menu 末尾已调用 update_tray_icon
+    } else {
+        #[cfg(target_os = "macos")]
+        update_tray_icon(app);
     }
-    #[cfg(target_os = "macos")]
-    update_tray_icon(app);
 }
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
