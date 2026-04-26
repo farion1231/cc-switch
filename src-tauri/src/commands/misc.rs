@@ -1601,7 +1601,7 @@ mod tests {
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/same/path"))
+            .filter(|path| **path == std::path::Path::new("/same/path"))
             .count();
         assert_eq!(count, 1);
     }
@@ -1613,7 +1613,7 @@ mod tests {
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/home/tester/.bun/bin"))
+            .filter(|path| **path == std::path::Path::new("/home/tester/.bun/bin"))
             .count();
         assert_eq!(count, 1);
     }
