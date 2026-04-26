@@ -554,7 +554,9 @@
         "windows": {
           "cmd": "命令提示符",
           "powershell": "PowerShell",
-          "wt": "Windows Terminal"
+          "wt": "Windows Terminal",
+          "profileError": "无法找到 Windows Terminal 配置文件。请确保已安装 Windows Terminal。",
+          "noProfiles": "未找到 Profile"
         },
         "linux": {
           "gnomeTerminal": "GNOME Terminal",

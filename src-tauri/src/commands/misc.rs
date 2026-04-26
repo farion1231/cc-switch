@@ -1220,7 +1220,16 @@ del \"%~f0\" >nul 2>&1
             &["powershell", "-NoExit", "-Command", &ps_cmd],
             "PowerShell",
         ),
-        "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+        "wt" => {
+            let profile = crate::settings::get_preferred_terminal_profile();
+            match profile.as_ref().filter(|p| !p.is_empty()) {
+                Some(p) => run_windows_start_command(
+                    &["wt", "-p", p.as_str(), "--", &bat_path],
+                    "Windows Terminal",
+                ),
+                None => run_windows_start_command(&["wt", "--", &bat_path], "Windows Terminal"),
+            }
+        }
         _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
     };
 
@@ -1508,6 +1517,127 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
     };
 
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
+}
+
+// ===== Windows Terminal Profile 管理 =====
+
+#[derive(serde::Serialize)]
+pub struct WtProfile {
+    guid: String,
+    name: String,
+}
+
+/// 获取 Windows Terminal 配置文件的可能路径
+#[cfg(target_os = "windows")]
+fn get_wt_settings_paths() -> Vec<std::path::PathBuf> {
+    use std::env;
+    let mut paths = Vec::new();
+
+    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+        let base = std::path::PathBuf::from(&local_app_data);
+
+        // 1. Microsoft Store 稳定版
+        paths.push(
+            base.join("Packages")
+                .join("Microsoft.WindowsTerminal_8wekyb3d8bbwe")
+                .join("LocalState")
+                .join("settings.json"),
+        );
+
+        // 2. Microsoft Store 预览版
+        paths.push(
+            base.join("Packages")
+                .join("Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe")
+                .join("LocalState")
+                .join("settings.json"),
+        );
+    }
+
+    // 3. 便携版 / GitHub releases / scoop 等通常在同目录下
+    // 尝试从 wt.exe 位置查找
+    if let Ok(output) = std::process::Command::new("where")
+        .arg("wt.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(wt_path) = stdout.lines().next() {
+                if let Some(parent) = std::path::Path::new(wt_path).parent() {
+                    paths.push(parent.join("settings.json"));
+                }
+            }
+        }
+    }
+
+    paths
+}
+
+/// 获取 Windows Terminal 的所有 profile 列表
+#[tauri::command]
+pub fn get_windows_terminal_profiles() -> Result<Vec<WtProfile>, String> {
+    #[cfg(not(target_os = "windows"))]
+    return Ok(Vec::new());
+
+    #[cfg(target_os = "windows")]
+    {
+        let paths = get_wt_settings_paths();
+
+        for settings_path in paths {
+            if !settings_path.exists() {
+                continue;
+            }
+
+            match std::fs::read_to_string(&settings_path) {
+                Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(json) => {
+                        if let Some(profiles) = json
+                            .get("profiles")
+                            .and_then(|p| p.get("list"))
+                            .and_then(|l| l.as_array())
+                        {
+                            let result: Vec<WtProfile> = profiles
+                                .iter()
+                                .filter(|p| {
+                                    p.get("hidden")
+                                        .and_then(|h| h.as_bool())
+                                        .unwrap_or(false)
+                                        == false
+                                })
+                                .filter_map(|p| {
+                                    let guid = p.get("guid")?.as_str()?.to_string();
+                                    let name = p.get("name")?.as_str()?.to_string();
+                                    Some(WtProfile { guid, name })
+                                })
+                                .collect();
+
+                            if !result.is_empty() {
+                                return Ok(result);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to parse WT settings {}: {}",
+                            settings_path.display(),
+                            e
+                        );
+                        continue;
+                    }
+                },
+                Err(e) => {
+                    log::warn!(
+                        "Failed to read WT settings {}: {}",
+                        settings_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            }
+        }
+
+        Err("terminal.wt.not_found".to_string())
+    }
 }
 
 #[cfg(test)]
