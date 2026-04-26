@@ -165,8 +165,24 @@ fn switch_session_provider_with_paths(
         ));
     }
 
+    let original_content = fs::read_to_string(&source).map_err(|e| {
+        format!(
+            "Failed to read Codex session file {}: {e}",
+            source.display()
+        )
+    })?;
     let provider = update_session_file_model_provider(&source, session_id, target_provider)?;
-    update_state_db_model_provider(state_db_path, session_id, target_provider)?;
+    if let Err(update_error) =
+        update_state_db_model_provider(state_db_path, session_id, target_provider)
+    {
+        fs::write(&source, original_content).map_err(|restore_error| {
+            format!(
+                "{update_error}; failed to restore Codex session file {}: {restore_error}",
+                source.display()
+            )
+        })?;
+        return Err(update_error);
+    }
 
     Ok(provider)
 }
@@ -651,6 +667,40 @@ mod tests {
             )
             .expect("query provider");
         assert_eq!(provider, "custom");
+    }
+
+    #[test]
+    fn switch_session_provider_restores_jsonl_when_state_db_update_fails() {
+        let temp = tempdir().expect("tempdir");
+        let sessions_root = temp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_root).expect("create sessions root");
+        let path = sessions_root.join("session.jsonl");
+        let original_content = concat!(
+            "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\"}}\n",
+            "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Hello\"}}\n"
+        );
+        std::fs::write(&path, original_content).expect("write");
+
+        let db_path = temp.path().join("state_5.sqlite");
+        let conn = rusqlite::Connection::open(&db_path).expect("open db");
+        conn.execute("CREATE TABLE threads (id TEXT PRIMARY KEY)", [])
+            .expect("create threads without provider");
+        drop(conn);
+
+        let error = switch_session_provider_with_paths(
+            "test-id",
+            &path,
+            "custom",
+            &sessions_root,
+            &db_path,
+        )
+        .expect_err("missing model_provider should fail");
+
+        assert!(error.contains("model_provider column"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read session"),
+            original_content
+        );
     }
 
     #[test]
