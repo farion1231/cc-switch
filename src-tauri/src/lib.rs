@@ -11,6 +11,7 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+pub mod hermes_config;
 mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
@@ -168,7 +169,7 @@ async fn update_tray_menu(
 ) -> Result<bool, String> {
     match tray::create_tray_menu(&app, state.inner()) {
         Ok(new_menu) => {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
                 tray.set_menu(Some(new_menu))
                     .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
                 return Ok(true);
@@ -272,6 +273,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+
             // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
             app_store::refresh_app_config_dir_override(app.handle());
             panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
@@ -540,6 +543,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No new OpenClaw providers to import"),
                 Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
             }
+            match crate::services::provider::import_hermes_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} Hermes provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new Hermes providers to import"),
+                Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -627,6 +637,14 @@ pub fn run() {
                     Ok(_) => log::debug!("○ No OpenCode MCP servers found to import"),
                     Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
                 }
+
+                match crate::services::mcp::McpService::import_from_hermes(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Hermes");
+                    }
+                    Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
+                }
             }
 
             // 4. 导入提示词文件（表空时触发）
@@ -639,6 +657,7 @@ pub fn run() {
                     crate::app_config::AppType::Gemini,
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
+                    crate::app_config::AppType::Hermes,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -728,10 +747,17 @@ pub fn run() {
             let menu = tray::create_tray_menu(app.handle(), &app_state)?;
 
             // 构建托盘
-            let mut tray_builder = TrayIconBuilder::with_id("main")
-                .on_tray_icon_event(|_tray, event| match event {
-                    // 左键点击已通过 show_menu_on_left_click(true) 打开菜单，这里不再额外处理
-                    TrayIconEvent::Click { .. } => {}
+            let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
+                .on_tray_icon_event(|tray, event| match event {
+                    // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+                    // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
+                    // refresh_all_usage_in_tray 内部有 10 秒防抖。
+                    TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+                        let app = tray.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            crate::tray::refresh_all_usage_in_tray(&app).await;
+                        });
+                    }
                     _ => log::debug!("unhandled event {event:?}"),
                 })
                 .menu(&menu)
@@ -1234,6 +1260,17 @@ pub fn run() {
             commands::set_openclaw_env,
             commands::get_openclaw_tools,
             commands::set_openclaw_tools,
+            // Hermes specific
+            commands::import_hermes_providers_from_live,
+            commands::get_hermes_live_provider_ids,
+            commands::get_hermes_live_provider,
+            commands::get_hermes_model_config,
+            commands::open_hermes_web_ui,
+            commands::launch_hermes_dashboard,
+            commands::get_hermes_memory,
+            commands::set_hermes_memory,
+            commands::get_hermes_memory_limits,
+            commands::set_hermes_memory_enabled,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,

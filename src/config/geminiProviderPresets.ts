@@ -296,6 +296,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "LemonData",
+    websiteUrl: "https://lemondata.cc",
+    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.lemondata.cc",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://api.lemondata.cc",
+    model: "gemini-3.1-pro",
+    description: "LemonData",
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lemondata",
+    endpointCandidates: ["https://api.lemondata.cc"],
+    icon: "lemondata",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
@@ -319,11 +338,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.therouter.ai",
-        GEMINI_MODEL: "gemini-2.5-pro",
+        GEMINI_MODEL: "gemini-3.1-pro",
       },
     },
     baseURL: "https://api.therouter.ai",
-    model: "gemini-2.5-pro",
+    model: "gemini-3.1-pro",
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],

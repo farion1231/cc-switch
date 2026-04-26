@@ -55,6 +55,8 @@ pub struct RequestForwarder {
     current_provider_id_at_start: String,
     /// 代理会话 ID（用于 Gemini Native shadow replay）
     session_id: String,
+    /// Session ID 是否由客户端提供；生成值不能作为上游缓存身份。
+    session_client_provided: bool,
     /// 整流器配置
     rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -77,6 +79,7 @@ impl RequestForwarder {
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
         session_id: String,
+        session_client_provided: bool,
         _streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
@@ -92,6 +95,7 @@ impl RequestForwarder {
             app_handle,
             current_provider_id_at_start,
             session_id,
+            session_client_provided,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -786,6 +790,13 @@ impl RequestForwarder {
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
 
+        if is_copilot {
+            mapped_body =
+                super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
+            self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
+                .await;
+        }
+
         // --- Copilot 优化器：分类 + 请求体优化（在格式转换之前执行） ---
         // 注意：确定性 ID 也在此处计算，因为 mapped_body 在格式转换时会被 move
         //
@@ -819,6 +830,12 @@ impl RequestForwarder {
             // 3. Tool result 合并 — 将 [tool_result, text] 变为 [tool_result(含text)]
             if self.copilot_optimizer_config.tool_result_merging {
                 mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
+            }
+
+            // 3.5. 主动剥离 thinking block — Copilot 走 OpenAI 兼容端点不识别该块
+            //      避免上游拒绝后由 rectifier 反应式重试（首次请求已消耗 quota）
+            if self.copilot_optimizer_config.strip_thinking {
+                mapped_body = super::copilot_optimizer::strip_thinking_blocks(mapped_body);
             }
 
             // 4. Warmup 小模型降级
@@ -960,7 +977,8 @@ impl RequestForwarder {
                     mapped_body,
                     provider,
                     api_format,
-                    Some(&self.session_id),
+                    self.session_client_provided
+                        .then_some(self.session_id.as_str()),
                     Some(self.gemini_shadow.as_ref()),
                 )?
             } else {
@@ -978,6 +996,7 @@ impl RequestForwarder {
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
+        let mut should_send_codex_oauth_session_headers = false;
 
         // 获取认证头（提前准备，用于内联替换）
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
@@ -1059,6 +1078,7 @@ impl RequestForwarder {
                     match token_result {
                         Ok(token) => {
                             auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
+                            should_send_codex_oauth_session_headers = true;
                             // 解析使用的 account_id（用于注入 ChatGPT-Account-Id header）
                             codex_oauth_account_id = match account_id {
                                 Some(id) => Some(id),
@@ -1095,6 +1115,13 @@ impl RequestForwarder {
                 auth_headers.push((http::HeaderName::from_static("chatgpt-account-id"), hv));
             }
         }
+
+        let codex_oauth_session_headers =
+            if should_send_codex_oauth_session_headers && self.session_client_provided {
+                build_codex_oauth_session_headers(&self.session_id)
+            } else {
+                Vec::new()
+            };
 
         // --- Copilot 优化器：动态 header 注入 ---
         if let Some((ref classification, ref det_request_id, ref interaction_id)) =
@@ -1336,6 +1363,12 @@ impl RequestForwarder {
             );
         }
 
+        // Codex OAuth 反代尽量对齐官方 Codex CLI 的会话路由信号。
+        // 只发送客户端提供的 session_id；生成的 UUID 每次不同，反而会破坏前缀缓存。
+        for (name, value) in codex_oauth_session_headers {
+            ordered_headers.insert(name, value);
+        }
+
         // 序列化请求体
         let body_bytes = serde_json::to_vec(&filtered_body)
             .map_err(|e| ProxyError::Internal(format!("Failed to serialize request body: {e}")))?;
@@ -1457,6 +1490,49 @@ impl RequestForwarder {
         }
 
         "openai_chat".to_string()
+    }
+
+    /// 用 Copilot live `/models` 列表确认 model ID 真实可用，找不到时按 family 降级。
+    /// 命中缓存后是同步的；首次请求或 5 min 缓存过期后会触发一次 HTTP。
+    async fn apply_copilot_live_model_resolution(
+        &self,
+        provider: &Provider,
+        body: &mut serde_json::Value,
+    ) {
+        let Some(model_id) = body.get("model").and_then(|v| v.as_str()) else {
+            return;
+        };
+        let model_id = model_id.to_string();
+
+        let Some(app_handle) = &self.app_handle else {
+            return;
+        };
+        let copilot_state = app_handle.state::<CopilotAuthState>();
+        let copilot_auth = copilot_state.0.read().await;
+        let account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.managed_account_id_for("github_copilot"));
+
+        let models_result = match account_id.as_deref() {
+            Some(id) => copilot_auth.fetch_models_for_account(id).await,
+            None => copilot_auth.fetch_models().await,
+        };
+
+        let models = match models_result {
+            Ok(m) => m,
+            Err(err) => {
+                log::debug!("[Copilot] live model list unavailable, skip resolution: {err}");
+                return;
+            }
+        };
+
+        if let Some(resolved) =
+            super::providers::copilot_model_map::resolve_against_models(&model_id, &models)
+        {
+            log::info!("[Copilot] live-model resolve: {model_id} → {resolved}");
+            body["model"] = serde_json::Value::String(resolved);
+        }
     }
 
     async fn is_copilot_openai_vendor_model(&self, provider: &Provider, model_id: &str) -> bool {
@@ -1767,6 +1843,28 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
     }
 }
 
+fn build_codex_oauth_session_headers(
+    session_id: &str,
+) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Vec::new();
+    }
+
+    let mut headers = Vec::new();
+    if let Ok(value) = http::HeaderValue::from_str(session_id) {
+        headers.push((http::HeaderName::from_static("session_id"), value.clone()));
+        headers.push((http::HeaderName::from_static("x-client-request-id"), value));
+    }
+
+    let window_id = format!("{session_id}:0");
+    if let Ok(value) = http::HeaderValue::from_str(&window_id) {
+        headers.push((http::HeaderName::from_static("x-codex-window-id"), value));
+    }
+
+    headers
+}
+
 fn should_force_identity_encoding(
     endpoint: &str,
     body: &Value,
@@ -1874,6 +1972,28 @@ mod tests {
         let summary = summarize_text_for_log("line1\n\n line2   line3", 12);
 
         assert_eq!(summary, "line1 line2...");
+    }
+
+    #[test]
+    fn codex_oauth_session_headers_match_codex_cache_identity() {
+        let headers = build_codex_oauth_session_headers("session-123");
+        let mut map = HeaderMap::new();
+        for (name, value) in headers {
+            map.insert(name, value);
+        }
+
+        assert_eq!(
+            map.get("session_id"),
+            Some(&HeaderValue::from_static("session-123"))
+        );
+        assert_eq!(
+            map.get("x-client-request-id"),
+            Some(&HeaderValue::from_static("session-123"))
+        );
+        assert_eq!(
+            map.get("x-codex-window-id"),
+            Some(&HeaderValue::from_static("session-123:0"))
+        );
     }
 
     #[test]

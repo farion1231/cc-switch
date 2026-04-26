@@ -27,7 +27,7 @@ const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 /// Claude Code 会继续以旧模型名发起请求，导致新供应商不支持时失败。
 const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 6] = [
     "ANTHROPIC_MODEL",
-    "ANTHROPIC_REASONING_MODEL",
+    "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -466,13 +466,9 @@ impl ProxyService {
             AppType::Claude => self.read_claude_live()?,
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                return Err("OpenCode 不支持代理功能".to_string());
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                return Err("OpenClaw 不支持代理功能".to_string());
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy features
+                return Err("该应用不支持代理功能".to_string());
             }
         };
 
@@ -687,11 +683,8 @@ impl ProxyService {
                     }
                 }
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features, skip silently
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features, skip silently
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy features, skip silently
             }
         }
 
@@ -871,13 +864,9 @@ impl ProxyService {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                return Err("OpenCode 不支持代理功能".to_string());
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                return Err("OpenClaw 不支持代理功能".to_string());
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy features
+                return Err("该应用不支持代理功能".to_string());
             }
         };
 
@@ -1019,13 +1008,9 @@ impl ProxyService {
                 self.write_gemini_live(&live_config)?;
                 log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                return Err("OpenCode 不支持代理功能".to_string());
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                return Err("OpenClaw 不支持代理功能".to_string());
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy features
+                return Err("该应用不支持代理功能".to_string());
             }
         }
 
@@ -1076,11 +1061,8 @@ impl ProxyService {
                     let _ = self.write_gemini_live(&live_config);
                 }
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features, skip silently
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features, skip silently
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy features, skip silently
             }
         }
 
@@ -1119,11 +1101,8 @@ impl ProxyService {
                     log::info!("Gemini Live 配置已恢复");
                 }
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features, skip silently
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features, skip silently
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy features, skip silently
             }
         }
 
@@ -1213,13 +1192,9 @@ impl ProxyService {
             AppType::Claude => self.write_claude_live(config),
             AppType::Codex => self.write_codex_live(config),
             AppType::Gemini => self.write_gemini_live(config),
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                Err("OpenCode 不支持代理功能".to_string())
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                Err("OpenClaw 不支持代理功能".to_string())
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy features
+                Err("该应用不支持代理功能".to_string())
             }
         }
     }
@@ -1238,12 +1213,8 @@ impl ProxyService {
                 Ok(config) => Self::is_gemini_live_taken_over(&config),
                 Err(_) => false,
             },
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy takeover
-                false
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy takeover
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy takeover
                 false
             }
         }
@@ -1285,12 +1256,8 @@ impl ProxyService {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                Ok(())
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy features
                 Ok(())
             }
         }
@@ -1540,7 +1507,7 @@ impl ProxyService {
                 serde_json::to_string(&env_backup)
                     .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?
             }
-            AppType::OpenCode | AppType::OpenClaw => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
                 return Err(format!("未知的应用类型: {app_type}"));
             }
         };

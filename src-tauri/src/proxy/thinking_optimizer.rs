@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 ///
 /// 三路径分发：
 /// - skip: haiku 模型直接跳过
-/// - adaptive: opus-4-6 / sonnet-4-6 使用 adaptive thinking
+/// - adaptive: opus-4-7 / opus-4-6 / sonnet-4-6 使用 adaptive thinking
 /// - legacy: 其他模型注入 enabled thinking + budget_tokens
 pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     if !config.thinking_optimizer {
@@ -24,7 +24,7 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
         return;
     }
 
-    if model.contains("opus-4-6") || model.contains("sonnet-4-6") {
+    if model.contains("opus-4-7") || model.contains("opus-4-6") || model.contains("sonnet-4-6") {
         log::info!("[OPT] thinking: adaptive({model})");
         body["thinking"] = json!({"type": "adaptive"});
         body["output_config"] = json!({"effort": "max"});

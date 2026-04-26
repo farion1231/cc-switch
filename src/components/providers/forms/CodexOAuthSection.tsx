@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -30,6 +31,10 @@ interface CodexOAuthSectionProps {
   selectedAccountId?: string | null;
   /** 账号选择回调 */
   onAccountSelect?: (accountId: string | null) => void;
+  /** 是否开启 Codex FAST mode */
+  fastModeEnabled?: boolean;
+  /** FAST mode 切换回调 */
+  onFastModeChange?: (enabled: boolean) => void;
 }
 
 /**
@@ -42,6 +47,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   className,
   selectedAccountId,
   onAccountSelect,
+  fastModeEnabled = false,
+  onFastModeChange,
 }) => {
   const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
@@ -137,6 +144,27 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
               ))}
             </SelectContent>
           </Select>
+        </div>
+      )}
+
+      {onFastModeChange && (
+        <div className="flex items-center justify-between rounded-md border bg-muted/30 p-3">
+          <div className="space-y-1 pr-4">
+            <Label className="text-sm font-medium">
+              {t("codexOauth.fastMode", "FAST mode")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t("codexOauth.fastModeDescription", {
+                defaultValue:
+                  'Send service_tier="priority" for lower latency. Turn it off if the ChatGPT Codex backend rejects the parameter.',
+              })}
+            </p>
+          </div>
+          <Switch
+            checked={fastModeEnabled}
+            onCheckedChange={onFastModeChange}
+            aria-label={t("codexOauth.fastMode", "FAST mode")}
+          />
         </div>
       )}
 

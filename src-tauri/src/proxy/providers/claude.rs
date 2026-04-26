@@ -89,6 +89,8 @@ pub fn transform_claude_request_for_api_format(
     session_id: Option<&str>,
     shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
 ) -> Result<serde_json::Value, ProxyError> {
+    let is_codex_oauth = provider.is_codex_oauth();
+
     // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
     // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
     // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
@@ -118,32 +120,39 @@ pub fn transform_claude_request_for_api_format(
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
             })
+    } else if is_codex_oauth {
+        session_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
     } else {
         None
     };
 
-    let cache_key = session_cache_key
-        .as_deref()
-        .or_else(|| {
-            provider
-                .meta
-                .as_ref()
-                .and_then(|m| m.prompt_cache_key.as_deref())
-        })
-        .unwrap_or(&provider.id);
+    let explicit_cache_key = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.prompt_cache_key.as_deref());
+    let cache_key = if is_codex_oauth {
+        explicit_cache_key
+            .or(session_cache_key.as_deref())
+            .unwrap_or(&provider.id)
+    } else {
+        session_cache_key
+            .as_deref()
+            .or(explicit_cache_key)
+            .unwrap_or(&provider.id)
+    };
     match api_format {
         "openai_responses" => {
             // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
             // + include: ["reasoning.encrypted_content"]，由 transform 层统一处理。
-            let is_codex_oauth = provider
-                .meta
-                .as_ref()
-                .and_then(|m| m.provider_type.as_deref())
-                == Some("codex_oauth");
+            let codex_fast_mode = provider.codex_fast_mode_enabled();
             super::transform_responses::anthropic_to_responses(
                 body,
                 Some(cache_key),
                 is_codex_oauth,
+                codex_fast_mode,
             )
         }
         "openai_chat" => {
@@ -1220,6 +1229,140 @@ mod tests {
         assert_eq!(transformed["model"], "gpt-5.4");
         assert!(transformed.get("input").is_some());
         assert!(transformed.get("max_output_tokens").is_some());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_codex_oauth_uses_session_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            Some("session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "session-123");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_codex_oauth_without_session_falls_back_to_provider_id() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], provider.id);
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_codex_oauth_keeps_explicit_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                prompt_cache_key: Some("explicit-cache-key".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            Some("session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "explicit-cache-key");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_codex_oauth_fast_mode_off() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("codex_oauth".to_string()),
+                codex_fast_mode: Some(false),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["store"], json!(false));
+        assert!(transformed.get("service_tier").is_none());
+        assert_eq!(
+            transformed["include"],
+            json!(["reasoning.encrypted_content"])
+        );
     }
 
     #[test]
