@@ -289,6 +289,10 @@ pub struct AppSettings {
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
+
+    /// 是否在托盘图标显示彩色用量进度（顺时针扇形填充，仅深色模式）
+    #[serde(default = "default_true")]
+    pub tray_progress_icon: bool,
 }
 
 fn default_show_in_tray() -> bool {
@@ -338,6 +342,7 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            tray_progress_icon: true,
         }
     }
 }

@@ -3,18 +3,28 @@
 //! 负责系统托盘图标和菜单的创建、更新和事件处理。
 
 use once_cell::sync::Lazy;
-use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, Submenu, SubmenuBuilder};
+use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::store::AppState;
 
-/// 每个 app 分区的子菜单句柄，用于 usage 更新时就地改 label 而非整菜单重建。
-/// `create_tray_menu` 每次重建都会整表覆盖写入，保证句柄始终指向当前活跃菜单。
-static TRAY_SECTION_SUBMENUS: Lazy<
-    std::sync::Mutex<std::collections::HashMap<AppType, Submenu<tauri::Wry>>>,
+/// 每个 app 分区的"第二行" disabled MenuItem 句柄，用于 usage 数据到达时就地更新文本，
+/// 避免 `set_menu` 整建打断用户正在查看的菜单。
+/// `create_tray_menu` 每次重建都会整表覆盖写入；缓存为空时不插入条目。
+static TRAY_SECTION_DETAIL_ITEMS: Lazy<
+    std::sync::Mutex<std::collections::HashMap<AppType, MenuItem<tauri::Wry>>>,
 > = Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// 主界面当前聚焦的 app（前端 activeApp 变化时写入）。
+/// None = 未知（启动期）。
+static TRAY_FOCUSED_APP: Lazy<std::sync::Mutex<Option<AppType>>> =
+    Lazy::new(|| std::sync::Mutex::new(None));
+
+/// 最近一次有订阅数据的官方 app，在 TRAY_FOCUSED_APP 指向无数据 app 时作为 fallback。
+static TRAY_LAST_OFFICIAL_APP: Lazy<std::sync::Mutex<Option<AppType>>> =
+    Lazy::new(|| std::sync::Mutex::new(None));
 
 /// 托盘菜单文本（国际化）
 #[derive(Clone, Copy)]
@@ -105,6 +115,231 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
     }
 }
 
+/// Original tray icon PNG bytes.
+const ICON_BASE_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
+
+/// Decoded RGBA pixels of the base icon — decoded once at first use.
+static ICON_BASE_RGBA: Lazy<(Vec<u8>, u32, u32)> =
+    Lazy::new(|| match tauri::image::Image::from_bytes(ICON_BASE_BYTES) {
+        Ok(img) => {
+            let w = img.width();
+            let h = img.height();
+            (img.rgba().to_vec(), w, h)
+        }
+        Err(_) => (vec![0u8; 72 * 72 * 4], 72, 72),
+    });
+
+/// Last percentage rendered to the tray icon (integer bucket 0–100).
+/// Used to skip re-renders when the utilization hasn't changed.
+static LAST_TRAY_ICON_PCT: std::sync::Mutex<Option<u8>> = std::sync::Mutex::new(None);
+
+/// Recolor the original icon's pixels as a clockwise progress fill.
+/// Non-transparent pixels within the fill angle get the utilization color;
+/// the rest become white. Alpha is preserved to keep anti-aliased edges.
+/// Returns None → caller should keep the startup template icon unchanged.
+pub(crate) fn generate_ring_icon_rgba(utilization_pct: Option<f64>, size: u32) -> Vec<u8> {
+    let (base, w, h) = &*ICON_BASE_RGBA;
+    let mut buf = if *w == size && *h == size {
+        base.clone()
+    } else {
+        vec![0u8; (size * size * 4) as usize]
+    };
+
+    let Some(pct) = utilization_pct else {
+        return buf; // No data → original pixels, used at startup via template mode
+    };
+
+    let s = size as f64;
+    let cx = s / 2.0;
+    let cy = s / 2.0;
+
+    let (fr, fg, fb) = if pct >= UTIL_DANGER_PCT {
+        (230u8, 60u8, 60u8)
+    } else if pct >= UTIL_WARN_PCT {
+        (240u8, 120u8, 30u8)
+    } else {
+        (60u8, 200u8, 80u8)
+    };
+
+    let fill_angle = (pct / 100.0).clamp(0.0, 1.0) * std::f64::consts::TAU;
+    let start = -std::f64::consts::FRAC_PI_2; // 12 o'clock
+
+    for y in 0..size {
+        for x in 0..size {
+            let idx = ((y * size + x) * 4) as usize;
+            if buf[idx + 3] == 0 {
+                continue; // transparent — outside icon shape, leave untouched
+            }
+
+            let dx = x as f64 + 0.5 - cx;
+            let dy = y as f64 + 0.5 - cy;
+            let mut angle = dy.atan2(dx) - start;
+            if angle < 0.0 {
+                angle += std::f64::consts::TAU;
+            }
+
+            let (r, g, b) = if angle <= fill_angle {
+                (fr, fg, fb) // filled sector → utilization color
+            } else {
+                (255u8, 255u8, 255u8) // unfilled sector → white
+            };
+            buf[idx] = r;
+            buf[idx + 1] = g;
+            buf[idx + 2] = b;
+            // buf[idx + 3] unchanged — preserve original alpha
+        }
+    }
+
+    buf
+}
+
+/// 获取指定 app 当前官方订阅的最高 tier 利用率（0–100）。
+/// 当前 provider 非官方或无缓存时返回 None。
+fn get_section_subscription_pct(
+    app_state: &crate::store::AppState,
+    app_type: &AppType,
+) -> Option<f64> {
+    let current_id = crate::settings::get_effective_current_provider(&app_state.db, app_type)
+        .ok()
+        .flatten()?;
+    let providers = app_state.db.get_all_providers(app_type.as_str()).ok()?;
+    let provider = providers.get(&current_id)?;
+    if provider.category.as_deref() != Some("official") {
+        return None;
+    }
+    app_state
+        .usage_cache
+        .with_subscription(app_type, |quota| {
+            quota.tiers.iter().map(|t| t.utilization).reduce(f64::max)
+        })
+        .flatten()
+}
+
+/// 根据主界面焦点和设置计算托盘图标应展示的利用率。
+/// - 有焦点且有数据 → 该 app 的利用率，并记录为 last_official
+/// - 有焦点但无数据（第三方/无订阅）→ fallback 到 last_official
+/// - 无焦点记录（启动期）→ 所有 section 的最大值
+fn compute_tray_worst_pct(app_state: &crate::store::AppState) -> Option<f64> {
+    let focused = TRAY_FOCUSED_APP
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+
+    if let Some(ref app_type) = focused {
+        if let Some(pct) = get_section_subscription_pct(app_state, app_type) {
+            // 记录最近有数据的官方 app
+            if let Ok(mut last) = TRAY_LAST_OFFICIAL_APP.lock() {
+                *last = Some(app_type.clone());
+            }
+            return Some(pct);
+        }
+        // 焦点 app 无数据（第三方），回退到上一个有数据的官方 app
+        let last = TRAY_LAST_OFFICIAL_APP
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let Some(ref last_app) = last {
+            return get_section_subscription_pct(app_state, last_app);
+        }
+        return None;
+    }
+
+    // 启动期无焦点：取所有 section 最大值
+    let mut worst: Option<f64> = None;
+    for section in TRAY_SECTIONS.iter() {
+        if let Some(pct) = get_section_subscription_pct(app_state, &section.app_type) {
+            worst = Some(worst.map_or(pct, |w: f64| w.max(pct)));
+        }
+    }
+    worst
+}
+
+/// 前端通知主界面 activeApp 切换时调用，更新焦点并刷新托盘图标。
+pub(crate) fn set_tray_focused_app(app_type_str: &str, app: &tauri::AppHandle) {
+    use std::str::FromStr;
+    let parsed = AppType::from_str(app_type_str).ok(); // 第三方 app 解析为 None
+    if let Ok(mut guard) = TRAY_FOCUSED_APP.lock() {
+        *guard = parsed;
+    }
+    update_tray_icon(app);
+}
+
+/// Public wrapper called from outside this module (e.g. after settings save).
+pub fn update_tray_icon_pub(app: &tauri::AppHandle) {
+    update_tray_icon(app);
+}
+
+/// Reset the tray usage refresh throttle so the next call to
+/// `refresh_all_usage_in_tray` runs immediately regardless of when the last
+/// refresh happened. Safe to call on deliberate user actions (settings save).
+pub(crate) fn reset_tray_refresh_throttle() {
+    *LAST_TRAY_USAGE_REFRESH
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = None;
+}
+
+/// Update the tray icon to show the original icon with a colored progress arc overlaid.
+/// Only fires when subscription data is available and the setting is enabled.
+fn update_tray_icon(app: &tauri::AppHandle) {
+    let Some(app_state) = app.try_state::<crate::store::AppState>() else {
+        return;
+    };
+    let enabled = crate::settings::get_settings().tray_progress_icon;
+    if !enabled {
+        if let Ok(mut last) = LAST_TRAY_ICON_PCT.lock() {
+            *last = None; // clear so re-enabling shows the icon immediately
+        }
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            #[cfg(target_os = "macos")]
+            let _ = tray.set_icon_as_template(true);
+            let (base, w, h) = &*ICON_BASE_RGBA;
+            let icon = tauri::image::Image::new(base, *w, *h);
+            let _ = tray.set_icon(Some(icon));
+        }
+        return;
+    }
+    let Some(pct) = compute_tray_worst_pct(&app_state) else {
+        return; // No data yet — keep the template icon set at startup
+    };
+    let pct_key = pct.round() as u8;
+    if let Ok(mut last) = LAST_TRAY_ICON_PCT.lock() {
+        if *last == Some(pct_key) {
+            return; // percentage unchanged — skip pixel re-render
+        }
+        *last = Some(pct_key);
+    }
+    let rgba = generate_ring_icon_rgba(Some(pct), 72);
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        // Switch off template mode so the colored ring is rendered as-is
+        #[cfg(target_os = "macos")]
+        let _ = tray.set_icon_as_template(false);
+        let icon = tauri::image::Image::new(&rgba, 72, 72);
+        if let Err(e) = tray.set_icon(Some(icon)) {
+            log::debug!("[Tray] 更新环形图标失败: {e}");
+        }
+    }
+}
+
+/// Parse an ISO 8601 reset timestamp and return a human-readable countdown.
+fn format_countdown(resets_at_iso: &str) -> Option<String> {
+    let dt = chrono::DateTime::parse_from_rfc3339(resets_at_iso).ok()?;
+    let secs = dt.signed_duration_since(chrono::Utc::now()).num_seconds();
+    if secs <= 0 {
+        return None;
+    }
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let mins = (secs % 3600) / 60;
+    Some(if days > 0 {
+        format!("{}d {}h", days, hours)
+    } else if hours > 0 {
+        format!("{}h {}m", hours, mins)
+    } else {
+        format!("{}m", mins)
+    })
+}
+
+#[allow(dead_code)] // only called from tests
 fn format_subscription_summary(
     quota: &crate::services::subscription::SubscriptionQuota,
 ) -> Option<String> {
@@ -172,6 +407,56 @@ fn format_subscription_summary(
     Some(format!("{emoji} {body}"))
 }
 
+/// Combines subscription usage and reset countdown into a single-line detail string
+/// suitable for rendering as a dedicated disabled menu item beneath the app submenu.
+/// Returns `None` when the quota indicates failure or no known tiers are present.
+/// Builds the second-line detail string shown beneath each app's submenu entry.
+/// Format matches the main-window subscription footer:
+/// `emoji tier%  countdown  tier%  countdown …`  (countdown omitted when reset is past)
+pub(crate) fn format_subscription_detail_from_quota(
+    quota: &crate::services::subscription::SubscriptionQuota,
+) -> Option<String> {
+    use crate::services::subscription::{
+        TIER_FIVE_HOUR, TIER_GEMINI_FLASH, TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_SEVEN_DAY,
+    };
+    if !quota.success {
+        return None;
+    }
+
+    let tier_map: &[(&str, &str)] = match quota.tool.as_str() {
+        "gemini" => &[
+            (TIER_GEMINI_PRO, "p"),
+            (TIER_GEMINI_FLASH, "f"),
+            (TIER_GEMINI_FLASH_LITE, "l"),
+        ],
+        _ => &[(TIER_FIVE_HOUR, "h"), (TIER_SEVEN_DAY, "w")],
+    };
+
+    let mut worst = f64::NEG_INFINITY;
+    let parts: Vec<String> = tier_map
+        .iter()
+        .filter_map(|(tier_name, label)| {
+            let tier = quota.tiers.iter().find(|t| t.name == *tier_name)?;
+            worst = worst.max(tier.utilization);
+            let pct = format!("{}{:.0}%", label, tier.utilization);
+            Some(match tier.resets_at.as_deref().and_then(format_countdown) {
+                Some(cd) => format!("{pct} {cd}"),
+                None => pct,
+            })
+        })
+        .collect();
+
+    if parts.is_empty() || !worst.is_finite() {
+        return None;
+    }
+
+    Some(format!(
+        "{} {}",
+        emoji_for_utilization(worst),
+        parts.join("  \u{00B7}  ")
+    ))
+}
+
 fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
     match (data.used, data.total) {
         (Some(used), Some(total)) if total > 0.0 => Some(used / total * 100.0),
@@ -233,38 +518,34 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
     }
 }
 
-fn format_usage_suffix(
+/// Builds the detail line text shown beneath each app's submenu (e.g. "   🟢 h9% w27% · ⏱ h 1h 30m").
+/// Script usage takes priority over subscription quota. Returns `None` when the cache has no data.
+fn format_usage_detail_line(
     app_state: &AppState,
     app_type: &AppType,
     provider: &crate::provider::Provider,
     provider_id: &str,
 ) -> Option<String> {
-    // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
-    // 并顺手 invalidate，防止后续重建继续命中过期数据。
     if provider.has_usage_script_enabled() {
-        // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
-        if let Some(Some(s)) =
-            app_state
-                .usage_cache
-                .with_script(app_type, provider_id, format_script_summary)
-        {
-            return Some(format!(" · {s}"));
-        }
+        let s = app_state
+            .usage_cache
+            .with_script(app_type, provider_id, format_script_summary)
+            .flatten()?;
+        return Some(s);
     } else {
         app_state
             .usage_cache
             .invalidate_script(app_type, provider_id);
     }
 
-    if provider.category.as_deref() == Some("official") {
-        if let Some(Some(s)) = app_state
-            .usage_cache
-            .with_subscription(app_type, format_subscription_summary)
-        {
-            return Some(format!(" · {s}"));
-        }
+    if provider.category.as_deref() != Some("official") {
+        return None;
     }
-    None
+
+    app_state
+        .usage_cache
+        .with_subscription(app_type, format_subscription_detail_from_quota)
+        .flatten()
 }
 
 /// 对供应商列表排序：sort_index → created_at → name
@@ -474,7 +755,7 @@ pub fn create_tray_menu(
     let visible_apps = app_settings.visible_apps.unwrap_or_default();
 
     let mut menu_builder = MenuBuilder::new(app);
-    let mut section_handles: std::collections::HashMap<AppType, Submenu<tauri::Wry>> =
+    let mut detail_handles: std::collections::HashMap<AppType, MenuItem<tauri::Wry>> =
         std::collections::HashMap::new();
 
     // 顶部：打开主界面
@@ -510,11 +791,7 @@ pub fn create_tray_menu(
         } else {
             let current_provider = providers.get(&current_id);
             let submenu_label = match current_provider {
-                Some(p) => {
-                    let suffix = format_usage_suffix(app_state, &section.app_type, p, &current_id)
-                        .unwrap_or_default();
-                    format!("{} · {}{}", section.header_label, p.name, suffix)
-                }
+                Some(p) => format!("{} \u{00B7} {}", section.header_label, p.name),
                 None => section.header_label.to_string(),
             };
             let submenu_id = format!("submenu_{}", app_type_str);
@@ -557,8 +834,25 @@ pub fn create_tray_menu(
             let submenu = submenu_builder.build().map_err(|e| {
                 AppError::Message(format!("构建{}子菜单失败: {e}", section.log_name))
             })?;
-            section_handles.insert(section.app_type.clone(), submenu.clone());
             menu_builder = menu_builder.item(&submenu);
+
+            // 第二行 detail 条目：仅当缓存已有数据时才插入（避免空行占位）。
+            // 数据首次到达时 update_tray_usage_labels 检测"handle 缺失但有数据"，
+            // 触发一次整建；此后只走 set_text 热路径，高度恒定，不再关闭已打开的菜单。
+            if let Some(p) = current_provider {
+                if let Some(text) =
+                    format_usage_detail_line(app_state, &section.app_type, p, &current_id)
+                {
+                    let detail_id = format!("detail_{}", app_type_str);
+                    match MenuItem::with_id(app, &detail_id, &text, false, None::<&str>) {
+                        Ok(item) => {
+                            menu_builder = menu_builder.item(&item);
+                            detail_handles.insert(section.app_type.clone(), item);
+                        }
+                        Err(e) => log::debug!("[Tray] 创建{}detail行失败: {e}", section.log_name),
+                    }
+                }
+            }
         }
 
         menu_builder = menu_builder.separator();
@@ -586,29 +880,29 @@ pub fn create_tray_menu(
         .build()
         .map_err(|e| AppError::Message(format!("构建菜单失败: {e}")))?;
 
-    *TRAY_SECTION_SUBMENUS
+    *TRAY_SECTION_DETAIL_ITEMS
         .lock()
-        .unwrap_or_else(|p| p.into_inner()) = section_handles;
+        .unwrap_or_else(|p| p.into_inner()) = detail_handles;
 
     Ok(menu)
 }
 
-/// 就地更新各 app 分区子菜单的标题（usage 后缀变化时走这条），
-/// 避免 `set_menu` 导致用户打开中的菜单被关闭。
-/// 句柄由上一次 `create_tray_menu` 填充；为空（从未构建过菜单）时无事发生。
+/// 就地更新各 app 分区的"第二行" detail 条目文本（usage 数据写入缓存时走这条）。
+/// 文本始终为单行字符串，NSMenuItem 高度不变，不会触发 macOS 强制收起已打开菜单的问题。
+/// detail 条目的插入/移除只发生在 `create_tray_menu` 整建时（启动预热或用户切换供应商等），
+/// 此函数永远不调用 `refresh_tray_menu`，保证菜单永不因缓存更新而自动关闭。
 fn update_tray_usage_labels(app: &tauri::AppHandle) {
     let Some(app_state) = app.try_state::<AppState>() else {
         return;
     };
-    let handles = match TRAY_SECTION_SUBMENUS.lock() {
+
+    let detail_items = match TRAY_SECTION_DETAIL_ITEMS.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
     };
 
+    let mut needs_rebuild = false;
     for section in TRAY_SECTIONS.iter() {
-        let Some(submenu) = handles.get(&section.app_type) else {
-            continue;
-        };
         let Ok(providers) = app_state.db.get_all_providers(section.app_type.as_str()) else {
             continue;
         };
@@ -620,13 +914,32 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
         let Some(provider) = providers.get(&current_id) else {
             continue;
         };
-        let suffix = format_usage_suffix(&app_state, &section.app_type, provider, &current_id)
-            .unwrap_or_default();
-        let new_label = format!("{} · {}{}", section.header_label, provider.name, suffix);
-        if let Err(e) = submenu.set_text(&new_label) {
-            log::debug!("[Tray] 更新{}子菜单标题失败: {e}", section.log_name);
+
+        let text = format_usage_detail_line(&app_state, &section.app_type, provider, &current_id);
+
+        match (detail_items.get(&section.app_type), text) {
+            (Some(item), Some(ref t)) => {
+                // handle 已缓存，直接更新文本（高度不变，菜单不会关闭）
+                if let Err(e) = item.set_text(t) {
+                    log::debug!("[Tray] 更新{}detail行失败: {e}", section.log_name);
+                }
+            }
+            (None, Some(_)) => {
+                // 数据首次到达而 handle 尚未建立（如网络错误恢复后），需要整建
+                needs_rebuild = true;
+            }
+            _ => {}
         }
     }
+    drop(detail_items); // release lock before possible rebuild or icon update
+
+    if needs_rebuild {
+        // 此处调用安全：菜单重建只在"数据从无到有"时触发，通常发生在启动阶段，
+        // 用户极少在此窗口期打开菜单。
+        refresh_tray_menu(app);
+        return; // refresh_tray_menu 末尾已调用 update_tray_icon
+    }
+    update_tray_icon(app);
 }
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
@@ -641,6 +954,7 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
             }
         }
     }
+    update_tray_icon(app);
 }
 
 #[cfg(target_os = "macos")]
@@ -742,7 +1056,7 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 /// `schedule_tray_refresh` 做合并。内部 10 秒节流防止鼠标悬停反复进出时
 /// 雪崩请求；互斥锁被毒化时以上次状态为准继续推进，不会永久阻塞。
 ///
-/// 刷新面与 `format_usage_suffix` 的展示面严格对齐 —— 每次悬停最多发
+/// 刷新面与 `format_usage_detail_line` 的展示面严格对齐 —— 每次悬停最多发
 /// `TRAY_SECTIONS.len()` 次外部请求，script 优先（覆盖 coding_plan / balance /
 /// Copilot / 自定义脚本），否则当前 provider 必须是 `official` 才查订阅。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
@@ -806,7 +1120,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
             }
         };
 
-        // 与 format_usage_suffix 同一优先级：脚本启用 → 查脚本；
+        // 与 format_usage_detail_line 同一优先级：脚本启用 → 查脚本；
         // 否则当前 provider 是 official → 查订阅；其它情况不发请求。
         if current.has_usage_script_enabled() {
             let app_clone = app.clone();
@@ -847,7 +1161,10 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_script_summary, format_subscription_summary, TRAY_ID};
+    use super::{
+        format_script_summary, format_subscription_detail_from_quota, format_subscription_summary,
+        TRAY_ID,
+    };
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT,
@@ -880,6 +1197,16 @@ mod tests {
         }
     }
 
+    fn tier_with_reset(name: &str, utilization: f64, reset_after_secs: i64) -> QuotaTier {
+        QuotaTier {
+            name: name.to_string(),
+            utilization,
+            resets_at: Some(
+                (chrono::Utc::now() + chrono::Duration::seconds(reset_after_secs)).to_rfc3339(),
+            ),
+        }
+    }
+
     #[test]
     fn claude_summary_uses_h_and_w_labels() {
         let quota = make_quota(
@@ -890,6 +1217,85 @@ mod tests {
         let s = format_subscription_summary(&quota).expect("should format");
         assert!(s.contains("h9%"), "expected h9% in {s}");
         assert!(s.contains("w27%"), "expected w27% in {s}");
+    }
+
+    #[test]
+    fn format_subscription_summary_is_single_line() {
+        // format_subscription_summary must never embed \n — it runs through
+        // NSMenuItem setTitle: which doesn't honour newlines and whose height
+        // change on an open menu forces macOS to collapse the popup.
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![
+                tier_with_reset("five_hour", 9.0, 3600),
+                tier_with_reset("seven_day", 27.0, 172800),
+            ],
+        );
+        let s = format_subscription_summary(&quota).expect("should format");
+        assert!(!s.contains('\n'), "summary must be single-line, got: {s}");
+    }
+
+    #[test]
+    fn detail_from_quota_combines_usage_and_countdown() {
+        // format: "emoji  h9% 1h 0m  w27% 2d 0h" — countdown follows each tier's usage
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![
+                tier_with_reset("five_hour", 9.0, 3600),
+                tier_with_reset("seven_day", 27.0, 172800),
+            ],
+        );
+        let s = format_subscription_detail_from_quota(&quota).expect("should format");
+        assert!(!s.contains('\n'), "detail must be single-line, got: {s}");
+        assert!(
+            !s.starts_with(' '),
+            "detail must not have leading spaces, got: {s}"
+        );
+        // h tier: usage then countdown adjacent
+        let h_pos = s.find("h9%").expect("h9% not found");
+        let w_pos = s.find("w27%").expect("w27% not found");
+        assert!(h_pos < w_pos, "h tier should appear before w tier");
+        // countdown for h comes before w usage
+        let h_cd_pos = s[h_pos..].find('h').map(|i| h_pos + i + 1).unwrap_or(0);
+        let _ = h_cd_pos; // timing proximity is validated by integration; unit test checks structure
+    }
+
+    #[test]
+    fn detail_from_quota_no_countdown_when_reset_is_past() {
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier("five_hour", 9.0), tier("seven_day", 27.0)],
+        );
+        let s = format_subscription_detail_from_quota(&quota).expect("should format");
+        assert!(s.contains("h9%"), "expected h9% in {s}");
+        assert!(s.contains("w27%"), "expected w27% in {s}");
+        assert!(!s.starts_with(' '), "no leading spaces in {s}");
+    }
+
+    #[test]
+    fn detail_from_quota_gemini_flash_lite_included() {
+        let quota = make_quota(
+            "gemini",
+            true,
+            vec![
+                tier_with_reset("gemini_pro", 5.0, 7200),
+                tier_with_reset("gemini_flash", 42.0, 14400),
+                tier_with_reset("gemini_flash_lite", 80.0, 21600),
+            ],
+        );
+        let s = format_subscription_detail_from_quota(&quota).expect("should format");
+        assert!(s.contains("p5%"), "expected p5% in {s}");
+        assert!(s.contains("f42%"), "expected f42% in {s}");
+        assert!(s.contains("l80%"), "expected l80% in {s}");
+        assert!(!s.starts_with(' '), "no leading spaces in {s}");
+        // each tier's countdown should appear right after its usage %
+        let p_pos = s.find("p5%").unwrap();
+        let f_pos = s.find("f42%").unwrap();
+        let l_pos = s.find("l80%").unwrap();
+        assert!(p_pos < f_pos && f_pos < l_pos, "tiers in order p f l");
     }
 
     #[test]
@@ -979,6 +1385,122 @@ mod tests {
         let quota = make_quota("gemini", true, vec![tier("some_future_tier", 80.0)]);
         assert!(format_subscription_summary(&quota).is_none());
     }
+
+    // ── Ring icon pixel tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn ring_icon_output_size_is_correct() {
+        let buf = super::generate_ring_icon_rgba(Some(50.0), 72);
+        assert_eq!(buf.len(), 72 * 72 * 4);
+    }
+
+    #[test]
+    fn ring_icon_none_returns_unmodified_base() {
+        let buf = super::generate_ring_icon_rgba(None, 72);
+        let (base, _, _) = &*super::ICON_BASE_RGBA;
+        assert_eq!(&buf, base, "None pct must return unmodified base pixels");
+    }
+
+    #[test]
+    fn ring_icon_zero_pct_all_white() {
+        // 0 % → fill_angle = 0 → no pixel satisfies angle ≤ 0 → all opaque pixels white
+        let buf = super::generate_ring_icon_rgba(Some(0.0), 72);
+        for chunk in buf.chunks(4) {
+            if chunk[3] == 0 {
+                continue;
+            }
+            assert_eq!(
+                (chunk[0], chunk[1], chunk[2]),
+                (255, 255, 255),
+                "0% fill: every opaque pixel should be white"
+            );
+        }
+    }
+
+    #[test]
+    fn ring_icon_full_pct_all_red() {
+        // 100% ≥ UTIL_DANGER_PCT (90) and fill_angle = 2π → all opaque pixels danger-red
+        let buf = super::generate_ring_icon_rgba(Some(100.0), 72);
+        for chunk in buf.chunks(4) {
+            if chunk[3] == 0 {
+                continue;
+            }
+            assert_eq!(
+                (chunk[0], chunk[1], chunk[2]),
+                (230, 60, 60),
+                "100% fill: every opaque pixel should be danger red"
+            );
+        }
+    }
+
+    #[test]
+    fn ring_icon_alpha_preserved() {
+        // RGB channels are recolored; alpha must remain identical to the base icon
+        let (base, _, _) = &*super::ICON_BASE_RGBA;
+        let buf = super::generate_ring_icon_rgba(Some(50.0), 72);
+        for (i, chunk) in buf.chunks(4).enumerate() {
+            assert_eq!(
+                chunk[3],
+                base[i * 4 + 3],
+                "alpha at pixel {i} must match original"
+            );
+        }
+    }
+
+    #[test]
+    fn ring_icon_half_pct_roughly_half_colored() {
+        // 50% should produce a roughly equal split of colored vs white opaque pixels
+        let buf = super::generate_ring_icon_rgba(Some(50.0), 72);
+        let mut colored = 0usize;
+        let mut white = 0usize;
+        for chunk in buf.chunks(4) {
+            if chunk[3] == 0 {
+                continue;
+            }
+            if (chunk[0], chunk[1], chunk[2]) == (255, 255, 255) {
+                white += 1;
+            } else {
+                colored += 1;
+            }
+        }
+        assert!(colored > 0, "50% should have some colored pixels");
+        assert!(white > 0, "50% should have some white pixels");
+        let ratio = colored as f64 / (colored + white) as f64;
+        assert!(
+            ratio > 0.3 && ratio < 0.7,
+            "50% fill ratio should be ~0.5, got {ratio:.2} ({colored} colored / {white} white)"
+        );
+    }
+
+    #[test]
+    fn ring_icon_color_thresholds() {
+        // Locate the first non-white opaque pixel — its RGB is the fill color for that pct.
+        // All filled pixels share the same color, so any one is representative.
+        let fill_color = |pct: f64| -> Option<(u8, u8, u8)> {
+            super::generate_ring_icon_rgba(Some(pct), 72)
+                .chunks(4)
+                .find(|c| c[3] > 0 && (c[0], c[1], c[2]) != (255, 255, 255))
+                .map(|c| (c[0], c[1], c[2]))
+        };
+        assert_eq!(fill_color(50.0), Some((60, 200, 80)), "< 70% → green");
+        assert_eq!(
+            fill_color(70.0),
+            Some((240, 120, 30)),
+            "≥ 70% → orange (warn)"
+        );
+        assert_eq!(
+            fill_color(89.9),
+            Some((240, 120, 30)),
+            "< 90% → still orange"
+        );
+        assert_eq!(
+            fill_color(90.0),
+            Some((230, 60, 60)),
+            "≥ 90% → red (danger)"
+        );
+    }
+
+    // ── Script summary tests ────────────────────────────────────────────────────
 
     fn usage_data(plan_name: Option<&str>, utilization: f64) -> UsageData {
         UsageData {

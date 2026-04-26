@@ -504,6 +504,8 @@
     "autoLaunchFailed": "设置开机自启失败",
     "minimizeToTray": "关闭时最小化到托盘",
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
+    "trayProgressIcon": "托盘用量进度图标",
+    "trayProgressIconDescription": "在菜单栏图标上以顺时针扇形展示当前订阅用量（仅深色模式）。",
     "useAppWindowControls": "启用应用级窗口按钮",
     "useAppWindowControlsDescription": "开启后使用应用自建的最小化、最大化/还原、关闭按钮；关闭后沿用系统窗口模式。",
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",
