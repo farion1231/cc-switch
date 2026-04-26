@@ -274,20 +274,20 @@ fn compute_tray_worst_pct(app_state: &crate::store::AppState) -> Option<f64> {
 }
 
 /// 前端通知主界面 activeApp 切换时调用，更新焦点并刷新托盘图标。
-pub(crate) fn set_tray_focused_app(app_type_str: &str, app: &tauri::AppHandle) {
+pub(crate) fn set_tray_focused_app(app_type_str: &str, _app: &tauri::AppHandle) {
     use std::str::FromStr;
     let parsed = AppType::from_str(app_type_str).ok(); // 第三方 app 解析为 None
     if let Ok(mut guard) = TRAY_FOCUSED_APP.lock() {
         *guard = parsed;
     }
     #[cfg(target_os = "macos")]
-    update_tray_icon(app);
+    update_tray_icon(_app);
 }
 
 /// Public wrapper called from outside this module (e.g. after settings save).
-pub fn update_tray_icon_pub(app: &tauri::AppHandle) {
+pub fn update_tray_icon_pub(_app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
-    update_tray_icon(app);
+    update_tray_icon(_app);
 }
 
 /// Reset the tray usage refresh throttle so the next call to
@@ -987,6 +987,7 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
         refresh_tray_menu(app);
         return; // refresh_tray_menu 末尾已调用 update_tray_icon
     }
+    #[cfg(target_os = "macos")]
     update_tray_icon(app);
 }
 
@@ -1002,6 +1003,7 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
             }
         }
     }
+    #[cfg(target_os = "macos")]
     update_tray_icon(app);
 }
 
