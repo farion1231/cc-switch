@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
-use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+use crate::codex_config::{
+    get_codex_auth_path, get_codex_config_path, write_codex_live_atomic_with_stable_provider,
+};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
@@ -683,10 +685,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
             })?;
 
-            let auth_path = get_codex_auth_path();
-            write_json_file(&auth_path, auth)?;
-            let config_path = get_codex_config_path();
-            std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
+            write_codex_live_atomic_with_stable_provider(auth, Some(config_str))?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
