@@ -273,6 +273,7 @@ fn convert_message_to_openai(
     if let Some(blocks) = content.as_array() {
         let mut content_parts = Vec::new();
         let mut tool_calls = Vec::new();
+        let mut reasoning_parts: Vec<String> = Vec::new();
 
         for block in blocks {
             let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -332,7 +333,14 @@ fn convert_message_to_openai(
                     }));
                 }
                 "thinking" => {
-                    // 跳过 thinking blocks
+                    // 保留 thinking 文本，供下游需要 reasoning_content 的
+                    // provider 使用（例如 Moonshot AI 启用 thinking 时会校验
+                    // assistant tool call message 必须携带 reasoning_content）。
+                    if let Some(thinking) = block.get("thinking").and_then(|t| t.as_str()) {
+                        if !thinking.is_empty() {
+                            reasoning_parts.push(thinking.to_string());
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -364,6 +372,19 @@ fn convert_message_to_openai(
             // 工具调用
             if !tool_calls.is_empty() {
                 msg["tool_calls"] = json!(tool_calls);
+            }
+
+            // reasoning_content：仅在 assistant + tool_calls 同时存在时注入。
+            // Moonshot AI（kimi）启用 thinking 后要求 assistant tool call message
+            // 必须携带该字段，缺失即返回 400；其它 OpenAI 兼容 provider 会忽略
+            // 这个额外字段，因此无需按 provider gate。
+            if role == "assistant" && !tool_calls.is_empty() {
+                let reasoning_content = if reasoning_parts.is_empty() {
+                    "tool call".to_string()
+                } else {
+                    reasoning_parts.join("\n")
+                };
+                msg["reasoning_content"] = json!(reasoning_content);
             }
 
             result.push(msg);
@@ -710,6 +731,70 @@ mod tests {
         assert_eq!(msg["role"], "assistant");
         assert!(msg.get("tool_calls").is_some());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_preserves_reasoning_content() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert!(msg.get("tool_calls").is_some());
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_injects_placeholder_reasoning_content_when_missing() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_456", "name": "get_weather", "input": {"location": "Osaka"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert!(msg.get("tool_calls").is_some());
+        assert_eq!(msg["reasoning_content"], "tool call");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_assistant_text_only_does_not_inject_reasoning_content() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Just a plain reply, no tools."}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert!(msg.get("tool_calls").is_none());
+        assert!(
+            msg.get("reasoning_content").is_none(),
+            "reasoning_content should not be injected on plain assistant messages"
+        );
     }
 
     #[test]
