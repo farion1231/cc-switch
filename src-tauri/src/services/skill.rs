@@ -556,9 +556,33 @@ impl SkillService {
     // ========== 统一管理方法 ==========
 
     /// 获取所有已安装的 Skills
+    ///
+    /// 同时核对磁盘：若 SSOT 目录下的 skill 文件夹已被手动删除，自动清理 DB 记录。
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let skills = db.get_all_installed_skills()?;
-        Ok(skills.into_values().collect())
+        let ssot_dir = Self::get_ssot_dir().ok();
+        let mut result = Vec::new();
+        for (id, skill) in skills {
+            let exists = ssot_dir
+                .as_ref()
+                .map(|d| d.join(&skill.directory).exists())
+                .unwrap_or(true);
+            if exists {
+                result.push(skill);
+            } else {
+                // Clean up app copies before removing the DB record so the
+                // enabled-app directories don't contain orphaned skill folders.
+                for app in AppType::all() {
+                    let _ = Self::remove_from_app(&skill.directory, &app);
+                }
+                let _ = db.delete_skill(&id);
+                log::info!(
+                    "skill '{}' directory missing from SSOT, removed from database",
+                    skill.name
+                );
+            }
+        }
+        Ok(result)
     }
 
     /// 安装 Skill
