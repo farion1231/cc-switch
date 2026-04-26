@@ -273,6 +273,10 @@ fn convert_message_to_openai(
     if let Some(blocks) = content.as_array() {
         let mut content_parts = Vec::new();
         let mut tool_calls = Vec::new();
+        // reasoning_parts: 收集 thinking block 内容，用于生成 reasoning_content。
+        // Moonshot AI（kimi-k2.6）等 provider 要求：若启用 thinking，assistant
+        // 的 tool call 消息中必须包含 reasoning_content，否则返回 400。
+        let mut reasoning_parts = Vec::new();
 
         for block in blocks {
             let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -332,14 +336,21 @@ fn convert_message_to_openai(
                     }));
                 }
                 "thinking" => {
-                    // 跳过 thinking blocks
+                    // 提取 thinking 内容，后续作为 reasoning_content 传给上游。
+                    // 某些 provider（如 Moonshot AI/kimi-k2.6）强制要求 assistant
+                    // tool call 消息必须携带 reasoning_content，否则报错 400。
+                    if let Some(thinking) = block.get("thinking").and_then(|t| t.as_str()) {
+                        if !thinking.is_empty() {
+                            reasoning_parts.push(thinking.to_string());
+                        }
+                    }
                 }
                 _ => {}
             }
         }
 
         // 添加带内容和/或工具调用的消息
-        if !content_parts.is_empty() || !tool_calls.is_empty() {
+        if !content_parts.is_empty() || !tool_calls.is_empty() || !reasoning_parts.is_empty() {
             let mut msg = json!({"role": role});
 
             // 内容处理
@@ -364,6 +375,18 @@ fn convert_message_to_openai(
             // 工具调用
             if !tool_calls.is_empty() {
                 msg["tool_calls"] = json!(tool_calls);
+            }
+
+            // 当 assistant 消息包含 tool_calls 时，注入 reasoning_content。
+            // Moonshot AI（kimi-k2.6）要求：若启用 thinking，assistant tool call
+            // 消息必须携带 reasoning_content，缺失会返回 400。
+            if role == "assistant" && !tool_calls.is_empty() {
+                let reasoning_content = if reasoning_parts.is_empty() {
+                    "tool call".to_string()
+                } else {
+                    reasoning_parts.join("\n")
+                };
+                msg["reasoning_content"] = json!(reasoning_content);
             }
 
             result.push(msg);
@@ -708,6 +731,49 @@ mod tests {
         let result = anthropic_to_openai(input).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
+        assert!(msg.get("tool_calls").is_some());
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_preserves_reasoning_content() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_injects_placeholder_reasoning_content_when_missing() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert_eq!(msg["reasoning_content"], "tool call");
         assert!(msg.get("tool_calls").is_some());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
     }
