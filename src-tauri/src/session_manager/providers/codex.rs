@@ -401,11 +401,17 @@ fn update_state_db_model_provider(
         return Err("Codex threads table is missing model_provider column".to_string());
     }
 
-    conn.execute(
-        "UPDATE threads SET model_provider = ?1 WHERE id = ?2",
-        rusqlite::params![target_provider, session_id],
-    )
-    .map_err(|e| format!("Failed to update Codex state database: {e}"))?;
+    let rows_affected = conn
+        .execute(
+            "UPDATE threads SET model_provider = ?1 WHERE id = ?2",
+            rusqlite::params![target_provider, session_id],
+        )
+        .map_err(|e| format!("Failed to update Codex state database: {e}"))?;
+    if rows_affected == 0 {
+        return Err(format!(
+            "Codex state database thread not found for session: {session_id}"
+        ));
+    }
 
     Ok(())
 }
@@ -697,6 +703,43 @@ mod tests {
         .expect_err("missing model_provider should fail");
 
         assert!(error.contains("model_provider column"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read session"),
+            original_content
+        );
+    }
+
+    #[test]
+    fn switch_session_provider_fails_when_state_db_thread_is_missing() {
+        let temp = tempdir().expect("tempdir");
+        let sessions_root = temp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_root).expect("create sessions root");
+        let path = sessions_root.join("session.jsonl");
+        let original_content = concat!(
+            "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\"}}\n",
+            "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Hello\"}}\n"
+        );
+        std::fs::write(&path, original_content).expect("write");
+
+        let db_path = temp.path().join("state_5.sqlite");
+        let conn = rusqlite::Connection::open(&db_path).expect("open db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads");
+        drop(conn);
+
+        let error = switch_session_provider_with_paths(
+            "test-id",
+            &path,
+            "custom",
+            &sessions_root,
+            &db_path,
+        )
+        .expect_err("missing thread should fail");
+
+        assert!(error.contains("thread"));
         assert_eq!(
             std::fs::read_to_string(&path).expect("read session"),
             original_content
