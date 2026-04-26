@@ -386,9 +386,16 @@ fn build_opencode_settings(request: &DeepLinkImportRequest) -> serde_json::Value
         models.insert(model.clone(), json!({ "name": model }));
     }
 
-    // Default to openai-compatible npm package
+    // Resolve npm package: explicit override (e.g. "@ai-sdk/google" for Gemini-
+    // native routing) wins; fall back to the generic OpenAI-compatible SDK.
+    let npm = request
+        .npm
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("@ai-sdk/openai-compatible");
+
     json!({
-        "npm": "@ai-sdk/openai-compatible",
+        "npm": npm,
         "options": options,
         "models": models
     })
@@ -726,6 +733,14 @@ fn merge_additive_config(
             .and_then(|v| v.as_str())
         {
             request.endpoint = Some(base_url.to_string());
+        }
+    }
+
+    // Extract npm package override from config if not provided in URL
+    // (OpenCode only; openclaw ignores npm at build time)
+    if request.npm.as_ref().is_none_or(|s| s.is_empty()) {
+        if let Some(npm) = config.get("npm").and_then(|v| v.as_str()) {
+            request.npm = Some(npm.to_string());
         }
     }
 

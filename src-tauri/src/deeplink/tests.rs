@@ -35,6 +35,16 @@ fn test_parse_valid_claude_deeplink() {
 }
 
 #[test]
+fn test_parse_opencode_deeplink_with_npm_param() {
+    let url = "ccswitch://v1/import?resource=provider&app=opencode&name=Relay&homepage=https%3A%2F%2Frelay.example.com&endpoint=https%3A%2F%2Frelay.example.com%2Fv1beta&apiKey=sk-test&npm=%40ai-sdk%2Fgoogle";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.app, Some("opencode".to_string()));
+    assert_eq!(request.npm, Some("@ai-sdk/google".to_string()));
+}
+
+#[test]
 fn test_parse_deeplink_with_notes() {
     let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&notes=Test%20notes";
 
@@ -135,6 +145,7 @@ fn test_build_gemini_provider_with_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        npm: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -188,6 +199,7 @@ fn test_build_gemini_provider_without_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        npm: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -217,6 +229,98 @@ fn test_build_gemini_provider_without_model() {
 }
 
 #[test]
+fn test_build_opencode_provider_defaults_npm_when_absent() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("opencode".to_string()),
+        name: Some("Test OpenCode".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1".to_string()),
+        api_key: Some("test-api-key".to_string()),
+        icon: None,
+        model: Some("gpt-5".to_string()),
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        npm: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::OpenCode, &request).unwrap();
+    assert_eq!(provider.settings_config["npm"], "@ai-sdk/openai-compatible");
+}
+
+#[test]
+fn test_build_opencode_provider_honors_npm_override() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("opencode".to_string()),
+        name: Some("Gemini via OpenCode".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1beta".to_string()),
+        api_key: Some("test-api-key".to_string()),
+        icon: None,
+        model: Some("gemini-2.5-flash".to_string()),
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        npm: Some("@ai-sdk/google".to_string()),
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::OpenCode, &request).unwrap();
+    assert_eq!(provider.settings_config["npm"], "@ai-sdk/google");
+    assert_eq!(
+        provider.settings_config["options"]["baseURL"],
+        "https://api.example.com/v1beta"
+    );
+    assert_eq!(
+        provider.settings_config["options"]["apiKey"],
+        "test-api-key"
+    );
+}
+
+#[test]
 fn test_parse_and_merge_config_claude() {
     // Prepare Base64 encoded Claude config
     let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#;
@@ -236,6 +340,7 @@ fn test_parse_and_merge_config_claude() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        npm: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -286,6 +391,7 @@ fn test_parse_and_merge_config_url_override() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        npm: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
