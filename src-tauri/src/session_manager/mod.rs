@@ -55,6 +55,14 @@ pub struct DeleteSessionOutcome {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchCodexSessionProviderRequest {
+    pub session_id: String,
+    pub source_path: String,
+    pub target_provider: String,
+}
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let (r1, r2, r3, r4, r5, r6) = std::thread::scope(|s| {
         let h1 = s.spawn(codex::scan_sessions);
@@ -136,6 +144,21 @@ pub fn delete_sessions(requests: &[DeleteSessionRequest]) -> Vec<DeleteSessionOu
             &request.source_path,
         )
     })
+}
+
+pub fn get_codex_session_provider(
+    session_id: &str,
+    source_path: &str,
+) -> Result<Option<String>, String> {
+    codex::get_session_provider(session_id, Path::new(source_path))
+}
+
+pub fn switch_codex_session_provider(
+    session_id: &str,
+    source_path: &str,
+    target_provider: &str,
+) -> Result<Option<String>, String> {
+    codex::switch_session_provider(session_id, Path::new(source_path), target_provider)
 }
 
 fn delete_session_with_root(
