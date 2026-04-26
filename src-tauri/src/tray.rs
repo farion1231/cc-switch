@@ -749,6 +749,7 @@ fn handle_provider_click(
 
         // 切换供应商
         crate::commands::switch_provider(
+            app.clone(),
             app_state.clone(),
             app_type_str.to_string(),
             provider_id.to_string(),
