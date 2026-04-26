@@ -240,6 +240,114 @@ command = "say"
 }
 
 #[test]
+fn provider_service_switch_codex_preserves_live_model_provider_id_for_history() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let legacy_auth = json!({ "OPENAI_API_KEY": "rightcode-key" });
+    let legacy_config = r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    write_codex_live_atomic(&legacy_auth, Some(legacy_config))
+        .expect("seed existing codex live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "RightCode".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "stale"},
+                    "config": legacy_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "fresh-key"},
+                    "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "new-provider")
+        .expect("switch provider should succeed");
+
+    let config_text =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed: toml::Value = toml::from_str(&config_text).expect("parse config.toml");
+
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("rightcode"),
+        "live Codex model_provider should stay stable so resume history remains visible"
+    );
+
+    let model_providers = parsed
+        .get("model_providers")
+        .and_then(|v| v.as_table())
+        .expect("model_providers table exists");
+    assert!(
+        model_providers.get("aihubmix").is_none(),
+        "target provider-specific id should be rewritten in live config"
+    );
+    assert_eq!(
+        model_providers
+            .get("rightcode")
+            .and_then(|v| v.get("base_url"))
+            .and_then(|v| v.as_str()),
+        Some("https://aihubmix.example/v1"),
+        "stable provider id should point at the newly selected supplier endpoint"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after switch");
+    let new_config_text = providers
+        .get("new-provider")
+        .expect("new provider exists")
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        new_config_text.contains("[model_providers.aihubmix]"),
+        "stored provider template should remain provider-specific"
+    );
+}
+
+#[test]
 fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
