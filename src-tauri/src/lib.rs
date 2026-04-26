@@ -161,6 +161,12 @@ fn handle_deeplink_url(
     true
 }
 
+/// 主界面 activeApp 切换时通知后端，用于托盘图标跟随焦点 app 显示用量
+#[tauri::command]
+fn set_tray_focus_app(app_type: String, app: tauri::AppHandle) {
+    tray::set_tray_focused_app(&app_type, &app);
+}
+
 /// 更新托盘菜单的Tauri命令
 #[tauri::command]
 async fn update_tray_menu(
@@ -179,19 +185,6 @@ async fn update_tray_menu(
         Err(err) => {
             log::error!("创建托盘菜单失败: {err}");
             Ok(false)
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_tray_icon() -> Option<Image<'static>> {
-    const ICON_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
-
-    match Image::from_bytes(ICON_BYTES) {
-        Ok(icon) => Some(icon),
-        Err(err) => {
-            log::warn!("Failed to load macOS tray icon: {err}");
-            None
         }
     }
 }
@@ -766,16 +759,16 @@ pub fn run() {
                 })
                 .show_menu_on_left_click(true);
 
-            // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
+            // macOS: 启动时使用原始图标，用量加载后由 update_tray_icon 叠加彩色进度环
             #[cfg(target_os = "macos")]
             {
-                if let Some(icon) = macos_tray_icon() {
-                    tray_builder = tray_builder.icon(icon).icon_as_template(true);
-                } else if let Some(icon) = app.default_window_icon() {
-                    log::warn!("Falling back to default window icon for tray");
-                    tray_builder = tray_builder.icon(icon.clone());
-                } else {
-                    log::warn!("Failed to load macOS tray icon for tray");
+                const ICON_BYTES: &[u8] =
+                    include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
+                match Image::from_bytes(ICON_BYTES) {
+                    Ok(icon) => {
+                        tray_builder = tray_builder.icon(icon).icon_as_template(true);
+                    }
+                    Err(err) => log::warn!("Failed to load macOS tray icon: {err}"),
                 }
             }
 
@@ -795,6 +788,18 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+
+            // 启动预热：AppState 就绪后拉取用量并整建一次托盘菜单（补充 detail 行）。
+            // 在用户首次触碰托盘之前完成，避免首次点击时因 None→Some 状态翻转
+            // 触发 refresh_tray_menu 而强制收起正在查看的菜单。
+            {
+                let app_warmup = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    crate::tray::refresh_all_usage_in_tray(&app_warmup).await;
+                    crate::tray::refresh_tray_menu(&app_warmup);
+                });
+            }
 
             // 从数据库加载日志配置并应用
             {
@@ -1142,6 +1147,7 @@ pub fn run() {
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             update_tray_menu,
+            set_tray_focus_app,
             // Environment variable management
             commands::check_env_conflicts,
             commands::delete_env_vars,

@@ -330,6 +330,8 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+  // 是否在托盘图标显示彩色用量进度（顺时针扇形，深色模式）
+  trayProgressIcon?: boolean;
 }
 
 export interface SessionMeta {
