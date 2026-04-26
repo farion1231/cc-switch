@@ -6,7 +6,7 @@ use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 /// OpenAI 流式响应数据结构
@@ -106,6 +106,14 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut current_model = None;
         let mut next_content_index: u32 = 0;
         let mut has_sent_message_start = false;
+        // 某些上游 provider（如 OpenRouter 的 kimi-k2.6）会在 tool_use 后发送多个
+        // 带 finish_reason 的 SSE chunk。Anthropic 协议要求每个消息流只能有一个
+        // message_delta，重复会导致 Claude Code abort 连接。因此需要：
+        // 1) has_emitted_message_delta: 去重，只处理第一个 finish_reason
+        // 2) pending_message_delta: 缓存延迟到 [DONE] 发送，确保 usage 完整
+        let mut has_emitted_message_delta = false;
+        let mut pending_message_delta: Option<(Option<String>, Option<Value>)> = None;
+        let mut has_sent_message_stop = false;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
@@ -127,11 +135,33 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                             if let Some(data) = strip_sse_field(l, "data") {
                                 if data.trim() == "[DONE]" {
                                     log::debug!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
+
+                                    // 流正常结束，发出缓存的 message_delta（含完整 usage）。
+                                    // 如果此处没有缓存（如上游未发 finish_reason），后续
+                                    // async_stream! 末尾的兜底逻辑会确保 message_delta 被发送。
+                                    if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
+                                        let mut event = json!({
+                                            "type": "message_delta",
+                                            "delta": {
+                                                "stop_reason": stop_reason,
+                                                "stop_sequence": null
+                                            }
+                                        });
+                                        if let Some(uj) = usage_json {
+                                            event["usage"] = uj;
+                                        }
+                                        let sse_data = format!("event: message_delta\ndata: {}\n\n",
+                                            serde_json::to_string(&event).unwrap_or_default());
+                                        log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (from pending)");
+                                        yield Ok(Bytes::from(sse_data));
+                                    }
+
                                     let event = json!({"type": "message_stop"});
                                     let sse_data = format!("event: message_stop\ndata: {}\n\n",
                                         serde_json::to_string(&event).unwrap_or_default());
                                     log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop");
                                     yield Ok(Bytes::from(sse_data));
+                                    has_sent_message_stop = true;
                                     continue;
                                 }
 
@@ -420,8 +450,35 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             }
                                         }
 
-                                        // 处理 finish_reason
+                                        // 处理 finish_reason。
+                                        // 注意：OpenRouter 某些 provider 会发送多个带 finish_reason 的 chunk
+                                        // （第一个 usage 为 null，后续才补全）。此处只做缓存，不立即发送，
+                                        // 等到 [DONE] 或流末尾再统一发出，确保 usage 完整且只发一次。
                                         if let Some(finish_reason) = &choice.finish_reason {
+                                            let stop_reason = map_stop_reason(Some(finish_reason));
+                                            let usage_json = chunk.usage.as_ref().map(|u| {
+                                                let mut uj = json!({
+                                                    "input_tokens": u.prompt_tokens,
+                                                    "output_tokens": u.completion_tokens
+                                                });
+                                                if let Some(cached) = extract_cache_read_tokens(u) {
+                                                    uj["cache_read_input_tokens"] = json!(cached);
+                                                }
+                                                if let Some(created) = u.cache_creation_input_tokens {
+                                                    uj["cache_creation_input_tokens"] = json!(created);
+                                                }
+                                                uj
+                                            });
+
+                                            if has_emitted_message_delta {
+                                                // 更新缓存的 message_delta usage（如果有更完整的 usage）
+                                                if let (Some((_, ref mut usage)), Some(uj)) = (&mut pending_message_delta, usage_json) {
+                                                    *usage = Some(uj);
+                                                }
+                                                continue;
+                                            }
+                                            has_emitted_message_delta = true;
+
                                             if let Some(index) = current_non_tool_block_index.take() {
                                                 let event = json!({
                                                     "type": "content_block_stop",
@@ -511,32 +568,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 open_tool_block_indices.clear();
                                             }
 
-                                            let stop_reason = map_stop_reason(Some(finish_reason));
-                                            // Build usage with cache token fields
-                                            let usage_json = chunk.usage.as_ref().map(|u| {
-                                                let mut uj = json!({
-                                                    "input_tokens": u.prompt_tokens,
-                                                    "output_tokens": u.completion_tokens
-                                                });
-                                                if let Some(cached) = extract_cache_read_tokens(u) {
-                                                    uj["cache_read_input_tokens"] = json!(cached);
-                                                }
-                                                if let Some(created) = u.cache_creation_input_tokens {
-                                                    uj["cache_creation_input_tokens"] = json!(created);
-                                                }
-                                                uj
-                                            });
-                                            let event = json!({
-                                                "type": "message_delta",
-                                                "delta": {
-                                                    "stop_reason": stop_reason,
-                                                    "stop_sequence": null
-                                                },
-                                                "usage": usage_json
-                                            });
-                                            let sse_data = format!("event: message_delta\ndata: {}\n\n",
-                                                serde_json::to_string(&event).unwrap_or_default());
-                                            yield Ok(Bytes::from(sse_data));
+                                            // 缓存 message_delta，等到 [DONE] 时发送（以便收集完整的 usage）
+                                            pending_message_delta = Some((stop_reason, usage_json));
                                         }
                                     }
                                 }
@@ -559,6 +592,32 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                     break;
                 }
             }
+        }
+
+        // 流结束（未收到 [DONE] 或连接中断），确保发送缓存的 message_delta 和 message_stop
+        if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
+            let mut event = json!({
+                "type": "message_delta",
+                "delta": {
+                    "stop_reason": stop_reason,
+                    "stop_sequence": null
+                }
+            });
+            if let Some(uj) = usage_json {
+                event["usage"] = uj;
+            }
+            let sse_data = format!("event: message_delta\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default());
+            log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (at stream end)");
+            yield Ok(Bytes::from(sse_data));
+        }
+
+        if !has_sent_message_stop {
+            let event = json!({"type": "message_stop"});
+            let sse_data = format!("event: message_stop\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default());
+            log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop (at stream end)");
+            yield Ok(Bytes::from(sse_data));
         }
     }
 }
@@ -817,5 +876,59 @@ mod tests {
             !merged.contains('\u{FFFD}'),
             "output must not contain U+FFFD replacement characters"
         );
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_finish_reason_emits_only_one_message_delta() {
+        // Simulates OpenRouter behavior where two chunks carry finish_reason:
+        // first with null usage, second with populated usage.
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_dup\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_dup\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        let events: Vec<Value> = merged
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
+                serde_json::from_str::<Value>(data).ok()
+            })
+            .collect();
+
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_delta"))
+            .collect();
+
+        assert_eq!(
+            message_deltas.len(),
+            1,
+            "duplicate finish_reason chunks must produce exactly one message_delta, got {}: {:?}",
+            message_deltas.len(),
+            message_deltas
+        );
+
+        assert_eq!(message_deltas[0]["usage"]["input_tokens"], 10);
+        assert_eq!(message_deltas[0]["usage"]["output_tokens"], 5);
+
+        let message_stops = events
+            .iter()
+            .filter(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop"))
+            .count();
+        assert_eq!(message_stops, 1, "message_stop must only be emitted once");
     }
 }
