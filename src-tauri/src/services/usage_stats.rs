@@ -130,6 +130,55 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     )
 }
 
+const CODEX_SESSION_DEDUP_WINDOW_SECS: i64 = 90;
+
+fn sql_col(alias: &str, column: &str) -> String {
+    if alias.is_empty() {
+        column.to_string()
+    } else {
+        format!("{alias}.{column}")
+    }
+}
+
+/// Exclude Codex session rows from aggregate statistics when the same request
+/// is already present as a real proxy log. Raw request logs still show both
+/// sources so the original data remains inspectable.
+fn codex_session_duplicate_exclusion(log_alias: &str) -> String {
+    let app_type = sql_col(log_alias, "app_type");
+    let provider_id = sql_col(log_alias, "provider_id");
+    let data_source = sql_col(log_alias, "data_source");
+    let status_code = sql_col(log_alias, "status_code");
+    let model = sql_col(log_alias, "model");
+    let input_tokens = sql_col(log_alias, "input_tokens");
+    let output_tokens = sql_col(log_alias, "output_tokens");
+    let cache_read_tokens = sql_col(log_alias, "cache_read_tokens");
+    let cache_creation_tokens = sql_col(log_alias, "cache_creation_tokens");
+    let created_at = sql_col(log_alias, "created_at");
+
+    format!(
+        "NOT (
+            {app_type} = 'codex'
+            AND {provider_id} = '_codex_session'
+            AND COALESCE({data_source}, '') = 'codex_session'
+            AND EXISTS (
+                SELECT 1
+                FROM proxy_request_logs p
+                WHERE p.app_type = 'codex'
+                  AND p.provider_id != '_codex_session'
+                  AND COALESCE(p.data_source, 'proxy') = 'proxy'
+                  AND p.status_code = {status_code}
+                  AND p.model = {model}
+                  AND p.input_tokens = {input_tokens}
+                  AND p.output_tokens = {output_tokens}
+                  AND p.cache_read_tokens = {cache_read_tokens}
+                  AND p.cache_creation_tokens = {cache_creation_tokens}
+                  AND p.created_at BETWEEN {created_at} - {CODEX_SESSION_DEDUP_WINDOW_SECS}
+                                      AND {created_at} + {CODEX_SESSION_DEDUP_WINDOW_SECS}
+            )
+        )"
+    )
+}
+
 #[derive(Debug, Clone, Default)]
 struct RollupDateBounds {
     start: Option<String>,
@@ -231,21 +280,22 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         // Build detail WHERE clause
-        let mut conditions = Vec::new();
+        let mut conditions: Vec<String> = Vec::new();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(start) = start_date {
-            conditions.push("created_at >= ?");
+            conditions.push("l.created_at >= ?".to_string());
             params_vec.push(Box::new(start));
         }
         if let Some(end) = end_date {
-            conditions.push("created_at <= ?");
+            conditions.push("l.created_at <= ?".to_string());
             params_vec.push(Box::new(end));
         }
         if let Some(at) = app_type {
-            conditions.push("app_type = ?");
+            conditions.push("l.app_type = ?".to_string());
             params_vec.push(Box::new(at.to_string()));
         }
+        conditions.push(codex_session_duplicate_exclusion("l"));
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -293,7 +343,7 @@ impl Database {
                     COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
                     COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
-                 FROM proxy_request_logs {where_clause}) d,
+                 FROM proxy_request_logs l {where_clause}) d,
                 (SELECT
                     COALESCE(SUM(request_count), 0) as total_requests,
                     COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
@@ -369,23 +419,25 @@ impl Database {
             }
 
             let app_type_filter = if app_type.is_some() {
-                "AND app_type = ?4"
+                "AND l.app_type = ?4"
             } else {
                 ""
             };
+            let dedup_filter = codex_session_duplicate_exclusion("l");
 
             let sql = format!(
                 "SELECT
-                    CAST((created_at - ?1) / ?3 AS INTEGER) as bucket_idx,
+                    CAST((l.created_at - ?1) / ?3 AS INTEGER) as bucket_idx,
                     COUNT(*) as request_count,
-                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
-                    COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-                    COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
-                FROM proxy_request_logs
-                WHERE created_at >= ?1 AND created_at <= ?2 {app_type_filter}
+                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
+                    COALESCE(SUM(l.input_tokens + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM(l.input_tokens), 0) as total_input_tokens,
+                    COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
+                    COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
+                FROM proxy_request_logs l
+                WHERE l.created_at >= ?1 AND l.created_at <= ?2 {app_type_filter}
+                  AND {dedup_filter}
                 GROUP BY bucket_idx
                 ORDER BY bucket_idx ASC"
             );
@@ -456,23 +508,25 @@ impl Database {
         let bucket_count = (end_day.signed_duration_since(start_day).num_days() + 1) as usize;
 
         let app_type_filter = if app_type.is_some() {
-            "AND app_type = ?3"
+            "AND l.app_type = ?3"
         } else {
             ""
         };
+        let dedup_filter = codex_session_duplicate_exclusion("l");
 
         let detail_sql = format!(
             "SELECT
-                date(created_at, 'unixepoch', 'localtime') as bucket_date,
+                date(l.created_at, 'unixepoch', 'localtime') as bucket_date,
                 COUNT(*) as request_count,
-                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
-                COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
-                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-                COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens
-            FROM proxy_request_logs
-            WHERE created_at >= ?1 AND created_at <= ?2 {app_type_filter}
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
+                COALESCE(SUM(l.input_tokens + l.output_tokens), 0) as total_tokens,
+                COALESCE(SUM(l.input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
+                COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
+                COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
+            FROM proxy_request_logs l
+            WHERE l.created_at >= ?1 AND l.created_at <= ?2 {app_type_filter}
+              AND {dedup_filter}
             GROUP BY bucket_date
             ORDER BY bucket_date ASC"
         );
@@ -623,20 +677,21 @@ impl Database {
     ) -> Result<Vec<ProviderStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = Vec::new();
+        let mut detail_conditions: Vec<String> = Vec::new();
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
-            detail_conditions.push("l.created_at >= ?");
+            detail_conditions.push("l.created_at >= ?".to_string());
             detail_params.push(Box::new(start));
         }
         if let Some(end) = end_date {
-            detail_conditions.push("l.created_at <= ?");
+            detail_conditions.push("l.created_at <= ?".to_string());
             detail_params.push(Box::new(end));
         }
         if let Some(at) = app_type {
-            detail_conditions.push("l.app_type = ?");
+            detail_conditions.push("l.app_type = ?".to_string());
             detail_params.push(Box::new(at.to_string()));
         }
+        detail_conditions.push(codex_session_duplicate_exclusion("l"));
         let detail_where = if detail_conditions.is_empty() {
             String::new()
         } else {
@@ -747,20 +802,21 @@ impl Database {
     ) -> Result<Vec<ModelStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = Vec::new();
+        let mut detail_conditions: Vec<String> = Vec::new();
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
-            detail_conditions.push("l.created_at >= ?");
+            detail_conditions.push("l.created_at >= ?".to_string());
             detail_params.push(Box::new(start));
         }
         if let Some(end) = end_date {
-            detail_conditions.push("l.created_at <= ?");
+            detail_conditions.push("l.created_at <= ?".to_string());
             detail_params.push(Box::new(end));
         }
         if let Some(at) = app_type {
-            detail_conditions.push("l.app_type = ?");
+            detail_conditions.push("l.app_type = ?".to_string());
             detail_params.push(Box::new(at.to_string()));
         }
+        detail_conditions.push(codex_session_duplicate_exclusion("l"));
         let detail_where = if detail_conditions.is_empty() {
             String::new()
         } else {
@@ -1351,6 +1407,49 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn insert_usage_log(
+        conn: &Connection,
+        request_id: &str,
+        provider_id: &str,
+        app_type: &str,
+        model: &str,
+        input_tokens: i64,
+        output_tokens: i64,
+        cache_read_tokens: i64,
+        cache_creation_tokens: i64,
+        total_cost_usd: &str,
+        status_code: i64,
+        created_at: i64,
+        data_source: &str,
+        latency_ms: i64,
+    ) -> Result<(), AppError> {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, latency_ms, status_code, created_at, data_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                request_id,
+                provider_id,
+                app_type,
+                model,
+                model,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                total_cost_usd,
+                latency_ms,
+                status_code,
+                created_at,
+                data_source
+            ],
+        )?;
+        Ok(())
+    }
+
     #[test]
     fn test_get_usage_summary() -> Result<(), AppError> {
         let db = Database::memory()?;
@@ -1379,6 +1478,95 @@ mod tests {
         let summary = db.get_usage_summary(None, None, None)?;
         assert_eq!(summary.total_requests, 2);
         assert_eq!(summary.success_rate, 100.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_codex_session_duplicate_is_excluded_from_aggregate_stats() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "proxy-1",
+                "codex-provider",
+                "codex",
+                "gpt-5.5",
+                100,
+                20,
+                5,
+                0,
+                "0.010",
+                200,
+                1_000,
+                "proxy",
+                1_500,
+            )?;
+            insert_usage_log(
+                &conn,
+                "codex-session-duplicate",
+                "_codex_session",
+                "codex",
+                "gpt-5.5",
+                100,
+                20,
+                5,
+                0,
+                "0.010",
+                200,
+                1_005,
+                "codex_session",
+                0,
+            )?;
+            insert_usage_log(
+                &conn,
+                "codex-session-only",
+                "_codex_session",
+                "codex",
+                "gpt-5.5",
+                200,
+                40,
+                10,
+                0,
+                "0.020",
+                200,
+                1_300,
+                "codex_session",
+                0,
+            )?;
+        }
+
+        let summary = db.get_usage_summary(None, None, Some("codex"))?;
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.total_input_tokens, 300);
+        assert_eq!(summary.total_output_tokens, 60);
+
+        let provider_stats = db.get_provider_stats(None, None, Some("codex"))?;
+        assert_eq!(provider_stats.len(), 2);
+        let real_provider = provider_stats
+            .iter()
+            .find(|stat| stat.provider_id == "codex-provider")
+            .expect("real proxy provider should remain");
+        assert_eq!(real_provider.request_count, 1);
+        assert_eq!(real_provider.total_tokens, 120);
+
+        let session_provider = provider_stats
+            .iter()
+            .find(|stat| stat.provider_id == "_codex_session")
+            .expect("unmatched Codex session usage should remain");
+        assert_eq!(session_provider.request_count, 1);
+        assert_eq!(session_provider.total_tokens, 240);
+
+        let model_stats = db.get_model_stats(None, None, Some("codex"))?;
+        assert_eq!(model_stats.len(), 1);
+        assert_eq!(model_stats[0].request_count, 2);
+        assert_eq!(model_stats[0].total_tokens, 360);
+
+        let trends = db.get_daily_trends(Some(0), Some(2 * 60 * 60), Some("codex"))?;
+        let total_trend_requests: u64 = trends.iter().map(|stat| stat.request_count).sum();
+        assert_eq!(total_trend_requests, 2);
 
         Ok(())
     }
