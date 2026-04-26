@@ -752,6 +752,25 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
+    let is_codex_oauth_provider = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.as_deref())
+        == Some("codex_oauth");
+
+    if app_type == AppType::Codex || is_codex_oauth_provider {
+        let proxy_info = state.proxy_service.start().await?;
+        launch_codex_provider_terminal(
+            &providerId,
+            app_type.as_str(),
+            &proxy_info.address,
+            proxy_info.port,
+            launch_cwd.as_deref(),
+        )
+        .map_err(|e| format!("启动 Codex 终端失败: {e}"))?;
+        return Ok(true);
+    }
+
     // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
@@ -811,6 +830,183 @@ fn extract_env_vars_from_config(
     }
 
     env_vars
+}
+
+fn launch_codex_provider_terminal(
+    provider_id: &str,
+    provider_app: &str,
+    proxy_address: &str,
+    proxy_port: u16,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
+    let home = dirs::home_dir().ok_or_else(|| "无法定位用户 Home 目录".to_string())?;
+    let codex_home = home
+        .join(".cc-switch")
+        .join("codex-cli")
+        .join(sanitize_shell_name(provider_id));
+    std::fs::create_dir_all(&codex_home).map_err(|e| format!("创建 Codex Home 失败: {e}"))?;
+
+    let base_url = format!(
+        "http://{proxy_address}:{proxy_port}/codex/provider/{provider_app}/{provider_id}/v1"
+    );
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let temp_dir = std::env::temp_dir();
+        let script_file = temp_dir.join(format!(
+            "cc_switch_codex_launcher_{}_{}.sh",
+            sanitize_shell_name(provider_id),
+            std::process::id()
+        ));
+        let cd_command = build_shell_cd_command(cwd);
+        let script_content = format!(
+            r#"#!/bin/bash
+set -e
+{cd_command}
+export CODEX_HOME={codex_home}
+export OPENAI_API_KEY="PROXY_MANAGED"
+echo "Using provider-scoped Codex config:"
+echo "  provider: {provider_app}/{provider_id}"
+echo "  CODEX_HOME: $CODEX_HOME"
+echo "  base_url: {base_url}"
+codex -c {config_arg}
+exec bash --norc --noprofile
+"#,
+            cd_command = cd_command,
+            codex_home = shell_single_quote(&codex_home.to_string_lossy()),
+            provider_app = provider_app,
+            provider_id = provider_id,
+            base_url = base_url,
+            config_arg = shell_single_quote(&format!("base_url=\"{base_url}\"")),
+        );
+
+        std::fs::write(&script_file, script_content)
+            .map_err(|e| format!("写入 Codex 启动脚本失败: {e}"))?;
+        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("设置 Codex 启动脚本权限失败: {e}"))?;
+
+        #[cfg(target_os = "macos")]
+        {
+            return launch_macos_script_file(&script_file);
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            return launch_linux_script_file(&script_file);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let temp_dir = std::env::temp_dir();
+        let bat_file = temp_dir.join(format!(
+            "cc_switch_codex_launcher_{}_{}.bat",
+            sanitize_shell_name(provider_id),
+            std::process::id()
+        ));
+        let cwd_command = build_windows_cwd_command(cwd);
+        let codex_home = escape_windows_batch_value(&codex_home.to_string_lossy());
+        let base_url_escaped = escape_windows_batch_value(&base_url);
+        let content = format!(
+            "@echo off\r\n{cwd_command}set \"CODEX_HOME={codex_home}\"\r\nset \"OPENAI_API_KEY=PROXY_MANAGED\"\r\necho Using provider-scoped Codex config:\r\necho   provider: {provider_app}/{provider_id}\r\necho   CODEX_HOME: %CODEX_HOME%\r\necho   base_url: {base_url_escaped}\r\ncodex -c \"base_url=\\\"{base_url_escaped}\\\"\"\r\n",
+        );
+        std::fs::write(&bat_file, content).map_err(|e| format!("写入 Codex 启动脚本失败: {e}"))?;
+        let bat_path = bat_file.to_string_lossy();
+        return run_windows_start_command(&["cmd", "/K", &bat_path], "cmd");
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    Err("不支持的操作系统".to_string())
+}
+
+fn sanitize_shell_name(value: &str) -> String {
+    let cleaned: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    cleaned.trim_matches('_').to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn launch_macos_script_file(script_file: &std::path::Path) -> Result<(), String> {
+    let preferred = crate::settings::get_preferred_terminal();
+    let terminal = preferred.as_deref().unwrap_or("terminal");
+
+    let result = match terminal {
+        "iterm2" => launch_macos_iterm2(script_file),
+        "alacritty" => launch_macos_open_app("Alacritty", script_file, true),
+        "kitty" => launch_macos_open_app("kitty", script_file, false),
+        "ghostty" => launch_macos_open_app("Ghostty", script_file, true),
+        "wezterm" => launch_macos_open_app("WezTerm", script_file, true),
+        "kaku" => launch_macos_open_app("Kaku", script_file, true),
+        _ => launch_macos_terminal_app(script_file),
+    };
+
+    if result.is_err() && terminal != "terminal" {
+        return launch_macos_terminal_app(script_file);
+    }
+
+    result
+}
+
+#[cfg(target_os = "linux")]
+fn launch_linux_script_file(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let preferred = crate::settings::get_preferred_terminal();
+    let default_terminals = [
+        ("gnome-terminal", vec!["--"]),
+        ("konsole", vec!["-e"]),
+        ("xfce4-terminal", vec!["-e"]),
+        ("mate-terminal", vec!["--"]),
+        ("lxterminal", vec!["-e"]),
+        ("alacritty", vec!["-e"]),
+        ("kitty", vec!["-e"]),
+        ("ghostty", vec!["-e"]),
+    ];
+
+    let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
+        let pref_args = default_terminals
+            .iter()
+            .find(|(name, _)| *name == pref.as_str())
+            .map(|(_, args)| args.to_vec())
+            .unwrap_or_else(|| vec!["-e"]);
+        let mut list = vec![(pref.as_str(), pref_args)];
+        for (name, args) in &default_terminals {
+            if *name != pref.as_str() {
+                list.push((*name, args.to_vec()));
+            }
+        }
+        list
+    } else {
+        default_terminals
+            .iter()
+            .map(|(name, args)| (*name, args.to_vec()))
+            .collect()
+    };
+
+    let mut last_error = String::from("未找到可用的终端");
+    for (terminal, args) in terminals_to_try {
+        if which_command(terminal) {
+            match Command::new(terminal)
+                .args(&args)
+                .arg("bash")
+                .arg(script_file.to_string_lossy().as_ref())
+                .spawn()
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => last_error = format!("执行 {terminal} 失败: {e}"),
+            }
+        }
+    }
+    Err(last_error)
 }
 
 fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
