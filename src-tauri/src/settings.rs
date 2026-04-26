@@ -481,10 +481,7 @@ fn settings_store() -> &'static RwLock<AppSettings> {
 fn expand_env_vars(s: &str) -> String {
     let mut result = s.to_string();
     let mut pos = 0;
-    loop {
-        let Some(rel_start) = result[pos..].find("${") else {
-            break;
-        };
+    while let Some(rel_start) = result[pos..].find("${") {
         let start = pos + rel_start;
         let Some(rel_end) = result[start + 2..].find('}') else {
             break;
