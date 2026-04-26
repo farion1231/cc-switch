@@ -1187,6 +1187,10 @@ impl RequestForwarder {
             .parse::<http::Uri>()
             .ok()
             .and_then(|u| u.authority().map(|a| a.to_string()));
+        let strip_openrouter_hop_by_hop_headers =
+            should_strip_openrouter_hop_by_hop_request_headers(provider, &base_url);
+        let connection_header_tokens =
+            strip_openrouter_hop_by_hop_headers.then(|| collect_connection_header_tokens(headers));
 
         let should_send_anthropic_headers = adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
@@ -1265,6 +1269,13 @@ impl RequestForwarder {
                     | "tracestate"
             ) {
                 continue;
+            }
+
+            // --- OpenRouter 全请求：补充剥离 hop-by-hop 请求头 ---
+            if let Some(connection_header_tokens) = connection_header_tokens.as_ref() {
+                if should_strip_openrouter_request_header(key_str, connection_header_tokens) {
+                    continue;
+                }
             }
 
             // --- 认证类 — 用 adapter 提供的认证头替换（在原始位置） ---
@@ -1614,6 +1625,52 @@ fn is_bedrock_provider(provider: &Provider) -> bool {
         .and_then(|v| v.as_str())
         .map(|v| v == "1")
         .unwrap_or(false)
+}
+
+const OPENROUTER_HOP_BY_HOP_REQUEST_HEADERS: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "trailers",
+    "upgrade",
+];
+
+fn should_strip_openrouter_hop_by_hop_request_headers(provider: &Provider, base_url: &str) -> bool {
+    let provider_type = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.as_deref())
+        .unwrap_or_default();
+
+    provider_type.eq_ignore_ascii_case(ProviderType::OpenRouter.as_str())
+        || base_url.to_ascii_lowercase().contains("openrouter.ai")
+}
+
+fn collect_connection_header_tokens(
+    headers: &axum::http::HeaderMap,
+) -> std::collections::HashSet<String> {
+    headers
+        .get_all("connection")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| name.to_ascii_lowercase())
+        .collect()
+}
+
+fn should_strip_openrouter_request_header(
+    key_str: &str,
+    connection_header_tokens: &std::collections::HashSet<String>,
+) -> bool {
+    let lower_key = key_str.to_ascii_lowercase();
+    OPENROUTER_HOP_BY_HOP_REQUEST_HEADERS.contains(&lower_key.as_str())
+        || connection_header_tokens.contains(lower_key.as_str())
 }
 
 fn build_retryable_failure_log(
@@ -2181,6 +2238,90 @@ mod tests {
             "/v1/responses",
             &json!({ "model": "gpt-5" }),
             &headers
+        ));
+    }
+
+    #[test]
+    fn collect_connection_header_tokens_tracks_dynamic_hop_by_hop_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "connection",
+            HeaderValue::from_static("keep-alive, x-custom-hop, Upgrade"),
+        );
+
+        let tokens = collect_connection_header_tokens(&headers);
+
+        assert!(tokens.contains("keep-alive"));
+        assert!(tokens.contains("x-custom-hop"));
+        assert!(tokens.contains("upgrade"));
+    }
+
+    #[test]
+    fn should_strip_openrouter_hop_by_hop_request_headers_for_any_openrouter_base_url() {
+        let mut custom_domain_openrouter = Provider::with_id(
+            "openrouter-custom".to_string(),
+            "OpenRouter Custom".to_string(),
+            serde_json::json!({}),
+            None,
+        );
+        custom_domain_openrouter.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("openrouter".to_string()),
+            ..Default::default()
+        });
+
+        assert!(should_strip_openrouter_hop_by_hop_request_headers(
+            &Provider::with_id(
+                "a".to_string(),
+                "A".to_string(),
+                serde_json::json!({}),
+                None
+            ),
+            "https://openrouter.ai/api"
+        ));
+        assert!(should_strip_openrouter_hop_by_hop_request_headers(
+            &Provider::with_id(
+                "b".to_string(),
+                "B".to_string(),
+                serde_json::json!({}),
+                None
+            ),
+            "https://OPENROUTER.ai/api/v1"
+        ));
+        assert!(should_strip_openrouter_hop_by_hop_request_headers(
+            &custom_domain_openrouter,
+            "https://relay.example/custom"
+        ));
+        assert!(!should_strip_openrouter_hop_by_hop_request_headers(
+            &Provider::with_id(
+                "c".to_string(),
+                "C".to_string(),
+                serde_json::json!({}),
+                None
+            ),
+            "https://api.openai.com/v1"
+        ));
+    }
+
+    #[test]
+    fn should_strip_openrouter_request_header_covers_static_and_dynamic_hop_by_hop_headers() {
+        let mut connection_tokens = std::collections::HashSet::new();
+        connection_tokens.insert("x-custom-hop".to_string());
+
+        assert!(should_strip_openrouter_request_header(
+            "connection",
+            &connection_tokens
+        ));
+        assert!(should_strip_openrouter_request_header(
+            "proxy-connection",
+            &connection_tokens
+        ));
+        assert!(should_strip_openrouter_request_header(
+            "x-custom-hop",
+            &connection_tokens
+        ));
+        assert!(!should_strip_openrouter_request_header(
+            "anthropic-version",
+            &connection_tokens
         ));
     }
 
