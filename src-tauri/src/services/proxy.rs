@@ -141,6 +141,9 @@ impl ProxyService {
         .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
         let (proxy_url, _) = self.build_proxy_urls().await?;
 
+        if let Ok(existing_live) = self.read_claude_live() {
+            Self::preserve_missing_json_fields(&mut effective_settings, &existing_live);
+        }
         Self::apply_claude_takeover_fields(&mut effective_settings, &proxy_url);
         self.write_claude_live(&effective_settings)?;
         Ok(())
@@ -182,6 +185,9 @@ impl ProxyService {
         .map_err(|e| format!("构建 codex 有效配置失败: {e}"))?;
         let (_, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
+        if let Ok(existing_live) = self.read_codex_live() {
+            Self::preserve_missing_codex_fields(&mut effective_settings, &existing_live)?;
+        }
         Self::apply_codex_takeover_fields(&mut effective_settings, &proxy_codex_base_url);
         self.write_codex_live(&effective_settings)?;
         Ok(())
@@ -1520,20 +1526,24 @@ impl ProxyService {
             build_effective_settings_with_common_config(self.db.as_ref(), &app_type_enum, provider)
                 .map_err(|e| format!("构建 {app_type} 有效配置失败: {e}"))?;
 
-        if matches!(app_type_enum, AppType::Codex) {
-            let existing_backup = self
-                .db
-                .get_live_backup(app_type)
-                .await
-                .map_err(|e| format!("读取 {app_type} 现有备份失败: {e}"))?;
+        let existing_backup = self
+            .db
+            .get_live_backup(app_type)
+            .await
+            .map_err(|e| format!("读取 {app_type} 现有备份失败: {e}"))?;
 
-            if let Some(existing_backup) = existing_backup {
-                let existing_value: Value = serde_json::from_str(&existing_backup.original_config)
-                    .map_err(|e| format!("解析 {app_type} 现有备份失败: {e}"))?;
-                Self::preserve_codex_mcp_servers_in_backup(
-                    &mut effective_settings,
-                    &existing_value,
-                )?;
+        if let Some(existing_backup) = existing_backup {
+            let existing_value: Value = serde_json::from_str(&existing_backup.original_config)
+                .map_err(|e| format!("解析 {app_type} 现有备份失败: {e}"))?;
+
+            match app_type_enum {
+                AppType::Claude => {
+                    Self::preserve_missing_json_fields(&mut effective_settings, &existing_value);
+                }
+                AppType::Codex => {
+                    Self::preserve_missing_codex_fields(&mut effective_settings, &existing_value)?;
+                }
+                _ => {}
             }
         }
 
@@ -1646,13 +1656,55 @@ impl ProxyService {
         self.switch_locks.lock_for_app(app_type).await
     }
 
-    fn preserve_codex_mcp_servers_in_backup(
+    fn preserve_missing_json_fields(target: &mut Value, source: &Value) {
+        let Some(target_obj) = target.as_object_mut() else {
+            return;
+        };
+        let Some(source_obj) = source.as_object() else {
+            return;
+        };
+
+        for (key, source_value) in source_obj {
+            match target_obj.get_mut(key) {
+                Some(target_value) => {
+                    Self::preserve_missing_json_fields(target_value, source_value)
+                }
+                None => {
+                    target_obj.insert(key.clone(), source_value.clone());
+                }
+            }
+        }
+    }
+
+    fn preserve_missing_toml_tables(
+        target: &mut dyn toml_edit::TableLike,
+        source: &dyn toml_edit::TableLike,
+    ) {
+        for (key, source_item) in source.iter() {
+            match target.get_mut(key) {
+                Some(target_item) => {
+                    if let (Some(target_table), Some(source_table)) =
+                        (target_item.as_table_like_mut(), source_item.as_table_like())
+                    {
+                        Self::preserve_missing_toml_tables(target_table, source_table);
+                    }
+                }
+                None => {
+                    target.insert(key, source_item.clone());
+                }
+            }
+        }
+    }
+
+    fn preserve_missing_codex_fields(
         target_settings: &mut Value,
-        existing_backup: &Value,
+        existing_settings: &Value,
     ) -> Result<(), String> {
+        Self::preserve_missing_json_fields(target_settings, existing_settings);
+
         let target_obj = target_settings
             .as_object_mut()
-            .ok_or_else(|| "Codex 备份必须是 JSON 对象".to_string())?;
+            .ok_or_else(|| "Codex 配置必须是 JSON 对象".to_string())?;
 
         let target_config = target_obj
             .get("config")
@@ -1666,7 +1718,7 @@ impl ProxyService {
                 .map_err(|e| format!("解析新的 Codex config.toml 失败: {e}"))?
         };
 
-        let existing_config = existing_backup
+        let existing_config = existing_settings
             .get("config")
             .and_then(|v| v.as_str())
             .unwrap_or("");
@@ -1677,31 +1729,9 @@ impl ProxyService {
 
         let existing_doc = existing_config
             .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("解析现有 Codex 备份失败: {e}"))?;
+            .map_err(|e| format!("解析现有 Codex config.toml 失败: {e}"))?;
 
-        if let Some(existing_mcp_servers) = existing_doc.get("mcp_servers") {
-            match target_doc.get_mut("mcp_servers") {
-                Some(target_mcp_servers) => {
-                    if let (Some(target_table), Some(existing_table)) = (
-                        target_mcp_servers.as_table_like_mut(),
-                        existing_mcp_servers.as_table_like(),
-                    ) {
-                        for (server_id, server_item) in existing_table.iter() {
-                            if target_table.get(server_id).is_none() {
-                                target_table.insert(server_id, server_item.clone());
-                            }
-                        }
-                    } else {
-                        log::warn!(
-                            "Codex config contains a non-table mcp_servers section; skipping backup MCP merge"
-                        );
-                    }
-                }
-                None => {
-                    target_doc["mcp_servers"] = existing_mcp_servers.clone();
-                }
-            }
-        }
+        Self::preserve_missing_toml_tables(target_doc.as_table_mut(), existing_doc.as_table());
 
         target_obj.insert("config".to_string(), json!(target_doc.to_string()));
         Ok(())
@@ -2329,9 +2359,11 @@ model = "gpt-5.1-codex"
                 "env": {
                     "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
                     "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
-                    "ANTHROPIC_MODEL": "stale-model"
+                    "ANTHROPIC_MODEL": "stale-model",
+                    "CLAUDE_CODE_ENABLE_TELEMETRY": "0"
                 },
-                "permissions": { "allow": ["Bash"] }
+                "permissions": { "allow": ["Bash"] },
+                "statusLine": { "type": "command", "command": "printf custom" }
             }))
             .expect("seed taken-over live file");
 
@@ -2365,6 +2397,20 @@ model = "gpt-5.1-codex"
                 .and_then(|env| env.get("ANTHROPIC_MODEL"))
                 .is_none(),
             "Claude model override fields should be removed in takeover mode"
+        );
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("CLAUDE_CODE_ENABLE_TELEMETRY"))
+                .and_then(|v| v.as_str()),
+            Some("0"),
+            "live-only Claude env settings should survive takeover hot switch"
+        );
+        assert_eq!(
+            live.get("statusLine")
+                .and_then(|status| status.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("printf custom"),
+            "live-only Claude root settings should survive takeover hot switch"
         );
 
         let backup = db
@@ -2433,6 +2479,13 @@ base_url = "https://api.a.example/v1"
 
 [model_providers.any]
 base_url = "https://stale.example/v1"
+
+[mcp_servers.echo]
+command = "npx"
+args = ["echo-server"]
+
+[experimental]
+keep = true
 "#
             }))
             .expect("seed minimized live config");
@@ -2467,6 +2520,18 @@ base_url = "https://stale.example/v1"
         assert!(
             config.contains("base_url = \"http://127.0.0.1:15721/v1\""),
             "takeover proxy base_url should remain active"
+        );
+        assert!(
+            config.contains("[mcp_servers.echo]"),
+            "live-only Codex MCP config should survive takeover rebuild"
+        );
+        assert!(
+            config.contains("[experimental]"),
+            "live-only Codex custom tables should survive takeover rebuild"
+        );
+        assert!(
+            config.contains("keep = true"),
+            "live-only Codex custom values should survive takeover rebuild"
         );
         assert_eq!(
             live.get("auth")
@@ -2560,13 +2625,21 @@ base_url = "https://api.b.example/v1"
         service
             .write_codex_live(&json!({
                 "auth": {
-                    "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                    "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                    "OPENAI_ORG_ID": "custom-org"
                 },
                 "config": r#"model_provider = "any"
 model = "stale"
 
 [model_providers.any]
 base_url = "http://127.0.0.1:15721/v1"
+
+[mcp_servers.echo]
+command = "npx"
+args = ["echo-server"]
+
+[experimental]
+keep = true
 "#
             }))
             .expect("seed taken-over live file");
@@ -2606,12 +2679,31 @@ base_url = "http://127.0.0.1:15721/v1"
             config.contains("base_url = \"http://127.0.0.1:15721/v1\""),
             "takeover proxy base_url should remain active"
         );
+        assert!(
+            config.contains("[mcp_servers.echo]"),
+            "live-only Codex MCP config should survive takeover hot switch"
+        );
+        assert!(
+            config.contains("[experimental]"),
+            "live-only Codex custom tables should survive takeover hot switch"
+        );
+        assert!(
+            config.contains("keep = true"),
+            "live-only Codex custom values should survive takeover hot switch"
+        );
         assert_eq!(
             live.get("auth")
                 .and_then(|auth| auth.get("OPENAI_API_KEY"))
                 .and_then(|v| v.as_str()),
             Some(PROXY_TOKEN_PLACEHOLDER),
             "takeover token placeholder should be preserved"
+        );
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("OPENAI_ORG_ID"))
+                .and_then(|v| v.as_str()),
+            Some("custom-org"),
+            "live-only Codex auth settings should survive takeover hot switch"
         );
     }
 
@@ -2852,6 +2944,85 @@ base_url = "http://127.0.0.1:15721/v1"
 
     #[tokio::test]
     #[serial]
+    async fn update_live_backup_from_provider_preserves_claude_custom_fields() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "old-token",
+                    "CLAUDE_CODE_ENABLE_TELEMETRY": "0"
+                },
+                "statusLine": {
+                    "type": "command",
+                    "command": "printf custom"
+                }
+            }))
+            .expect("serialize seed backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "new-token"
+                },
+                "permissions": {
+                    "allow": ["Read"]
+                }
+            }),
+            None,
+        );
+
+        service
+            .update_live_backup_from_provider("claude", &provider)
+            .await
+            .expect("update live backup");
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+
+        assert_eq!(
+            stored
+                .get("statusLine")
+                .and_then(|status| status.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("printf custom"),
+            "backup-only Claude root settings should be preserved"
+        );
+        assert_eq!(
+            stored
+                .get("env")
+                .and_then(|env| env.get("CLAUDE_CODE_ENABLE_TELEMETRY"))
+                .and_then(|v| v.as_str()),
+            Some("0"),
+            "backup-only Claude env settings should be preserved"
+        );
+        assert_eq!(
+            stored
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN"))
+                .and_then(|v| v.as_str()),
+            Some("new-token"),
+            "provider token should still update in the restore backup"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn update_live_backup_from_provider_applies_codex_common_config() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
@@ -2933,6 +3104,9 @@ base_url = "https://old.example/v1"
 [mcp_servers.echo]
 command = "npx"
 args = ["echo-server"]
+
+[experimental]
+keep = true
 "#
             }))
             .expect("serialize seed backup"),
@@ -2977,6 +3151,14 @@ base_url = "https://new.example/v1"
         assert!(
             config.contains("[mcp_servers.echo]"),
             "existing Codex MCP section should survive proxy hot-switch backup update"
+        );
+        assert!(
+            config.contains("[experimental]"),
+            "backup-only Codex custom tables should survive proxy hot-switch backup update"
+        );
+        assert!(
+            config.contains("keep = true"),
+            "backup-only Codex custom values should survive proxy hot-switch backup update"
         );
         assert!(
             config.contains("https://new.example/v1"),
