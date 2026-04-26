@@ -108,6 +108,22 @@ impl ProviderRouter {
         Ok(result)
     }
 
+    /// Select one exact provider for provider-scoped requests.
+    ///
+    /// This bypasses current-provider and failover selection so a dedicated
+    /// Codex CLI window can keep using the provider it was launched with.
+    pub async fn select_provider_by_id(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+    ) -> Result<Provider, AppError> {
+        self.db
+            .get_provider_by_id(provider_id, app_type)?
+            .ok_or_else(|| {
+                AppError::Message(format!("Provider not found: {app_type}/{provider_id}"))
+            })
+    }
+
     /// 请求执行前获取熔断器“放行许可”
     ///
     /// - Closed：直接放行

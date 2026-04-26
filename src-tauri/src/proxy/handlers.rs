@@ -31,10 +31,16 @@ use super::{
     ProxyError,
 };
 use crate::app_config::AppType;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::str::FromStr;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -367,6 +373,40 @@ pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_codex_request(
+        state,
+        request,
+        "/chat/completions",
+        &OPENAI_PARSER_CONFIG,
+        None,
+    )
+    .await
+}
+
+pub async fn handle_chat_completions_scoped(
+    State(state): State<ProxyState>,
+    Path((provider_app, provider_id)): Path<(String, String)>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let provider_app_type =
+        AppType::from_str(&provider_app).map_err(|e| ProxyError::InvalidRequest(e.to_string()))?;
+    handle_codex_request(
+        state,
+        request,
+        "/chat/completions",
+        &OPENAI_PARSER_CONFIG,
+        Some((provider_app_type, provider_id)),
+    )
+    .await
+}
+
+async fn handle_codex_request(
+    state: ProxyState,
+    request: axum::extract::Request,
+    endpoint: &str,
+    parser_config: &'static super::handler_config::UsageParserConfig,
+    scoped_provider: Option<(AppType, String)>,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let uri = parts.uri;
     let headers = parts.headers;
@@ -379,9 +419,22 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-    let endpoint = endpoint_with_query(&uri, "/chat/completions");
+    let mut ctx = if let Some((provider_app_type, provider_id)) = scoped_provider.as_ref() {
+        RequestContext::new_with_provider_id(
+            &state,
+            &body,
+            &headers,
+            AppType::Codex,
+            "Codex",
+            "codex",
+            provider_app_type.clone(),
+            provider_id,
+        )
+        .await?
+    } else {
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?
+    };
+    let endpoint = endpoint_with_query(&uri, endpoint);
 
     let is_stream = body
         .get("stream")
@@ -413,7 +466,7 @@ pub async fn handle_chat_completions(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG).await
+    process_response(response, &ctx, &state, parser_config).await
 }
 
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
@@ -421,53 +474,24 @@ pub async fn handle_responses(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    let (parts, req_body) = request.into_parts();
-    let uri = parts.uri;
-    let headers = parts.headers;
-    let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
-        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    handle_codex_request(state, request, "/responses", &CODEX_PARSER_CONFIG, None).await
+}
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-    let endpoint = endpoint_with_query(&uri, "/responses");
-
-    let is_stream = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
-        .forward_with_retry(
-            &AppType::Codex,
-            &endpoint,
-            body,
-            headers,
-            extensions,
-            ctx.get_providers(),
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(mut err) => {
-            if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
-            }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
-            return Err(err.error);
-        }
-    };
-
-    ctx.provider = result.provider;
-    let response = result.response;
-
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+pub async fn handle_responses_scoped(
+    State(state): State<ProxyState>,
+    Path((provider_app, provider_id)): Path<(String, String)>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let provider_app_type =
+        AppType::from_str(&provider_app).map_err(|e| ProxyError::InvalidRequest(e.to_string()))?;
+    handle_codex_request(
+        state,
+        request,
+        "/responses",
+        &CODEX_PARSER_CONFIG,
+        Some((provider_app_type, provider_id)),
+    )
+    .await
 }
 
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
@@ -475,53 +499,31 @@ pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    let (parts, req_body) = request.into_parts();
-    let uri = parts.uri;
-    let headers = parts.headers;
-    let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
-        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    handle_codex_request(
+        state,
+        request,
+        "/responses/compact",
+        &CODEX_PARSER_CONFIG,
+        None,
+    )
+    .await
+}
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-    let endpoint = endpoint_with_query(&uri, "/responses/compact");
-
-    let is_stream = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
-        .forward_with_retry(
-            &AppType::Codex,
-            &endpoint,
-            body,
-            headers,
-            extensions,
-            ctx.get_providers(),
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(mut err) => {
-            if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
-            }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
-            return Err(err.error);
-        }
-    };
-
-    ctx.provider = result.provider;
-    let response = result.response;
-
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+pub async fn handle_responses_compact_scoped(
+    State(state): State<ProxyState>,
+    Path((provider_app, provider_id)): Path<(String, String)>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let provider_app_type =
+        AppType::from_str(&provider_app).map_err(|e| ProxyError::InvalidRequest(e.to_string()))?;
+    handle_codex_request(
+        state,
+        request,
+        "/responses/compact",
+        &CODEX_PARSER_CONFIG,
+        Some((provider_app_type, provider_id)),
+    )
+    .await
 }
 
 // ============================================================================

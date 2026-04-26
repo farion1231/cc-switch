@@ -88,6 +88,45 @@ impl RequestContext {
         tag: &'static str,
         app_type_str: &'static str,
     ) -> Result<Self, ProxyError> {
+        Self::new_internal(state, body, headers, app_type, tag, app_type_str, None).await
+    }
+
+    /// Create a request context pinned to one provider.
+    ///
+    /// `provider_app_type` controls where the provider is read from. The
+    /// request can still be processed by a different handler, for example a
+    /// Codex CLI request using a Claude Codex-OAuth provider.
+    pub async fn new_with_provider_id(
+        state: &ProxyState,
+        body: &serde_json::Value,
+        headers: &HeaderMap,
+        request_app_type: AppType,
+        tag: &'static str,
+        request_app_type_str: &'static str,
+        provider_app_type: AppType,
+        provider_id: &str,
+    ) -> Result<Self, ProxyError> {
+        Self::new_internal(
+            state,
+            body,
+            headers,
+            request_app_type,
+            tag,
+            request_app_type_str,
+            Some((provider_app_type, provider_id)),
+        )
+        .await
+    }
+
+    async fn new_internal(
+        state: &ProxyState,
+        body: &serde_json::Value,
+        headers: &HeaderMap,
+        app_type: AppType,
+        tag: &'static str,
+        app_type_str: &'static str,
+        forced_provider: Option<(AppType, &str)>,
+    ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
 
         // 从数据库读取应用级代理配置（per-app）
@@ -124,24 +163,42 @@ impl RequestContext {
             session_result.client_provided
         );
 
-        // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
-        // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
-            .provider_router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
-                    ProxyError::AllProvidersCircuitOpen
-                }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
-                _ => ProxyError::DatabaseError(e.to_string()),
-            })?;
+        let (providers, provider, current_provider_id) =
+            if let Some((provider_app_type, provider_id)) = forced_provider {
+                let provider_app_type_str = provider_app_type.as_str();
+                let provider = state
+                    .provider_router
+                    .select_provider_by_id(provider_app_type_str, provider_id)
+                    .await
+                    .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+                (
+                    vec![provider.clone()],
+                    provider.clone(),
+                    provider.id.clone(),
+                )
+            } else {
+                // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
+                // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
+                let providers = state
+                    .provider_router
+                    .select_providers(app_type_str)
+                    .await
+                    .map_err(|e| match e {
+                        crate::error::AppError::AllProvidersCircuitOpen => {
+                            ProxyError::AllProvidersCircuitOpen
+                        }
+                        crate::error::AppError::NoProvidersConfigured => {
+                            ProxyError::NoProvidersConfigured
+                        }
+                        _ => ProxyError::DatabaseError(e.to_string()),
+                    })?;
 
-        let provider = providers
-            .first()
-            .cloned()
-            .ok_or(ProxyError::NoAvailableProvider)?;
+                let provider = providers
+                    .first()
+                    .cloned()
+                    .ok_or(ProxyError::NoAvailableProvider)?;
+                (providers, provider, current_provider_id)
+            };
 
         log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
