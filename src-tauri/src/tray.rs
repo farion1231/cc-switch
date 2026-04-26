@@ -23,6 +23,7 @@ static TRAY_FOCUSED_APP: Lazy<std::sync::Mutex<Option<AppType>>> =
     Lazy::new(|| std::sync::Mutex::new(None));
 
 /// 最近一次有订阅数据的官方 app，在 TRAY_FOCUSED_APP 指向无数据 app 时作为 fallback。
+#[cfg(target_os = "macos")]
 static TRAY_LAST_OFFICIAL_APP: Lazy<std::sync::Mutex<Option<AppType>>> =
     Lazy::new(|| std::sync::Mutex::new(None));
 
@@ -134,8 +135,10 @@ static ICON_BASE_RGBA: Lazy<(Vec<u8>, u32, u32)> =
 /// Cache key: (rounded_pct, color_tier) where tier 0=normal 1=warn 2=danger.
 /// Including the tier ensures a re-render when utilization crosses a color
 /// boundary even if both values round to the same integer.
+#[cfg(target_os = "macos")]
 static LAST_TRAY_ICON_PCT: std::sync::Mutex<Option<(u8, u8)>> = std::sync::Mutex::new(None);
 
+#[cfg(target_os = "macos")]
 fn pct_to_color_tier(pct: f64) -> u8 {
     if pct >= UTIL_DANGER_PCT {
         2
@@ -150,6 +153,7 @@ fn pct_to_color_tier(pct: f64) -> u8 {
 /// Non-transparent pixels within the fill angle get the utilization color;
 /// the rest become white. Alpha is preserved to keep anti-aliased edges.
 /// Returns None → caller should keep the startup template icon unchanged.
+#[cfg(target_os = "macos")]
 pub(crate) fn generate_ring_icon_rgba(utilization_pct: Option<f64>, size: u32) -> Vec<u8> {
     let (base, w, h) = &*ICON_BASE_RGBA;
     let mut buf = if *w == size && *h == size {
@@ -208,6 +212,7 @@ pub(crate) fn generate_ring_icon_rgba(utilization_pct: Option<f64>, size: u32) -
 
 /// 获取指定 app 当前官方订阅的最高 tier 利用率（0–100）。
 /// 当前 provider 非官方或无缓存时返回 None。
+#[cfg(target_os = "macos")]
 fn get_section_subscription_pct(
     app_state: &crate::store::AppState,
     app_type: &AppType,
@@ -232,6 +237,7 @@ fn get_section_subscription_pct(
 /// - 有焦点且有数据 → 该 app 的利用率，并记录为 last_official
 /// - 有焦点但无数据（第三方/无订阅）→ fallback 到 last_official
 /// - 无焦点记录（启动期）→ 所有 section 的最大值
+#[cfg(target_os = "macos")]
 fn compute_tray_worst_pct(app_state: &crate::store::AppState) -> Option<f64> {
     let focused = TRAY_FOCUSED_APP
         .lock()
@@ -274,11 +280,13 @@ pub(crate) fn set_tray_focused_app(app_type_str: &str, app: &tauri::AppHandle) {
     if let Ok(mut guard) = TRAY_FOCUSED_APP.lock() {
         *guard = parsed;
     }
+    #[cfg(target_os = "macos")]
     update_tray_icon(app);
 }
 
 /// Public wrapper called from outside this module (e.g. after settings save).
 pub fn update_tray_icon_pub(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
     update_tray_icon(app);
 }
 
@@ -293,6 +301,7 @@ pub(crate) fn reset_tray_refresh_throttle() {
 
 /// Update the tray icon to show the original icon with a colored progress arc overlaid.
 /// Only fires when subscription data is available and the setting is enabled.
+#[cfg(target_os = "macos")]
 fn update_tray_icon(app: &tauri::AppHandle) {
     let Some(app_state) = app.try_state::<crate::store::AppState>() else {
         return;
@@ -303,7 +312,6 @@ fn update_tray_icon(app: &tauri::AppHandle) {
             *last = None; // clear so re-enabling shows the icon immediately
         }
         if let Some(tray) = app.tray_by_id(TRAY_ID) {
-            #[cfg(target_os = "macos")]
             let _ = tray.set_icon_as_template(true);
             let (base, w, h) = &*ICON_BASE_RGBA;
             let icon = tauri::image::Image::new(base, *w, *h);
@@ -311,45 +319,38 @@ fn update_tray_icon(app: &tauri::AppHandle) {
         }
         return;
     }
-    // Ring icon is macOS-only; on other platforms leave the system icon untouched.
-    #[cfg(not(target_os = "macos"))]
-    return;
-
-    #[cfg(target_os = "macos")]
-    {
-        let Some(pct) = compute_tray_worst_pct(&app_state) else {
-            // Data disappeared (e.g. switched to a third-party provider).
-            // If we previously rendered a ring icon, clear the cache and restore
-            // the base template so a stale colored arc is not left on screen.
-            let had_icon = LAST_TRAY_ICON_PCT
-                .lock()
-                .map(|mut g| g.take().is_some())
-                .unwrap_or(false);
-            if had_icon {
-                if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                    let _ = tray.set_icon_as_template(true);
-                    let (base, w, h) = &*ICON_BASE_RGBA;
-                    let icon = tauri::image::Image::new(base, *w, *h);
-                    let _ = tray.set_icon(Some(icon));
-                }
+    let Some(pct) = compute_tray_worst_pct(&app_state) else {
+        // Data disappeared (e.g. switched to a third-party provider).
+        // If we previously rendered a ring icon, clear the cache and restore
+        // the base template so a stale colored arc is not left on screen.
+        let had_icon = LAST_TRAY_ICON_PCT
+            .lock()
+            .map(|mut g| g.take().is_some())
+            .unwrap_or(false);
+        if had_icon {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                let _ = tray.set_icon_as_template(true);
+                let (base, w, h) = &*ICON_BASE_RGBA;
+                let icon = tauri::image::Image::new(base, *w, *h);
+                let _ = tray.set_icon(Some(icon));
             }
-            return;
-        };
-        let pct_key = (pct.round() as u8, pct_to_color_tier(pct));
-        if let Ok(mut last) = LAST_TRAY_ICON_PCT.lock() {
-            if *last == Some(pct_key) {
-                return; // percentage and color tier unchanged — skip pixel re-render
-            }
-            *last = Some(pct_key);
         }
-        let rgba = generate_ring_icon_rgba(Some(pct), 72);
-        if let Some(tray) = app.tray_by_id(TRAY_ID) {
-            // Switch off template mode so the colored ring is rendered as-is.
-            let _ = tray.set_icon_as_template(false);
-            let icon = tauri::image::Image::new(&rgba, 72, 72);
-            if let Err(e) = tray.set_icon(Some(icon)) {
-                log::debug!("[Tray] 更新环形图标失败: {e}");
-            }
+        return;
+    };
+    let pct_key = (pct.round() as u8, pct_to_color_tier(pct));
+    if let Ok(mut last) = LAST_TRAY_ICON_PCT.lock() {
+        if *last == Some(pct_key) {
+            return; // percentage and color tier unchanged — skip pixel re-render
+        }
+        *last = Some(pct_key);
+    }
+    let rgba = generate_ring_icon_rgba(Some(pct), 72);
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        // Switch off template mode so the colored ring is rendered as-is.
+        let _ = tray.set_icon_as_template(false);
+        let icon = tauri::image::Image::new(&rgba, 72, 72);
+        if let Err(e) = tray.set_icon(Some(icon)) {
+            log::debug!("[Tray] 更新环形图标失败: {e}");
         }
     }
 }
@@ -1435,12 +1436,14 @@ mod tests {
 
     // ── Ring icon pixel tests ──────────────────────────────────────────────────
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn ring_icon_output_size_is_correct() {
         let buf = super::generate_ring_icon_rgba(Some(50.0), 72);
         assert_eq!(buf.len(), 72 * 72 * 4);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn ring_icon_none_returns_unmodified_base() {
         let buf = super::generate_ring_icon_rgba(None, 72);
@@ -1448,6 +1451,7 @@ mod tests {
         assert_eq!(&buf, base, "None pct must return unmodified base pixels");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn ring_icon_zero_pct_all_white() {
         // 0 % → fill_angle = 0 → no pixel satisfies angle ≤ 0 → all opaque pixels white
@@ -1464,6 +1468,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn ring_icon_full_pct_all_red() {
         // 100% ≥ UTIL_DANGER_PCT (90) and fill_angle = 2π → all opaque pixels danger-red
@@ -1480,6 +1485,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn ring_icon_alpha_preserved() {
         // RGB channels are recolored; alpha must remain identical to the base icon
@@ -1494,6 +1500,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn ring_icon_half_pct_roughly_half_colored() {
         // 50% should produce a roughly equal split of colored vs white opaque pixels
@@ -1519,6 +1526,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn ring_icon_color_thresholds() {
         // Locate the first non-white opaque pixel — its RGB is the fill color for that pct.
