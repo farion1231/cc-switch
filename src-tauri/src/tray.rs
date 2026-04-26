@@ -312,24 +312,45 @@ fn update_tray_icon(app: &tauri::AppHandle) {
         }
         return;
     }
-    let Some(pct) = compute_tray_worst_pct(&app_state) else {
-        return; // No data yet — keep the template icon set at startup
-    };
-    let pct_key = (pct.round() as u8, pct_to_color_tier(pct));
-    if let Ok(mut last) = LAST_TRAY_ICON_PCT.lock() {
-        if *last == Some(pct_key) {
-            return; // percentage and color tier unchanged — skip pixel re-render
+    // Ring icon is macOS-only; on other platforms leave the system icon untouched.
+    #[cfg(not(target_os = "macos"))]
+    return;
+
+    #[cfg(target_os = "macos")]
+    {
+        let Some(pct) = compute_tray_worst_pct(&app_state) else {
+            // Data disappeared (e.g. switched to a third-party provider).
+            // If we previously rendered a ring icon, clear the cache and restore
+            // the base template so a stale colored arc is not left on screen.
+            let had_icon = LAST_TRAY_ICON_PCT
+                .lock()
+                .map(|mut g| g.take().is_some())
+                .unwrap_or(false);
+            if had_icon {
+                if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                    let _ = tray.set_icon_as_template(true);
+                    let (base, w, h) = &*ICON_BASE_RGBA;
+                    let icon = tauri::image::Image::new(base, *w, *h);
+                    let _ = tray.set_icon(Some(icon));
+                }
+            }
+            return;
+        };
+        let pct_key = (pct.round() as u8, pct_to_color_tier(pct));
+        if let Ok(mut last) = LAST_TRAY_ICON_PCT.lock() {
+            if *last == Some(pct_key) {
+                return; // percentage and color tier unchanged — skip pixel re-render
+            }
+            *last = Some(pct_key);
         }
-        *last = Some(pct_key);
-    }
-    let rgba = generate_ring_icon_rgba(Some(pct), 72);
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        // Switch off template mode so the colored ring is rendered as-is
-        #[cfg(target_os = "macos")]
-        let _ = tray.set_icon_as_template(false);
-        let icon = tauri::image::Image::new(&rgba, 72, 72);
-        if let Err(e) = tray.set_icon(Some(icon)) {
-            log::debug!("[Tray] 更新环形图标失败: {e}");
+        let rgba = generate_ring_icon_rgba(Some(pct), 72);
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            // Switch off template mode so the colored ring is rendered as-is.
+            let _ = tray.set_icon_as_template(false);
+            let icon = tauri::image::Image::new(&rgba, 72, 72);
+            if let Err(e) = tray.set_icon(Some(icon)) {
+                log::debug!("[Tray] 更新环形图标失败: {e}");
+            }
         }
     }
 }
@@ -915,8 +936,17 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
         Err(poisoned) => poisoned.into_inner(),
     };
 
+    let visible_apps = crate::settings::get_settings()
+        .visible_apps
+        .unwrap_or_default();
+
     let mut needs_rebuild = false;
     for section in TRAY_SECTIONS.iter() {
+        // Hidden sections have no detail item in the menu — skip them to avoid
+        // incorrectly triggering a full menu rebuild on every usage refresh.
+        if !visible_apps.is_visible(&section.app_type) {
+            continue;
+        }
         let Ok(providers) = app_state.db.get_all_providers(section.app_type.as_str()) else {
             continue;
         };
