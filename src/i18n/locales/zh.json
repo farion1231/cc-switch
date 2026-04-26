@@ -2211,6 +2211,22 @@
       "disabled": "日志记录已关闭",
       "failed": "切换日志状态失败"
     },
+    "sensitiveWord": {
+      "title": "敏感词过滤",
+      "description": "自动过滤请求中的敏感词，替换为 ***",
+      "enabled": "敏感词过滤已启用",
+      "disabled": "敏感词过滤已关闭",
+      "failed": "切换敏感词过滤失败",
+      "pathPlaceholder": "/path/to/sensitive_words.txt",
+      "selectFile": "选择敏感词文件",
+      "pathSaved": "敏感词文件路径已保存",
+      "pathSaveFailed": "保存敏感词文件路径失败",
+      "reload": "重新加载敏感词",
+      "reloadSuccess": "敏感词已重新加载到缓存",
+      "reloadFailed": "重新加载敏感词失败: {{message}}",
+      "cacheLoaded": "当前缓存已加载 {{count}} 个敏感词",
+      "cacheNotLoaded": "当前文件尚未加载到缓存，重启应用或点击重新加载后生效"
+    },
     "server": {
       "started": "路由服务已启动 - {{address}}:{{port}}",
       "startFailed": "启动路由服务失败: {{detail}}"

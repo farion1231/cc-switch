@@ -17,7 +17,7 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig,SensitiveWordConfig},
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState};
@@ -61,6 +61,8 @@ pub struct RequestForwarder {
     rectifier_config: RectifierConfig,
     /// 优化器配置
     optimizer_config: OptimizerConfig,
+    /// 敏感词过滤配置
+    sensitive_word_config: SensitiveWordConfig,
     /// Copilot 优化器配置
     copilot_optimizer_config: CopilotOptimizerConfig,
     /// 非流式请求超时（秒）
@@ -85,6 +87,7 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        sensitive_word_config: SensitiveWordConfig,
     ) -> Self {
         Self {
             router,
@@ -98,6 +101,7 @@ impl RequestForwarder {
             session_client_provided,
             rectifier_config,
             optimizer_config,
+            sensitive_word_config,
             copilot_optimizer_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
         }
@@ -138,6 +142,15 @@ impl RequestForwarder {
         // 整流器重试标记：确保整流最多触发一次
         let mut rectifier_retried = false;
         let mut budget_rectifier_retried = false;
+
+        // 敏感词过滤（在转发前一次性处理原始 body）
+        let mut body = body;
+        if self.sensitive_word_config.enabled && !self.sensitive_word_config.file_path.is_empty() {
+            super::sensitive_word_filter::filter_sensitive_words_with_cache(
+                &mut body,
+                &self.sensitive_word_config.file_path,
+            );
+        }
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;

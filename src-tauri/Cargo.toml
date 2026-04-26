@@ -78,6 +78,7 @@ uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
 json5 = "0.4"
 json-five = "0.3.1"
+aho-corasick = "1.1"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

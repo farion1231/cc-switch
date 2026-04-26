@@ -2211,6 +2211,22 @@
       "disabled": "ログ記録が無効になりました",
       "failed": "ログ状態の切り替えに失敗しました"
     },
+    "sensitiveWord": {
+      "title": "NGワードフィルター",
+      "description": "リクエスト内のNGワードを自動的にフィルタリングし、*** に置き換えます",
+      "enabled": "NGワードフィルターを有効にしました",
+      "disabled": "NGワードフィルターを無効にしました",
+      "failed": "NGワードフィルターの切り替えに失敗しました",
+      "pathPlaceholder": "/path/to/sensitive_words.txt",
+      "selectFile": "NGワードファイルを選択",
+      "pathSaved": "NGワードファイルのパスを保存しました",
+      "pathSaveFailed": "NGワードファイルのパス保存に失敗しました",
+      "reload": "NGワードを再読み込み",
+      "reloadSuccess": "NGワードをキャッシュに再読み込みしました",
+      "reloadFailed": "NGワードの再読み込みに失敗しました: {{message}}",
+      "cacheLoaded": "現在 {{count}} 件のNGワードがキャッシュに読み込まれています",
+      "cacheNotLoaded": "現在のファイルはまだキャッシュに読み込まれていません。アプリを再起動するか、再読み込みをクリックすると反映されます"
+    },
     "server": {
       "started": "ルーティングサービスが開始されました - {{address}}:{{port}}",
       "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}"

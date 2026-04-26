@@ -8,7 +8,7 @@ use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
     server::ProxyState,
-    types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
+    types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig,SensitiveWordConfig},
     ProxyError,
 };
 use axum::http::HeaderMap;
@@ -63,6 +63,8 @@ pub struct RequestContext {
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
     pub optimizer_config: OptimizerConfig,
+    /// 敏感词过滤配置
+    pub sensitive_word_config: SensitiveWordConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
 }
@@ -101,6 +103,7 @@ impl RequestContext {
         let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+        let sensitive_word_config = state.db.get_sensitive_word_config().unwrap_or_default();
 
         let current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
@@ -167,6 +170,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            sensitive_word_config,
         })
     }
 
@@ -232,6 +236,7 @@ impl RequestContext {
             self.rectifier_config.clone(),
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
+            self.sensitive_word_config.clone(),
         )
     }
 

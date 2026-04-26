@@ -279,6 +279,87 @@ pub async fn get_log_config(
     state.db.get_log_config().map_err(|e| e.to_string())
 }
 
+/// 获取敏感词过滤配置
+#[tauri::command]
+pub async fn get_sensitive_word_config(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<crate::proxy::types::SensitiveWordConfig, String> {
+    state.db.get_sensitive_word_config().map_err(|e| e.to_string())
+}
+
+/// 设置敏感词过滤配置
+#[tauri::command]
+pub async fn set_sensitive_word_config(
+    state: tauri::State<'_, crate::AppState>,
+    config: crate::proxy::types::SensitiveWordConfig,
+) -> Result<bool, String> {
+    state
+        .db
+        .set_sensitive_word_config(&config)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SensitiveWordCacheInfo {
+    pub loaded: bool,
+    pub file_path: String,
+    pub words: Vec<String>,
+    pub modified_at: Option<String>,
+}
+
+/// 重新加载敏感词文件到缓存
+#[tauri::command]
+pub async fn reload_sensitive_word_cache(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<SensitiveWordCacheInfo, String> {
+    let config = state.db.get_sensitive_word_config().map_err(|e| e.to_string())?;
+
+    if config.file_path.trim().is_empty() {
+        return Err("请先选择敏感词文件".to_string());
+    }
+
+    let words = crate::proxy::sensitive_word_filter::reload_sensitive_words(&config.file_path)?;
+    let modified_at = std::fs::metadata(&config.file_path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .map(format_system_time);
+
+    Ok(SensitiveWordCacheInfo {
+        loaded: true,
+        file_path: config.file_path,
+        words,
+        modified_at,
+    })
+}
+
+/// 获取当前敏感词缓存详情
+#[tauri::command]
+pub async fn get_sensitive_word_cache_info() -> Result<SensitiveWordCacheInfo, String> {
+    Ok(
+        match crate::proxy::sensitive_word_filter::get_sensitive_word_cache() {
+            Some((file_path, words, modified_time)) => SensitiveWordCacheInfo {
+                loaded: true,
+                file_path,
+                words,
+                modified_at: modified_time.map(format_system_time),
+            },
+            None => SensitiveWordCacheInfo {
+                loaded: false,
+                file_path: String::new(),
+                words: Vec::new(),
+                modified_at: None,
+            },
+        },
+    )
+}
+
+fn format_system_time(time: std::time::SystemTime) -> String {
+    let datetime: chrono::DateTime<chrono::Local> = time.into();
+    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 /// 设置日志配置
 #[tauri::command]
 pub async fn set_log_config(

@@ -269,6 +269,28 @@ impl Default for OptimizerConfig {
     }
 }
 
+/// 敏感词过滤配置
+///
+/// 存储在 settings 表中，key = "sensitive_word_config"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SensitiveWordConfig {
+    /// 总开关（默认关闭）
+    #[serde(default)]
+    pub enabled: bool,
+    /// 敏感词 txt 文件路径（每行一个敏感词）
+    #[serde(default)]
+    pub file_path: String,
+}
+
+impl Default for SensitiveWordConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            file_path: String::new(),
+        }
+    }
+}
 /// Copilot 优化器配置
 ///
 /// 存储在 settings 表中，key = "copilot_optimizer_config"
