@@ -12,6 +12,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
   Loader2,
   Github,
   LogOut,
@@ -50,6 +58,10 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     "github.com" | "enterprise"
   >("github.com");
   const [enterpriseDomain, setEnterpriseDomain] = React.useState("");
+  const [pendingRemoveId, setPendingRemoveId] = React.useState<string | null>(
+    null,
+  );
+  const prevAccountsLen = React.useRef(0);
 
   // 根据部署类型计算实际的 GitHub 域名
   const effectiveGithubDomain =
@@ -79,6 +91,15 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     logout,
   } = useCopilotAuth(effectiveGithubDomain);
 
+  // 账号数量增加时（添加账号成功），清空 Enterprise 输入框并重置下拉框
+  React.useEffect(() => {
+    if (accounts.length > prevAccountsLen.current) {
+      setEnterpriseDomain("");
+      setDeploymentType("github.com");
+    }
+    prevAccountsLen.current = accounts.length;
+  }, [accounts.length]);
+
   // 复制用户码
   const copyUserCode = async () => {
     if (deviceCode?.user_code) {
@@ -93,15 +114,21 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     onAccountSelect?.(value === "none" ? null : value);
   };
 
-  // 处理移除账号
+  // 处理移除账号（先弹确认框）
   const handleRemoveAccount = (accountId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
-    removeAccount(accountId);
-    // 如果移除的是当前选中的账号，清除选择
-    if (selectedAccountId === accountId) {
+    setPendingRemoveId(accountId);
+  };
+
+  // 确认移除账号
+  const handleConfirmRemove = () => {
+    if (!pendingRemoveId) return;
+    removeAccount(pendingRemoveId);
+    if (selectedAccountId === pendingRemoveId) {
       onAccountSelect?.(null);
     }
+    setPendingRemoveId(null);
   };
 
   // 渲染账号头像
@@ -241,7 +268,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
                   )}
                 </div>
                 <div className="flex items-center gap-1">
-                  {defaultAccountId !== account.id && (
+                  {accounts.length >= 2 && defaultAccountId !== account.id && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -271,6 +298,11 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         </div>
       )}
 
+      {/* 账号操作错误提示（独立于登录流程错误）*/}
+      {error && pollingState !== "error" && (
+        <p className="text-sm text-red-500">{error}</p>
+      )}
+
       {/* 未认证状态 - 登录按钮 */}
       {!hasAnyAccount && pollingState === "idle" && (
         <Button
@@ -281,7 +313,12 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
           disabled={deploymentType === "enterprise" && !enterpriseDomain.trim()}
         >
           <Github className="mr-2 h-4 w-4" />
-          {t("copilot.loginWithGitHub", "使用 GitHub 登录")}
+          {deploymentType === "enterprise"
+            ? t(
+                "copilot.loginWithGitHubEnterprise",
+                "使用 GitHub Enterprise 登录",
+              )
+            : t("copilot.loginWithGitHub", "使用 GitHub 登录")}
         </Button>
       )}
 
@@ -399,6 +436,34 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
           {t("copilot.logoutAll", "注销所有账号")}
         </Button>
       )}
+      {/* 删除账号确认对话框 */}
+      <Dialog
+        open={pendingRemoveId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRemoveId(null);
+        }}
+      >
+        <DialogContent zIndex="alert">
+          <DialogHeader>
+            <DialogTitle>CC Switch</DialogTitle>
+            <DialogDescription>
+              {t("copilot.confirmRemoveAccount")}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPendingRemoveId(null)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button type="button" onClick={handleConfirmRemove}>
+              {t("common.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
