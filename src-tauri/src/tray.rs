@@ -134,8 +134,7 @@ static ICON_BASE_RGBA: Lazy<(Vec<u8>, u32, u32)> =
 /// Cache key: (rounded_pct, color_tier) where tier 0=normal 1=warn 2=danger.
 /// Including the tier ensures a re-render when utilization crosses a color
 /// boundary even if both values round to the same integer.
-static LAST_TRAY_ICON_PCT: std::sync::Mutex<Option<(u8, u8)>> =
-    std::sync::Mutex::new(None);
+static LAST_TRAY_ICON_PCT: std::sync::Mutex<Option<(u8, u8)>> = std::sync::Mutex::new(None);
 
 fn pct_to_color_tier(pct: f64) -> u8 {
     if pct >= UTIL_DANGER_PCT {
