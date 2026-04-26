@@ -91,29 +91,39 @@ export function PricingConfigPanel() {
 
     // Used models: all models from stats, merge with pricing when available
     const used: ModelPricing[] = [];
-    const usedModelIds = new Set<string>();
+    const usedNormalizedIds = new Set<string>();
+    const usedRawModelIds = new Set<string>();
 
     // Add models from stats
     for (const stat of modelStats ?? []) {
       const normalizedStatModel = normalizeModelId(stat.model);
+
+      // Skip if we already added this normalized ID (deduplication)
+      if (usedNormalizedIds.has(normalizedStatModel)) {
+        continue;
+      }
+
       const existing = pricing.find(
         (p) => normalizeModelId(p.modelId) === normalizedStatModel,
       );
       if (existing) {
         used.push(existing);
-        usedModelIds.add(existing.modelId);
+        usedNormalizedIds.add(normalizedStatModel);
+        usedRawModelIds.add(existing.modelId);
       } else {
         // No pricing configured, create entry with all zeros
+        // Normalize model ID before persisting to match backend lookup
         const synthetic = {
-          modelId: stat.model,
-          displayName: stat.model,
+          modelId: normalizedStatModel,
+          displayName: stat.model, // Keep original raw model name for display
           inputCostPerMillion: "0",
           outputCostPerMillion: "0",
           cacheReadCostPerMillion: "0",
           cacheCreationCostPerMillion: "0",
         };
         used.push(synthetic);
-        usedModelIds.add(synthetic.modelId);
+        usedNormalizedIds.add(normalizedStatModel);
+        usedRawModelIds.add(synthetic.modelId);
       }
     }
 
@@ -132,7 +142,7 @@ export function PricingConfigPanel() {
     // Only exclude the specific modelIds that are already in used - preserve distinct
     // pricing entries that normalize to the same base ID but are configured separately
     const filteredUnused = pricing
-      .filter((p) => !usedModelIds.has(p.modelId))
+      .filter((p) => !usedRawModelIds.has(p.modelId))
       .filter((model) => {
         if (!searchQuery.trim()) return true;
         const query = searchQuery.toLowerCase().trim();
