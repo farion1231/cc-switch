@@ -576,7 +576,10 @@ impl SkillService {
                     let _ = Self::remove_from_app(&skill.directory, &app);
                 }
                 let _ = db.delete_skill(&id);
-                log::info!("skill '{}' directory missing from SSOT, removed from database", skill.name);
+                log::info!(
+                    "skill '{}' directory missing from SSOT, removed from database",
+                    skill.name
+                );
             }
         }
         Ok(result)
