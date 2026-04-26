@@ -990,7 +990,25 @@ impl RequestForwarder {
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+        let mut filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+
+        // Tool Schema 整流：仅对 Codex adapter 且非 OpenAI 原生端点生效
+        // OpenAI 原生支持 web_search / code_interpreter 等内置 tool 类型，无需整流
+        // Claude / Gemini adapter 使用自有格式，不适用此整流逻辑
+        let is_openai_native = base_url.contains("api.openai.com");
+        if adapter.name() == "Codex" && !is_openai_native {
+            let tool_rectify_result =
+                super::tool_schema_rectifier::rectify_tool_schema(&mut filtered_body);
+            if tool_rectify_result.applied {
+                let tag = adapter.name();
+                log::info!(
+                    "[{tag}] [TOOL-001] Tool Schema 整流: 移除 {} 个非 function tool, 修补 {} 个缺失 required 字段",
+                    tool_rectify_result.removed_non_function_tools,
+                    tool_rectify_result.patched_required_count,
+                );
+            }
+        }
+
         let force_identity_encoding = needs_transform
             || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
