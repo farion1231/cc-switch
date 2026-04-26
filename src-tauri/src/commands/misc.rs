@@ -1510,6 +1510,37 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
 }
 
+/// Whitelist of Windows environment variables that may legitimately appear as
+/// `%NAME%` placeholders inside Claude Code config JSON values (paths, command
+/// strings). Only these are returned to the frontend for expansion.
+const WINDOWS_ENV_WHITELIST: &[&str] = &[
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "TEMP",
+    "TMP",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMDATA",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "PUBLIC",
+    "ALLUSERSPROFILE",
+];
+
+#[tauri::command]
+pub async fn get_windows_env_paths() -> Result<HashMap<String, String>, String> {
+    let mut map = HashMap::new();
+    for name in WINDOWS_ENV_WHITELIST {
+        if let Ok(val) = std::env::var(name) {
+            map.insert((*name).to_string(), val);
+        }
+    }
+    Ok(map)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

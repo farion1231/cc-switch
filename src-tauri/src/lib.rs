@@ -1068,6 +1068,7 @@ pub fn run() {
             commands::check_for_updates,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
+            commands::get_windows_env_paths,
             commands::get_claude_plugin_status,
             commands::read_claude_plugin_config,
             commands::apply_claude_plugin_config,

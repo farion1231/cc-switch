@@ -81,7 +81,12 @@
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
     "effortMax": "最大強度思考",
-    "disableAutoUpgrade": "自動アップグレードを無効化"
+    "disableAutoUpgrade": "自動アップグレードを無効化",
+    "winEnvDetected": "Windows 環境変数プレースホルダーを検出しました（{{vars}}）。Claude Code は自動展開しません",
+    "winEnvUnknown": "{{vars}} はホワイトリストにないため、そのまま保持されます",
+    "winEnvConvert": "絶対パスに変換",
+    "winEnvDone": "{{count}} 箇所を展開しました",
+    "winEnvFailed": "変換に失敗しました：{{error}}"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",

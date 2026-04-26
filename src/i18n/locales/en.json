@@ -81,7 +81,12 @@
     "enableTeammates": "Teammates Mode",
     "enableToolSearch": "Enable Tool Search",
     "effortMax": "Max Effort Thinking",
-    "disableAutoUpgrade": "Disable Auto-Upgrade"
+    "disableAutoUpgrade": "Disable Auto-Upgrade",
+    "winEnvDetected": "Windows env var placeholders detected ({{vars}}). Claude Code does not expand these automatically.",
+    "winEnvUnknown": "{{vars}} not in the whitelist; left unchanged.",
+    "winEnvConvert": "Convert to absolute paths",
+    "winEnvDone": "Expanded {{count}} occurrence(s)",
+    "winEnvFailed": "Conversion failed: {{error}}"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
