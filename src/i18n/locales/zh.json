@@ -81,7 +81,12 @@
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "启用 Tool Search",
     "effortMax": "最大强度思考",
-    "disableAutoUpgrade": "禁用自动升级"
+    "disableAutoUpgrade": "禁用自动升级",
+    "winEnvDetected": "检测到 Windows 环境变量占位符（{{vars}}），Claude Code 不会自动展开",
+    "winEnvUnknown": "{{vars}} 不在白名单中，将原样保留",
+    "winEnvConvert": "转为绝对路径",
+    "winEnvDone": "已展开 {{count}} 处",
+    "winEnvFailed": "转换失败：{{error}}"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
