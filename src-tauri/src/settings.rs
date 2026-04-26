@@ -478,7 +478,31 @@ fn settings_store() -> &'static RwLock<AppSettings> {
     SETTINGS_STORE.get_or_init(|| RwLock::new(AppSettings::load_from_file()))
 }
 
+fn expand_env_vars(s: &str) -> String {
+    let mut result = s.to_string();
+    let mut pos = 0;
+    loop {
+        let Some(rel_start) = result[pos..].find("${") else {
+            break;
+        };
+        let start = pos + rel_start;
+        let Some(rel_end) = result[start + 2..].find('}') else {
+            break;
+        };
+        let end = start + 2 + rel_end;
+        let var_name = result[start + 2..end].to_string();
+        if let Ok(val) = std::env::var(&var_name) {
+            result.replace_range(start..=end, &val);
+            pos = start + val.len();
+        } else {
+            pos = end + 1;
+        }
+    }
+    result
+}
+
 fn resolve_override_path(raw: &str) -> PathBuf {
+    let raw = &expand_env_vars(raw);
     if raw == "~" {
         if let Some(home) = dirs::home_dir() {
             return home;
@@ -767,4 +791,47 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
             sync.status = status;
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expand_env_vars_replaces_home() {
+        std::env::set_var("HOME", "/Users/test");
+        assert_eq!(expand_env_vars("${HOME}/.claude"), "/Users/test/.claude");
+        assert_eq!(expand_env_vars("${HOME}"), "/Users/test");
+    }
+
+    #[test]
+    fn expand_env_vars_multiple_vars() {
+        std::env::set_var("FOO", "foo");
+        std::env::set_var("BAR", "bar");
+        assert_eq!(expand_env_vars("${FOO}/${BAR}"), "foo/bar");
+    }
+
+    #[test]
+    fn expand_env_vars_unknown_var_left_as_is() {
+        let s = "${DEFINITELY_NOT_SET_XYZ}";
+        assert_eq!(expand_env_vars(s), s);
+    }
+
+    #[test]
+    fn expand_env_vars_no_vars_unchanged() {
+        assert_eq!(expand_env_vars("/absolute/path"), "/absolute/path");
+        assert_eq!(expand_env_vars("~/path"), "~/path");
+    }
+
+    #[test]
+    fn resolve_override_path_expands_home_var() {
+        if let Some(home) = dirs::home_dir() {
+            let home_str = home.to_string_lossy();
+            std::env::set_var("HOME", home_str.as_ref());
+            assert_eq!(
+                resolve_override_path("${HOME}/.claude"),
+                home.join(".claude")
+            );
+        }
+    }
 }
