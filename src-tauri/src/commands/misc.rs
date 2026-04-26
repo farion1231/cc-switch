@@ -1180,6 +1180,49 @@ fn which_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Resolve the full path to `wt.exe` (Windows Terminal). Returns None if not found.
+///
+/// We must resolve a concrete path *before* invoking `cmd /C start wt …`. If
+/// `start` can't locate `wt` it routes through ShellExecute, which pops a modal
+/// "Windows 找不到文件 'wt'" dialog and only *then* returns failure — the existing
+/// fallback to cmd happens after the dialog is already on screen.
+///
+/// `where wt` covers the normal case. The explicit `LOCALAPPDATA\Microsoft\
+/// WindowsApps\wt.exe` probe covers the common elevated-launch scenario, where
+/// the SYSTEM PATH inherited by an admin-elevated cc-switch lacks the user's
+/// per-user WindowsApps directory.
+#[cfg(target_os = "windows")]
+fn resolve_windows_terminal_path() -> Option<String> {
+    use std::process::Command;
+
+    if let Ok(output) = Command::new("cmd")
+        .args(["/C", "where", "wt"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(first) = stdout.lines().next() {
+                let trimmed = first.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    let local_appdata = std::env::var_os("LOCALAPPDATA")?;
+    let wt_path = std::path::Path::new(&local_appdata)
+        .join("Microsoft")
+        .join("WindowsApps")
+        .join("wt.exe");
+    if wt_path.exists() {
+        wt_path.to_str().map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
 /// Windows: 根据用户首选终端启动
 #[cfg(target_os = "windows")]
 fn launch_windows_terminal(
@@ -1220,7 +1263,13 @@ del \"%~f0\" >nul 2>&1
             &["powershell", "-NoExit", "-Command", &ps_cmd],
             "PowerShell",
         ),
-        "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+        "wt" => match resolve_windows_terminal_path() {
+            Some(wt_path) => run_windows_start_command(
+                &["", &wt_path, "cmd", "/K", &bat_path],
+                "Windows Terminal",
+            ),
+            None => Err("Windows Terminal (wt.exe) 未找到".to_string()),
+        },
         _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
     };
 
@@ -1464,7 +1513,13 @@ read -n 1 -s
                 &["powershell", "-NoExit", "-Command", &ps_cmd],
                 "PowerShell",
             ),
-            "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+            "wt" => match resolve_windows_terminal_path() {
+                Some(wt_path) => run_windows_start_command(
+                    &["", &wt_path, "cmd", "/K", &bat_path],
+                    "Windows Terminal",
+                ),
+                None => Err("Windows Terminal (wt.exe) 未找到".to_string()),
+            },
             _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
         };
 
