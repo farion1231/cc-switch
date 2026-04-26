@@ -570,6 +570,11 @@ impl SkillService {
             if exists {
                 result.push(skill);
             } else {
+                // Clean up app copies before removing the DB record so the
+                // enabled-app directories don't contain orphaned skill folders.
+                for app in AppType::all() {
+                    let _ = Self::remove_from_app(&skill.directory, &app);
+                }
                 let _ = db.delete_skill(&id);
                 log::info!("skill '{}' directory missing from SSOT, removed from database", skill.name);
             }
