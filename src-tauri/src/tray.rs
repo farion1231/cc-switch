@@ -131,7 +131,21 @@ static ICON_BASE_RGBA: Lazy<(Vec<u8>, u32, u32)> =
 
 /// Last percentage rendered to the tray icon (integer bucket 0–100).
 /// Used to skip re-renders when the utilization hasn't changed.
-static LAST_TRAY_ICON_PCT: std::sync::Mutex<Option<u8>> = std::sync::Mutex::new(None);
+/// Cache key: (rounded_pct, color_tier) where tier 0=normal 1=warn 2=danger.
+/// Including the tier ensures a re-render when utilization crosses a color
+/// boundary even if both values round to the same integer.
+static LAST_TRAY_ICON_PCT: std::sync::Mutex<Option<(u8, u8)>> =
+    std::sync::Mutex::new(None);
+
+fn pct_to_color_tier(pct: f64) -> u8 {
+    if pct >= UTIL_DANGER_PCT {
+        2
+    } else if pct >= UTIL_WARN_PCT {
+        1
+    } else {
+        0
+    }
+}
 
 /// Recolor the original icon's pixels as a clockwise progress fill.
 /// Non-transparent pixels within the fill angle get the utilization color;
@@ -301,10 +315,10 @@ fn update_tray_icon(app: &tauri::AppHandle) {
     let Some(pct) = compute_tray_worst_pct(&app_state) else {
         return; // No data yet — keep the template icon set at startup
     };
-    let pct_key = pct.round() as u8;
+    let pct_key = (pct.round() as u8, pct_to_color_tier(pct));
     if let Ok(mut last) = LAST_TRAY_ICON_PCT.lock() {
         if *last == Some(pct_key) {
-            return; // percentage unchanged — skip pixel re-render
+            return; // percentage and color tier unchanged — skip pixel re-render
         }
         *last = Some(pct_key);
     }
@@ -928,7 +942,11 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
                 // 数据首次到达而 handle 尚未建立（如网络错误恢复后），需要整建
                 needs_rebuild = true;
             }
-            _ => {}
+            (Some(_), None) => {
+                // usage became unavailable but a stale detail item exists — rebuild to remove it
+                needs_rebuild = true;
+            }
+            (None, None) => {}
         }
     }
     drop(detail_items); // release lock before possible rebuild or icon update

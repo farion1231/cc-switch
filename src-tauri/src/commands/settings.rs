@@ -37,13 +37,15 @@ pub async fn save_settings(
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
+    let was_progress_icon_enabled = existing.tray_progress_icon;
     let merged = merge_settings_for_save(settings, &existing);
     let enable_progress_icon = merged.tray_progress_icon;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
     // Immediate update: restores template when disabled, or renders if cache has data
     crate::tray::update_tray_icon_pub(&app);
-    // When enabling: reset throttle and kick off a fetch in case the cache is empty
-    if enable_progress_icon {
+    // Only reset throttle and kick off a fetch when transitioning off → on,
+    // so unrelated settings saves don't bypass the refresh throttle.
+    if enable_progress_icon && !was_progress_icon_enabled {
         crate::tray::reset_tray_refresh_throttle();
         let app_clone = app.clone();
         tauri::async_runtime::spawn(async move {
