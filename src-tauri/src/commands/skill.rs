@@ -33,8 +33,13 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
 // ========== 统一管理命令 ==========
 
 /// 获取所有已安装的 Skills
+///
+/// 每次调用前先清理磁盘上已不存在的记录，确保前端看到的列表与文件系统一致。
 #[tauri::command]
 pub fn get_installed_skills(app_state: State<'_, AppState>) -> Result<Vec<InstalledSkill>, String> {
+    if let Err(e) = SkillService::reconcile_stale_entries(&app_state.db) {
+        log::warn!("reconcile_stale_entries failed: {e}");
+    }
     SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())
 }
 

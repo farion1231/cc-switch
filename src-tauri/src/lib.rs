@@ -813,13 +813,6 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
-            // 清理磁盘上已不存在的 skill 记录（用户手动删除 SSOT 目录后的自愈）
-            {
-                let db = &app.state::<AppState>().db;
-                if let Err(e) = SkillService::reconcile_stale_entries(db) {
-                    log::warn!("reconcile_stale_entries failed: {e}");
-                }
-            }
 
             // 初始化 CopilotAuthManager
             {
