@@ -587,10 +587,12 @@ impl SkillService {
         Ok(db.get_all_installed_skills()?.into_values().collect())
     }
 
-    /// 清理磁盘上已不存在的 skill 记录。
+    /// 清理磁盘上已不存在的 skill 记录（幂等，可重复调用）。
     ///
-    /// 应在应用启动时调用一次。若 skill 的 SSOT 目录在所有候选路径下均确认不存在，
-    /// 则删除其 DB 记录并清理各已启用 app 下的副本。
+    /// 若 skill 的 SSOT 目录在所有候选路径下均确认不存在，则删除其 DB 记录
+    /// 并清理各已启用 app 下的副本。
+    ///
+    /// 副作用：可能修改数据库（删除 skill 记录）和文件系统（删除 app 目录下的副本）。
     pub fn reconcile_stale_entries(db: &Arc<Database>) -> Result<()> {
         let skills = db.get_all_installed_skills()?;
         let ssot_dirs = Self::all_ssot_dirs();
@@ -623,7 +625,7 @@ impl SkillService {
             // Delete the DB record first. If that fails (locked/read-only DB),
             // skip filesystem cleanup so DB and app directories stay in sync.
             match db.delete_skill(&id) {
-                Ok(_) => {
+                Ok(true) => {
                     for app in skill.apps.enabled_apps() {
                         if let Err(e) = Self::remove_from_app(&skill.directory, &app) {
                             log::warn!(
@@ -636,6 +638,9 @@ impl SkillService {
                         "skill '{}' directory missing from SSOT, removed from database",
                         skill.name
                     );
+                }
+                Ok(false) => {
+                    // 记录已被并发的另一次 reconcile 删除，无需重复清理 app 副本
                 }
                 Err(e) => {
                     log::warn!(
