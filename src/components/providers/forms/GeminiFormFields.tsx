@@ -5,7 +5,12 @@ import { Download, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelInputWithFetch, ApiKeyHeaderSection } from "./shared";
+import {
+  ApiKeySection,
+  EndpointField,
+  ModelInputWithFetch,
+  ApiKeyHeaderSection,
+} from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
