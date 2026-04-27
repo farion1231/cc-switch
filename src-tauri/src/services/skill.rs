@@ -563,13 +563,12 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir().ok();
         let mut result = Vec::new();
         for (id, skill) in skills {
-            let exists = ssot_dir
+            let missing = ssot_dir
                 .as_ref()
-                .map(|d| d.join(&skill.directory).exists())
-                .unwrap_or(true);
-            if exists {
-                result.push(skill);
-            } else {
+                .and_then(|d| d.join(&skill.directory).try_exists().ok())
+                .map(|exists| !exists)
+                .unwrap_or(false);
+            if missing {
                 // Clean up app copies before removing the DB record so the
                 // enabled-app directories don't contain orphaned skill folders.
                 for app in AppType::all() {
@@ -580,6 +579,8 @@ impl SkillService {
                     "skill '{}' directory missing from SSOT, removed from database",
                     skill.name
                 );
+            } else {
+                result.push(skill);
             }
         }
         Ok(result)
