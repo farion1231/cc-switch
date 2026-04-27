@@ -88,14 +88,9 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
             // 单个字符串
             messages.push(json!({"role": "system", "content": text}));
         } else if let Some(arr) = system.as_array() {
-            // 多个 system message — preserve cache_control for compatible proxies
             for msg in arr {
                 if let Some(text) = msg.get("text").and_then(|t| t.as_str()) {
-                    let mut sys_msg = json!({"role": "system", "content": text});
-                    if let Some(cc) = msg.get("cache_control") {
-                        sys_msg["cache_control"] = cc.clone();
-                    }
-                    messages.push(sys_msg);
+                    messages.push(json!({"role": "system", "content": text}));
                 }
             }
         }
@@ -149,18 +144,14 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
             .iter()
             .filter(|t| t.get("type").and_then(|v| v.as_str()) != Some("BatchTool"))
             .map(|t| {
-                let mut tool = json!({
+                json!({
                     "type": "function",
                     "function": {
                         "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
                         "description": t.get("description"),
                         "parameters": clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})))
                     }
-                });
-                if let Some(cc) = t.get("cache_control") {
-                    tool["cache_control"] = cc.clone();
-                }
-                tool
+                })
             })
             .collect();
 
@@ -170,10 +161,35 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
     }
 
     if let Some(v) = body.get("tool_choice") {
-        result["tool_choice"] = v.clone();
+        if let Some(tool_choice) = convert_tool_choice_to_openai(v) {
+            result["tool_choice"] = tool_choice;
+        }
     }
 
     Ok(result)
+}
+
+fn convert_tool_choice_to_openai(value: &Value) -> Option<Value> {
+    if value.is_null() {
+        return None;
+    }
+
+    if value.as_str().is_some() {
+        return Some(value.clone());
+    }
+
+    let obj = value.as_object()?;
+    match obj.get("type").and_then(|v| v.as_str()) {
+        Some("auto") => Some(json!("auto")),
+        Some("any") => Some(json!("required")),
+        Some("none") => Some(json!("none")),
+        Some("tool") => obj
+            .get("name")
+            .and_then(|name| name.as_str())
+            .map(|name| json!({"type": "function", "function": {"name": name}})),
+        Some("function") => Some(value.clone()),
+        _ => None,
+    }
 }
 
 fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
@@ -280,11 +296,7 @@ fn convert_message_to_openai(
             match block_type {
                 "text" => {
                     if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                        let mut part = json!({"type": "text", "text": text});
-                        if let Some(cc) = block.get("cache_control") {
-                            part["cache_control"] = cc.clone();
-                        }
-                        content_parts.push(part);
+                        content_parts.push(json!({"type": "text", "text": text}));
                     }
                 }
                 "image" => {
@@ -346,14 +358,8 @@ fn convert_message_to_openai(
             if content_parts.is_empty() {
                 msg["content"] = Value::Null;
             } else if content_parts.len() == 1 {
-                // When cache_control is present, keep array format to preserve it
-                let has_cache_control = content_parts[0].get("cache_control").is_some();
-                if !has_cache_control {
-                    if let Some(text) = content_parts[0].get("text") {
-                        msg["content"] = text.clone();
-                    } else {
-                        msg["content"] = json!(content_parts);
-                    }
+                if let Some(text) = content_parts[0].get("text") {
+                    msg["content"] = text.clone();
                 } else {
                     msg["content"] = json!(content_parts);
                 }
@@ -627,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_preserves_matching_system_cache_control_when_merging() {
+    fn test_anthropic_to_openai_drops_matching_system_cache_control_when_merging() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -645,7 +651,7 @@ mod tests {
             result["messages"][0]["content"],
             "You are Claude Code.\nBe concise."
         );
-        assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
+        assert!(result["messages"][0].get("cache_control").is_none());
         assert_eq!(result["messages"][1]["role"], "user");
     }
 
@@ -689,6 +695,58 @@ mod tests {
             "You are Claude Code.\nBe concise."
         );
         assert!(result["messages"][0].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_maps_anthropic_tool_choice() {
+        let base = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let mut auto = base.clone();
+        auto["tool_choice"] = json!({"type": "auto"});
+        assert_eq!(anthropic_to_openai(auto).unwrap()["tool_choice"], "auto");
+
+        let mut any = base.clone();
+        any["tool_choice"] = json!({"type": "any"});
+        assert_eq!(anthropic_to_openai(any).unwrap()["tool_choice"], "required");
+
+        let mut none = base.clone();
+        none["tool_choice"] = json!({"type": "none"});
+        assert_eq!(anthropic_to_openai(none).unwrap()["tool_choice"], "none");
+
+        let mut tool = base.clone();
+        tool["tool_choice"] = json!({"type": "tool", "name": "get_weather"});
+        let result = anthropic_to_openai(tool).unwrap();
+        assert_eq!(result["tool_choice"]["type"], "function");
+        assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
+
+        let mut native = base.clone();
+        native["tool_choice"] = json!({"type": "function", "function": {"name": "get_weather"}});
+        assert_eq!(
+            anthropic_to_openai(native).unwrap()["tool_choice"],
+            json!({"type": "function", "function": {"name": "get_weather"}})
+        );
+
+        let mut string = base.clone();
+        string["tool_choice"] = json!("auto");
+        assert_eq!(anthropic_to_openai(string).unwrap()["tool_choice"], "auto");
+
+        let mut null_choice = base.clone();
+        null_choice["tool_choice"] = Value::Null;
+        assert!(anthropic_to_openai(null_choice)
+            .unwrap()
+            .get("tool_choice")
+            .is_none());
+
+        let mut unknown = base;
+        unknown["tool_choice"] = json!({"type": "unsupported"});
+        assert!(anthropic_to_openai(unknown)
+            .unwrap()
+            .get("tool_choice")
+            .is_none());
     }
 
     #[test]
@@ -814,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_cache_control_preserved() {
+    fn test_anthropic_to_openai_drops_cache_control() {
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
@@ -836,19 +894,9 @@ mod tests {
         });
 
         let result = anthropic_to_openai(input).unwrap();
-        // System message cache_control preserved
-        assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
-        // Text block cache_control preserved
-        assert_eq!(
-            result["messages"][1]["content"][0]["cache_control"]["type"],
-            "ephemeral"
-        );
-        assert_eq!(
-            result["messages"][1]["content"][0]["cache_control"]["ttl"],
-            "5m"
-        );
-        // Tool cache_control preserved
-        assert_eq!(result["tools"][0]["cache_control"]["type"], "ephemeral");
+        assert!(result["messages"][0].get("cache_control").is_none());
+        assert_eq!(result["messages"][1]["content"], "Hello");
+        assert!(result["tools"][0].get("cache_control").is_none());
     }
 
     #[test]
