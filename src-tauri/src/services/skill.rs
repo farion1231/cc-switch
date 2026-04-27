@@ -594,9 +594,12 @@ impl SkillService {
             // possible SSOT location. Checking all locations guards against both
             // in-flight migration races and crash-after-move / before-settings-persist
             // restarts where files landed in the alternate path.
-            let missing = ssot_dirs
-                .iter()
-                .all(|d| matches!(d.join(&skill.directory).try_exists(), Ok(false)));
+            // Vacuous truth: if no SSOT path is resolvable we cannot verify
+            // absence, so skip pruning to avoid data loss.
+            let missing = !ssot_dirs.is_empty()
+                && ssot_dirs
+                    .iter()
+                    .all(|d| matches!(d.join(&skill.directory).try_exists(), Ok(false)));
             if missing {
                 // Delete the DB record first. If that fails (locked/read-only DB),
                 // leave the skill visible and skip filesystem cleanup so the DB and
