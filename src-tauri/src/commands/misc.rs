@@ -869,8 +869,7 @@ fn should_write_temp_claude_config(
     env_vars: &[(String, String)],
     claude_profile_dir: Option<&str>,
 ) -> bool {
-    let _ = claude_profile_dir;
-    !env_vars.is_empty()
+    claude_profile_dir.is_none() && !env_vars.is_empty()
 }
 
 /// 创建临时配置文件并启动 claude 终端
@@ -1703,18 +1702,18 @@ mod tests {
     }
 
     #[test]
-    fn profile_dir_mode_still_writes_temp_claude_config_file_when_env_exists() {
+    fn profile_dir_mode_skips_temp_claude_config_file_when_env_exists() {
         let env_vars = vec![(
             "ANTHROPIC_AUTH_TOKEN".to_string(),
             "secret-token".to_string(),
         )];
 
         assert!(
-            should_write_temp_claude_config(
+            !should_write_temp_claude_config(
                 &env_vars,
                 Some(r"C:\Users\test\.claude-profiles\api")
             ),
-            "profile-dir launches should still create a temporary provider config when provider env exists"
+            "profile-dir launches should use persisted profile config instead of a temporary provider config"
         );
     }
 
