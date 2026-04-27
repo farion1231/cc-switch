@@ -350,7 +350,7 @@ fn convert_message_to_openai(
         }
 
         // 添加带内容和/或工具调用的消息
-        if !content_parts.is_empty() || !tool_calls.is_empty() || !reasoning_parts.is_empty() {
+        if !content_parts.is_empty() || !tool_calls.is_empty() {
             let mut msg = json!({"role": role});
 
             // 内容处理
@@ -776,6 +776,23 @@ mod tests {
         assert_eq!(msg["reasoning_content"], "tool call");
         assert!(msg.get("tool_calls").is_some());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_skips_thinking_only_message() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "No visible content yet."}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"].as_array().unwrap().len(), 0);
     }
 
     #[test]
