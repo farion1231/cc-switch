@@ -114,6 +114,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut has_emitted_message_delta = false;
         let mut pending_message_delta: Option<(Option<String>, Option<Value>)> = None;
         let mut has_sent_message_stop = false;
+        let mut stream_ended_with_error = false;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
@@ -579,6 +580,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                 }
                 Err(e) => {
                     log::error!("Stream error: {e}");
+                    stream_ended_with_error = true;
                     let error_event = json!({
                         "type": "error",
                         "error": {
@@ -594,30 +596,33 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
             }
         }
 
-        // 流结束（未收到 [DONE] 或连接中断），确保发送缓存的 message_delta 和 message_stop
-        if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
-            let mut event = json!({
-                "type": "message_delta",
-                "delta": {
-                    "stop_reason": stop_reason,
-                    "stop_sequence": null
+        // 流自然结束但未收到 [DONE] 时，确保发送缓存的 message_delta 和 message_stop。
+        // 若上游已显式报错，则只保留 error 事件，避免把失败伪装成成功完成。
+        if !stream_ended_with_error {
+            if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
+                let mut event = json!({
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": stop_reason,
+                        "stop_sequence": null
+                    }
+                });
+                if let Some(uj) = usage_json {
+                    event["usage"] = uj;
                 }
-            });
-            if let Some(uj) = usage_json {
-                event["usage"] = uj;
+                let sse_data = format!("event: message_delta\ndata: {}\n\n",
+                    serde_json::to_string(&event).unwrap_or_default());
+                log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (at stream end)");
+                yield Ok(Bytes::from(sse_data));
             }
-            let sse_data = format!("event: message_delta\ndata: {}\n\n",
-                serde_json::to_string(&event).unwrap_or_default());
-            log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (at stream end)");
-            yield Ok(Bytes::from(sse_data));
-        }
 
-        if !has_sent_message_stop {
-            let event = json!({"type": "message_stop"});
-            let sse_data = format!("event: message_stop\ndata: {}\n\n",
-                serde_json::to_string(&event).unwrap_or_default());
-            log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop (at stream end)");
-            yield Ok(Bytes::from(sse_data));
+            if !has_sent_message_stop {
+                let event = json!({"type": "message_stop"});
+                let sse_data = format!("event: message_stop\ndata: {}\n\n",
+                    serde_json::to_string(&event).unwrap_or_default());
+                log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop (at stream end)");
+                yield Ok(Bytes::from(sse_data));
+            }
         }
     }
 }
@@ -930,5 +935,39 @@ mod tests {
             .filter(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop"))
             .count();
         assert_eq!(message_stops, 1, "message_stop must only be emitted once");
+    }
+
+    #[tokio::test]
+    async fn test_stream_error_does_not_emit_success_terminal_events() {
+        let upstream = stream::iter(vec![Err::<Bytes, _>(std::io::Error::other(
+            "upstream disconnected",
+        ))]);
+        let converted = create_anthropic_sse_stream(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        let events: Vec<Value> = merged
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
+                serde_json::from_str::<Value>(data).ok()
+            })
+            .collect();
+
+        assert!(events
+            .iter()
+            .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("error")));
+        assert!(!events
+            .iter()
+            .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_delta")));
+        assert!(!events
+            .iter()
+            .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
     }
 }
