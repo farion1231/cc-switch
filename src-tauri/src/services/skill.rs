@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::timeout;
 
@@ -18,6 +19,10 @@ use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
+
+/// Set to true while migrate_storage is moving files so that get_all_installed
+/// does not prune DB records that are temporarily absent from the old SSOT path.
+static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 // ========== 数据结构 ==========
 
@@ -568,7 +573,7 @@ impl SkillService {
                 .and_then(|d| d.join(&skill.directory).try_exists().ok())
                 .map(|exists| !exists)
                 .unwrap_or(false);
-            if missing {
+            if missing && !MIGRATION_IN_PROGRESS.load(Ordering::Acquire) {
                 // Delete the DB record first. If that fails (locked/read-only DB),
                 // leave the skill visible and skip filesystem cleanup so the DB and
                 // app directories stay in sync.
@@ -1207,6 +1212,16 @@ impl SkillService {
         fs::create_dir_all(&new_dir)?;
 
         // 2. 逐个移动 skill 目录
+        // Guard against get_all_installed pruning records while files are in flight.
+        // The guard resets the flag on drop, so any early-return also clears it.
+        struct MigrationGuard;
+        impl Drop for MigrationGuard {
+            fn drop(&mut self) {
+                MIGRATION_IN_PROGRESS.store(false, Ordering::Release);
+            }
+        }
+        MIGRATION_IN_PROGRESS.store(true, Ordering::Release);
+        let _migration_guard = MigrationGuard;
         let skills = db.get_all_installed_skills()?;
         let mut result = MigrationResult {
             migrated_count: 0,
@@ -1242,7 +1257,7 @@ impl SkillService {
             }
         }
 
-        // 3. 文件移动完成后才持久化设置
+        // 3. 文件移动完成后才持久化设置（_migration_guard 在此作用域末尾自动清 flag）
         crate::settings::set_skill_storage_location(target)?;
 
         // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
