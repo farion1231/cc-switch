@@ -1101,11 +1101,16 @@ impl RequestForwarder {
 
             if let Some(ref header_name) = auth.custom_auth_header {
                 use http::{HeaderName, HeaderValue};
-                if let (Ok(name), Ok(value)) = (
+                if let (Ok(custom_name), Ok(custom_value)) = (
                     HeaderName::from_bytes(header_name.as_bytes()),
                     HeaderValue::from_str(&auth.api_key),
                 ) {
-                    vec![(name, value)]
+                    // Keep all adapter headers except authorization, then add the custom one.
+                    // This preserves companion headers (e.g. x-goog-api-client, Copilot headers).
+                    let mut headers = adapter.get_auth_headers(&auth);
+                    headers.retain(|(name, _)| name.as_str() != "authorization");
+                    headers.push((custom_name, custom_value));
+                    headers
                 } else {
                     adapter.get_auth_headers(&auth)
                 }

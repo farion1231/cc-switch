@@ -27,7 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ApiKeySection, ApiKeyHeaderSection } from "./shared";
+import { ApiKeySection } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -225,10 +225,6 @@ interface OpenCodeFormFieldsProps {
   // Extra Options
   extraOptions: Record<string, string>;
   onExtraOptionsChange: (options: Record<string, string>) => void;
-
-  // Custom API Key Header
-  apiKeyHeaderName?: string;
-  onApiKeyHeaderNameChange: (name: string | undefined) => void;
 }
 
 export function OpenCodeFormFields({
@@ -247,8 +243,6 @@ export function OpenCodeFormFields({
   onModelsChange,
   extraOptions,
   onExtraOptionsChange,
-  apiKeyHeaderName,
-  onApiKeyHeaderNameChange,
 }: OpenCodeFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -549,11 +543,6 @@ export function OpenCodeFormFields({
         websiteUrl={websiteUrl}
         isPartner={isPartner}
         partnerPromotionKey={partnerPromotionKey}
-      />
-
-      <ApiKeyHeaderSection
-        apiKeyHeaderName={apiKeyHeaderName}
-        onApiKeyHeaderNameChange={onApiKeyHeaderNameChange}
       />
 
       {/* Base URL */}

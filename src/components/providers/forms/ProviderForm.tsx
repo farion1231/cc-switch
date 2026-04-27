@@ -1856,8 +1856,6 @@ export function ProviderForm({
               onExtraOptionsChange={
                 opencodeForm.handleOpencodeExtraOptionsChange
               }
-              apiKeyHeaderName={localApiKeyHeaderName}
-              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
@@ -1899,8 +1897,6 @@ export function ProviderForm({
               onModelsChange={openclawForm.handleOpenclawModelsChange}
               userAgent={openclawForm.openclawUserAgent}
               onUserAgentChange={openclawForm.handleOpenclawUserAgentChange}
-              apiKeyHeaderName={localApiKeyHeaderName}
-              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
@@ -1924,8 +1920,6 @@ export function ProviderForm({
               onRateLimitDelayChange={
                 hermesForm.handleHermesRateLimitDelayChange
               }
-              apiKeyHeaderName={localApiKeyHeaderName}
-              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 

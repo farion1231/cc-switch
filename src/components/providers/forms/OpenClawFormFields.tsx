@@ -34,7 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ApiKeySection, ApiKeyHeaderSection } from "./shared";
+import { ApiKeySection } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -68,10 +68,6 @@ interface OpenClawFormFieldsProps {
   // User-Agent
   userAgent: boolean;
   onUserAgentChange: (checked: boolean) => void;
-
-  // Custom API Key Header
-  apiKeyHeaderName?: string;
-  onApiKeyHeaderNameChange: (name: string | undefined) => void;
 }
 
 export function OpenClawFormFields({
@@ -90,8 +86,6 @@ export function OpenClawFormFields({
   onModelsChange,
   userAgent,
   onUserAgentChange,
-  apiKeyHeaderName,
-  onApiKeyHeaderNameChange,
 }: OpenClawFormFieldsProps) {
   const { t } = useTranslation();
   const [expandedModels, setExpandedModels] = useState<Record<number, boolean>>(
@@ -268,11 +262,6 @@ export function OpenClawFormFields({
         websiteUrl={websiteUrl}
         isPartner={isPartner}
         partnerPromotionKey={partnerPromotionKey}
-      />
-
-      <ApiKeyHeaderSection
-        apiKeyHeaderName={apiKeyHeaderName}
-        onApiKeyHeaderNameChange={onApiKeyHeaderNameChange}
       />
 
       {/* User-Agent */}
