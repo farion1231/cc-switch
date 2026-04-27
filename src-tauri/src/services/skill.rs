@@ -493,31 +493,31 @@ impl SkillService {
         Ok(dir)
     }
 
-    /// Returns all candidate SSOT directories (current + alternate location).
-    ///
-    /// Used by get_all_installed to avoid pruning skill records that are absent
-    /// from the current SSOT path but present in the alternate one — this covers
-    /// both the in-flight migration race and the crash-after-move / before-settings
-    /// recovery case where settings still point to the old path.
-    fn all_ssot_dirs() -> Vec<PathBuf> {
-        let mut dirs = Vec::new();
-        // Current configured location (may fail if home dir is unavailable)
-        if let Ok(d) = Self::get_ssot_dir() {
-            dirs.push(d);
-        }
-        // Alternate location
-        let alternate = match crate::settings::get_skill_storage_location() {
-            SkillStorageLocation::CcSwitch => {
+    /// Returns the SSOT path for a given storage location without creating it.
+    fn ssot_dir_for(loc: SkillStorageLocation) -> Option<PathBuf> {
+        match loc {
+            SkillStorageLocation::CcSwitch => Some(get_app_config_dir().join("skills")),
+            SkillStorageLocation::Unified => {
                 dirs::home_dir().map(|h| h.join(".agents").join("skills"))
             }
-            SkillStorageLocation::Unified => Some(get_app_config_dir().join("skills")),
-        };
-        if let Some(alt) = alternate {
-            if !dirs.contains(&alt) {
-                dirs.push(alt);
-            }
         }
-        dirs
+    }
+
+    /// Returns all candidate SSOT directories (current + alternate) without creating them.
+    ///
+    /// Checking both locations guards against in-flight migration races and
+    /// crash-after-move / before-settings-persist restarts where files landed
+    /// in the alternate path while settings still point to the old one.
+    fn all_ssot_dirs() -> Vec<PathBuf> {
+        let current_loc = crate::settings::get_skill_storage_location();
+        let alternate_loc = match current_loc {
+            SkillStorageLocation::CcSwitch => SkillStorageLocation::Unified,
+            SkillStorageLocation::Unified => SkillStorageLocation::CcSwitch,
+        };
+        [current_loc, alternate_loc]
+            .into_iter()
+            .filter_map(Self::ssot_dir_for)
+            .collect()
     }
 
     /// 获取 Skill 卸载备份目录（~/.cc-switch/skill-backups/）
@@ -582,51 +582,70 @@ impl SkillService {
 
     // ========== 统一管理方法 ==========
 
-    /// 获取所有已安装的 Skills
-    ///
-    /// 同时核对磁盘：若 SSOT 目录下的 skill 文件夹已被手动删除，自动清理 DB 记录。
+    /// 获取所有已安装的 Skills（纯读，不修改任何状态）
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
+        Ok(db.get_all_installed_skills()?.into_values().collect())
+    }
+
+    /// 清理磁盘上已不存在的 skill 记录。
+    ///
+    /// 应在应用启动时调用一次。若 skill 的 SSOT 目录在所有候选路径下均确认不存在，
+    /// 则删除其 DB 记录并清理各已启用 app 下的副本。
+    pub fn reconcile_stale_entries(db: &Arc<Database>) -> Result<()> {
         let skills = db.get_all_installed_skills()?;
         let ssot_dirs = Self::all_ssot_dirs();
-        let mut result = Vec::new();
+
+        if ssot_dirs.is_empty() {
+            log::warn!("reconcile_stale_entries: no SSOT path resolvable, skipping cleanup");
+            return Ok(());
+        }
+
         for (id, skill) in skills {
-            // Only prune when the skill dir is definitively absent from every
-            // possible SSOT location. Checking all locations guards against both
-            // in-flight migration races and crash-after-move / before-settings-persist
-            // restarts where files landed in the alternate path.
-            // Vacuous truth: if no SSOT path is resolvable we cannot verify
-            // absence, so skip pruning to avoid data loss.
-            let missing = !ssot_dirs.is_empty()
-                && ssot_dirs
-                    .iter()
-                    .all(|d| matches!(d.join(&skill.directory).try_exists(), Ok(false)));
-            if missing {
-                // Delete the DB record first. If that fails (locked/read-only DB),
-                // leave the skill visible and skip filesystem cleanup so the DB and
-                // app directories stay in sync.
-                match db.delete_skill(&id) {
-                    Ok(_) => {
-                        for app in skill.apps.enabled_apps() {
-                            let _ = Self::remove_from_app(&skill.directory, &app);
-                        }
-                        log::info!(
-                            "skill '{}' directory missing from SSOT, removed from database",
-                            skill.name
-                        );
-                    }
+            let missing = ssot_dirs.iter().all(|d| {
+                let path = d.join(&skill.directory);
+                match path.try_exists() {
+                    Ok(exists) => !exists,
                     Err(e) => {
                         log::warn!(
-                            "skill '{}' SSOT directory missing but DB deletion failed, keeping record: {}",
-                            skill.name, e
+                            "skill '{}': could not check path {}: {e}",
+                            skill.name,
+                            path.display()
                         );
-                        result.push(skill);
+                        false // conservative: treat as present
                     }
                 }
-            } else {
-                result.push(skill);
+            });
+
+            if !missing {
+                continue;
+            }
+
+            // Delete the DB record first. If that fails (locked/read-only DB),
+            // skip filesystem cleanup so DB and app directories stay in sync.
+            match db.delete_skill(&id) {
+                Ok(_) => {
+                    for app in skill.apps.enabled_apps() {
+                        if let Err(e) = Self::remove_from_app(&skill.directory, &app) {
+                            log::warn!(
+                                "skill '{}': failed to remove app copy for {app:?}: {e}",
+                                skill.name
+                            );
+                        }
+                    }
+                    log::info!(
+                        "skill '{}' directory missing from SSOT, removed from database",
+                        skill.name
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "skill '{}' SSOT directory missing but DB deletion failed, keeping record: {e}",
+                        skill.name
+                    );
+                }
             }
         }
-        Ok(result)
+        Ok(())
     }
 
     /// 安装 Skill
