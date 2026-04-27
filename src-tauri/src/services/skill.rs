@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::timeout;
 
@@ -19,10 +18,6 @@ use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
-
-/// Set to true while migrate_storage is moving files so that get_all_installed
-/// does not prune DB records that are temporarily absent from the old SSOT path.
-static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 // ========== 数据结构 ==========
 
@@ -498,6 +493,33 @@ impl SkillService {
         Ok(dir)
     }
 
+    /// Returns all candidate SSOT directories (current + alternate location).
+    ///
+    /// Used by get_all_installed to avoid pruning skill records that are absent
+    /// from the current SSOT path but present in the alternate one — this covers
+    /// both the in-flight migration race and the crash-after-move / before-settings
+    /// recovery case where settings still point to the old path.
+    fn all_ssot_dirs() -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        // Current configured location (may fail if home dir is unavailable)
+        if let Ok(d) = Self::get_ssot_dir() {
+            dirs.push(d);
+        }
+        // Alternate location
+        let alternate = match crate::settings::get_skill_storage_location() {
+            SkillStorageLocation::CcSwitch => {
+                dirs::home_dir().map(|h| h.join(".agents").join("skills"))
+            }
+            SkillStorageLocation::Unified => Some(get_app_config_dir().join("skills")),
+        };
+        if let Some(alt) = alternate {
+            if !dirs.contains(&alt) {
+                dirs.push(alt);
+            }
+        }
+        dirs
+    }
+
     /// 获取 Skill 卸载备份目录（~/.cc-switch/skill-backups/）
     fn get_backup_dir() -> Result<PathBuf> {
         let dir = get_app_config_dir().join("skill-backups");
@@ -565,15 +587,17 @@ impl SkillService {
     /// 同时核对磁盘：若 SSOT 目录下的 skill 文件夹已被手动删除，自动清理 DB 记录。
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let skills = db.get_all_installed_skills()?;
-        let ssot_dir = Self::get_ssot_dir().ok();
+        let ssot_dirs = Self::all_ssot_dirs();
         let mut result = Vec::new();
         for (id, skill) in skills {
-            let missing = ssot_dir
-                .as_ref()
-                .and_then(|d| d.join(&skill.directory).try_exists().ok())
-                .map(|exists| !exists)
-                .unwrap_or(false);
-            if missing && !MIGRATION_IN_PROGRESS.load(Ordering::Acquire) {
+            // Only prune when the skill dir is definitively absent from every
+            // possible SSOT location. Checking all locations guards against both
+            // in-flight migration races and crash-after-move / before-settings-persist
+            // restarts where files landed in the alternate path.
+            let missing = ssot_dirs
+                .iter()
+                .all(|d| matches!(d.join(&skill.directory).try_exists(), Ok(false)));
+            if missing {
                 // Delete the DB record first. If that fails (locked/read-only DB),
                 // leave the skill visible and skip filesystem cleanup so the DB and
                 // app directories stay in sync.
@@ -1212,16 +1236,6 @@ impl SkillService {
         fs::create_dir_all(&new_dir)?;
 
         // 2. 逐个移动 skill 目录
-        // Guard against get_all_installed pruning records while files are in flight.
-        // The guard resets the flag on drop, so any early-return also clears it.
-        struct MigrationGuard;
-        impl Drop for MigrationGuard {
-            fn drop(&mut self) {
-                MIGRATION_IN_PROGRESS.store(false, Ordering::Release);
-            }
-        }
-        MIGRATION_IN_PROGRESS.store(true, Ordering::Release);
-        let _migration_guard = MigrationGuard;
         let skills = db.get_all_installed_skills()?;
         let mut result = MigrationResult {
             migrated_count: 0,
@@ -1257,7 +1271,7 @@ impl SkillService {
             }
         }
 
-        // 3. 文件移动完成后才持久化设置（_migration_guard 在此作用域末尾自动清 flag）
+        // 3. 文件移动完成后才持久化设置
         crate::settings::set_skill_storage_location(target)?;
 
         // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
