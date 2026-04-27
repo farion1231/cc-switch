@@ -569,16 +569,27 @@ impl SkillService {
                 .map(|exists| !exists)
                 .unwrap_or(false);
             if missing {
-                // Clean up app copies before removing the DB record so the
-                // enabled-app directories don't contain orphaned skill folders.
-                for app in AppType::all() {
-                    let _ = Self::remove_from_app(&skill.directory, &app);
+                // Delete the DB record first. If that fails (locked/read-only DB),
+                // leave the skill visible and skip filesystem cleanup so the DB and
+                // app directories stay in sync.
+                match db.delete_skill(&id) {
+                    Ok(_) => {
+                        for app in skill.apps.enabled_apps() {
+                            let _ = Self::remove_from_app(&skill.directory, &app);
+                        }
+                        log::info!(
+                            "skill '{}' directory missing from SSOT, removed from database",
+                            skill.name
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "skill '{}' SSOT directory missing but DB deletion failed, keeping record: {}",
+                            skill.name, e
+                        );
+                        result.push(skill);
+                    }
                 }
-                let _ = db.delete_skill(&id);
-                log::info!(
-                    "skill '{}' directory missing from SSOT, removed from database",
-                    skill.name
-                );
             } else {
                 result.push(skill);
             }
