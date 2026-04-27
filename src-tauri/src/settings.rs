@@ -833,7 +833,9 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn expand_env_vars_multiple_vars() {
+        let _guard = env_lock().lock().unwrap();
         let _foo = EnvGuard::set("FOO", "foo");
         let _bar = EnvGuard::set("BAR", "bar");
         assert_eq!(expand_env_vars("${FOO}/${BAR}"), "foo/bar");
