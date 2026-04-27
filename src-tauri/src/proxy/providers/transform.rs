@@ -363,6 +363,16 @@ fn convert_message_to_openai(
                 } else {
                     msg["content"] = json!(content_parts);
                 }
+            } else if content_parts
+                .iter()
+                .all(|part| part.get("type").and_then(|v| v.as_str()) == Some("text"))
+            {
+                let text = content_parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                msg["content"] = json!(text);
             } else {
                 msg["content"] = json!(content_parts);
             }
@@ -788,6 +798,27 @@ mod tests {
         assert_eq!(msg["role"], "tool");
         assert_eq!(msg["tool_call_id"], "call_123");
         assert_eq!(msg["content"], "Sunny, 25°C");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_flattens_text_only_content_blocks() {
+        let input = json!({
+            "model": "moonshotai/kimi-k2.5",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Caveat: local command output follows."},
+                    {"type": "text", "text": "Tell me the settings path."}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(
+            result["messages"][0]["content"],
+            "Caveat: local command output follows.\nTell me the settings path."
+        );
     }
 
     #[test]
