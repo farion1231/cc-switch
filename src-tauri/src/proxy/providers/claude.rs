@@ -509,7 +509,13 @@ impl ProviderAdapter for ClaudeAdapter {
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
         let bearer = format!("Bearer {}", auth.api_key);
         match auth.strategy {
-            AuthStrategy::Anthropic | AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
+            AuthStrategy::Anthropic => {
+                vec![(
+                    HeaderName::from_static("x-api-key"),
+                    HeaderValue::from_str(&auth.api_key).unwrap(),
+                )]
+            }
+            AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
                 vec![(
                     HeaderName::from_static("authorization"),
                     HeaderValue::from_str(&bearer).unwrap(),
