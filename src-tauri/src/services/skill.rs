@@ -561,10 +561,19 @@ impl SkillService {
     /// 如果数据库记录对应的目录已被手动删除，会自动清理该记录。
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let skills = db.get_all_installed_skills()?;
-        let ssot_dir = Self::get_ssot_dir()?;
+        let ssot_dir = match Self::get_ssot_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                log::error!("SSOT 目录不可访问: {}, 跳过清理以避免误删", e);
+                return Ok(skills.into_values().collect());
+            }
+        };
 
         if !ssot_dir.exists() || !ssot_dir.is_dir() {
-            log::error!("SSOT 目录不可访问: {}, 跳过清理以避免误删", ssot_dir.display());
+            log::error!(
+                "SSOT 目录不可访问: {}, 跳过清理以避免误删",
+                ssot_dir.display()
+            );
             return Ok(skills.into_values().collect());
         }
 
