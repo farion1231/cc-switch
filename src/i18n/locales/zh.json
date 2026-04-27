@@ -824,6 +824,11 @@
     "fillTemplateValue": "请填写 {{label}}",
     "endpointRequired": "非官方供应商请填写 API 端点",
     "apiKeyRequired": "非官方供应商请填写 API Key",
+    "softValidation": {
+      "title": "配置存在以下问题",
+      "hint": "仍要保存吗？保存后切换此供应商时可能失败，可以之后再补全。",
+      "saveAnyway": "仍要保存"
+    },
     "configJsonError": "配置JSON格式错误，请检查语法",
     "authJsonRequired": "auth.json 必须是 JSON 对象",
     "authJsonError": "auth.json 格式错误，请检查JSON语法",
