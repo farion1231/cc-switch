@@ -1191,7 +1191,7 @@ export function ProviderForm({
           : undefined,
       codexFastMode: isCodexOauthProvider ? codexFastMode : undefined,
       customUserAgent:
-        appId === "claude" || appId === "codex"
+        (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
