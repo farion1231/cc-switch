@@ -12,6 +12,7 @@ import { isMac, isWindows, isLinux } from "@/lib/platform";
 const MACOS_TERMINALS = [
   { value: "terminal", labelKey: "settings.terminal.options.macos.terminal" },
   { value: "iterm2", labelKey: "settings.terminal.options.macos.iterm2" },
+  { value: "warp", labelKey: "settings.terminal.options.macos.warp" },
   { value: "alacritty", labelKey: "settings.terminal.options.macos.alacritty" },
   { value: "kitty", labelKey: "settings.terminal.options.macos.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.macos.ghostty" },
@@ -41,6 +42,10 @@ const LINUX_TERMINALS = [
   { value: "alacritty", labelKey: "settings.terminal.options.linux.alacritty" },
   { value: "kitty", labelKey: "settings.terminal.options.linux.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.linux.ghostty" },
+  {
+    value: "warp-terminal",
+    labelKey: "settings.terminal.options.linux.warp",
+  },
 ] as const;
 
 // Get terminals for the current platform

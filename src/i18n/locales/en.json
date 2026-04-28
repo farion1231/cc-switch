@@ -545,6 +545,7 @@
         "macos": {
           "terminal": "Terminal.app",
           "iterm2": "iTerm2",
+          "warp": "Warp",
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
@@ -562,7 +563,8 @@
           "xfce4Terminal": "Xfce4 Terminal",
           "alacritty": "Alacritty",
           "kitty": "Kitty",
-          "ghostty": "Ghostty"
+          "ghostty": "Ghostty",
+          "warp": "Warp"
         }
       }
     },

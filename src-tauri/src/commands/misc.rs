@@ -944,6 +944,7 @@ exec bash --norc --noprofile
     // Note: Kitty doesn't need the -e flag, others do
     let result = match terminal {
         "iterm2" => launch_macos_iterm2(&script_file),
+        "warp" => launch_macos_warp(&script_file),
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
         "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
@@ -1032,6 +1033,76 @@ end tell"#,
     Ok(())
 }
 
+/// macOS: Warp - 通过 AppleScript 激活并使用 System Events 发送键盘事件
+/// 运行脚本（Warp 不支持 Terminal.app 的 `do script` AppleScript 词汇）。
+#[cfg(target_os = "macos")]
+fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+    use std::thread;
+    use std::time::Duration;
+
+    // First make sure Warp is running and bring it to the foreground.
+    let activate_script = r#"tell application "Warp" to activate"#;
+    let activate_output = Command::new("osascript")
+        .arg("-e")
+        .arg(activate_script)
+        .output()
+        .map_err(|e| format!("启动 Warp 失败: {e}"))?;
+
+    if !activate_output.status.success() {
+        let stderr = String::from_utf8_lossy(&activate_output.stderr);
+        return Err(format!(
+            "Warp 启动失败 (exit code: {:?}): {}",
+            activate_output.status.code(),
+            stderr
+        ));
+    }
+
+    // Open a brand-new tab via the standard Cmd+T shortcut, then give the UI a
+    // moment to focus the new prompt before we type the launcher command.
+    let new_tab_script = r#"tell application "System Events"
+    tell process "Warp"
+        keystroke "t" using {command down}
+    end tell
+end tell"#;
+    let _ = Command::new("osascript")
+        .arg("-e")
+        .arg(new_tab_script)
+        .output();
+
+    thread::sleep(Duration::from_millis(600));
+
+    // Send the bash command to launch the cc-switch script.
+    let cmd_text = format!("bash '{}'", script_file.display());
+    // Escape backslashes and double quotes for AppleScript string literal.
+    let escaped_cmd = cmd_text.replace('\\', "\\\\").replace('"', "\\\"");
+    let keystroke_script = format!(
+        r#"tell application "System Events"
+    tell process "Warp"
+        keystroke "{escaped_cmd}"
+        key code 36
+    end tell
+end tell"#
+    );
+
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(&keystroke_script)
+        .output()
+        .map_err(|e| format!("向 Warp 发送键盘事件失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Warp 执行失败 (exit code: {:?}): {}. 提示: 需要在「系统设置 → 隐私与安全 → 辅助功能」中授权 cc-switch。",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
 /// macOS: 使用 open -a 启动支持 --args 参数的终端（Alacritty/Kitty/Ghostty）
 #[cfg(target_os = "macos")]
 fn launch_macos_open_app(
@@ -1084,6 +1155,7 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
         ("alacritty", vec!["-e"]),
         ("kitty", vec!["-e"]),
         ("ghostty", vec!["-e"]),
+        ("warp-terminal", vec!["-e"]),
     ];
 
     // Create temp script file
@@ -1353,6 +1425,7 @@ read -n 1 -s
 
         let result = match terminal {
             "iterm2" => launch_macos_iterm2(&script_file),
+            "warp" => launch_macos_warp(&script_file),
             "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
             "kitty" => launch_macos_open_app("kitty", &script_file, false),
             "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
@@ -1392,6 +1465,7 @@ read -n 1 -s
             ("alacritty", vec!["-e"]),
             ("kitty", vec!["-e"]),
             ("ghostty", vec!["-e"]),
+            ("warp-terminal", vec!["-e"]),
         ];
 
         let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {

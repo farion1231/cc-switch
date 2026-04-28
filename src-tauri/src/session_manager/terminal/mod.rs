@@ -22,6 +22,7 @@ pub fn launch_terminal(
         "wezterm" => launch_wezterm(command, cwd),
         "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        "warp" => launch_warp(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
         _ => Err(format!("Unsupported terminal target: {target}")),
     }
@@ -199,6 +200,63 @@ fn build_wezterm_compatible_args_with_shell(
     args.push("-c".to_string());
     args.push(full_command);
     args
+}
+
+fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    use std::thread;
+    use std::time::Duration;
+
+    // Warp does not implement the Terminal.app `do script` AppleScript verb.
+    // The pragmatic workaround is to activate Warp, open a fresh tab, then
+    // synthesize keystrokes via System Events to type the command. This
+    // requires the user to grant cc-switch the Accessibility permission.
+    let activate_status = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"tell application "Warp" to activate"#)
+        .status()
+        .map_err(|e| format!("Failed to activate Warp: {e}"))?;
+
+    if !activate_status.success() {
+        return Err("Failed to activate Warp. Make sure it is installed.".to_string());
+    }
+
+    let new_tab_script = r#"tell application "System Events"
+    tell process "Warp"
+        keystroke "t" using {command down}
+    end tell
+end tell"#;
+    let _ = Command::new("osascript")
+        .arg("-e")
+        .arg(new_tab_script)
+        .status();
+
+    thread::sleep(Duration::from_millis(600));
+
+    let full_command = build_shell_command(command, cwd);
+    let escaped = escape_osascript(&full_command);
+    let keystroke_script = format!(
+        r#"tell application "System Events"
+    tell process "Warp"
+        keystroke "{escaped}"
+        key code 36
+    end tell
+end tell"#
+    );
+
+    let status = Command::new("osascript")
+        .arg("-e")
+        .arg(keystroke_script)
+        .status()
+        .map_err(|e| format!("Failed to send keystrokes to Warp: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(
+            "Warp command execution failed. Grant cc-switch Accessibility permission in System Settings."
+                .to_string(),
+        )
+    }
 }
 
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
