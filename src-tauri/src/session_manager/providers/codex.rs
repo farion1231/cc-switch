@@ -143,6 +143,9 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
         if value.get("type").and_then(Value::as_str) == Some("session_meta") {
             if let Some(payload) = value.get("payload") {
+                if is_subagent_source(payload.get("source")) {
+                    return None;
+                }
                 if session_id.is_none() {
                     session_id = payload
                         .get("id")
@@ -239,6 +242,13 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     })
 }
 
+fn is_subagent_source(source: Option<&Value>) -> bool {
+    source
+        .and_then(|value| value.as_object())
+        .map(|source| source.contains_key("subagent"))
+        .unwrap_or(false)
+}
+
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     let file_name = path.file_name()?.to_string_lossy();
     UUID_RE.find(&file_name).map(|mat| mat.as_str().to_string())
@@ -326,6 +336,22 @@ mod tests {
         let meta = parse_session(&path).unwrap();
         // Should skip AGENTS.md injection and use the real user message
         assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
+    }
+
+    #[test]
+    fn parse_session_skips_subagent_sessions() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-04-28T10:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"subagent-id\",\"cwd\":\"/tmp/project\",\"originator\":\"codex-tui\",\"source\":{\"subagent\":{\"thread_spawn\":{\"parent_thread_id\":\"parent-id\",\"depth\":1,\"agent_role\":\"explorer\"}}}}}\n",
+                "{\"timestamp\":\"2026-04-28T10:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Inspect the project\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        assert!(parse_session(&path).is_none());
     }
 
     #[test]
