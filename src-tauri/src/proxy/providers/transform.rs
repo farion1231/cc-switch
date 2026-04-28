@@ -73,6 +73,18 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
 pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
+    anthropic_to_openai_with_reasoning_content(body, false)
+}
+
+/// Anthropic 请求 → OpenAI Chat Completions 请求
+///
+/// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi
+/// `reasoning_content` 兼容字段的 provider。默认转换保持通用 OpenAI-compatible
+/// 请求体，避免向严格后端发送未知字段。
+pub fn anthropic_to_openai_with_reasoning_content(
+    body: Value,
+    preserve_reasoning_content: bool,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
     // NOTE: 模型映射由上游统一处理（proxy::model_mapper），格式转换层只做结构转换。
@@ -106,7 +118,7 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
         for msg in msgs {
             let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
             let content = msg.get("content");
-            let converted = convert_message_to_openai(role, content)?;
+            let converted = convert_message_to_openai(role, content, preserve_reasoning_content)?;
             messages.extend(converted);
         }
     }
@@ -252,6 +264,7 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
 fn convert_message_to_openai(
     role: &str,
     content: Option<&Value>,
+    preserve_reasoning_content: bool,
 ) -> Result<Vec<Value>, ProxyError> {
     let mut result = Vec::new();
 
@@ -273,6 +286,9 @@ fn convert_message_to_openai(
     if let Some(blocks) = content.as_array() {
         let mut content_parts = Vec::new();
         let mut tool_calls = Vec::new();
+        // reasoning_parts: 仅在兼容 Moonshot/Kimi thinking tool-call 路径时
+        // 生成 reasoning_content，通用 OpenAI-compatible 路径不发送该非标准字段。
+        let mut reasoning_parts = Vec::new();
 
         for block in blocks {
             let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -332,7 +348,12 @@ fn convert_message_to_openai(
                     }));
                 }
                 "thinking" => {
-                    // 跳过 thinking blocks
+                    // 提取 thinking 内容，后续可作为 reasoning_content 传给需要它的上游。
+                    if let Some(thinking) = block.get("thinking").and_then(|t| t.as_str()) {
+                        if !thinking.is_empty() {
+                            reasoning_parts.push(thinking.to_string());
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -364,6 +385,15 @@ fn convert_message_to_openai(
             // 工具调用
             if !tool_calls.is_empty() {
                 msg["tool_calls"] = json!(tool_calls);
+            }
+
+            if preserve_reasoning_content && role == "assistant" && !tool_calls.is_empty() {
+                let reasoning_content = if reasoning_parts.is_empty() {
+                    "tool call".to_string()
+                } else {
+                    reasoning_parts.join("\n")
+                };
+                msg["reasoning_content"] = json!(reasoning_content);
             }
 
             result.push(msg);
@@ -710,6 +740,88 @@ mod tests {
         assert_eq!(msg["role"], "assistant");
         assert!(msg.get("tool_calls").is_some());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+        assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_preserves_reasoning_content() {
+        let input = json!({
+            "model": "kimi-k2.6",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_injects_placeholder_reasoning_content_when_missing() {
+        let input = json!({
+            "model": "kimi-k2.6",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert_eq!(msg["reasoning_content"], "tool call");
+        assert!(msg.get("tool_calls").is_some());
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_does_not_emit_reasoning_content_by_default() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert!(msg.get("tool_calls").is_some());
+        assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_skips_thinking_only_message() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "No visible content yet."}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"].as_array().unwrap().len(), 0);
     }
 
     #[test]
