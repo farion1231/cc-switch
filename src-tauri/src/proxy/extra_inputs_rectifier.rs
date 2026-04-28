@@ -18,8 +18,6 @@ const CACHE_TTL: Duration = Duration::from_secs(3600);
 pub struct ExtraInputsRectifyResult {
     /// 是否应用了整流
     pub applied: bool,
-    /// 从错误消息中提取的字段名列表
-    pub extracted_fields: Vec<String>,
     /// 实际从 body 中移除的字段名列表
     pub removed_fields: Vec<String>,
 }
@@ -62,13 +60,6 @@ impl ExtraInputsCache {
     /// 缓存 key 格式
     fn make_key(provider_id: &str, field_name: &str) -> String {
         format!("{provider_id}:{field_name}")
-    }
-
-    /// 记录一个不支持的字段
-    pub async fn insert(&self, provider_id: &str, field_name: &str) {
-        let key = Self::make_key(provider_id, field_name);
-        let mut entries = self.entries.write().await;
-        entries.insert(key, CacheEntry::new());
     }
 
     /// 批量记录不支持的字段
@@ -160,7 +151,7 @@ fn extract_from_line(text: &str, fields: &mut Vec<String>) {
             // 取最后一个字段路径（可能前面有其他文本）
             // 查找最近的分隔符（空格、逗号、引号等）
             let field_path = before
-                .rsplit(|c: char| c == ' ' || c == ',' || c == '"' || c == '\'' || c == '{')
+                .rsplit([' ', ',', '"', '\'', '{'])
                 .next()
                 .unwrap_or("")
                 .trim();
@@ -199,7 +190,6 @@ fn extract_from_line(text: &str, fields: &mut Vec<String>) {
 pub fn strip_fields(body: &mut Value, fields: &[String]) -> ExtraInputsRectifyResult {
     let mut result = ExtraInputsRectifyResult {
         applied: false,
-        extracted_fields: fields.to_vec(),
         removed_fields: Vec::new(),
     };
 
@@ -444,9 +434,15 @@ mod tests {
     #[tokio::test]
     async fn test_cache_insert_and_get() {
         let cache = ExtraInputsCache::new();
-        cache.insert("provider_1", "context_management").await;
-        cache.insert("provider_1", "some_field").await;
-        cache.insert("provider_2", "other_field").await;
+        cache
+            .insert_many(
+                "provider_1",
+                &["context_management".to_string(), "some_field".to_string()],
+            )
+            .await;
+        cache
+            .insert_many("provider_2", &["other_field".to_string()])
+            .await;
 
         let fields = cache.get_blocked_fields("provider_1").await;
         assert!(fields.contains(&"context_management".to_string()));
