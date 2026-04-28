@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **DashScope Usage Parsing Robustness**: Enhanced `build_anthropic_usage_from_responses()` to handle null, missing, empty, and partial usage fields gracefully, preventing VSCode Extension crashes with "Cannot read properties of null (reading 'output_tokens')" when connecting to DashScope (Alibaba Cloud Bailian) models. Added OpenAI field name fallbacks (prompt_tokens/completion_tokens), defensive null checks in streaming SSE event handlers, and comprehensive logging for malformed usage scenarios (#fix-dashscope-usage-parsing-robustness).
+
 ## [3.14.1] - 2026-04-23
 
 Development since v3.14.0 focuses on Codex OAuth stability, tray usage visibility, Skills import/install reliability, Gemini session restore paths, and simplifying Hermes configuration health handling.
