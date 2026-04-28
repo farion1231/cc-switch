@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -512,6 +513,34 @@ pub(crate) fn write_live_with_common_config(
         build_effective_settings_with_common_config(db, app_type, provider)?;
 
     write_live_snapshot(app_type, &effective_provider)
+}
+
+fn claude_settings_path_for_dir(dir: &Path) -> PathBuf {
+    let settings = dir.join("settings.json");
+    if settings.exists() {
+        return settings;
+    }
+
+    let legacy = dir.join("claude.json");
+    if legacy.exists() {
+        return legacy;
+    }
+
+    settings
+}
+
+pub(crate) fn write_claude_profile_with_common_config(
+    db: &Database,
+    provider: &Provider,
+    profile_dir: &Path,
+) -> Result<(), AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config =
+        build_effective_settings_with_common_config(db, &AppType::Claude, provider)?;
+
+    let path = claude_settings_path_for_dir(profile_dir);
+    let settings = sanitize_claude_settings_for_live(&effective_provider.settings_config);
+    write_json_file(&path, &settings)
 }
 
 pub(crate) fn strip_common_config_from_live_settings(

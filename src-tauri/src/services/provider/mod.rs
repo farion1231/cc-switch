@@ -32,7 +32,8 @@ pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config,
+    sync_current_provider_for_app_to_live, write_claude_profile_with_common_config,
+    write_live_with_common_config,
 };
 
 // Internal re-exports
@@ -697,6 +698,81 @@ mod tests {
                 default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
                 Value::String("default-live-token".to_string()),
                 "switching api profiles must not mutate the default live settings"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn terminal_launch_profile_and_config_syncs_selected_provider_without_switching_current() {
+        with_test_home(|state, home| {
+            let api_dir = home.join(".claude-profiles").join("api");
+            fs::create_dir_all(&api_dir).expect("create api profile dir");
+            write_json_file(
+                &api_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "stale-token",
+                        "ANTHROPIC_BASE_URL": "https://stale.example"
+                    }
+                }),
+            )
+            .expect("seed stale api profile settings");
+
+            let default_provider = claude_provider(
+                "default",
+                "Default",
+                "default-provider-token",
+                "https://default-provider.example",
+                None,
+            );
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &default_provider)
+                .expect("save default provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "default")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("default"))
+                .expect("set local current provider");
+
+            ProviderService::prepare_claude_profile_terminal_launch(state, &api_provider)
+                .expect("prepare profile launch");
+
+            let api_live: Value =
+                read_json_file(&api_dir.join("settings.json")).expect("read api profile");
+            assert_eq!(
+                api_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("api-provider-token".to_string()),
+                "terminal launch should write the selected provider settings into the target profile"
+            );
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .as_deref(),
+                Some("default"),
+                "preparing a terminal launch must not switch the current provider"
+            );
+            assert!(
+                crate::settings::get_claude_override_dir().is_none(),
+                "preparing a terminal launch must not persist a global Claude override"
             );
         });
     }
@@ -1594,6 +1670,26 @@ impl ProviderService {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn prepare_claude_profile_terminal_launch(
+        state: &AppState,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        Self::validate_claude_switch_plan(provider)?;
+
+        let plan = Self::claude_switch_plan(provider);
+        Self::validate_claude_runtime_switch_plan(&plan)?;
+
+        if !matches!(plan.activation_mode, ClaudeActivationMode::ProfileAndConfig) {
+            return Ok(());
+        }
+
+        let profile_dir = plan.override_dir.as_deref().ok_or_else(|| {
+            AppError::Message("Claude profile switching requires a profile directory".to_string())
+        })?;
+
+        write_claude_profile_with_common_config(state.db.as_ref(), provider, Path::new(profile_dir))
     }
 
     fn rollback_claude_switch(

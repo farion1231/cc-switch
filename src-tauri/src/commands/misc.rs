@@ -752,6 +752,11 @@ pub async fn open_provider_terminal(
     let provider = providers
         .get(&providerId)
         .ok_or_else(|| format!("provider {providerId} not found"))?;
+    if matches!(app_type, AppType::Claude) {
+        ProviderService::prepare_claude_profile_terminal_launch(state.inner(), provider)
+            .map_err(|e| format!("准备 Claude profile 终端配置失败: {e}"))?;
+    }
+
     let claude_profile_dir = if matches!(app_type, AppType::Claude) {
         provider
             .meta
