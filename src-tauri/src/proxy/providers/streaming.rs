@@ -12,8 +12,11 @@ use std::collections::{HashMap, HashSet};
 /// OpenAI 流式响应数据结构
 #[derive(Debug, Deserialize)]
 struct OpenAIStreamChunk {
+    #[serde(default)]
     id: String,
+    #[serde(default)]
     model: String,
+    #[serde(default)]
     choices: Vec<StreamChoice>,
     #[serde(default)]
     usage: Option<Usage>,
@@ -95,6 +98,20 @@ struct ToolBlockState {
 /// 无限空白 bug 的连续空白字符阈值
 const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
 
+fn build_anthropic_usage_json(usage: &Usage) -> Value {
+    let mut usage_json = json!({
+        "input_tokens": usage.prompt_tokens,
+        "output_tokens": usage.completion_tokens
+    });
+    if let Some(cached) = extract_cache_read_tokens(usage) {
+        usage_json["cache_read_input_tokens"] = json!(cached);
+    }
+    if let Some(created) = usage.cache_creation_input_tokens {
+        usage_json["cache_creation_input_tokens"] = json!(created);
+    }
+    usage_json
+}
+
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -115,6 +132,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut pending_message_delta: Option<(Option<String>, Option<Value>)> = None;
         let mut has_sent_message_stop = false;
         let mut stream_ended_with_error = false;
+        let mut latest_usage: Option<Value> = None;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
@@ -138,8 +156,6 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                     log::debug!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
 
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
-                                    // 如果此处没有缓存（如上游未发 finish_reason），后续
-                                    // async_stream! 末尾的兜底逻辑会确保 message_delta 被发送。
                                     if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
                                         let mut event = json!({
                                             "type": "message_delta",
@@ -169,11 +185,20 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                 if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(data) {
                                     log::debug!("[Claude/OpenRouter] <<< SSE chunk received");
 
-                                    if message_id.is_none() {
+                                    if message_id.is_none() && !chunk.id.is_empty() {
                                         message_id = Some(chunk.id.clone());
                                     }
-                                    if current_model.is_none() {
+                                    if current_model.is_none() && !chunk.model.is_empty() {
                                         current_model = Some(chunk.model.clone());
+                                    }
+
+                                    let chunk_usage_json =
+                                        chunk.usage.as_ref().map(build_anthropic_usage_json);
+                                    if let Some(usage_json) = &chunk_usage_json {
+                                        latest_usage = Some(usage_json.clone());
+                                        if let Some((_, pending_usage)) = pending_message_delta.as_mut() {
+                                            *pending_usage = Some(usage_json.clone());
+                                        }
                                     }
 
                                     if let Some(choice) = chunk.choices.first() {
@@ -457,19 +482,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 等到 [DONE] 或流末尾再统一发出，确保 usage 完整且只发一次。
                                         if let Some(finish_reason) = &choice.finish_reason {
                                             let stop_reason = map_stop_reason(Some(finish_reason));
-                                            let usage_json = chunk.usage.as_ref().map(|u| {
-                                                let mut uj = json!({
-                                                    "input_tokens": u.prompt_tokens,
-                                                    "output_tokens": u.completion_tokens
-                                                });
-                                                if let Some(cached) = extract_cache_read_tokens(u) {
-                                                    uj["cache_read_input_tokens"] = json!(cached);
-                                                }
-                                                if let Some(created) = u.cache_creation_input_tokens {
-                                                    uj["cache_creation_input_tokens"] = json!(created);
-                                                }
-                                                uj
-                                            });
+                                            let usage_json =
+                                                chunk_usage_json.clone().or_else(|| latest_usage.clone());
 
                                             if has_emitted_message_delta {
                                                 // 更新缓存的 message_delta usage（如果有更完整的 usage）
@@ -599,7 +613,9 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         // 流自然结束但未收到 [DONE] 时，确保发送缓存的 message_delta 和 message_stop。
         // 若上游已显式报错，则只保留 error 事件，避免把失败伪装成成功完成。
         if !stream_ended_with_error {
-            if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
+            let emitted_pending_message_delta = if let Some((stop_reason, usage_json)) =
+                pending_message_delta.take()
+            {
                 let mut event = json!({
                     "type": "message_delta",
                     "delta": {
@@ -614,9 +630,12 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                     serde_json::to_string(&event).unwrap_or_default());
                 log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (at stream end)");
                 yield Ok(Bytes::from(sse_data));
-            }
+                true
+            } else {
+                false
+            };
 
-            if !has_sent_message_stop {
+            if emitted_pending_message_delta && !has_sent_message_stop {
                 let event = json!({"type": "message_stop"});
                 let sse_data = format!("event: message_stop\ndata: {}\n\n",
                     serde_json::to_string(&event).unwrap_or_default());
@@ -665,6 +684,32 @@ mod tests {
     use futures::StreamExt;
     use serde_json::Value;
     use std::collections::HashMap;
+
+    async fn collect_anthropic_events(input: &str) -> Vec<Value> {
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        let merged = chunks
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        merged
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
+                serde_json::from_str::<Value>(data).ok()
+            })
+            .collect()
+    }
+
+    fn event_type(event: &Value) -> Option<&str> {
+        event.get("type").and_then(|v| v.as_str())
+    }
 
     #[test]
     fn test_map_stop_reason_legacy_and_filtered_values() {
@@ -935,6 +980,88 @@ mod tests {
             .filter(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop"))
             .count();
         assert_eq!(message_stops, 1, "message_stop must only be emitted once");
+    }
+
+    #[tokio::test]
+    async fn test_usage_only_chunk_after_finish_reason_updates_message_delta_usage() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_split\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tool-0924\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_split\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":13312,\"completion_tokens\":79,\"prompt_tokens_details\":{\"cached_tokens\":100}}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .collect();
+        let message_stops = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_stop"))
+            .count();
+
+        assert_eq!(message_deltas.len(), 1);
+        assert_eq!(message_stops, 1);
+
+        let message_delta = message_deltas[0];
+        assert_eq!(
+            message_delta
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("tool_use")
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(13312)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/output_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(79)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_read_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(100)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_finalizes_after_finish_when_done_is_missing() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_no_done\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_no_done\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert!(events.iter().any(|event| {
+            event_type(event) == Some("message_delta")
+                && event.pointer("/delta/stop_reason").and_then(|v| v.as_str()) == Some("end_turn")
+        }));
+        assert_eq!(
+            events.last().and_then(|event| event_type(event)),
+            Some("message_stop")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stream_end_without_finish_reason_does_not_emit_success_terminal_events() {
+        let input = "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n";
+
+        let events = collect_anthropic_events(input).await;
+
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_delta")));
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
     }
 
     #[tokio::test]
