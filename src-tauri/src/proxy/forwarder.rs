@@ -8,7 +8,7 @@ use super::{
     error::*,
     extra_inputs_rectifier::{
         extract_extra_input_fields, pre_filter_from_cache, should_rectify_extra_inputs,
-        strip_fields, ExtraInputsCache,
+        strip_fields, ExtraInputsCache, ANTHROPIC_ONLY_FIELDS,
     },
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
@@ -718,10 +718,25 @@ impl RequestForwarder {
                                 });
                             }
 
-                            let fields = error_message
+                            let mut fields = error_message
                                 .as_deref()
                                 .map(extract_extra_input_fields)
                                 .unwrap_or_default();
+
+                            if fields.is_empty() {
+                                if let Some(obj) = provider_body.as_object() {
+                                    for &f in ANTHROPIC_ONLY_FIELDS {
+                                        if obj.contains_key(f) {
+                                            fields.push(f.to_string());
+                                        }
+                                    }
+                                }
+                                if !fields.is_empty() {
+                                    log::info!(
+                                        "[{app_type_str}] [RECT-026] 错误消息未指明字段，从请求体中检测到已知 Anthropic 候选字段: {fields:?}"
+                                    );
+                                }
+                            }
 
                             if !fields.is_empty() {
                                 // 缓存这些字段（1 小时过期）
@@ -1742,7 +1757,31 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
-            Ok((response, resolved_claude_api_format))
+            if response.is_sse() {
+                return Ok((response, resolved_claude_api_format));
+            }
+
+            let headers = response.headers().clone();
+            let body_bytes = response.bytes().await?;
+
+            if is_valid_response_body(&body_bytes) {
+                let response = ProxyResponse::Buffered {
+                    status,
+                    headers,
+                    body: body_bytes,
+                };
+                Ok((response, resolved_claude_api_format))
+            } else {
+                let body_text = String::from_utf8(body_bytes.into()).ok();
+                log::info!(
+                    "[RECT-027] 上游返回 200 但响应体缺少有效字段，转为 UpstreamError 走重试: body={}",
+                    body_text.as_deref().unwrap_or("<non-utf8>")
+                );
+                Err(ProxyError::UpstreamError {
+                    status: status.as_u16(),
+                    body: body_text,
+                })
+            }
         } else {
             let status_code = status.as_u16();
             let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
@@ -2003,6 +2042,19 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
         .into_iter()
         .flatten()
         .find_map(|value| value.as_str().map(ToString::to_string))
+}
+
+fn is_valid_response_body(body: &[u8]) -> bool {
+    let Ok(json) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let Some(obj) = json.as_object() else {
+        return false;
+    };
+    obj.contains_key("content")
+        || obj.contains_key("choices")
+        || obj.contains_key("output")
+        || obj.contains_key("candidates")
 }
 
 fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
@@ -2814,5 +2866,55 @@ mod tests {
             let will_replace = is_copilot && !is_full_url;
             assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    // ==================== is_valid_response_body 测试 ====================
+
+    #[test]
+    fn valid_anthropic_response() {
+        let body = br#"{"id":"msg_01","type":"message","role":"assistant","content":[{"type":"text","text":"Hi"}],"model":"claude-3","usage":{"input_tokens":10,"output_tokens":5}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn valid_openai_response() {
+        let body = br#"{"id":"chatcmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"}}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn valid_codex_response() {
+        let body = br#"{"id":"resp_1","output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}],"usage":{"input_tokens":10,"output_tokens":5}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn valid_gemini_response() {
+        let body = br#"{"candidates":[{"content":{"parts":[{"text":"Hi"}]}}],"usageMetadata":{"promptTokenCount":5,"totalTokenCount":10}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_error_json() {
+        let body = br#"{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}"#;
+        assert!(!super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_custom_error() {
+        let body = br#"{"message":"something went wrong","code":"INTERNAL_ERROR"}"#;
+        assert!(!super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_non_json() {
+        let body = b"<html>502 Bad Gateway</html>";
+        assert!(!super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_empty_json() {
+        let body = b"{}";
+        assert!(!super::is_valid_response_body(body));
     }
 }

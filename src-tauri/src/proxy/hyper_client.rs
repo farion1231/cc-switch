@@ -79,6 +79,11 @@ fn global_hyper_client() -> &'static HyperClient {
 pub enum ProxyResponse {
     Hyper(hyper::Response<hyper::body::Incoming>),
     Reqwest(reqwest::Response),
+    Buffered {
+        status: http::StatusCode,
+        headers: http::HeaderMap,
+        body: Bytes,
+    },
 }
 
 impl ProxyResponse {
@@ -86,6 +91,7 @@ impl ProxyResponse {
         match self {
             Self::Hyper(r) => r.status(),
             Self::Reqwest(r) => r.status(),
+            Self::Buffered { status, .. } => *status,
         }
     }
 
@@ -93,6 +99,7 @@ impl ProxyResponse {
         match self {
             Self::Hyper(r) => r.headers(),
             Self::Reqwest(r) => r.headers(),
+            Self::Buffered { headers, .. } => headers,
         }
     }
 
@@ -122,6 +129,7 @@ impl ProxyResponse {
             Self::Reqwest(r) => r.bytes().await.map_err(|e| {
                 ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
             }),
+            Self::Buffered { body, .. } => Ok(body),
         }
     }
 
@@ -161,6 +169,7 @@ impl ProxyResponse {
                     .map(|r| r.map_err(|e| std::io::Error::other(e.to_string())));
                 Box::pin(stream)
             }
+            Self::Buffered { body, .. } => Box::pin(futures::stream::once(async move { Ok(body) })),
         }
     }
 }

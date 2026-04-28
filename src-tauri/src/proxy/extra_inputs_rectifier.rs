@@ -13,6 +13,11 @@ use tokio::sync::RwLock;
 /// 缓存条目过期时间：1 小时
 const CACHE_TTL: Duration = Duration::from_secs(3600);
 
+/// Anthropic 独有的顶层字段，作为兜底候选：当 200+error 触发整流但无法从错误消息中提取字段名时，
+/// 检查请求体是否包含这些字段并尝试剥离。
+pub const ANTHROPIC_ONLY_FIELDS: &[&str] =
+    &["context_management", "anthropic_beta", "output_config"];
+
 /// Extra Inputs 整流结果
 #[derive(Debug, Clone, Default)]
 pub struct ExtraInputsRectifyResult {
