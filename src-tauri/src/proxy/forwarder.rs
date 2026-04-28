@@ -6,6 +6,10 @@ use super::hyper_client::ProxyResponse;
 use super::{
     body_filter::filter_private_params_with_whitelist,
     error::*,
+    extra_inputs_rectifier::{
+        extract_extra_input_fields, pre_filter_from_cache, should_rectify_extra_inputs,
+        strip_fields, ExtraInputsCache,
+    },
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
@@ -68,6 +72,8 @@ pub struct RequestForwarder {
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
     streaming_first_byte_timeout: std::time::Duration,
+    /// Extra inputs 字段缓存（跨请求共享，1 小时过期）
+    extra_inputs_cache: Arc<ExtraInputsCache>,
 }
 
 impl RequestForwarder {
@@ -88,6 +94,7 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        extra_inputs_cache: Arc<ExtraInputsCache>,
     ) -> Self {
         Self {
             router,
@@ -106,6 +113,7 @@ impl RequestForwarder {
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
             ),
+            extra_inputs_cache,
         }
     }
 
@@ -178,6 +186,7 @@ impl RequestForwarder {
         // 整流器重试标记：确保整流最多触发一次
         let mut rectifier_retried = false;
         let mut budget_rectifier_retried = false;
+        let mut extra_inputs_retried = false;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
@@ -217,6 +226,24 @@ impl RequestForwarder {
                 };
 
             attempted_providers += 1;
+
+            // PRE-SEND extra inputs 预过滤：根据缓存剥离已知不支持的字段
+            if self.rectifier_config.enabled && self.rectifier_config.request_extra_inputs_strip {
+                let blocked_fields = self
+                    .extra_inputs_cache
+                    .get_blocked_fields(&provider.id)
+                    .await;
+                if !blocked_fields.is_empty() {
+                    let pre_result = pre_filter_from_cache(&mut provider_body, &blocked_fields);
+                    if !pre_result.removed_fields.is_empty() {
+                        log::info!(
+                            "[{app_type_str}] [RECT-020] extra inputs 预过滤: 移除 {:?}（provider={}）",
+                            pre_result.removed_fields,
+                            provider.name
+                        );
+                    }
+                }
+            }
 
             // 更新状态中的当前Provider信息
             {
@@ -656,6 +683,192 @@ impl RequestForwarder {
                                         error: retry_err,
                                         provider: Some(provider.clone()),
                                     });
+                                }
+                            }
+                        }
+                    }
+
+                    // 检测是否需要触发 extra inputs 整流器
+                    {
+                        let error_message = extract_error_message(&e);
+                        if should_rectify_extra_inputs(
+                            error_message.as_deref(),
+                            &self.rectifier_config,
+                        ) {
+                            if extra_inputs_retried {
+                                log::warn!("[{app_type_str}] [RECT-025] extra inputs 整流器已触发过，不再重试");
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                let mut status = self.status.write().await;
+                                status.failed_requests += 1;
+                                status.last_error = Some(e.to_string());
+                                if status.total_requests > 0 {
+                                    status.success_rate = (status.success_requests as f32
+                                        / status.total_requests as f32)
+                                        * 100.0;
+                                }
+                                return Err(ForwardError {
+                                    error: e,
+                                    provider: Some(provider.clone()),
+                                });
+                            }
+
+                            let fields = error_message
+                                .as_deref()
+                                .map(extract_extra_input_fields)
+                                .unwrap_or_default();
+
+                            if !fields.is_empty() {
+                                // 缓存这些字段（1 小时过期）
+                                self.extra_inputs_cache
+                                    .insert_many(&provider.id, &fields)
+                                    .await;
+
+                                let rectified = strip_fields(&mut provider_body, &fields);
+
+                                if rectified.applied {
+                                    let _ = std::mem::replace(&mut extra_inputs_retried, true);
+                                    log::info!(
+                                        "[{app_type_str}] [RECT-021] extra inputs 整流器触发, 移除字段 {:?}, 缓存到 provider={}",
+                                        rectified.removed_fields,
+                                        provider.name
+                                    );
+
+                                    // 使用同一供应商重试（不计入熔断器）
+                                    match self
+                                        .forward(
+                                            provider,
+                                            endpoint,
+                                            &provider_body,
+                                            &headers,
+                                            &extensions,
+                                            adapter.as_ref(),
+                                        )
+                                        .await
+                                    {
+                                        Ok((response, claude_api_format)) => {
+                                            log::info!(
+                                                "[{app_type_str}] [RECT-022] extra inputs 整流重试成功"
+                                            );
+                                            let _ = self
+                                                .router
+                                                .record_result(
+                                                    &provider.id,
+                                                    app_type_str,
+                                                    used_half_open_permit,
+                                                    true,
+                                                    None,
+                                                )
+                                                .await;
+
+                                            {
+                                                let mut current_providers =
+                                                    self.current_providers.write().await;
+                                                current_providers.insert(
+                                                    app_type_str.to_string(),
+                                                    (provider.id.clone(), provider.name.clone()),
+                                                );
+                                            }
+
+                                            {
+                                                let mut status = self.status.write().await;
+                                                status.success_requests += 1;
+                                                status.last_error = None;
+                                                let should_switch =
+                                                    self.current_provider_id_at_start.as_str()
+                                                        != provider.id.as_str();
+                                                if should_switch {
+                                                    status.failover_count += 1;
+                                                    let fm = self.failover_manager.clone();
+                                                    let ah = self.app_handle.clone();
+                                                    let pid = provider.id.clone();
+                                                    let pname = provider.name.clone();
+                                                    let at = app_type_str.to_string();
+                                                    tokio::spawn(async move {
+                                                        let _ = fm
+                                                            .try_switch(
+                                                                ah.as_ref(),
+                                                                &at,
+                                                                &pid,
+                                                                &pname,
+                                                            )
+                                                            .await;
+                                                    });
+                                                }
+                                                if status.total_requests > 0 {
+                                                    status.success_rate = (status.success_requests
+                                                        as f32
+                                                        / status.total_requests as f32)
+                                                        * 100.0;
+                                                }
+                                            }
+
+                                            return Ok(ForwardResult {
+                                                response,
+                                                provider: provider.clone(),
+                                                claude_api_format,
+                                            });
+                                        }
+                                        Err(retry_err) => {
+                                            log::warn!(
+                                                "[{app_type_str}] [RECT-023] extra inputs 整流重试仍失败: {retry_err}"
+                                            );
+
+                                            let is_provider_error = match &retry_err {
+                                                ProxyError::Timeout(_)
+                                                | ProxyError::ForwardFailed(_) => true,
+                                                ProxyError::UpstreamError { status, .. } => {
+                                                    *status >= 500
+                                                }
+                                                _ => false,
+                                            };
+
+                                            if is_provider_error {
+                                                let _ = self
+                                                    .router
+                                                    .record_result(
+                                                        &provider.id,
+                                                        app_type_str,
+                                                        used_half_open_permit,
+                                                        false,
+                                                        Some(retry_err.to_string()),
+                                                    )
+                                                    .await;
+                                            } else {
+                                                self.router
+                                                    .release_permit_neutral(
+                                                        &provider.id,
+                                                        app_type_str,
+                                                        used_half_open_permit,
+                                                    )
+                                                    .await;
+                                            }
+
+                                            let mut status = self.status.write().await;
+                                            status.failed_requests += 1;
+                                            status.last_error = Some(retry_err.to_string());
+                                            if status.total_requests > 0 {
+                                                status.success_rate = (status.success_requests
+                                                    as f32
+                                                    / status.total_requests as f32)
+                                                    * 100.0;
+                                            }
+                                            return Err(ForwardError {
+                                                error: retry_err,
+                                                provider: Some(provider.clone()),
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    log::warn!(
+                                        "[{app_type_str}] [RECT-024] extra inputs 整流器触发但字段 {:?} 不在 body 中",
+                                        fields
+                                    );
                                 }
                             }
                         }

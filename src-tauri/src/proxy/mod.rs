@@ -8,6 +8,7 @@ pub mod circuit_breaker;
 pub mod copilot_optimizer;
 pub mod error;
 pub mod error_mapper;
+pub mod extra_inputs_rectifier;
 pub(crate) mod failover_switch;
 mod forwarder;
 pub mod gemini_url;

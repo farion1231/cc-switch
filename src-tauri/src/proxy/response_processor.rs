@@ -887,6 +887,9 @@ mod tests {
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            extra_inputs_cache: Arc::new(
+                crate::proxy::extra_inputs_rectifier::ExtraInputsCache::new(),
+            ),
         }
     }
 
