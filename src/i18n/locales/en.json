@@ -2294,6 +2294,9 @@
     }
   },
   "universalProvider": {
+    "duplicate": "Duplicate",
+    "duplicatedAndSynced": "Universal provider duplicated and synced",
+    "duplicateError": "Failed to duplicate universal provider",
     "title": "Universal Provider",
     "description": "Universal providers manage Claude, Codex, and Gemini configurations simultaneously. Changes are automatically synced to all enabled apps.",
     "add": "Add Universal Provider",

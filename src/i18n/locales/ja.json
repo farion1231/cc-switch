@@ -2294,6 +2294,9 @@
     }
   },
   "universalProvider": {
+    "duplicate": "複製",
+    "duplicatedAndSynced": "統合プロバイダーを複製して同期しました",
+    "duplicateError": "統合プロバイダーの複製に失敗しました",
     "title": "統合プロバイダー",
     "description": "統合プロバイダーは Claude、Codex、Gemini の設定を同時に管理します。変更は有効なすべてのアプリに自動的に同期されます。",
     "add": "統合プロバイダーを追加",
