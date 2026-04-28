@@ -170,10 +170,46 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
     }
 
     if let Some(v) = body.get("tool_choice") {
-        result["tool_choice"] = v.clone();
+        if let Some(tool_choice) = convert_tool_choice_to_openai(v) {
+            result["tool_choice"] = tool_choice;
+            if disables_parallel_tool_use(v) {
+                result["parallel_tool_calls"] = json!(false);
+            }
+        }
     }
 
     Ok(result)
+}
+
+fn disables_parallel_tool_use(value: &Value) -> bool {
+    value
+        .as_object()
+        .and_then(|obj| obj.get("disable_parallel_tool_use"))
+        .and_then(|value| value.as_bool())
+        == Some(true)
+}
+
+fn convert_tool_choice_to_openai(value: &Value) -> Option<Value> {
+    if value.is_null() {
+        return None;
+    }
+
+    if value.as_str().is_some() {
+        return Some(value.clone());
+    }
+
+    let obj = value.as_object()?;
+    match obj.get("type").and_then(|v| v.as_str()) {
+        Some("auto") => Some(json!("auto")),
+        Some("any") => Some(json!("required")),
+        Some("none") => Some(json!("none")),
+        Some("tool") => obj
+            .get("name")
+            .and_then(|name| name.as_str())
+            .map(|name| json!({"type": "function", "function": {"name": name}})),
+        Some("function") => Some(value.clone()),
+        _ => None,
+    }
 }
 
 fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
@@ -689,6 +725,87 @@ mod tests {
             "You are Claude Code.\nBe concise."
         );
         assert!(result["messages"][0].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_maps_anthropic_tool_choice() {
+        let base = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let mut auto = base.clone();
+        auto["tool_choice"] = json!({"type": "auto"});
+        assert_eq!(anthropic_to_openai(auto).unwrap()["tool_choice"], "auto");
+
+        let mut any = base.clone();
+        any["tool_choice"] = json!({"type": "any"});
+        assert_eq!(anthropic_to_openai(any).unwrap()["tool_choice"], "required");
+
+        let mut none = base.clone();
+        none["tool_choice"] = json!({"type": "none"});
+        assert_eq!(anthropic_to_openai(none).unwrap()["tool_choice"], "none");
+
+        let mut tool = base.clone();
+        tool["tool_choice"] = json!({"type": "tool", "name": "get_weather"});
+        let result = anthropic_to_openai(tool).unwrap();
+        assert_eq!(result["tool_choice"]["type"], "function");
+        assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
+
+        let mut native = base.clone();
+        native["tool_choice"] = json!({"type": "function", "function": {"name": "get_weather"}});
+        assert_eq!(
+            anthropic_to_openai(native).unwrap()["tool_choice"],
+            json!({"type": "function", "function": {"name": "get_weather"}})
+        );
+
+        let mut string = base.clone();
+        string["tool_choice"] = json!("auto");
+        assert_eq!(anthropic_to_openai(string).unwrap()["tool_choice"], "auto");
+
+        let mut null_choice = base.clone();
+        null_choice["tool_choice"] = Value::Null;
+        assert!(anthropic_to_openai(null_choice)
+            .unwrap()
+            .get("tool_choice")
+            .is_none());
+
+        let mut unknown = base;
+        unknown["tool_choice"] = json!({"type": "unsupported"});
+        assert!(anthropic_to_openai(unknown)
+            .unwrap()
+            .get("tool_choice")
+            .is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_maps_disable_parallel_tool_use() {
+        let base = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let mut auto = base.clone();
+        auto["tool_choice"] = json!({"type": "auto", "disable_parallel_tool_use": true});
+        let result = anthropic_to_openai(auto).unwrap();
+        assert_eq!(result["tool_choice"], "auto");
+        assert_eq!(result["parallel_tool_calls"], false);
+
+        let mut any = base.clone();
+        any["tool_choice"] = json!({"type": "any", "disable_parallel_tool_use": true});
+        let result = anthropic_to_openai(any).unwrap();
+        assert_eq!(result["tool_choice"], "required");
+        assert_eq!(result["parallel_tool_calls"], false);
+
+        let mut tool = base;
+        tool["tool_choice"] =
+            json!({"type": "tool", "name": "get_weather", "disable_parallel_tool_use": true});
+        let result = anthropic_to_openai(tool).unwrap();
+        assert_eq!(result["tool_choice"]["type"], "function");
+        assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
+        assert_eq!(result["parallel_tool_calls"], false);
     }
 
     #[test]
