@@ -163,10 +163,21 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
     if let Some(v) = body.get("tool_choice") {
         if let Some(tool_choice) = convert_tool_choice_to_openai(v) {
             result["tool_choice"] = tool_choice;
+            if disables_parallel_tool_use(v) {
+                result["parallel_tool_calls"] = json!(false);
+            }
         }
     }
 
     Ok(result)
+}
+
+fn disables_parallel_tool_use(value: &Value) -> bool {
+    value
+        .as_object()
+        .and_then(|obj| obj.get("disable_parallel_tool_use"))
+        .and_then(|value| value.as_bool())
+        == Some(true)
 }
 
 fn convert_tool_choice_to_openai(value: &Value) -> Option<Value> {
@@ -757,6 +768,35 @@ mod tests {
             .unwrap()
             .get("tool_choice")
             .is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_maps_disable_parallel_tool_use() {
+        let base = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let mut auto = base.clone();
+        auto["tool_choice"] = json!({"type": "auto", "disable_parallel_tool_use": true});
+        let result = anthropic_to_openai(auto).unwrap();
+        assert_eq!(result["tool_choice"], "auto");
+        assert_eq!(result["parallel_tool_calls"], false);
+
+        let mut any = base.clone();
+        any["tool_choice"] = json!({"type": "any", "disable_parallel_tool_use": true});
+        let result = anthropic_to_openai(any).unwrap();
+        assert_eq!(result["tool_choice"], "required");
+        assert_eq!(result["parallel_tool_calls"], false);
+
+        let mut tool = base;
+        tool["tool_choice"] =
+            json!({"type": "tool", "name": "get_weather", "disable_parallel_tool_use": true});
+        let result = anthropic_to_openai(tool).unwrap();
+        assert_eq!(result["tool_choice"]["type"], "function");
+        assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
+        assert_eq!(result["parallel_tool_calls"], false);
     }
 
     #[test]
