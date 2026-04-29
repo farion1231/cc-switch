@@ -2055,6 +2055,7 @@ fn is_valid_response_body(body: &[u8]) -> bool {
         || obj.contains_key("choices")
         || obj.contains_key("output")
         || obj.contains_key("candidates")
+        || obj.contains_key("promptFeedback")
 }
 
 fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
@@ -2891,6 +2892,12 @@ mod tests {
     #[test]
     fn valid_gemini_response() {
         let body = br#"{"candidates":[{"content":{"parts":[{"text":"Hi"}]}}],"usageMetadata":{"promptTokenCount":5,"totalTokenCount":10}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn valid_gemini_safety_blocked_response() {
+        let body = br#"{"responseId":"resp_3","modelVersion":"gemini-2.5-flash","promptFeedback":{"blockReason":"SAFETY"},"usageMetadata":{"promptTokenCount":4,"totalTokenCount":4}}"#;
         assert!(super::is_valid_response_body(body));
     }
 

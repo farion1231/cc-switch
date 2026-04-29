@@ -80,11 +80,25 @@ impl ExtraInputsCache {
     pub async fn get_blocked_fields(&self, provider_id: &str) -> Vec<String> {
         let prefix = format!("{provider_id}:");
         let entries = self.entries.read().await;
-        entries
-            .iter()
-            .filter(|(k, v)| k.starts_with(&prefix) && !v.is_expired())
-            .map(|(k, _)| k[prefix.len()..].to_string())
-            .collect()
+        let mut expired_keys = Vec::new();
+        let mut fields = Vec::new();
+        for (k, v) in entries.iter() {
+            if k.starts_with(&prefix) {
+                if v.is_expired() {
+                    expired_keys.push(k.clone());
+                } else {
+                    fields.push(k[prefix.len()..].to_string());
+                }
+            }
+        }
+        if !expired_keys.is_empty() {
+            drop(entries);
+            let mut entries = self.entries.write().await;
+            for key in &expired_keys {
+                entries.remove(key);
+            }
+        }
+        fields
     }
 }
 
