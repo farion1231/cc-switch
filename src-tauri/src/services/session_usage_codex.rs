@@ -19,6 +19,7 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::SessionSyncResult;
+use crate::services::usage_stats::{should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -438,20 +439,6 @@ fn insert_codex_session_entry(
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
-    // 检查是否已存在
-    let exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = ?1",
-            rusqlite::params![request_id],
-            |row| row.get::<_, i64>(0).map(|c| c > 0),
-        )
-        .unwrap_or(false);
-
-    if exists {
-        return Ok(false);
-    }
-
-    // 解析时间戳
     let created_at = timestamp
         .and_then(|ts| {
             chrono::DateTime::parse_from_rfc3339(ts)
@@ -464,6 +451,19 @@ fn insert_codex_session_entry(
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0)
         });
+
+    let dedup_key = DedupKey {
+        app_type: "codex",
+        model,
+        input_tokens: delta.input,
+        output_tokens: delta.output,
+        cache_read_tokens: delta.cached_input,
+        cache_creation_tokens: 0,
+        created_at,
+    };
+    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+        return Ok(false);
+    }
 
     // 计算费用
     let usage = TokenUsage {
@@ -731,6 +731,60 @@ mod tests {
     fn test_collect_codex_session_files_nonexistent() {
         let files = collect_codex_session_files(Path::new("/nonexistent/path"));
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_insert_codex_session_skips_matching_proxy_log() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "codex-proxy",
+                    "openai",
+                    "codex",
+                    "gpt-5.4",
+                    "gpt-5.4",
+                    10,
+                    2,
+                    1,
+                    7,
+                    "0.01",
+                    100,
+                    200,
+                    1000,
+                    "proxy"
+                ],
+            )?;
+        }
+
+        let delta = DeltaTokens {
+            input: 10,
+            cached_input: 1,
+            output: 2,
+        };
+        let inserted = insert_codex_session_entry(
+            &db,
+            "codex-session-dup",
+            &delta,
+            "gpt-5.4",
+            Some("session-1"),
+            Some("1970-01-01T00:16:45Z"),
+        )?;
+        assert!(!inserted);
+
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(count, 1);
+
+        Ok(())
     }
 
     // ── 模型名归一化测试 ──

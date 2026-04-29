@@ -870,6 +870,34 @@ mod tests {
     }
 
     #[test]
+    fn test_openai_to_anthropic_preserves_id_for_usage_dedup() {
+        let input = json!({
+            "id": "chatcmpl-claude-compatible",
+            "object": "chat.completion",
+            "model": "claude-sonnet-4-5",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        let usage = crate::proxy::usage::parser::TokenUsage::from_claude_response(&result)
+            .expect("converted Anthropic response should parse usage");
+
+        assert_eq!(
+            usage.message_id.as_deref(),
+            Some("chatcmpl-claude-compatible")
+        );
+        assert_eq!(
+            usage.dedup_request_id(),
+            "session:chatcmpl-claude-compatible"
+        );
+    }
+
+    #[test]
     fn test_openai_to_anthropic_with_tool_calls() {
         let input = json!({
             "id": "chatcmpl-123",

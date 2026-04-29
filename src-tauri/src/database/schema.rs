@@ -214,6 +214,7 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::create_request_logs_dedup_index_if_supported(conn)?;
 
         // 11. Model Pricing 表
         conn.execute(
@@ -1107,6 +1108,7 @@ impl Database {
                 "data_source",
                 "TEXT NOT NULL DEFAULT 'proxy'",
             )?;
+            Self::create_request_logs_dedup_index_if_supported(conn)?;
         }
 
         // 2. 创建会话日志同步状态表
@@ -1905,6 +1907,36 @@ impl Database {
         let sql = format!("PRAGMA user_version = {version};");
         conn.execute(&sql, [])
             .map_err(|e| AppError::Database(format!("写入 user_version 失败: {e}")))?;
+        Ok(())
+    }
+
+    fn create_request_logs_dedup_index_if_supported(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_request_logs")? {
+            return Ok(());
+        }
+
+        let required_columns = [
+            "app_type",
+            "data_source",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "created_at",
+            "cache_creation_tokens",
+        ];
+        for column in required_columns {
+            if !Self::has_column(conn, "proxy_request_logs", column)? {
+                return Ok(());
+            }
+        }
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_request_logs_dedup_lookup
+             ON proxy_request_logs(app_type, data_source, input_tokens, output_tokens,
+                                   cache_read_tokens, created_at, cache_creation_tokens)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建使用量去重索引失败: {e}")))?;
         Ok(())
     }
 
