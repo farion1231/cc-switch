@@ -561,13 +561,14 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
 }
 
 /// 扫描常见路径查找 CLI
-fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
-    use std::process::Command;
+pub(crate) fn build_cli_search_paths(
+    home: &std::path::Path,
+    #[allow(unused_variables)] appdata: Option<&std::path::Path>,
+    #[allow(unused_variables)] local_appdata: Option<&std::path::Path>,
+    pnpm_home: Option<std::ffi::OsString>,
+) -> Vec<std::path::PathBuf> {
+    let mut search_paths = Vec::new();
 
-    let home = dirs::home_dir().unwrap_or_default();
-
-    // 常见的安装路径（原生安装优先）
-    let mut search_paths: Vec<std::path::PathBuf> = Vec::new();
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
@@ -577,8 +578,15 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         push_unique_path(&mut search_paths, home.join(".yarn/bin"));
     }
 
+    if let Some(ph) = pnpm_home {
+        push_unique_path(&mut search_paths, std::path::PathBuf::from(ph));
+    }
+
     #[cfg(target_os = "macos")]
     {
+        if !home.as_os_str().is_empty() {
+            push_unique_path(&mut search_paths, home.join("Library/pnpm"));
+        }
         push_unique_path(
             &mut search_paths,
             std::path::PathBuf::from("/opt/homebrew/bin"),
@@ -600,12 +608,12 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(appdata) = dirs::data_dir() {
-            push_unique_path(&mut search_paths, appdata.join("npm"));
+        if let Some(ad) = appdata {
+            push_unique_path(&mut search_paths, ad.join("npm"));
         }
-        if let Some(local_appdata) = dirs::data_local_dir() {
-            push_unique_path(&mut search_paths, local_appdata.join("pnpm"));
-            push_unique_path(&mut search_paths, local_appdata.join("Yarn/bin"));
+        if let Some(lad) = local_appdata {
+            push_unique_path(&mut search_paths, lad.join("pnpm"));
+            push_unique_path(&mut search_paths, lad.join("Yarn").join("bin"));
         }
         push_unique_path(
             &mut search_paths,
@@ -636,6 +644,22 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
             }
         }
     }
+
+    search_paths
+}
+
+fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
+    use std::process::Command;
+
+    let home = dirs::home_dir().unwrap_or_default();
+
+    // 常见的安装路径（原生安装优先）
+    let mut search_paths = build_cli_search_paths(
+        &home,
+        dirs::data_dir().as_deref(),
+        dirs::data_local_dir().as_deref(),
+        std::env::var_os("PNPM_HOME"),
+    );
 
     if tool == "opencode" {
         let extra_paths = opencode_extra_search_paths(
@@ -1705,5 +1729,43 @@ mod tests {
             command,
             "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
         );
+    }
+
+    #[test]
+    fn build_cli_search_paths_includes_common_pnpm_yarn() {
+        let home = Path::new("/mock/home");
+        let paths = super::build_cli_search_paths(home, None, None, None);
+        
+        assert!(paths.contains(&home.join(".local/share/pnpm")));
+        assert!(paths.contains(&home.join(".yarn/bin")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn build_cli_search_paths_macos_includes_library_pnpm() {
+        let home = Path::new("/mock/home");
+        let paths = super::build_cli_search_paths(home, None, None, None);
+        
+        assert!(paths.contains(&home.join("Library/pnpm")));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_cli_search_paths_windows_includes_local_appdata_pnpm_yarn() {
+        let home = Path::new("C:\\mock\\home");
+        let local_appdata = Path::new("C:\\mock\\localappdata");
+        let paths = super::build_cli_search_paths(home, None, Some(local_appdata), None);
+        
+        assert!(paths.contains(&local_appdata.join("pnpm")));
+        assert!(paths.contains(&local_appdata.join("Yarn").join("bin")));
+    }
+    
+    #[test]
+    fn build_cli_search_paths_includes_pnpm_home() {
+        let home = Path::new("/mock/home");
+        let pnpm_home = std::ffi::OsString::from("/mock/pnpm_home");
+        let paths = super::build_cli_search_paths(home, None, None, Some(pnpm_home));
+        
+        assert!(paths.contains(&std::path::PathBuf::from("/mock/pnpm_home")));
     }
 }
