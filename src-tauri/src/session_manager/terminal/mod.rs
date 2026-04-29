@@ -234,7 +234,7 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
     );
 
     let status = Command::new("open")
-        .args(&["-a", "Warp", &warp_uri])
+        .args(["-a", "Warp", &warp_uri])
         .status()
         .map_err(|e| format!("Failed to launch Warp: {e}"))?;
 
