@@ -371,17 +371,69 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                                 .get("tool_use_id")
                                 .and_then(|i| i.as_str())
                                 .unwrap_or("");
-                            let output = match block.get("content") {
-                                Some(Value::String(s)) => s.clone(),
-                                Some(v) => serde_json::to_string(v).unwrap_or_default(),
-                                None => String::new(),
-                            };
+
+                            // tool_result.content 可以是字符串或数组（包含 text / image blocks）
+                            // Responses API 的 function_call_output.output 只接受文本，
+                            // 图片需要拆出来作为独立的 role:"user" + input_image 消息发送
+                            let output;
+                            let mut image_messages: Vec<serde_json::Value> = Vec::new();
+
+                            match block.get("content") {
+                                Some(Value::String(s)) => {
+                                    output = s.clone();
+                                }
+                                Some(Value::Array(contents)) => {
+                                    let mut text_parts = Vec::new();
+                                    for item in contents {
+                                        match item.get("type").and_then(|t| t.as_str()) {
+                                            Some("text") => {
+                                                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                                                    text_parts.push(text.to_string());
+                                                }
+                                            }
+                                            Some("image") => {
+                                                if let Some(source) = item.get("source") {
+                                                    let media_type = source
+                                                        .get("media_type")
+                                                        .and_then(|m| m.as_str())
+                                                        .unwrap_or("image/png");
+                                                    let data = source
+                                                        .get("data")
+                                                        .and_then(|d| d.as_str())
+                                                        .unwrap_or("");
+                                                    image_messages.push(json!({
+                                                        "role": "user",
+                                                        "content": [{
+                                                            "type": "input_image",
+                                                            "image_url": format!("data:{media_type};base64,{data}")
+                                                        }]
+                                                    }));
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    output = text_parts.join("\n");
+                                }
+                                Some(v) => {
+                                    // 其他 JSON 值 fallback 为字符串
+                                    output = serde_json::to_string(v).unwrap_or_default();
+                                }
+                                None => {
+                                    output = String::new();
+                                }
+                            }
 
                             input.push(json!({
                                 "type": "function_call_output",
                                 "call_id": call_id,
                                 "output": output
                             }));
+
+                            // 图片作为独立的 user 消息发送
+                            for img_msg in image_messages {
+                                input.push(img_msg);
+                            }
                         }
 
                         "thinking" => {
