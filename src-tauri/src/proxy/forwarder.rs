@@ -2044,6 +2044,19 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
         .find_map(|value| value.as_str().map(ToString::to_string))
 }
 
+/// 通过各家协议的类型标记字段判断 200 响应体是否为合法的成功响应。
+///
+/// 背景：某些上游会对错误响应仍然返回 HTTP 200 + 错误 JSON body，
+/// 此时需要把它转为 UpstreamError 走重试/整流。
+///
+/// 本代理支持的 8 种 ProviderType 最终只映射到 4 种 wire format；
+/// 按协议 discriminator 匹配：
+/// - Anthropic Messages（Claude/ClaudeAuth/OpenRouter 默认）：`type == "message"`
+///   （错误响应为 `type == "error"`）
+/// - OpenAI Chat Completions（GitHubCopilot）：`object == "chat.completion"`
+/// - OpenAI Responses API（Codex/CodexOAuth）：`object == "response"`
+/// - Gemini generateContent（Gemini/GeminiCli）：协议无 discriminator 字段，
+///   退化为检查 `candidates`（正常响应）或 `promptFeedback`（prompt 被安全策略拦截的响应）
 fn is_valid_response_body(body: &[u8]) -> bool {
     let Ok(json) = serde_json::from_slice::<Value>(body) else {
         return false;
@@ -2051,11 +2064,21 @@ fn is_valid_response_body(body: &[u8]) -> bool {
     let Some(obj) = json.as_object() else {
         return false;
     };
-    obj.contains_key("content")
-        || obj.contains_key("choices")
-        || obj.contains_key("output")
-        || obj.contains_key("candidates")
-        || obj.contains_key("promptFeedback")
+
+    // Anthropic Messages
+    let type_str = obj.get("type").and_then(|v| v.as_str());
+    if type_str == Some("message") {
+        return true;
+    }
+
+    // OpenAI Chat Completions / Responses API
+    let object_str = obj.get("object").and_then(|v| v.as_str());
+    if matches!(object_str, Some("chat.completion") | Some("response")) {
+        return true;
+    }
+
+    // Gemini generateContent（无 discriminator，按 key 识别）
+    obj.contains_key("candidates") || obj.contains_key("promptFeedback")
 }
 
 fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
@@ -2885,7 +2908,7 @@ mod tests {
 
     #[test]
     fn valid_codex_response() {
-        let body = br#"{"id":"resp_1","output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}],"usage":{"input_tokens":10,"output_tokens":5}}"#;
+        let body = br#"{"id":"resp_1","object":"response","output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}],"usage":{"input_tokens":10,"output_tokens":5}}"#;
         assert!(super::is_valid_response_body(body));
     }
 
@@ -2904,6 +2927,19 @@ mod tests {
     #[test]
     fn invalid_error_json() {
         let body = br#"{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}"#;
+        assert!(!super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_anthropic_error_envelope() {
+        let body =
+            br#"{"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}"#;
+        assert!(!super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_openai_unknown_object() {
+        let body = br#"{"id":"x","object":"chat.completion.chunk","choices":[]}"#;
         assert!(!super::is_valid_response_body(body));
     }
 
