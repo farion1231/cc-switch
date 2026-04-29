@@ -186,7 +186,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
 fn collect_codex_session_files(codex_dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
-    // 1. 扫描 sessions/YYYY/MM/DD/*.jsonl（日期分区目录��
+    // 1. 扫描 sessions/YYYY/MM/DD/*.jsonl（日期分区目录）
     let sessions_dir = codex_dir.join("sessions");
     if sessions_dir.is_dir() {
         collect_jsonl_recursive(&sessions_dir, &mut files, 0, 3);
@@ -225,13 +225,13 @@ fn collect_jsonl_recursive(dir: &Path, files: &mut Vec<PathBuf>, depth: u32, max
     }
 }
 
-/// 同步单�� Codex JSONL 文件，返回 (imported, skipped)
+/// 同步单个 Codex JSONL 文件，返回 (imported, skipped)
 fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
-        .map_err(|e| AppError::Config(format!("无法读取文���元数据: {e}")))?;
+        .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata
         .modified()
         .ok()
@@ -334,7 +334,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
 
                 let info = match payload.get("info") {
                     Some(i) if !i.is_null() => i,
-                    _ => continue, // info 为 null 的首个事件跳��
+                    _ => continue, // 跳过 info 为 null 的首个事件
                 };
 
                 // 提取模型（token_count 事件也可能携带 model）
@@ -538,7 +538,7 @@ fn insert_codex_session_entry(
     Ok(true)
 }
 
-/// ��找 Codex 模型定价（带归一化）
+/// 查找 Codex 模型定价（带归一化）
 fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
     let normalized = normalize_codex_model(model_id);
 
