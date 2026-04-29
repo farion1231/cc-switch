@@ -1772,12 +1772,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "claude-opus-4-6",
-        fallbacks: ["claude-sonnet-4-6"],
+        primary: "burncloud/claude-opus-4-6",
+        fallbacks: ["burncloud/claude-sonnet-4-6"],
       },
       modelCatalog: {
-        "claude-opus-4-6": { alias: "Opus" },
-        "claude-sonnet-4-6": { alias: "Sonnet" },
+        "burncloud/claude-opus-4-6": { alias: "Opus" },
+        "burncloud/claude-sonnet-4-6": { alias: "Sonnet" },
       },
     },
   },
