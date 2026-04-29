@@ -18,7 +18,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
-use crate::services::session_usage::SessionSyncResult;
+use crate::services::session_usage::{get_sync_state, update_sync_state, SessionSyncResult};
 use crate::services::usage_stats::{should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use std::fs;
@@ -536,39 +536,6 @@ fn insert_codex_session_entry(
     .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
 
     Ok(true)
-}
-
-/// 获取文件的同步状态
-fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
-    let conn = lock_conn!(db.conn);
-    let result = conn.query_row(
-        "SELECT last_modified, last_line_offset FROM session_log_sync WHERE file_path = ?1",
-        rusqlite::params![file_path],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-    );
-    Ok(result.unwrap_or((0, 0)))
-}
-
-/// 更新文件的同步状态
-fn update_sync_state(
-    db: &Database,
-    file_path: &str,
-    last_modified: i64,
-    last_offset: i64,
-) -> Result<(), AppError> {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    let conn = lock_conn!(db.conn);
-    conn.execute(
-        "INSERT OR REPLACE INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
-         VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![file_path, last_modified, last_offset, now],
-    )
-    .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
-    Ok(())
 }
 
 /// ��找 Codex 模型定价（带归一化）

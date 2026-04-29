@@ -117,29 +117,84 @@ pub struct RequestLogDetail {
     pub data_source: Option<String>,
 }
 
+/// 把 24 列的查询结果映射为 `RequestLogDetail`。
+///
+/// 调用方的 SELECT **必须**按以下顺序返回 24 列：
+/// `request_id, provider_id, provider_name, app_type, model, request_model,
+///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
+///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
+///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
+///  first_token_ms, duration_ms, status_code, error_message, created_at,
+///  data_source`
+///
+/// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
+fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
+    Ok(RequestLogDetail {
+        request_id: row.get(0)?,
+        provider_id: row.get(1)?,
+        provider_name: row.get(2)?,
+        app_type: row.get(3)?,
+        model: row.get(4)?,
+        request_model: row.get(5)?,
+        cost_multiplier: row
+            .get::<_, Option<String>>(6)?
+            .unwrap_or_else(|| "1".to_string()),
+        input_tokens: row.get::<_, i64>(7)? as u32,
+        output_tokens: row.get::<_, i64>(8)? as u32,
+        cache_read_tokens: row.get::<_, i64>(9)? as u32,
+        cache_creation_tokens: row.get::<_, i64>(10)? as u32,
+        input_cost_usd: row.get(11)?,
+        output_cost_usd: row.get(12)?,
+        cache_read_cost_usd: row.get(13)?,
+        cache_creation_cost_usd: row.get(14)?,
+        total_cost_usd: row.get(15)?,
+        is_streaming: row.get::<_, i64>(16)? != 0,
+        latency_ms: row.get::<_, i64>(17)? as u64,
+        first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
+        duration_ms: row.get::<_, Option<i64>>(19)?.map(|v| v as u64),
+        status_code: row.get::<_, i64>(20)? as u16,
+        error_message: row.get(21)?,
+        created_at: row.get(22)?,
+        data_source: row.get(23)?,
+    })
+}
+
 /// SQL fragment: resolve provider_name with fallback for session-based entries.
-/// Session logs use placeholder provider_ids (_session, _codex_session, _gemini_session)
-/// that don't exist in the providers table — this COALESCE gives them readable names.
+/// Session logs use placeholder provider_ids (e.g., `_session`, `_<app>_session`)
+/// that don't exist in the providers table — the CASE expression below is the
+/// authoritative mapping from placeholder to readable name.
 fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
         "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
          WHEN '_session' THEN 'Claude (Session)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
+         WHEN '_hermes_session' THEN 'Hermes (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
 
 pub(crate) const SESSION_PROXY_DEDUP_WINDOW_SECONDS: i64 = 10 * 60;
 
+/// SQL 片段：把指定别名的 `data_source` 包成 COALESCE，NULL 视作 'proxy'。
+///
+/// 防御 schema v9 之前可能写入的 NULL data_source 行（见
+/// `tests::create_legacy_nullable_logs_table`）。所有用到 data_source 的查询
+/// 都应通过此 helper 生成片段，避免遗漏。
+fn data_source_expr(log_alias: &str) -> String {
+    format!("COALESCE({log_alias}.data_source, 'proxy')")
+}
+
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
+    let data_source = data_source_expr(log_alias);
+    let proxy_data_source = data_source_expr("proxy_dedup");
     format!(
         "NOT (
-            {log_alias}.data_source IN ('session_log', 'codex_session', 'gemini_session')
+            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'hermes_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
-                WHERE proxy_dedup.data_source = 'proxy'
+                WHERE {proxy_data_source} = 'proxy'
                   AND proxy_dedup.app_type = {log_alias}.app_type
                   AND proxy_dedup.status_code >= 200
                   AND proxy_dedup.status_code < 300
@@ -150,7 +205,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
                       OR (
                           {log_alias}.cache_creation_tokens = 0
-                          AND {log_alias}.data_source IN ('codex_session', 'gemini_session')
+                          AND {data_source} IN ('codex_session', 'gemini_session')
                       )
                   )
                   AND proxy_dedup.created_at BETWEEN
@@ -212,11 +267,12 @@ pub(crate) fn has_matching_proxy_usage_log(
     let allow_missing_cache_creation =
         matches!(key.app_type, "codex" | "gemini") && key.cache_creation_tokens == 0;
 
-    conn.query_row(
+    let l_data_source = data_source_expr("l");
+    let sql = format!(
         "SELECT EXISTS (
             SELECT 1
             FROM proxy_request_logs l
-            WHERE l.data_source = 'proxy'
+            WHERE {l_data_source} = 'proxy'
               AND l.app_type = ?1
               AND l.status_code >= 200
               AND l.status_code < 300
@@ -230,7 +286,11 @@ pub(crate) fn has_matching_proxy_usage_log(
                   OR LOWER(l.model) = 'unknown'
                   OR LOWER(?2) = 'unknown'
               )
-        )",
+        )"
+    );
+
+    conn.query_row(
+        &sql,
         params![
             key.app_type,
             key.model,
@@ -1043,36 +1103,7 @@ impl Database {
 
         let mut stmt = conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt.query_map(params_refs.as_slice(), |row| {
-            Ok(RequestLogDetail {
-                request_id: row.get(0)?,
-                provider_id: row.get(1)?,
-                provider_name: row.get(2)?,
-                app_type: row.get(3)?,
-                model: row.get(4)?,
-                request_model: row.get(5)?,
-                cost_multiplier: row
-                    .get::<_, Option<String>>(6)?
-                    .unwrap_or_else(|| "1".to_string()),
-                input_tokens: row.get::<_, i64>(7)? as u32,
-                output_tokens: row.get::<_, i64>(8)? as u32,
-                cache_read_tokens: row.get::<_, i64>(9)? as u32,
-                cache_creation_tokens: row.get::<_, i64>(10)? as u32,
-                input_cost_usd: row.get(11)?,
-                output_cost_usd: row.get(12)?,
-                cache_read_cost_usd: row.get(13)?,
-                cache_creation_cost_usd: row.get(14)?,
-                total_cost_usd: row.get(15)?,
-                is_streaming: row.get::<_, i64>(16)? != 0,
-                latency_ms: row.get::<_, i64>(17)? as u64,
-                first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
-                duration_ms: row.get::<_, Option<i64>>(19)?.map(|v| v as u64),
-                status_code: row.get::<_, i64>(20)? as u16,
-                error_message: row.get(21)?,
-                created_at: row.get(22)?,
-                data_source: row.get(23)?,
-            })
-        })?;
+        let rows = stmt.query_map(params_refs.as_slice(), row_to_request_log_detail)?;
 
         let mut logs = Vec::new();
         let mut provider_cache = HashMap::new();
@@ -1116,36 +1147,7 @@ impl Database {
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
         );
-        let result = conn.query_row(&detail_sql, [request_id], |row| {
-            Ok(RequestLogDetail {
-                request_id: row.get(0)?,
-                provider_id: row.get(1)?,
-                provider_name: row.get(2)?,
-                app_type: row.get(3)?,
-                model: row.get(4)?,
-                request_model: row.get(5)?,
-                cost_multiplier: row
-                    .get::<_, Option<String>>(6)?
-                    .unwrap_or_else(|| "1".to_string()),
-                input_tokens: row.get::<_, i64>(7)? as u32,
-                output_tokens: row.get::<_, i64>(8)? as u32,
-                cache_read_tokens: row.get::<_, i64>(9)? as u32,
-                cache_creation_tokens: row.get::<_, i64>(10)? as u32,
-                input_cost_usd: row.get(11)?,
-                output_cost_usd: row.get(12)?,
-                cache_read_cost_usd: row.get(13)?,
-                cache_creation_cost_usd: row.get(14)?,
-                total_cost_usd: row.get(15)?,
-                is_streaming: row.get::<_, i64>(16)? != 0,
-                latency_ms: row.get::<_, i64>(17)? as u64,
-                first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
-                duration_ms: row.get::<_, Option<i64>>(19)?.map(|v| v as u64),
-                status_code: row.get::<_, i64>(20)? as u16,
-                error_message: row.get(21)?,
-                created_at: row.get(22)?,
-                data_source: row.get(23)?,
-            })
-        });
+        let result = conn.query_row(&detail_sql, [request_id], row_to_request_log_detail);
 
         match result {
             Ok(mut detail) => {
@@ -1276,27 +1278,80 @@ struct PricingInfo {
 }
 
 impl Database {
+    /// Recalculate stored zero-cost usage rows once pricing becomes available.
+    pub(crate) fn backfill_missing_usage_costs(&self) -> Result<u64, AppError> {
+        let conn = lock_conn!(self.conn);
+        Self::backfill_missing_usage_costs_on_conn(&conn)
+    }
+
+    fn backfill_missing_usage_costs_on_conn(conn: &Connection) -> Result<u64, AppError> {
+        let mut logs = {
+            let mut stmt = conn.prepare(
+                "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
+                        cost_multiplier,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                        cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
+                        first_token_ms, duration_ms, status_code, error_message, created_at,
+                        data_source
+                 FROM proxy_request_logs
+                 WHERE CAST(total_cost_usd AS REAL) <= 0
+                   AND (input_tokens > 0 OR output_tokens > 0
+                        OR cache_read_tokens > 0 OR cache_creation_tokens > 0)",
+            )?;
+
+            let rows = stmt.query_map([], row_to_request_log_detail)?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        if logs.is_empty() {
+            return Ok(0);
+        }
+
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Database(format!("启动用量成本回填事务失败: {e}")))?;
+
+        let mut updated = 0u64;
+        let mut provider_cache = HashMap::new();
+        let mut pricing_cache = HashMap::new();
+        for log in &mut logs {
+            if Self::maybe_backfill_log_costs(&tx, log, &mut provider_cache, &mut pricing_cache)? {
+                updated += 1;
+            }
+        }
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交用量成本回填事务失败: {e}")))?;
+
+        if updated > 0 {
+            log::info!("已回填 {updated} 条缺失的用量成本");
+        }
+
+        Ok(updated)
+    }
+
+    /// 尝试为单条 log 回填成本字段。返回是否实际写入（true=已 UPDATE，false=跳过）。
     fn maybe_backfill_log_costs(
         conn: &Connection,
         log: &mut RequestLogDetail,
         provider_cache: &mut HashMap<(String, String), rust_decimal::Decimal>,
         pricing_cache: &mut HashMap<String, PricingInfo>,
-    ) -> Result<(), AppError> {
-        let total_cost = rust_decimal::Decimal::from_str(&log.total_cost_usd)
+    ) -> Result<bool, AppError> {
+        let existing_cost = rust_decimal::Decimal::from_str(&log.total_cost_usd)
             .unwrap_or(rust_decimal::Decimal::ZERO);
-        let has_cost = total_cost > rust_decimal::Decimal::ZERO;
+        let has_cost = existing_cost > rust_decimal::Decimal::ZERO;
         let has_usage = log.input_tokens > 0
             || log.output_tokens > 0
             || log.cache_read_tokens > 0
             || log.cache_creation_tokens > 0;
 
         if has_cost || !has_usage {
-            return Ok(());
+            return Ok(false);
         }
 
         let pricing = match Self::get_model_pricing_cached(conn, pricing_cache, &log.model)? {
             Some(info) => info,
-            None => return Ok(()),
+            None => return Ok(false),
         };
         let multiplier = Self::get_cost_multiplier_cached(
             conn,
@@ -1352,7 +1407,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(format!("更新请求成本失败: {e}")))?;
 
-        Ok(())
+        Ok(true)
     }
 
     fn get_cost_multiplier_cached(
@@ -1431,7 +1486,8 @@ pub(crate) fn find_model_pricing_row(
         .next()
         .unwrap_or(model_id)
         .trim()
-        .replace('@', "-");
+        .replace('@', "-")
+        .to_ascii_lowercase();
 
     // 精确匹配清洗后的名称
     let exact = conn
@@ -1511,6 +1567,110 @@ mod tests {
                 data_source
             ],
         )?;
+        Ok(())
+    }
+
+    fn create_legacy_nullable_logs_table(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE proxy_request_logs (
+                request_id TEXT PRIMARY KEY,
+                app_type TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                cache_read_tokens INTEGER NOT NULL,
+                cache_creation_tokens INTEGER NOT NULL,
+                status_code INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                data_source TEXT
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_keeps_legacy_null_data_source_proxy_rows() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES ('legacy-proxy', 'codex', 'gpt-5.5', 10, 2, 1, 0, 200, 1000, NULL)",
+            [],
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let sql = format!("SELECT COUNT(*) FROM proxy_request_logs l WHERE {filter}");
+        let count: i64 = conn.query_row(&sql, [], |row| row.get(0))?;
+        assert_eq!(count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matching_proxy_log_treats_legacy_null_data_source_as_proxy() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES ('legacy-proxy', 'codex', 'gpt-5.5', 10, 2, 1, 0, 200, 1000, NULL)",
+            [],
+        )?;
+
+        let key = DedupKey {
+            app_type: "codex",
+            model: "gpt-5.5",
+            input_tokens: 10,
+            output_tokens: 2,
+            cache_read_tokens: 1,
+            cache_creation_tokens: 0,
+            created_at: 1000,
+        };
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_missing_usage_costs_uses_new_gpt_5_5_pricing() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "codex-gpt-5-5-zero-cost",
+                "codex",
+                "_codex_session",
+                "gpt-5.5",
+                "codex_session",
+                1000,
+                1_000_000,
+                1_000_000,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, output_cost, total_cost): (String, String, String) = conn.query_row(
+            "SELECT input_cost_usd, output_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'codex-gpt-5-5-zero-cost'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(input_cost, "5.000000");
+        assert_eq!(output_cost, "30.000000");
+        assert_eq!(total_cost, "35.000000");
+
         Ok(())
     }
 
@@ -2435,6 +2595,11 @@ mod tests {
         assert!(
             result.is_some(),
             "带 @ 分隔符的模型 gpt-5.2-codex@low 应能匹配到 gpt-5.2-codex-low"
+        );
+        let result = find_model_pricing_row(&conn, "OpenAI/GPT-5.5@HIGH")?;
+        assert!(
+            result.is_some(),
+            "大小写混合的 GPT-5.5 模型应能归一化匹配到 gpt-5.5-high"
         );
 
         // 测试不存在的模型

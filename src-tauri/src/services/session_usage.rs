@@ -308,8 +308,10 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     Ok((imported, skipped))
 }
 
-/// 获取文件的同步状态
-fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
+/// 获取 session_log_sync 表中某条目的同步进度。
+///
+/// Shared by all session_usage_* parsers.
+pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
     let conn = lock_conn!(db.conn);
     let result = conn.query_row(
         "SELECT last_modified, last_line_offset FROM session_log_sync WHERE file_path = ?1",
@@ -319,8 +321,10 @@ fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError
     Ok(result.unwrap_or((0, 0)))
 }
 
-/// 更新文件的同步状态
-fn update_sync_state(
+/// 更新 session_log_sync 表中某条目的同步进度。
+///
+/// Shared by all session_usage_* parsers.
+pub(crate) fn update_sync_state(
     db: &Database,
     file_path: &str,
     last_modified: i64,
