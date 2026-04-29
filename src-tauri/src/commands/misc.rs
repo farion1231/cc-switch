@@ -1072,12 +1072,40 @@ fn launch_macos_open_app(
 
 #[cfg(target_os = "macos")]
 fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
     let mut cmd = Command::new("open");
     cmd.arg("-a").arg("Warp");
 
-    let warp_uri = format!("warp://action/new_tab?path={}", script_file.display());
+    // Warp URI scheme cannot work well with script_file, because:
+    //
+    // 1. script_file's name ends up with .sh, so Warp would open the file rather than execute it
+    // 2. script_file has no execution permission, so we need to add one more indirection
+    let mut second_script_file = tempfile::Builder::new()
+        .disable_cleanup(true)
+        .permissions(std::fs::Permissions::from_mode(0o755))
+        .tempfile()
+        .map_err(|e| format!("Failed to create temporary script file: {e}"))?;
+
+    writeln!(
+        &mut second_script_file,
+        r#"
+        #!/usr/bin/env sh
+
+        rm -- $0
+
+        exec bash {}
+        "#,
+        script_file.display(),
+    )
+    .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
+
+    let warp_uri = format!(
+        "warp://action/new_tab?path={}",
+        second_script_file.path().display()
+    );
     cmd.arg(warp_uri);
 
     let output = cmd.output().map_err(|e| format!("启动 Warp 失败: {e}"))?;
