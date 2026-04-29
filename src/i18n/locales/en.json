@@ -549,7 +549,8 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
-          "kaku": "Kaku"
+          "kaku": "Kaku",
+          "warp": "Warp"
         },
         "windows": {
           "cmd": "Command Prompt",

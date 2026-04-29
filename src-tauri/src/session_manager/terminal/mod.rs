@@ -211,6 +211,7 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let cwd = cwd.unwrap_or(".");
 
     let mut script_file = tempfile::Builder::new()
+        .disable_cleanup(true)
         .permissions(std::fs::Permissions::from_mode(0o755))
         .tempfile_in(cwd)
         .map_err(|e| format!("Failed to create temporary script file for launching Warp: {e}"))?;
