@@ -573,6 +573,8 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
+        push_unique_path(&mut search_paths, home.join(".local/share/pnpm"));
+        push_unique_path(&mut search_paths, home.join(".yarn/bin"));
     }
 
     #[cfg(target_os = "macos")]
@@ -600,6 +602,10 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     {
         if let Some(appdata) = dirs::data_dir() {
             push_unique_path(&mut search_paths, appdata.join("npm"));
+        }
+        if let Some(local_appdata) = dirs::data_local_dir() {
+            push_unique_path(&mut search_paths, local_appdata.join("pnpm"));
+            push_unique_path(&mut search_paths, local_appdata.join("Yarn/bin"));
         }
         push_unique_path(
             &mut search_paths,
