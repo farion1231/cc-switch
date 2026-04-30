@@ -24,6 +24,7 @@ import {
   useInstallSkillsFromZip,
   useCheckSkillUpdates,
   useUpdateSkill,
+  useSyncAllSkillsToApps,
   type InstalledSkill,
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
@@ -100,6 +101,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     isFetching: isCheckingUpdates,
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
+  const syncAllMutation = useSyncAllSkillsToApps();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
 
   const updatesMap = useMemo(() => {
@@ -275,6 +277,37 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
+  const handleSyncAllToApps = async () => {
+    try {
+      const result = await syncAllMutation.mutateAsync();
+      const failureCount = result.failures.length;
+
+      if (failureCount > 0) {
+        toast.warning(t("skills.syncAll.partial"), {
+          description: t("skills.syncAll.partialDescription", {
+            failed: failureCount,
+            firstError: result.failures[0]?.error ?? "",
+          }),
+          closeButton: true,
+        });
+        return;
+      }
+
+      toast.success(
+        t("skills.syncAll.success", {
+          skillCount: result.skillCount,
+          appCount: result.appCount,
+        }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(t("skills.syncAll.failed"), {
+        description: String(error),
+        closeButton: true,
+      });
+    }
+  };
+
   const handleOpenRestoreFromBackup = async () => {
     setRestoreDialogOpen(true);
     try {
@@ -352,6 +385,23 @@ const UnifiedSkillsPanel = React.forwardRef<
           appIds={SKILLS_APP_IDS}
         />
         <div className="flex items-center gap-1.5">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1 whitespace-nowrap"
+            onClick={handleSyncAllToApps}
+            disabled={syncAllMutation.isPending || !skills || skills.length === 0}
+          >
+            {syncAllMutation.isPending ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
+            {syncAllMutation.isPending
+              ? t("skills.syncAll.syncing")
+              : t("skills.syncAll.button")}
+          </Button>
           <div
             className="transition-all duration-300 ease-out overflow-hidden"
             style={{

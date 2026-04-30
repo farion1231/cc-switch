@@ -1790,6 +1790,14 @@
     "updateAll": "全部更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "已成功更新 {{count}} 个技能",
+    "syncAll": {
+      "button": "同步全部 CLI",
+      "syncing": "同步中...",
+      "success": "已将 {{skillCount}} 个技能同步到 {{appCount}} 个 CLI",
+      "partial": "部分技能同步失败",
+      "partialDescription": "{{failed}} 个同步任务失败。首个错误：{{firstError}}",
+      "failed": "同步全部 CLI 失败"
+    },
     "error": {
       "skillNotFound": "技能不存在：{{directory}}",
       "missingRepoInfo": "缺少仓库信息（owner 或 name）",

@@ -74,6 +74,22 @@ export interface ImportSkillSelection {
   apps: SkillApps;
 }
 
+export interface SkillSyncFailure {
+  skillId: string;
+  skillName: string;
+  directory: string;
+  app: string;
+  error: string;
+}
+
+export interface SkillSyncAllResult {
+  skillCount: number;
+  appCount: number;
+  syncedCount: number;
+  skippedCount: number;
+  failures: SkillSyncFailure[];
+}
+
 /** 技能对象（兼容旧 API） */
 export interface Skill {
   key: string;
@@ -173,6 +189,11 @@ export const skillsApi = {
   /** 切换 Skill 的应用启用状态 */
   async toggleApp(id: string, app: AppId, enabled: boolean): Promise<boolean> {
     return await invoke("toggle_skill_app", { id, app, enabled });
+  },
+
+  /** 同步所有已安装 Skills 到所有支持的 CLI */
+  async syncAllToApps(): Promise<SkillSyncAllResult> {
+    return await invoke("sync_all_skills_to_apps");
   },
 
   /** 扫描未管理的 Skills */

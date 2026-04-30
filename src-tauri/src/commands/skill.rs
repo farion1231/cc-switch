@@ -8,7 +8,7 @@ use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
-    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
+    SkillService, SkillStorageLocation, SkillSyncAllResult, SkillUninstallResult, SkillUpdateInfo,
     SkillsShSearchResult,
 };
 use crate::store::AppState;
@@ -101,6 +101,13 @@ pub fn toggle_skill_app(
     let app_type = parse_app_type(&app)?;
     SkillService::toggle_app(&app_state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+#[tauri::command]
+pub fn sync_all_skills_to_apps(
+    app_state: State<'_, AppState>,
+) -> Result<SkillSyncAllResult, String> {
+    SkillService::sync_all_to_supported_apps(&app_state.db).map_err(|e| e.to_string())
 }
 
 /// 扫描未管理的 Skills

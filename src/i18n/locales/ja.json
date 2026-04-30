@@ -1790,6 +1790,14 @@
     "updateAll": "すべて更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "{{count}} 個のスキルを更新しました",
+    "syncAll": {
+      "button": "すべての CLI に同期",
+      "syncing": "同期中...",
+      "success": "{{skillCount}} 個のスキルを {{appCount}} 個の CLI に同期しました",
+      "partial": "一部のスキルの同期に失敗しました",
+      "partialDescription": "{{failed}} 件の同期タスクが失敗しました。最初のエラー: {{firstError}}",
+      "failed": "すべての CLI への同期に失敗しました"
+    },
     "error": {
       "skillNotFound": "スキルが見つかりません: {{directory}}",
       "missingRepoInfo": "リポジトリ情報（owner または name）が不足しています",

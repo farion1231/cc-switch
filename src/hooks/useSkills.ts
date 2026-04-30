@@ -185,6 +185,16 @@ export function useToggleSkillApp() {
   });
 }
 
+export function useSyncAllSkillsToApps() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => skillsApi.syncAllToApps(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    },
+  });
+}
+
 /**
  * 扫描未管理的 Skills
  */
