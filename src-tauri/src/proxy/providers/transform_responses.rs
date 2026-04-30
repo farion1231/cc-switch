@@ -259,12 +259,15 @@ pub(crate) fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Val
 
     // Extract input_tokens with OpenAI field name fallback
     // Priority: input_tokens (Anthropic) → prompt_tokens (OpenAI) → 0
-    let input = u.get("input_tokens")
+    let input = u
+        .get("input_tokens")
         .and_then(|v| v.as_u64())
         .or_else(|| {
             let prompt_tokens = u.get("prompt_tokens").and_then(|v| v.as_u64());
             if prompt_tokens.is_some() {
-                log::debug!("[Responses] Using OpenAI field name fallback 'prompt_tokens' for input_tokens");
+                log::debug!(
+                    "[Responses] Using OpenAI field name fallback 'prompt_tokens' for input_tokens"
+                );
             }
             prompt_tokens
         })
@@ -283,9 +286,10 @@ pub(crate) fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Val
         })
         .unwrap_or(0);
 
-    // Log warning if only one field present (partial object)
+    // Log if only one field present (partial object). Streaming chunks legitimately
+    // arrive with partial usage, so this stays at debug level to avoid noise.
     if (input == 0 && output > 0) || (input > 0 && output == 0) {
-        log::warn!("[Responses] Partial usage object: {:?}", u);
+        log::debug!("[Responses] Partial usage object: {:?}", u);
     }
 
     let mut result = json!({
@@ -1466,8 +1470,8 @@ mod tests {
             "output_tokens": 50,
             "completion_tokens": 45
         })));
-        assert_eq!(result["input_tokens"], json!(100));  // Anthropic name takes precedence
-        assert_eq!(result["output_tokens"], json!(50));  // Anthropic name takes precedence
+        assert_eq!(result["input_tokens"], json!(100)); // Anthropic name takes precedence
+        assert_eq!(result["output_tokens"], json!(50)); // Anthropic name takes precedence
     }
 
     #[test]
@@ -1494,7 +1498,7 @@ mod tests {
             },
             "cache_read_input_tokens": 100
         })));
-        assert_eq!(result["cache_read_input_tokens"], json!(100));  // Direct field overrides nested
+        assert_eq!(result["cache_read_input_tokens"], json!(100)); // Direct field overrides nested
     }
 
     #[test]

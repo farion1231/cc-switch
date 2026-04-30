@@ -583,17 +583,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 open_tool_block_indices.clear();
                                             }
 
-// 缓存 message_delta，等到 [DONE] 时发送（以便收集完整的 usage）
-                                            // Defensive: usage_json 始终为 Some(Value)，防止 VSCode Extension 访问 null usage 时崩溃
-                                            // DashScope 和其他 provider 可能不立即提供 usage，使用 latest_usage 或默认值
-                                            let safe_usage_json = usage_json.or_else(|| {
-                                                log::warn!("[Claude/OpenRouter] finish_reason chunk has no usage, using latest_usage or defaults");
-                                                latest_usage.clone()
-                                            }).unwrap_or_else(|| {
-                                                log::warn!("[Claude/OpenRouter] No usage available, using defaults to prevent null usage");
-                                                json!({"input_tokens": 0, "output_tokens": 0})
-                                            });
-                                            pending_message_delta = Some((stop_reason, Some(safe_usage_json)));
+                                            // 缓存 message_delta，等到 [DONE] 时发送（以便收集完整的 usage）
+                                            pending_message_delta = Some((stop_reason, usage_json));
                                         }
                                     }
                                 }
