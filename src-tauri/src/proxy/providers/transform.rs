@@ -6,6 +6,46 @@
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
+const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
+
+/// Strip only a leading Claude Code attribution line from system text.
+///
+/// Claude Code can send dynamic `x-anthropic-billing-header` metadata at the
+/// start of `system`. If forwarded into OpenAI Chat messages or Responses
+/// `instructions`, the rotating `cch=` value changes the prompt prefix on every
+/// request and prevents prefix cache reuse (#2350). Later occurrences are kept
+/// to avoid deleting user-authored prompt text.
+pub(crate) fn strip_leading_anthropic_billing_header(text: &str) -> &str {
+    if !text.starts_with(ANTHROPIC_BILLING_HEADER_PREFIX) {
+        return text;
+    }
+
+    let Some(line_end) = text
+        .as_bytes()
+        .iter()
+        .position(|byte| *byte == b'\n' || *byte == b'\r')
+    else {
+        return "";
+    };
+
+    let bytes = text.as_bytes();
+    let mut rest_start = line_end + 1;
+    if bytes[line_end] == b'\r' && bytes.get(line_end + 1) == Some(&b'\n') {
+        rest_start += 1;
+    }
+
+    let rest = &text[rest_start..];
+    if let Some(stripped) = rest.strip_prefix("\r\n") {
+        stripped
+    } else if let Some(stripped) = rest.strip_prefix('\n') {
+        stripped
+    } else if let Some(stripped) = rest.strip_prefix('\r') {
+        stripped
+    } else {
+        rest
+    }
+}
+
 /// Detect OpenAI o-series reasoning models (o1, o3, o4-mini, etc.)
 /// These models require `max_completion_tokens` instead of `max_tokens`.
 pub fn is_openai_o_series(model: &str) -> bool {
@@ -97,12 +137,18 @@ pub fn anthropic_to_openai_with_reasoning_content(
     // 处理 system prompt
     if let Some(system) = body.get("system") {
         if let Some(text) = system.as_str() {
-            // 单个字符串
-            messages.push(json!({"role": "system", "content": text}));
+            let text = strip_leading_anthropic_billing_header(text);
+            if !text.is_empty() {
+                messages.push(json!({"role": "system", "content": text}));
+            }
         } else if let Some(arr) = system.as_array() {
             // 多个 system message — preserve cache_control for compatible proxies
             for msg in arr {
                 if let Some(text) = msg.get("text").and_then(|t| t.as_str()) {
+                    let text = strip_leading_anthropic_billing_header(text);
+                    if text.is_empty() {
+                        continue;
+                    }
                     let mut sys_msg = json!({"role": "system", "content": text});
                     if let Some(cc) = msg.get("cache_control") {
                         sys_msg["cache_control"] = cc.clone();
@@ -636,6 +682,80 @@ mod tests {
             "You are a helpful assistant."
         );
         assert_eq!(result["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_leading_billing_header_from_system_string() {
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n\nYou are a helpful assistant.",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "You are a helpful assistant."
+        );
+        assert_eq!(result["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_billing_header_from_system_array_parts() {
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n"},
+                {"type": "text", "text": "Stable prompt"}
+            ],
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(result["messages"][0]["content"], "Stable prompt");
+        assert_eq!(result["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_preserves_prompt_after_billing_header_in_same_part() {
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n\nStable prompt part 1"},
+                {"type": "text", "text": "Stable prompt part 2"}
+            ],
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "Stable prompt part 1\nStable prompt part 2"
+        );
+        assert_eq!(result["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_keeps_non_leading_billing_header_text() {
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": "Keep this literal:\nx-anthropic-billing-header: example",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "Keep this literal:\nx-anthropic-billing-header: example"
+        );
     }
 
     #[test]
