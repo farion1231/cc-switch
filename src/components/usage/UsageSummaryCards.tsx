@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent } from "@/components/ui/card";
 import { useUsageSummary } from "@/lib/query/usage";
 import { Activity, DollarSign, Layers, Database, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
@@ -107,28 +106,36 @@ export function UsageSummaryCards({
     show: {
       opacity: 1,
       transition: {
-        staggerChildren: 0.1,
+        staggerChildren: 0.05,
       },
     },
   };
 
   const item = {
-    hidden: { opacity: 0, y: 20 },
-    show: { opacity: 1, y: 0 },
+    hidden: { opacity: 0, y: 8, scale: 0.98 },
+    show: {
+      opacity: 1,
+      y: 0,
+      scale: 1,
+      transition: {
+        type: "spring" as const,
+        stiffness: 500,
+        damping: 32,
+        mass: 0.6,
+      },
+    },
   };
 
   if (isLoading) {
     return (
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-4">
         {[...Array(4)].map((_, i) => (
-          <Card
+          <div
             key={i}
-            className="border border-border/50 bg-card/40 backdrop-blur-sm shadow-sm"
+            className="liquid-glass rounded-2xl h-[140px] flex items-center justify-center"
           >
-            <CardContent className="p-6 flex items-center justify-center min-h-[160px]">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/50" />
-            </CardContent>
-          </Card>
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/30" />
+          </div>
         ))}
       </div>
     );
@@ -139,33 +146,26 @@ export function UsageSummaryCards({
       variants={container}
       initial="hidden"
       animate="show"
-      className="grid gap-4 md:grid-cols-4"
+      className="grid gap-3 md:grid-cols-4"
     >
       {stats.map((stat, i) => (
         <motion.div key={i} variants={item}>
-          <Card className="relative h-full overflow-hidden border border-border/50 bg-gradient-to-br from-card/50 to-background/50 backdrop-blur-xl hover:from-card/60 hover:to-background/60 transition-all shadow-sm">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between mb-2">
-                <p className="text-sm font-medium text-muted-foreground">
-                  {stat.title}
-                </p>
-                <div className={`p-2 rounded-lg ${stat.bg}`}>
-                  <stat.icon className={`h-4 w-4 ${stat.color}`} />
-                </div>
+          <div className="liquid-glass rounded-2xl p-4 transition-all duration-200 hover:bg-white/50 dark:hover:bg-white/[0.06]">
+            <div className="flex items-start justify-between mb-3">
+              <p className="text-xs font-medium text-muted-foreground">
+                {stat.title}
+              </p>
+              <div className={`p-1.5 rounded-lg ${stat.bg}`}>
+                <stat.icon className={`h-3.5 w-3.5 ${stat.color}`} />
               </div>
+            </div>
 
-              <div className="space-y-1">
-                <h3 className="text-2xl font-bold truncate" title={stat.value}>
-                  {stat.value}
-                </h3>
-              </div>
+            <h3 className="text-xl font-bold truncate" title={stat.value}>
+              {stat.value}
+            </h3>
 
-              {stat.subValue || (
-                /* Placeholder to properly align cards if no subvalue (first 2 cards) - effectively adding empty space or using flex-1 equivalent */
-                <div className="mt-3 pt-3 border-t border-transparent h-[52px]"></div>
-              )}
-            </CardContent>
-          </Card>
+            {stat.subValue || <div className="mt-3 pt-3 border-t border-transparent h-[48px]" />}
+          </div>
         </motion.div>
       ))}
     </motion.div>

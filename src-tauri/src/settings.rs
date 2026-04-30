@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
 use crate::app_config::AppType;
+use crate::crypto;
 use crate::error::AppError;
 use crate::services::skill::{SkillStorageLocation, SyncMethod};
 
@@ -418,6 +419,16 @@ impl AppSettings {
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(mut settings) => {
                     settings.normalize_paths();
+                    // Decrypt WebDAV password if it was stored encrypted
+                    if let Some(ref sync) = settings.webdav_sync {
+                        if !sync.password.is_empty() && crypto::is_encrypted_str(&sync.password) {
+                            if let Some(decrypted) = crypto::decrypt(&sync.password) {
+                                let mut sync = sync.clone();
+                                sync.password = decrypted;
+                                settings.webdav_sync = Some(sync);
+                            }
+                        }
+                    }
                     settings
                 }
                 Err(err) => {
@@ -438,6 +449,16 @@ impl AppSettings {
 fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     let mut normalized = settings.clone();
     normalized.normalize_paths();
+
+    // Encrypt WebDAV password before persisting to disk
+    if let Some(ref mut sync) = normalized.webdav_sync {
+        if !sync.password.is_empty() && !crypto::is_encrypted_str(&sync.password) {
+            if let Some(encrypted) = crypto::encrypt(&sync.password) {
+                sync.password = encrypted;
+            }
+        }
+    }
+
     let Some(path) = AppSettings::settings_path() else {
         return Err(AppError::Config("无法获取用户主目录".to_string()));
     };

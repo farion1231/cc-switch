@@ -133,11 +133,12 @@ export function useCommonConfigSnippet({
         initialEnabled !== undefined ? initialEnabled : inferredHasCommon;
       setUseCommonConfig(hasCommon);
 
-      // 如果应该启用通用配置但配置中还没有，则自动添加
+      // 如果应该启用通用配置但配置中还没有，则自动添加（fillOnly 保留用户自定义值）
       if (hasCommon && !inferredHasCommon) {
         const { updatedConfig, error } = updateCommonConfigSnippet(
           settingsConfig,
           commonConfigSnippet,
+          true,
           true,
         );
         if (!error) {
@@ -172,10 +173,11 @@ export function useCommonConfigSnippet({
         const hasContent = Object.keys(snippetObj).length > 0;
         if (hasContent) {
           setUseCommonConfig(true);
-          // 合并通用配置到当前配置
+          // 合并通用配置到当前配置（fillOnly 保留用户自定义值）
           const { updatedConfig, error } = updateCommonConfigSnippet(
             settingsConfig,
             commonConfigSnippet,
+            true,
             true,
           );
           if (!error) {

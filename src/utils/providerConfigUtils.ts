@@ -26,6 +26,22 @@ const deepMerge = (
   return target;
 };
 
+// Only add fields from source that don't exist in target (preserves user customizations)
+const deepFill = (
+  target: Record<string, any>,
+  source: Record<string, any>,
+): Record<string, any> => {
+  Object.entries(source).forEach(([key, value]) => {
+    if (!(key in target)) {
+      target[key] = value;
+    } else if (isPlainObject(value) && isPlainObject(target[key])) {
+      deepFill(target[key], value);
+    }
+    // Skip: field already exists in target (user customization preserved)
+  });
+  return target;
+};
+
 const deepRemove = (
   target: Record<string, any>,
   source: Record<string, any>,
@@ -108,6 +124,7 @@ export const updateCommonConfigSnippet = (
   jsonString: string,
   snippetString: string,
   enabled: boolean,
+  fillOnly: boolean = false,
 ): UpdateCommonConfigResult => {
   let config: Record<string, any>;
   try {
@@ -137,7 +154,11 @@ export const updateCommonConfigSnippet = (
   const snippet = JSON.parse(snippetString) as Record<string, any>;
 
   if (enabled) {
-    const merged = deepMerge(deepClone(config), snippet);
+    // fillOnly: only add missing fields (preserves user customizations like effortLevel)
+    // default: overwrite all fields (used when user explicitly enables common config)
+    const merged = fillOnly
+      ? deepFill(deepClone(config), snippet)
+      : deepMerge(deepClone(config), snippet);
     return {
       updatedConfig: JSON.stringify(merged, null, 2),
     };

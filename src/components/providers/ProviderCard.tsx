@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { motion } from "framer-motion";
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
@@ -32,7 +33,7 @@ interface ProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
   appId: AppId;
-  isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
+  isInConfig?: boolean;
   isOmo?: boolean;
   isOmoSlim?: boolean;
   onSwitch: (provider: Provider) => void;
@@ -48,19 +49,18 @@ interface ProviderCardProps {
   onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
   isProxyRunning: boolean;
-  isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
+  isProxyTakeover?: boolean;
   dragHandleProps?: DragHandleProps;
-  isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
-  failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
-  isInFailoverQueue?: boolean; // 是否在故障转移队列中
-  onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
-  activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
-  // OpenClaw: default model
+  isAutoFailoverEnabled?: boolean;
+  failoverPriority?: number;
+  isInFailoverQueue?: boolean;
+  onToggleFailover?: (enabled: boolean) => void;
+  activeProviderId?: string;
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  staggerIndex?: number;
 }
 
-/** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   const config = provider.settingsConfig as Record<string, any>;
   if (appId === "claude") {
@@ -68,12 +68,10 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
     return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
   }
   if (appId === "codex") {
-    // 无 OPENAI_API_KEY → 使用 Codex CLI 内置 OAuth（官方）
     const apiKey = config?.auth?.OPENAI_API_KEY;
     return !apiKey || (typeof apiKey === "string" && apiKey.trim() === "");
   }
   if (appId === "gemini") {
-    // 无 GEMINI_API_KEY 且无 GOOGLE_GEMINI_BASE_URL → Google OAuth 官方模式
     const apiKey = config?.env?.GEMINI_API_KEY;
     const baseUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
     return (
@@ -85,34 +83,22 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
-  if (provider.notes?.trim()) {
-    return provider.notes.trim();
-  }
-
-  if (provider.websiteUrl) {
-    return provider.websiteUrl;
-  }
+  if (provider.notes?.trim()) return provider.notes.trim();
+  if (provider.websiteUrl) return provider.websiteUrl;
 
   const config = provider.settingsConfig;
-
   if (config && typeof config === "object") {
     const envBase =
       (config as Record<string, any>)?.env?.ANTHROPIC_BASE_URL ||
       (config as Record<string, any>)?.env?.GOOGLE_GEMINI_BASE_URL;
-    if (typeof envBase === "string" && envBase.trim()) {
-      return envBase;
-    }
+    if (typeof envBase === "string" && envBase.trim()) return envBase;
 
     const baseUrl = (config as Record<string, any>)?.config;
-
     if (typeof baseUrl === "string" && baseUrl.includes("base_url")) {
-      const extractedBaseUrl = extractCodexBaseUrl(baseUrl);
-      if (extractedBaseUrl) {
-        return extractedBaseUrl;
-      }
+      const extracted = extractCodexBaseUrl(baseUrl);
+      if (extracted) return extracted;
     }
   }
-
   return fallbackText;
 };
 
@@ -143,13 +129,12 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
-  // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  staggerIndex,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
-  // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
   const isAdditiveMode = appId === "opencode" && !isAnyOmo;
@@ -160,17 +145,14 @@ export function ProviderCard({
     defaultValue: "未配置接口地址",
   });
 
-  const displayUrl = useMemo(() => {
-    return extractApiUrl(provider, fallbackUrlText);
-  }, [provider, fallbackUrlText]);
+  const displayUrl = useMemo(
+    () => extractApiUrl(provider, fallbackUrlText),
+    [provider, fallbackUrlText],
+  );
 
   const isClickableUrl = useMemo(() => {
-    if (provider.notes?.trim()) {
-      return false;
-    }
-    if (displayUrl === fallbackUrlText) {
-      return false;
-    }
+    if (provider.notes?.trim()) return false;
+    if (displayUrl === fallbackUrlText) return false;
     return true;
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
@@ -181,15 +163,11 @@ export function ProviderCard({
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
-  // Hermes v12+ overlay entries live under the `providers:` dict and are
-  // read-only here — writes have to go through Hermes Web UI.
   const isHermesReadOnly =
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
 
-  // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
     appId === "opencode" || appId === "openclaw" || appId === "hermes"
       ? isInConfig
@@ -211,24 +189,14 @@ export function ProviderCard({
   const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
-    if (hasMultiplePlans) {
-      setIsExpanded(true);
-    }
+    if (hasMultiplePlans) setIsExpanded(true);
   }, [hasMultiplePlans]);
 
   const handleOpenWebsite = () => {
-    if (!isClickableUrl) {
-      return;
-    }
+    if (!isClickableUrl) return;
     onOpenWebsite(displayUrl);
   };
 
-  // 判断是否是"当前使用中"的供应商
-  // - OMO/OMO Slim 供应商：使用 isCurrent
-  // - OpenClaw：使用默认模型归属的 provider 作为当前项（蓝色边框）
-  // - OpenCode（非 OMO）：不存在"当前"概念，返回 false
-  // - 故障转移模式：代理实际使用的供应商（activeProviderId）
-  // - 普通模式：isCurrent
   const isActiveProvider = isAnyOmo
     ? isCurrent
     : appId === "openclaw"
@@ -248,72 +216,92 @@ export function ProviderCard({
       (isActiveProvider || hasPersistentConfigHighlight));
 
   return (
-    <div
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.08 } }}
+      transition={{
+        type: "spring",
+        stiffness: 500,
+        damping: 32,
+        mass: 0.6,
+        delay: staggerIndex ? Math.min(staggerIndex * 0.03, 0.2) : 0,
+      }}
+      whileHover={{ y: -2, transition: { type: "spring", stiffness: 600, damping: 28 } }}
+      whileTap={{ scale: 0.98, transition: { type: "spring", stiffness: 700, damping: 30 } }}
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
-        "bg-card text-card-foreground group",
-        isAutoFailoverEnabled || isProxyTakeover
-          ? "hover:border-emerald-500/50"
-          : "hover:border-border-active",
-        shouldUseGreen &&
-          "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
-        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
-        !(isActiveProvider || hasPersistentConfigHighlight) &&
-          "hover:shadow-sm",
-        dragHandleProps?.isDragging &&
-          "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+        "group relative overflow-hidden rounded-2xl p-4 cursor-default",
+        /* Default: liquid glass */
+        !shouldUseGreen && !shouldUseBlue && [
+          "liquid-glass",
+          "hover:bg-white/50 dark:hover:bg-white/[0.06]",
+        ],
+        /* Active: emerald (proxy takeover) */
+        shouldUseGreen && "liquid-glass-emerald",
+        /* Active: primary (current provider) */
+        shouldUseBlue && "liquid-glass-active",
+        /* Dragging */
+        dragHandleProps?.isDragging && "shadow-xl z-10",
       )}
+      style={dragHandleProps?.isDragging ? { scale: 1.03, rotate: 0.5, zIndex: 10 } : undefined}
     >
-      <div
-        className={cn(
-          "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
-          shouldUseGreen && "from-emerald-500/10",
-          shouldUseBlue && "from-blue-500/10",
-          !shouldUseGreen && !shouldUseBlue && "from-primary/10",
-          isActiveProvider || hasPersistentConfigHighlight
-            ? "opacity-100"
-            : "opacity-0",
-        )}
-      />
-      <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-1 items-center gap-2">
+      <div className="relative flex flex-col gap-3.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-1 items-center gap-2.5 min-w-0">
           <button
             type="button"
             className={cn(
-              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
-              "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
+              "-ml-1 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5 rounded-lg",
+              "text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-white/30 dark:hover:bg-white/5 transition-all",
               dragHandleProps?.isDragging && "cursor-grabbing",
             )}
             aria-label={t("provider.dragHandle")}
             {...(dragHandleProps?.attributes ?? {})}
             {...(dragHandleProps?.listeners ?? {})}
           >
-            <GripVertical className="h-4 w-4" />
+            <GripVertical className="h-3.5 w-3.5" />
           </button>
 
-          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
+          {/* Provider icon — glass bubble */}
+          <div
+            className={cn(
+              "relative h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0",
+              "liquid-glass-subtle",
+              "group-hover:bg-white/40 dark:group-hover:bg-white/[0.06]",
+              "transition-all duration-200",
+            )}
+          >
             <ProviderIcon
               icon={provider.icon}
               name={provider.name}
               color={provider.iconColor}
               size={20}
             />
+            {/* Subtle active indicator dot */}
+            {(isActiveProvider || hasPersistentConfigHighlight) && (
+              <div
+                className={cn(
+                  "absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-card",
+                  shouldUseGreen ? "bg-emerald-500" : "bg-primary",
+                )}
+              />
+            )}
           </div>
 
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2 min-h-7">
-              <h3 className="text-base font-semibold leading-none">
+          <div className="space-y-0.5 min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5 min-h-[1.375rem]">
+              <h3 className="text-sm font-semibold leading-none tracking-tight truncate">
                 {provider.name}
               </h3>
 
               {isOmo && (
-                <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                <span className="inline-flex items-center rounded bg-violet-500/10 px-1.5 py-px text-2xs font-semibold text-violet-600 dark:text-violet-400 ring-1 ring-violet-500/20">
                   OMO
                 </span>
               )}
 
               {isOmoSlim && (
-                <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                <span className="inline-flex items-center rounded bg-indigo-500/10 px-1.5 py-px text-2xs font-semibold text-indigo-600 dark:text-indigo-400 ring-1 ring-indigo-500/20">
                   Slim
                 </span>
               )}
@@ -333,22 +321,17 @@ export function ProviderCard({
               {provider.category === "third_party" &&
                 provider.meta?.isPartner && (
                   <span
-                    className="text-yellow-500 dark:text-yellow-400"
+                    className="text-amber-500 dark:text-amber-400 text-xs"
                     title={t("provider.officialPartner", {
                       defaultValue: "官方合作伙伴",
                     })}
                   >
-                    ⭐
+                    ★
                   </span>
                 )}
 
               {isHermesReadOnly && (
-                <span
-                  className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
-                  title={t("provider.managedByHermesHint", {
-                    defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
-                  })}
-                >
+                <span className="inline-flex items-center rounded bg-slate-500/10 px-1.5 py-px text-2xs font-medium text-slate-600 dark:text-slate-400 ring-1 ring-slate-500/20">
                   {t("provider.managedByHermes", {
                     defaultValue: "Hermes Managed",
                   })}
@@ -361,23 +344,23 @@ export function ProviderCard({
                 type="button"
                 onClick={handleOpenWebsite}
                 className={cn(
-                  "inline-flex items-center text-sm max-w-[280px]",
+                  "inline-flex items-center text-xs max-w-[260px] truncate",
                   isClickableUrl
-                    ? "text-blue-500 transition-colors hover:underline dark:text-blue-400 cursor-pointer"
-                    : "text-muted-foreground cursor-default",
+                    ? "text-primary/70 hover:text-primary hover:underline cursor-pointer transition-colors"
+                    : "text-muted-foreground/60 cursor-default",
                 )}
                 title={displayUrl}
                 disabled={!isClickableUrl}
               >
-                <span className="truncate">{displayUrl}</span>
+                {displayUrl}
               </button>
             )}
           </div>
         </div>
 
-        <div className="flex items-center ml-auto min-w-0 gap-3">
+        <div className="flex items-center ml-auto min-w-0 gap-2.5">
           <div className="ml-auto">
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               {isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
@@ -397,14 +380,12 @@ export function ProviderCard({
                   isCurrent={isCurrent}
                 />
               ) : hasMultiplePlans ? (
-                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                  <span className="font-medium">
-                    {t("usage.multiplePlans", {
-                      count: usage?.data?.length || 0,
-                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
-                    })}
-                  </span>
-                </div>
+                <span className="text-xs font-medium text-muted-foreground">
+                  {t("usage.multiplePlans", {
+                    count: usage?.data?.length || 0,
+                    defaultValue: `${usage?.data?.length || 0} 个套餐`,
+                  })}
+                </span>
               ) : (
                 <UsageFooter
                   provider={provider}
@@ -422,7 +403,7 @@ export function ProviderCard({
                     e.stopPropagation();
                     setIsExpanded(!isExpanded);
                   }}
-                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  className="p-1 rounded-md hover:bg-muted/80 transition-colors text-muted-foreground/60 hover:text-muted-foreground flex-shrink-0"
                   title={
                     isExpanded
                       ? t("usage.collapse", { defaultValue: "收起" })
@@ -430,16 +411,25 @@ export function ProviderCard({
                   }
                 >
                   {isExpanded ? (
-                    <ChevronUp size={14} />
+                    <ChevronUp size={13} />
                   ) : (
-                    <ChevronDown size={14} />
+                    <ChevronDown size={13} />
                   )}
                 </button>
               )}
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+          {/* Action buttons — appear on hover */}
+          <div
+            className={cn(
+              "flex items-center gap-1 flex-shrink-0",
+              "opacity-0 pointer-events-none",
+              "group-hover:opacity-100 group-hover:pointer-events-auto",
+              "group-focus-within:opacity-100 group-focus-within:pointer-events-auto",
+              "transition-opacity duration-150",
+            )}
+          >
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}
@@ -475,7 +465,6 @@ export function ProviderCard({
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
               onToggleFailover={onToggleFailover}
-              // OpenClaw: default model
               isDefaultModel={isDefaultModel}
               onSetAsDefault={onSetAsDefault}
             />
@@ -484,7 +473,7 @@ export function ProviderCard({
       </div>
 
       {isExpanded && hasMultiplePlans && (
-        <div className="mt-4 pt-4 border-t border-border-default">
+        <div className="mt-3.5 pt-3.5 border-t border-white/10 dark:border-white/5">
           <UsageFooter
             provider={provider}
             providerId={provider.id}
@@ -496,6 +485,6 @@ export function ProviderCard({
           />
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

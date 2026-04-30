@@ -453,7 +453,13 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
                     .get("arguments")
                     .and_then(|a| a.as_str())
                     .unwrap_or("{}");
-                let input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                let mut input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+
+                // Strip empty string fields from tool input to avoid
+                // Anthropic rejecting them (e.g. Read tool's `pages: ""`)
+                if let Some(obj) = input.as_object_mut() {
+                    obj.retain(|_k, v| !v.as_str().is_some_and(|s| s.is_empty()));
+                }
 
                 content.push(json!({
                     "type": "tool_use",
@@ -766,6 +772,34 @@ mod tests {
         assert_eq!(result["content"][0]["name"], "get_weather");
         assert_eq!(result["content"][0]["input"]["location"], "Tokyo");
         assert_eq!(result["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_strips_empty_pages_from_tool_input() {
+        // Issue #2471: Read tool's `pages: ""` causes Anthropic to reject
+        let input = json!({
+            "id": "resp_456",
+            "status": "completed",
+            "model": "gpt-5.5",
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_456",
+                "name": "Read",
+                "arguments": "{\"file_path\": \"/tmp/demo.py\", \"limit\": 2000, \"offset\": 0, \"pages\": \"\"}",
+                "status": "completed"
+            }],
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        let tool_input = &result["content"][0]["input"];
+
+        // pages: "" should be stripped
+        assert!(tool_input.get("pages").is_none(), "empty pages should be stripped");
+        // other fields should remain
+        assert_eq!(tool_input["file_path"], "/tmp/demo.py");
+        assert_eq!(tool_input["limit"], 2000);
+        assert_eq!(tool_input["offset"], 0);
     }
 
     #[test]

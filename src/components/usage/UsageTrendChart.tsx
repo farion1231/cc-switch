@@ -1,21 +1,18 @@
 import { useTranslation } from "react-i18next";
 import {
-  AreaChart,
-  Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from "recharts";
 import { useUsageTrends } from "@/lib/query/usage";
 import { Loader2 } from "lucide-react";
 import {
   fmtInt,
-  fmtUsd,
   getLocaleFromLanguage,
-  parseFiniteNumber,
 } from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type { UsageRangeSelection } from "@/types/usage";
@@ -26,6 +23,14 @@ interface UsageTrendChartProps {
   appType?: string;
   refreshIntervalMs: number;
 }
+
+// Blue-purple gradient palette for the stacked bars
+const CHART_COLORS = {
+  input: "#6366f1",       // indigo-500
+  output: "#8b5cf6",      // violet-500
+  cacheRead: "#a78bfa",   // violet-400
+  cacheCreation: "#c4b5fd", // violet-300
+};
 
 export function UsageTrendChart({
   range,
@@ -41,8 +46,8 @@ export function UsageTrendChart({
 
   if (isLoading) {
     return (
-      <div className="flex h-[350px] items-center justify-center rounded-xl bg-card/40 border border-border/50">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/30" />
+      <div className="flex h-[280px] items-center justify-center liquid-glass rounded-2xl">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/30" />
       </div>
     );
   }
@@ -51,10 +56,10 @@ export function UsageTrendChart({
   const isHourly = durationSeconds <= 24 * 60 * 60;
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const dateLocale = getLocaleFromLanguage(language);
+
   const chartData =
     trends?.map((stat) => {
       const pointDate = new Date(stat.date);
-      const cost = parseFiniteNumber(stat.totalCost);
       return {
         rawDate: stat.date,
         label: isHourly
@@ -65,169 +70,169 @@ export function UsageTrendChart({
               minute: "2-digit",
             })
           : pointDate.toLocaleDateString(dateLocale, {
-              month: "2-digit",
-              day: "2-digit",
+              month: "short",
+              day: "numeric",
             }),
-        hour: pointDate.getHours(),
-        inputTokens: stat.totalInputTokens,
-        outputTokens: stat.totalOutputTokens,
-        cacheCreationTokens: stat.totalCacheCreationTokens,
-        cacheReadTokens: stat.totalCacheReadTokens,
-        cost: cost ?? null,
+        input: stat.totalInputTokens,
+        output: stat.totalOutputTokens,
+        cacheRead: stat.totalCacheReadTokens,
+        cacheCreation: stat.totalCacheCreationTokens,
       };
     }) || [];
 
-  const displayData = chartData;
-
   const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur-md">
-          <p className="mb-2 font-medium">{label}</p>
-          {payload.map((entry: any, index: number) => (
+    if (!active || !payload?.length) return null;
+
+    const total = payload.reduce(
+      (sum: number, entry: any) => sum + (entry.value || 0),
+      0,
+    );
+
+    return (
+      <div className="liquid-glass rounded-xl px-3 py-2.5 min-w-[180px]">
+        <p className="text-xs font-medium text-foreground mb-2">{label}</p>
+        <div className="space-y-1">
+          {payload.map((entry: any) => (
             <div
-              key={index}
-              className="flex items-center gap-2 text-sm"
-              style={{ color: entry.color }}
+              key={entry.dataKey}
+              className="flex items-center justify-between gap-4 text-xs"
             >
-              <div
-                className="h-2 w-2 rounded-full"
-                style={{ backgroundColor: entry.color }}
-              />
-              <span className="font-medium">{entry.name}:</span>
-              <span>
-                {entry.dataKey === "cost"
-                  ? fmtUsd(entry.value, 6)
-                  : fmtInt(entry.value, dateLocale)}
+              <div className="flex items-center gap-1.5">
+                <div
+                  className="h-2 w-2 rounded-full"
+                  style={{ backgroundColor: entry.fill || entry.color }}
+                />
+                <span className="text-muted-foreground">{entry.name}</span>
+              </div>
+              <span className="font-mono font-medium text-foreground">
+                {fmtInt(entry.value, dateLocale)}
               </span>
             </div>
           ))}
         </div>
-      );
-    }
-    return null;
+        <div className="mt-1.5 pt-1.5 border-t border-white/10 dark:border-white/5 flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">
+            {t("usage.totalTokens", "Total")}
+          </span>
+          <span className="font-mono font-semibold text-foreground">
+            {fmtInt(total, dateLocale)}
+          </span>
+        </div>
+      </div>
+    );
   };
 
   return (
-    <div className="rounded-xl border border-border/50 bg-card/40 p-6 backdrop-blur-sm">
-      <div className="mb-6 flex items-center justify-between">
-        <h3 className="text-lg font-semibold">
-          {t("usage.trends", "使用趋势")}
+    <div className="liquid-glass rounded-2xl p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">
+          {t("usage.trends", "Usage Trends")}
         </h3>
-        <p className="text-sm text-muted-foreground">{rangeLabel}</p>
+        <span className="text-xs text-muted-foreground">{rangeLabel}</span>
       </div>
 
-      <div className="h-[350px] w-full">
+      {/* Legend */}
+      <div className="flex items-center gap-4 mb-4">
+        {[
+          { key: "input", label: t("usage.inputTokens", "Input"), color: CHART_COLORS.input },
+          { key: "output", label: t("usage.outputTokens", "Output"), color: CHART_COLORS.output },
+          { key: "cacheRead", label: t("usage.cacheReadTokens", "Cache Read"), color: CHART_COLORS.cacheRead },
+          { key: "cacheCreation", label: t("usage.cacheCreationTokens", "Cache Write"), color: CHART_COLORS.cacheCreation },
+        ].map((item) => (
+          <div key={item.key} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <div
+              className="h-2.5 w-2.5 rounded"
+              style={{ backgroundColor: item.color }}
+            />
+            {item.label}
+          </div>
+        ))}
+      </div>
+
+      <div className="h-[240px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart
-            data={displayData}
-            margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+          <BarChart
+            data={chartData}
+            margin={{ top: 4, right: 4, left: -12, bottom: 0 }}
+            barCategoryGap="20%"
           >
             <defs>
-              <linearGradient id="colorInput" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+              <linearGradient id="gradInput" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={CHART_COLORS.input} stopOpacity={0.9} />
+                <stop offset="100%" stopColor={CHART_COLORS.input} stopOpacity={0.7} />
               </linearGradient>
-              <linearGradient id="colorOutput" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#22c55e" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+              <linearGradient id="gradOutput" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={CHART_COLORS.output} stopOpacity={0.9} />
+                <stop offset="100%" stopColor={CHART_COLORS.output} stopOpacity={0.7} />
               </linearGradient>
-              <linearGradient
-                id="colorCacheCreation"
-                x1="0"
-                y1="0"
-                x2="0"
-                y2="1"
-              >
-                <stop offset="5%" stopColor="#f97316" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+              <linearGradient id="gradCacheRead" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={CHART_COLORS.cacheRead} stopOpacity={0.9} />
+                <stop offset="100%" stopColor={CHART_COLORS.cacheRead} stopOpacity={0.7} />
               </linearGradient>
-              <linearGradient id="colorCacheRead" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#a855f7" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#a855f7" stopOpacity={0} />
+              <linearGradient id="gradCacheCreation" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={CHART_COLORS.cacheCreation} stopOpacity={0.9} />
+                <stop offset="100%" stopColor={CHART_COLORS.cacheCreation} stopOpacity={0.7} />
               </linearGradient>
             </defs>
             <CartesianGrid
-              strokeDasharray="3 3"
+              strokeDasharray="none"
               vertical={false}
-              stroke="hsl(var(--border))"
-              opacity={0.4}
+              stroke="currentColor"
+              className="text-border/20"
             />
             <XAxis
               dataKey="label"
               axisLine={false}
               tickLine={false}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
-              dy={10}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+              dy={8}
             />
             <YAxis
-              yAxisId="tokens"
               axisLine={false}
               tickLine={false}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
-              tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+              tickFormatter={(value) =>
+                value >= 1_000_000
+                  ? `${(value / 1_000_000).toFixed(1)}M`
+                  : value >= 1_000
+                    ? `${(value / 1_000).toFixed(0)}k`
+                    : `${value}`
+              }
+              dx={-4}
             />
-            <YAxis
-              yAxisId="cost"
-              orientation="right"
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
-              tickFormatter={(value) => `$${value}`}
+            <Tooltip
+              content={<CustomTooltip />}
+              cursor={{ fill: "hsl(var(--muted) / 0.3)", radius: 6 }}
             />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend />
-            <Area
-              yAxisId="tokens"
-              type="monotone"
-              dataKey="inputTokens"
-              name={t("usage.inputTokens", "输入 Tokens")}
-              stroke="#3b82f6"
-              fillOpacity={1}
-              fill="url(#colorInput)"
-              strokeWidth={2}
+            <Bar
+              dataKey="input"
+              name={t("usage.inputTokens", "Input")}
+              stackId="tokens"
+              fill="url(#gradInput)"
+              radius={[0, 0, 0, 0]}
             />
-            <Area
-              yAxisId="tokens"
-              type="monotone"
-              dataKey="outputTokens"
-              name={t("usage.outputTokens", "输出 Tokens")}
-              stroke="#22c55e"
-              fillOpacity={1}
-              fill="url(#colorOutput)"
-              strokeWidth={2}
+            <Bar
+              dataKey="output"
+              name={t("usage.outputTokens", "Output")}
+              stackId="tokens"
+              fill="url(#gradOutput)"
+              radius={[0, 0, 0, 0]}
             />
-            <Area
-              yAxisId="tokens"
-              type="monotone"
-              dataKey="cacheCreationTokens"
-              name={t("usage.cacheCreationTokens", "缓存创建")}
-              stroke="#f97316"
-              fillOpacity={1}
-              fill="url(#colorCacheCreation)"
-              strokeWidth={2}
+            <Bar
+              dataKey="cacheRead"
+              name={t("usage.cacheReadTokens", "Cache Read")}
+              stackId="tokens"
+              fill="url(#gradCacheRead)"
+              radius={[0, 0, 0, 0]}
             />
-            <Area
-              yAxisId="tokens"
-              type="monotone"
-              dataKey="cacheReadTokens"
-              name={t("usage.cacheReadTokens", "缓存命中")}
-              stroke="#a855f7"
-              fillOpacity={1}
-              fill="url(#colorCacheRead)"
-              strokeWidth={2}
+            <Bar
+              dataKey="cacheCreation"
+              name={t("usage.cacheCreationTokens", "Cache Write")}
+              stackId="tokens"
+              fill="url(#gradCacheCreation)"
+              radius={[4, 4, 0, 0]}
             />
-            <Area
-              yAxisId="cost"
-              type="monotone"
-              dataKey="cost"
-              name={t("usage.cost", "成本")}
-              stroke="#f43f5e"
-              fill="none"
-              strokeWidth={2}
-              strokeDasharray="4 4"
-            />
-          </AreaChart>
+          </BarChart>
         </ResponsiveContainer>
       </div>
     </div>

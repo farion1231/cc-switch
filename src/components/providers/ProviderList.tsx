@@ -307,7 +307,8 @@ export function ProviderList({
         {[0, 1, 2].map((index) => (
           <div
             key={index}
-            className="w-full border border-dashed rounded-lg h-28 border-muted-foreground/40 bg-muted/40"
+            className="w-full rounded-2xl h-24 liquid-glass-subtle skeleton-shimmer opacity-60"
+            style={{ animationDelay: `${index * 150}ms` }}
           />
         ))}
       </div>
@@ -335,7 +336,7 @@ export function ProviderList({
         strategy={verticalListSortingStrategy}
       >
         <div className="space-y-3">
-          {filteredProviders.map((provider) => {
+          {filteredProviders.map((provider, index) => {
             const isOmo = provider.category === "omo";
             const isOmoSlim = provider.category === "omo-slim";
             const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
@@ -347,6 +348,7 @@ export function ProviderList({
               <SortableProviderCard
                 key={provider.id}
                 provider={provider}
+                staggerIndex={index}
                 isCurrent={
                   isOmo
                     ? isOmoCurrent
@@ -404,13 +406,13 @@ export function ProviderList({
         {isSearchOpen && (
           <motion.div
             key="provider-search"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            initial={{ opacity: 0, y: -8, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
+            exit={{ opacity: 0, y: -4, scale: 0.98, transition: { duration: 0.1 } }}
+            transition={{ type: "spring", stiffness: 500, damping: 32, mass: 0.6 }}
             className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
           >
-            <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
+            <div className="p-3.5 space-y-3 liquid-glass rounded-2xl">
               <div className="relative flex items-center gap-2">
                 <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
                 <Input
@@ -465,7 +467,7 @@ export function ProviderList({
       </AnimatePresence>
 
       {filteredProviders.length === 0 ? (
-        <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
+        <div className="px-6 py-8 text-sm text-center liquid-glass-subtle rounded-2xl text-muted-foreground border-dashed">
           {t("provider.noSearchResults", {
             defaultValue: "No providers match your search.",
           })}
@@ -497,6 +499,7 @@ interface SortableProviderCardProps {
   isInConfig: boolean;
   isOmo: boolean;
   isOmoSlim: boolean;
+  staggerIndex?: number;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
@@ -528,6 +531,7 @@ function SortableProviderCard({
   isInConfig,
   isOmo,
   isOmoSlim,
+  staggerIndex,
   onSwitch,
   onEdit,
   onDelete,
@@ -573,6 +577,7 @@ function SortableProviderCard({
         isInConfig={isInConfig}
         isOmo={isOmo}
         isOmoSlim={isOmoSlim}
+        staggerIndex={staggerIndex}
         onSwitch={onSwitch}
         onEdit={onEdit}
         onDelete={onDelete}
