@@ -756,6 +756,7 @@ pub fn run() {
 
             // 构建托盘
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
+                .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| match event {
                     // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
                     // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
@@ -932,28 +933,35 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
 
+                    fn run_step<T>(name: &str, result: Result<T, crate::error::AppError>) {
+                        if let Err(e) = result {
+                            log::warn!("{name} failed: {e}");
+                        }
+                    }
+
+                    let db = &db_for_session_sync;
+
                     // 首次同步
-                    if let Err(e) =
-                        crate::services::session_usage::sync_claude_session_logs(
-                            &db_for_session_sync,
-                        )
-                    {
-                        log::warn!("Session usage initial sync failed: {e}");
-                    }
-                    if let Err(e) =
-                        crate::services::session_usage_codex::sync_codex_usage(
-                            &db_for_session_sync,
-                        )
-                    {
-                        log::warn!("Codex usage initial sync failed: {e}");
-                    }
-                    if let Err(e) =
-                        crate::services::session_usage_gemini::sync_gemini_usage(
-                            &db_for_session_sync,
-                        )
-                    {
-                        log::warn!("Gemini usage initial sync failed: {e}");
-                    }
+                    run_step(
+                        "Usage cost startup backfill",
+                        db.backfill_missing_usage_costs(),
+                    );
+                    run_step(
+                        "Session usage initial sync",
+                        crate::services::session_usage::sync_claude_session_logs(db),
+                    );
+                    run_step(
+                        "Codex usage initial sync",
+                        crate::services::session_usage_codex::sync_codex_usage(db),
+                    );
+                    run_step(
+                        "Gemini usage initial sync",
+                        crate::services::session_usage_gemini::sync_gemini_usage(db),
+                    );
+                    run_step(
+                        "Hermes usage initial sync",
+                        crate::services::session_usage_hermes::sync_hermes_usage(db),
+                    );
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -962,27 +970,22 @@ pub fn run() {
                     interval.tick().await; // skip immediate first tick
                     loop {
                         interval.tick().await;
-                        if let Err(e) =
-                            crate::services::session_usage::sync_claude_session_logs(
-                                &db_for_session_sync,
-                            )
-                        {
-                            log::warn!("Session usage periodic sync failed: {e}");
-                        }
-                        if let Err(e) =
-                            crate::services::session_usage_codex::sync_codex_usage(
-                                &db_for_session_sync,
-                            )
-                        {
-                            log::warn!("Codex usage periodic sync failed: {e}");
-                        }
-                        if let Err(e) =
-                            crate::services::session_usage_gemini::sync_gemini_usage(
-                                &db_for_session_sync,
-                            )
-                        {
-                            log::warn!("Gemini usage periodic sync failed: {e}");
-                        }
+                        run_step(
+                            "Session usage periodic sync",
+                            crate::services::session_usage::sync_claude_session_logs(db),
+                        );
+                        run_step(
+                            "Codex usage periodic sync",
+                            crate::services::session_usage_codex::sync_codex_usage(db),
+                        );
+                        run_step(
+                            "Gemini usage periodic sync",
+                            crate::services::session_usage_gemini::sync_gemini_usage(db),
+                        );
+                        run_step(
+                            "Hermes usage periodic sync",
+                            crate::services::session_usage_hermes::sync_hermes_usage(db),
+                        );
                     }
                 });
             });

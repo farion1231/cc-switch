@@ -549,7 +549,8 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
-          "kaku": "Kaku"
+          "kaku": "Kaku",
+          "warp": "Warp"
         },
         "windows": {
           "cmd": "Command Prompt",
@@ -1129,7 +1130,8 @@
       "all": "All",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini"
+      "gemini": "Gemini",
+      "hermes": "Hermes"
     },
     "dataSources": "Data Sources",
     "dataSource": {
@@ -1137,7 +1139,8 @@
       "session_log": "Session Log",
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
-      "gemini_session": "Gemini Session"
+      "gemini_session": "Gemini Session",
+      "hermes_session": "Hermes Session"
     },
     "sessionSync": {
       "trigger": "Sync session logs",

@@ -220,6 +220,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 Hermes 使用数据
+    match crate::services::session_usage_hermes::sync_hermes_usage(&state.db) {
+        Ok(hermes_result) => {
+            result.imported += hermes_result.imported;
+            result.skipped += hermes_result.skipped;
+            result.files_scanned += hermes_result.files_scanned;
+            result.errors.extend(hermes_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Hermes 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 
