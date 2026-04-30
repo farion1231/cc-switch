@@ -7,6 +7,7 @@ import {
   isUrlIcon,
 } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
+import { isHttpsIconUrl } from "@/utils/iconUtils";
 
 interface ProviderIconProps {
   icon?: string; // 图标名称
@@ -35,6 +36,9 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
 
   // 获取图标 URL（URL_ICONS 列表中的 SVG / 光栅图片）
   const iconUrl = useMemo(() => {
+    if (isHttpsIconUrl(icon)) {
+      return icon;
+    }
     if (icon && isUrlIcon(icon)) {
       return getIconUrl(icon);
     }

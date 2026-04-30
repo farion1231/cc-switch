@@ -1895,7 +1895,7 @@
   },
   "iconPicker": {
     "search": "アイコンを検索",
-    "searchPlaceholder": "アイコン名を入力...",
+    "searchPlaceholder": "アイコン名を検索、または画像 URL を貼り付け...",
     "noResults": "一致するアイコンが見つかりません",
     "category": {
       "aiProvider": "AI プロバイダー",
@@ -1911,7 +1911,8 @@
     "preview": "プレビュー",
     "clickToChange": "クリックでアイコンを変更",
     "clickToSelect": "クリックでアイコンを選択",
-    "color": "アイコンカラー"
+    "color": "アイコンカラー",
+    "imageUrl": "画像 URL"
   },
   "migration": {
     "success": "設定の移行が完了しました",

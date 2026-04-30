@@ -1896,7 +1896,7 @@
   },
   "iconPicker": {
     "search": "搜索图标",
-    "searchPlaceholder": "输入图标名称...",
+    "searchPlaceholder": "搜索图标名称，或粘贴图片 URL...",
     "noResults": "未找到匹配的图标",
     "category": {
       "aiProvider": "AI 服务商",
@@ -1912,7 +1912,8 @@
     "preview": "预览",
     "clickToChange": "点击更换图标",
     "clickToSelect": "点击选择图标",
-    "color": "图标颜色"
+    "color": "图标颜色",
+    "imageUrl": "图片 URL"
   },
   "migration": {
     "success": "配置迁移成功",

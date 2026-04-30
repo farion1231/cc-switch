@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isHttpsIconUrl } from "@/utils/iconUtils";
 
 /**
  * 解析 JSON 语法错误，提取位置信息
@@ -53,7 +54,21 @@ export const providerSchema = z.object({
       }
     }),
   // 图标配置
-  icon: z.string().optional(),
+  icon: z
+    .string()
+    .optional()
+    .superRefine((value, ctx) => {
+      if (
+        value &&
+        /^[a-z][a-z0-9+.-]*:\/\//i.test(value) &&
+        !isHttpsIconUrl(value)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "图标图片 URL 仅支持 HTTPS",
+        });
+      }
+    }),
   iconColor: z.string().optional(),
 });
 
