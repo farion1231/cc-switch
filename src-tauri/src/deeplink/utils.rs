@@ -97,7 +97,7 @@ fn is_private_ip(ip: &IpAddr) -> bool {
                 || v4.octets()[0] == 0 // 0.0.0.0/8 (current network)
                 || v4.octets()[0] == 100 && v4.octets()[1] >= 64 && v4.octets()[1] <= 127 // 100.64.0.0/10 (CGN)
                 || v4.octets()[0] == 169 && v4.octets()[1] == 254 // 169.254.0.0/16 (link-local)
-                || v4.octets()[0] == 198 && v4.octets()[1] == 18 || v4.octets()[1] == 19 // 198.18.0.0/15 (benchmark)
+                || (v4.octets()[0] == 198 && (v4.octets()[1] == 18 || v4.octets()[1] == 19)) // 198.18.0.0/15 (benchmark)
         }
         IpAddr::V6(v6) => {
             v6.is_loopback()

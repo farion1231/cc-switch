@@ -31,9 +31,15 @@ pub fn is_encrypted(data: &[u8]) -> bool {
     data.len() >= 4 && &data[..4] == ENCRYPTION_MAGIC
 }
 
-/// Returns true if the string starts with the encryption magic prefix.
+/// Returns true if the string is base64-encoded ciphertext produced by `encrypt`.
+///
+/// `encrypt` base64-encodes the magic prefix together with the nonce and
+/// ciphertext, so the raw UTF-8 bytes of the returned string never start with
+/// the magic. Decode the base64 first, then check the magic.
 pub fn is_encrypted_str(data: &str) -> bool {
-    is_encrypted(data.as_bytes())
+    decode_base64(data)
+        .map(|bytes| is_encrypted(&bytes))
+        .unwrap_or(false)
 }
 
 /// Derive an AES-256 key from machine-specific context.

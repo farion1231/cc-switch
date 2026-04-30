@@ -38,7 +38,6 @@ module.exports = {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
-        /* Obsidian accent palette */
         surface: {
           0: "hsl(var(--surface-0))",
           1: "hsl(var(--surface-1))",
@@ -79,6 +78,11 @@ module.exports = {
         sm: "0 1px 3px 0 rgb(0 0 0 / 0.04)",
         md: "0 2px 8px -2px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.03)",
         lg: "0 4px 16px -4px rgb(0 0 0 / 0.08), 0 2px 4px rgb(0 0 0 / 0.03)",
+        /* Liquid Glass-specific named shadows for one-off use */
+        "glass-soft":
+          "0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px -8px rgb(0 0 0 / 0.06), 0 24px 48px -16px rgb(0 0 0 / 0.08)",
+        "glass-active":
+          "0 0 32px -4px hsl(var(--primary) / 0.18), 0 16px 40px -12px rgb(0 0 0 / 0.1)",
       },
       borderRadius: {
         sm: "0.5rem",
@@ -117,6 +121,7 @@ module.exports = {
         "accordion-up": "accordion-up 0.15s cubic-bezier(0.16, 1, 0.3, 1)",
         shimmer: "shimmer 1.8s ease-in-out infinite",
         "scale-in": "scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+        "glass-shine": "glass-shine 1.6s ease-out 1",
       },
       keyframes: {
         fadeIn: {
@@ -154,6 +159,11 @@ module.exports = {
         "accordion-up": {
           from: { height: "var(--radix-accordion-content-height)", opacity: "1" },
           to: { height: "0", opacity: "0" },
+        },
+        "glass-shine": {
+          "0%": { transform: "translateX(-100%) skewX(-15deg)", opacity: "0" },
+          "20%": { opacity: "0.7" },
+          "100%": { transform: "translateX(220%) skewX(-15deg)", opacity: "0" },
         },
       },
     },

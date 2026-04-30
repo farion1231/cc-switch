@@ -926,12 +926,8 @@ impl SkillService {
 
             for skill in group_skills {
                 // 在远程仓库中找到匹配的 Skill 目录
-                let remote_match = remote_skills.iter().find(|rs| {
-                    // 匹配方式：安装名称的最后一段
-                    let remote_install_name =
-                        rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
-                    remote_install_name.eq_ignore_ascii_case(&skill.directory)
-                });
+                let remote_match =
+                    Self::find_matching_remote_skill(&remote_skills, &skill.directory);
 
                 let remote_skill_dir = match remote_match {
                     Some(rs) => match Self::resolve_skill_source_dir(&temp_dir, &rs.directory) {
@@ -1029,12 +1025,7 @@ impl SkillService {
         let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
         let _ = self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills);
 
-        let remote_match = remote_skills
-            .iter()
-            .find(|rs| {
-                let remote_install_name = rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
-                remote_install_name.eq_ignore_ascii_case(&skill.directory)
-            })
+        let remote_match = Self::find_matching_remote_skill(&remote_skills, &skill.directory)
             .ok_or_else(|| {
                 let _ = fs::remove_dir_all(&temp_dir);
                 anyhow!(format_skill_error(
@@ -1956,6 +1947,46 @@ impl SkillService {
         })
     }
 
+    /// 在远程扫描出的 skill 列表里找出与本地 `requested_directory` 对应的条目。
+    ///
+    /// 优先精确匹配（最后一段大小写无关相等）；不命中时退化为"连字符边界后缀"匹配
+    /// 处理 skills.sh 之类前缀命名空间（issue #2477）。后缀匹配多候选时只接受
+    /// 唯一最长的，避免歧义误装。
+    fn find_matching_remote_skill<'a>(
+        remote_skills: &'a [DiscoverableSkill],
+        requested_directory: &str,
+    ) -> Option<&'a DiscoverableSkill> {
+        fn last_segment(directory: &str) -> &str {
+            directory.rsplit('/').next().unwrap_or(directory)
+        }
+
+        if let Some(exact) = remote_skills.iter().find(|rs| {
+            last_segment(&rs.directory).eq_ignore_ascii_case(requested_directory)
+        }) {
+            return Some(exact);
+        }
+
+        let requested_lower = requested_directory.to_ascii_lowercase();
+        let mut suffix_candidates: Vec<(&DiscoverableSkill, usize)> = remote_skills
+            .iter()
+            .filter_map(|rs| {
+                let last_lower = last_segment(&rs.directory).to_ascii_lowercase();
+                let needle = format!("-{last_lower}");
+                requested_lower
+                    .ends_with(&needle)
+                    .then_some((rs, last_lower.len()))
+            })
+            .collect();
+
+        suffix_candidates.sort_by(|a, b| b.1.cmp(&a.1));
+        match suffix_candidates.as_slice() {
+            [] => None,
+            [(only, _)] => Some(*only),
+            [(first, len_a), (_, len_b), ..] if len_a > len_b => Some(*first),
+            _ => None,
+        }
+    }
+
     /// 解析技能元数据
     fn parse_skill_metadata(&self, path: &Path) -> Result<SkillMetadata> {
         Self::parse_skill_metadata_static(path)
@@ -2090,10 +2121,13 @@ impl SkillService {
 
     /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
     ///
-    /// 兼容三种情况：
+    /// 兼容四种情况：
     /// 1. `skills/foo` 这类直接相对路径；
     /// 2. 仅持有安装名 `foo`，需要在仓库中递归查找真实目录；
-    /// 3. 仓库根目录本身就是 skill，此时回退到解压根目录。
+    /// 3. skills.sh 等服务在 skillId 前面加了命名空间前缀（如
+    ///    `vercel-react-best-practices`），实际仓库目录是去掉前缀后的尾段
+    ///    （如 `skills/react-best-practices/`）；
+    /// 4. 仓库根目录本身就是 skill，此时回退到解压根目录。
     fn resolve_skill_source_dir(root: &Path, raw_directory: &str) -> Option<PathBuf> {
         let source_rel = Self::sanitize_skill_source_path(raw_directory)?;
         let direct = root.join(&source_rel);
@@ -2111,6 +2145,15 @@ impl SkillService {
             return Some(found);
         }
 
+        if let Some(found) = Self::find_skill_dir_by_suffix_match(root, &target_name) {
+            log::info!(
+                "Skill directory '{}' not found by exact match; using suffix match: {}",
+                target_name,
+                found.display()
+            );
+            return Some(found);
+        }
+
         if root.is_dir() && root.join("SKILL.md").exists() {
             log::info!(
                 "Skill directory '{}' not found, but SKILL.md exists at root, using repo root",
@@ -2120,6 +2163,59 @@ impl SkillService {
         }
 
         None
+    }
+
+    /// 在仓库中寻找名称是 `target_name` 的"连字符边界后缀"且包含 SKILL.md 的子目录。
+    ///
+    /// 处理 skills.sh API 在 skillId 前加命名空间前缀的场景：例如
+    /// 仓库 `vercel-labs/agent-skills` 内的 `skills/react-best-practices/` 在 API 里被叫做
+    /// `vercel-react-best-practices`。此时 `react-best-practices` 是 target 的
+    /// 连字符边界后缀（`target.ends_with("-react-best-practices")`），可被识别。
+    ///
+    /// 多个候选时取**最长的唯一最长匹配**；存在并列最长则放弃猜测以防误装。
+    fn find_skill_dir_by_suffix_match(root: &Path, target_name: &str) -> Option<PathBuf> {
+        fn walk(
+            dir: &Path,
+            target_lower: &str,
+            depth: usize,
+            matches: &mut Vec<(PathBuf, usize)>,
+        ) {
+            if depth > 3 {
+                return;
+            }
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with('.') {
+                    continue;
+                }
+                let name_lower = name_str.to_ascii_lowercase();
+                let needle = format!("-{name_lower}");
+                if target_lower.ends_with(&needle) && path.join("SKILL.md").exists() {
+                    matches.push((path.clone(), name_lower.len()));
+                }
+                walk(&path, target_lower, depth + 1, matches);
+            }
+        }
+
+        let target_lower = target_name.to_ascii_lowercase();
+        let mut matches: Vec<(PathBuf, usize)> = Vec::new();
+        walk(root, &target_lower, 0, &mut matches);
+
+        matches.sort_by(|a, b| b.1.cmp(&a.1));
+        match matches.as_slice() {
+            [] => None,
+            [(only, _)] => Some(only.clone()),
+            [(first, len_a), (_, len_b), ..] if len_a > len_b => Some(first.clone()),
+            _ => None,
+        }
     }
 
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
@@ -3037,5 +3133,110 @@ mod tests {
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
+    }
+
+    /// Regression for issue #2477: skills.sh prepends a namespacing prefix to the
+    /// `skillId` that doesn't match the actual repo directory name. For
+    /// `vercel-labs/agent-skills`, skills.sh returns `skillId =
+    /// "vercel-react-best-practices"` while the repo directory is
+    /// `skills/react-best-practices/`.
+    #[test]
+    fn resolve_skill_source_dir_falls_back_to_suffix_match() {
+        let temp = tempdir().expect("tempdir");
+        let nested = temp.path().join("skills").join("react-best-practices");
+        write_skill(&nested, "React Best Practices");
+
+        let resolved =
+            SkillService::resolve_skill_source_dir(temp.path(), "vercel-react-best-practices")
+                .expect("suffix match should resolve when skillId has a namespacing prefix");
+
+        assert_eq!(resolved, nested);
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_suffix_match_picks_uniquely_longest() {
+        let temp = tempdir().expect("tempdir");
+        let short = temp.path().join("skills").join("foo");
+        let long = temp.path().join("packages").join("bar-foo");
+        write_skill(&short, "Foo");
+        write_skill(&long, "Bar Foo");
+
+        // Both `foo` and `bar-foo` are hyphen-bounded suffixes of `acme-bar-foo`.
+        // The longer (more specific) match wins.
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "acme-bar-foo")
+            .expect("uniquely longest suffix match should win");
+
+        assert_eq!(resolved, long);
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_refuses_ambiguous_suffix_match() {
+        let temp = tempdir().expect("tempdir");
+        write_skill(&temp.path().join("a").join("foo"), "Foo A");
+        write_skill(&temp.path().join("b").join("foo"), "Foo B");
+
+        // Two equally-specific (`foo` length 3) suffix matches → refuse to guess.
+        // Repo root has no SKILL.md, so the whole resolve must fail.
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "acme-foo");
+
+        assert!(
+            resolved.is_none(),
+            "tied suffix matches must not be auto-resolved, got {resolved:?}"
+        );
+    }
+
+    fn make_remote(directory: &str) -> DiscoverableSkill {
+        DiscoverableSkill {
+            key: format!("test/test:{directory}"),
+            name: directory.to_string(),
+            description: String::new(),
+            directory: directory.to_string(),
+            readme_url: None,
+            repo_owner: "test".to_string(),
+            repo_name: "test".to_string(),
+            repo_branch: "main".to_string(),
+        }
+    }
+
+    #[test]
+    fn find_matching_remote_skill_prefers_exact_match_over_suffix() {
+        let skills = vec![
+            make_remote("skills/react-best-practices"),
+            make_remote("skills/vercel-react-best-practices"),
+        ];
+
+        let matched = SkillService::find_matching_remote_skill(&skills, "vercel-react-best-practices")
+            .expect("exact match should be found");
+
+        assert_eq!(matched.directory, "skills/vercel-react-best-practices");
+    }
+
+    /// Regression for issue #2477: stored `skill.directory` is the skills.sh
+    /// `skillId` ("vercel-react-best-practices"), but the actual repo directory
+    /// is "skills/react-best-practices/". Update path must still find a match.
+    #[test]
+    fn find_matching_remote_skill_falls_back_to_suffix_for_namespaced_id() {
+        let skills = vec![
+            make_remote("skills/composition-patterns"),
+            make_remote("skills/react-best-practices"),
+            make_remote("skills/web-design-guidelines"),
+        ];
+
+        let matched = SkillService::find_matching_remote_skill(&skills, "vercel-react-best-practices")
+            .expect("suffix match should resolve namespaced skillId");
+
+        assert_eq!(matched.directory, "skills/react-best-practices");
+    }
+
+    #[test]
+    fn find_matching_remote_skill_refuses_ambiguous_suffix() {
+        let skills = vec![
+            make_remote("a/foo"),
+            make_remote("b/foo"),
+        ];
+
+        let matched = SkillService::find_matching_remote_skill(&skills, "acme-foo");
+
+        assert!(matched.is_none(), "tied suffix matches must not auto-resolve");
     }
 }
