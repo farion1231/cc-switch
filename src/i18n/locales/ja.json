@@ -1121,8 +1121,7 @@
       "all": "すべて",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini",
-      "hermes": "Hermes"
+      "gemini": "Gemini"
     },
     "dataSources": "データソース",
     "dataSource": {
@@ -1130,8 +1129,7 @@
       "session_log": "セッションログ",
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
-      "gemini_session": "Gemini セッション",
-      "hermes_session": "Hermes セッション"
+      "gemini_session": "Gemini セッション"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",
