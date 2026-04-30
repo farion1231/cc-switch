@@ -178,6 +178,29 @@ fn stable_codex_model_provider_id_from_config(config_text: &str) -> Option<Strin
     }
 }
 
+fn codex_model_provider_id_with_table_from_config(
+    config_text: &str,
+) -> Result<Option<String>, AppError> {
+    if config_text.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(None);
+    };
+
+    let has_provider_table = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|table| table.get(provider_id.as_str()))
+        .is_some();
+
+    Ok(has_provider_table.then_some(provider_id))
+}
+
 fn normalize_codex_live_config_model_provider_with_anchors<'a>(
     config_text: &str,
     anchor_config_texts: impl IntoIterator<Item = &'a str>,
@@ -290,6 +313,77 @@ pub fn normalize_codex_settings_config_model_provider(
 
     if let Some(obj) = settings.as_object_mut() {
         obj.insert("config".to_string(), Value::String(normalized));
+    }
+
+    Ok(())
+}
+
+fn restore_codex_backfill_model_provider_id(
+    config_text: &str,
+    template_config_text: &str,
+) -> Result<String, AppError> {
+    let Some(template_provider_id) =
+        codex_model_provider_id_with_table_from_config(template_config_text)?
+    else {
+        return Ok(config_text.to_string());
+    };
+
+    if config_text.trim().is_empty() {
+        return Ok(config_text.to_string());
+    }
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let Some(live_provider_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(config_text.to_string());
+    };
+
+    if live_provider_id == template_provider_id {
+        return Ok(config_text.to_string());
+    }
+
+    if let Some(model_providers) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut())
+    {
+        let Some(provider_table) = model_providers.remove(live_provider_id.as_str()) else {
+            return Ok(config_text.to_string());
+        };
+        model_providers[template_provider_id.as_str()] = provider_table;
+    } else {
+        return Ok(config_text.to_string());
+    }
+
+    rewrite_codex_profile_model_provider_refs(&mut doc, &live_provider_id, &template_provider_id);
+    doc["model_provider"] = toml_edit::value(template_provider_id.as_str());
+
+    Ok(doc.to_string())
+}
+
+/// Convert a Codex live config that was normalized for history stability back
+/// to the provider-specific id used by the stored provider template.
+pub fn restore_codex_settings_config_model_provider_for_backfill(
+    settings: &mut Value,
+    template_settings: &Value,
+) -> Result<(), AppError> {
+    let Some(config_text) = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    let Some(template_config_text) = template_settings
+        .get("config")
+        .and_then(|value| value.as_str())
+    else {
+        return Ok(());
+    };
+
+    let restored = restore_codex_backfill_model_provider_id(&config_text, template_config_text)?;
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("config".to_string(), Value::String(restored));
     }
 
     Ok(())

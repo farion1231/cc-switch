@@ -348,6 +348,133 @@ requires_openai_auth = true
 }
 
 #[test]
+fn provider_service_switch_codex_backfill_keeps_provider_specific_model_provider_id() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let legacy_auth = json!({ "OPENAI_API_KEY": "rightcode-key" });
+    let provider_a_config = r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    write_codex_live_atomic(&legacy_auth, Some(provider_a_config))
+        .expect("seed existing codex live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "provider-a".to_string();
+        manager.providers.insert(
+            "provider-a".to_string(),
+            Provider::with_id(
+                "provider-a".to_string(),
+                "RightCode".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "rightcode-key"},
+                    "config": provider_a_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "provider-b".to_string(),
+            Provider::with_id(
+                "provider-b".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "aihubmix-key"},
+                    "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+profile = "work"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[profiles.work]
+model_provider = "aihubmix"
+model = "gpt-5.4"
+"#
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "provider-c".to_string(),
+            Provider::with_id(
+                "provider-c".to_string(),
+                "Vendor C".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "vendor-c-key"},
+                    "config": r#"model_provider = "vendor_c"
+model = "gpt-5.4"
+
+[model_providers.vendor_c]
+name = "Vendor C"
+base_url = "https://vendor-c.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "provider-b")
+        .expect("switch to provider b should succeed");
+    ProviderService::switch(&state, AppType::Codex, "provider-c")
+        .expect("switch to provider c should succeed");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after switches");
+    let provider_b_config = providers
+        .get("provider-b")
+        .expect("provider b exists")
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .expect("provider b config");
+    let parsed: toml::Value = toml::from_str(provider_b_config).expect("parse provider b config");
+
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("aihubmix"),
+        "backfill should restore provider b's storage-specific model_provider id"
+    );
+    assert!(
+        parsed
+            .get("model_providers")
+            .and_then(|v| v.get("aihubmix"))
+            .is_some(),
+        "provider b should keep its own model_providers table after backfill"
+    );
+    assert_eq!(
+        parsed
+            .get("profiles")
+            .and_then(|v| v.get("work"))
+            .and_then(|v| v.get("model_provider"))
+            .and_then(|v| v.as_str()),
+        Some("aihubmix"),
+        "profile overrides should be restored to provider b's storage-specific id"
+    );
+}
+
+#[test]
 fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
