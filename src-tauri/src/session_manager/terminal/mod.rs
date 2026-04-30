@@ -208,7 +208,7 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
-    let cwd = cwd.unwrap_or(".");
+    let cwd = cwd.ok_or("Failed to resume session without cwd")?;
 
     let mut script_file = tempfile::Builder::new()
         .disable_cleanup(true)
@@ -218,23 +218,23 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
 
     writeln!(
         &mut script_file,
-        r#"
-        #!/usr/bin/env sh
+        r#"#!/usr/bin/env sh
 
-        rm -- $0
+        rm -- "$0"
 
         exec {command}
         "#,
     )
     .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
 
-    let warp_uri = format!(
-        "warp://action/new_tab?path={}",
-        script_file.path().display()
-    );
+    let mut warp_url = url::Url::parse("warp://action/new_tab").unwrap();
+    warp_url
+        .query_pairs_mut()
+        .append_pair("path", &script_file.path().to_string_lossy());
+    let warp_url = warp_url.to_string();
 
     let status = Command::new("open")
-        .args(["-a", "Warp", &warp_uri])
+        .args(["-a", "Warp", &warp_url])
         .status()
         .map_err(|e| format!("Failed to launch Warp: {e}"))?;
 

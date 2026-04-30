@@ -1091,10 +1091,9 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
     writeln!(
         &mut second_script_file,
-        r#"
-        #!/usr/bin/env sh
+        r#"#!/usr/bin/env sh
 
-        rm -- $0
+        rm -- "$0"
 
         exec bash {}
         "#,
@@ -1102,11 +1101,12 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
 
-    let warp_uri = format!(
-        "warp://action/new_tab?path={}",
-        second_script_file.path().display()
-    );
-    cmd.arg(warp_uri);
+    let mut warp_url = url::Url::parse("warp://action/new_tab").unwrap();
+    warp_url
+        .query_pairs_mut()
+        .append_pair("path", &second_script_file.path().to_string_lossy());
+    let warp_url = warp_url.to_string();
+    cmd.arg(warp_url);
 
     let output = cmd.output().map_err(|e| format!("启动 Warp 失败: {e}"))?;
     if !output.status.success() {
