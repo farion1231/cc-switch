@@ -947,6 +947,7 @@ exec bash --norc --noprofile
     // Note: Kitty doesn't need the -e flag, others do
     let result = match terminal {
         "iterm2" => launch_macos_iterm2(&script_file),
+        "warp" => launch_macos_warp(&script_file),
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
         "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
@@ -1061,6 +1062,57 @@ fn launch_macos_open_app(
         return Err(format!(
             "{} 启动失败 (exit code: {:?}): {}",
             app_name,
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let mut cmd = Command::new("open");
+    cmd.arg("-a").arg("Warp");
+
+    // Warp URI scheme cannot work well with script_file, because:
+    //
+    // 1. script_file's name ends up with .sh, so Warp would open the file rather than execute it
+    // 2. script_file has no execution permission, so we need to add one more indirection
+    let mut second_script_file = tempfile::Builder::new()
+        .disable_cleanup(true)
+        .permissions(std::fs::Permissions::from_mode(0o755))
+        .tempfile()
+        .map_err(|e| format!("Failed to create temporary script file: {e}"))?;
+
+    writeln!(
+        &mut second_script_file,
+        r#"#!/usr/bin/env sh
+
+        rm -- "$0"
+
+        exec bash {}
+        "#,
+        script_file.display(),
+    )
+    .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
+
+    let mut warp_url = url::Url::parse("warp://action/new_tab").unwrap();
+    warp_url
+        .query_pairs_mut()
+        .append_pair("path", &second_script_file.path().to_string_lossy());
+    let warp_url = warp_url.to_string();
+    cmd.arg(warp_url);
+
+    let output = cmd.output().map_err(|e| format!("启动 Warp 失败: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Warp 启动失败 (exit code: {:?}): {}",
             output.status.code(),
             stderr
         ));
@@ -1356,6 +1408,7 @@ read -n 1 -s
 
         let result = match terminal {
             "iterm2" => launch_macos_iterm2(&script_file),
+            "warp" => launch_macos_warp(&script_file),
             "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
             "kitty" => launch_macos_open_app("kitty", &script_file, false),
             "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
