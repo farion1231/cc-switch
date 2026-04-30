@@ -170,9 +170,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                 }
 
                                 has_sent_message_start = true;
-                                // Build usage with cache tokens if available
+                                // Build usage with defensive null handling
+                                // Some() wrapper ensures build function always receives valid input
+                                // Fallback to empty object {} if usage field missing, ensuring message_start
+                                // event always has valid usage structure for VSCode Extension compatibility
                                 let start_usage = build_anthropic_usage_from_responses(
-                                    response_obj.get("usage"),
+                                    Some(response_obj.get("usage").unwrap_or(&json!({}))),
                                 );
 
                                 let event = json!({
@@ -670,9 +673,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                 }
                                 fallback_open_index = None;
 
-                                let usage_json = response_obj.get("usage").map(|u| {
-                                    build_anthropic_usage_from_responses(Some(u))
-                                });
+                                // Defensive: Always build usage_json, even if usage field missing
+                                // Some() wrapper with fallback to {} ensures build_anthropic_usage_from_responses
+                                // always receives valid input, preventing null pointer errors in VSCode Extension
+                                let usage_json = build_anthropic_usage_from_responses(
+                                    Some(response_obj.get("usage").unwrap_or(&json!({})))
+                                );
 
                                 // Emit message_delta (with usage + stop_reason)
                                 let delta_event = json!({
