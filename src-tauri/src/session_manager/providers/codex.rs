@@ -173,7 +173,10 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 {
                     let text = payload.get("content").map(extract_text).unwrap_or_default();
                     let trimmed = text.trim();
-                    if !trimmed.is_empty() && !trimmed.starts_with("# AGENTS.md") {
+                    if !trimmed.is_empty()
+                        && !trimmed.starts_with("# AGENTS.md")
+                        && !trimmed.starts_with("<environment_context>")
+                    {
                         first_user_message = Some(trimmed.to_string());
                     }
                 }
@@ -352,6 +355,25 @@ mod tests {
         .expect("write");
 
         assert!(parse_session(&path).is_none());
+    }
+
+    #[test]
+    fn parse_session_skips_environment_context_injection() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"<environment_context>\\n  <cwd>/tmp/project</cwd>\\n</environment_context>\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        // Should skip environment_context injection and use the real user message
+        assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
     }
 
     #[test]
