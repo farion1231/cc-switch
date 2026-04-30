@@ -251,8 +251,8 @@ export interface Settings {
   // ===== 设备级 UI 设置 =====
   // 是否在系统托盘（macOS 菜单栏）显示图标
   showInTray: boolean;
-  // 点击关闭按钮时是否最小化到托盘而不是关闭应用
-  minimizeToTrayOnClose: boolean;
+  /** 窗口关闭行为：close=退出应用，tray=隐藏到托盘，lightweight=进入轻量模式 */
+  closeBehavior: "close" | "tray" | "lightweight";
   // 是否启用应用级窗口控制按钮（最小化/最大化/关闭）
   useAppWindowControls?: boolean;
   // 启用 Claude 插件联动（写入 ~/.claude/config.json 的 primaryApiKey）

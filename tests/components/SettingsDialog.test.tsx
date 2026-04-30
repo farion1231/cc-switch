@@ -62,7 +62,7 @@ const createSettingsMock = (overrides: Partial<SettingsMock> = {}) => {
   const base: SettingsMock = {
     settings: {
       showInTray: true,
-      minimizeToTrayOnClose: true,
+      closeBehavior: "tray",
       enableClaudePluginIntegration: false,
       language: "zh",
       claudeConfigDir: "/claude",
@@ -199,7 +199,7 @@ vi.mock("@/components/settings/ThemeSettings", () => ({
 
 vi.mock("@/components/settings/WindowSettings", () => ({
   WindowSettings: ({ onChange }: any) => (
-    <button onClick={() => onChange({ minimizeToTrayOnClose: false })}>
+    <button onClick={() => onChange({ closeBehavior: "close" })}>
       window-settings
     </button>
   ),
@@ -335,7 +335,7 @@ describe("SettingsPage Component", () => {
 
     fireEvent.click(screen.getByText("window-settings"));
     expect(settingsMock.updateSettings).toHaveBeenCalledWith({
-      minimizeToTrayOnClose: false,
+      closeBehavior: "close",
     });
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));

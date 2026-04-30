@@ -87,7 +87,7 @@ let liveProviderIds: LiveProviderIdsByApp = {
 };
 let settingsState: Settings = {
   showInTray: true,
-  minimizeToTrayOnClose: true,
+  closeBehavior: "tray",
   enableClaudePluginIntegration: false,
   claudeConfigDir: "/default/claude",
   codexConfigDir: "/default/codex",
@@ -204,7 +204,7 @@ export const resetProviderState = () => {
   sessionMessagesState = createDefaultSessionMessages();
   settingsState = {
     showInTray: true,
-    minimizeToTrayOnClose: true,
+    closeBehavior: "tray",
     enableClaudePluginIntegration: false,
     claudeConfigDir: "/default/claude",
     codexConfigDir: "/default/codex",

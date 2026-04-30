@@ -2,6 +2,13 @@ import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { AnimatePresence, motion } from "framer-motion";
 import { isLinux } from "@/lib/platform";
 
@@ -67,15 +74,44 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           onCheckedChange={(value) => onChange({ skipClaudeOnboarding: value })}
         />
 
-        <ToggleRow
-          icon={<AppWindow className="h-4 w-4 text-blue-500" />}
-          title={t("settings.minimizeToTray")}
-          description={t("settings.minimizeToTrayDescription")}
-          checked={settings.minimizeToTrayOnClose}
-          onCheckedChange={(value) =>
-            onChange({ minimizeToTrayOnClose: value })
-          }
-        />
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card/50 p-4 transition-colors hover:bg-muted/50">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-background ring-1 ring-border">
+              <AppWindow className="h-4 w-4 text-blue-500" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-medium leading-none">
+                {t("settings.closeBehaviorTitle")}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t("settings.closeBehaviorDescription")}
+              </p>
+            </div>
+          </div>
+          <Select
+            value={settings.closeBehavior}
+            onValueChange={(value) =>
+              onChange({
+                closeBehavior: value as "close" | "tray" | "lightweight",
+              })
+            }
+          >
+            <SelectTrigger className="w-[140px] shrink-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="close">
+                {t("settings.closeBehaviorClose")}
+              </SelectItem>
+              <SelectItem value="tray">
+                {t("settings.closeBehaviorTray")}
+              </SelectItem>
+              <SelectItem value="lightweight">
+                {t("settings.closeBehaviorLightweight")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
         {isLinux() && (
           <ToggleRow

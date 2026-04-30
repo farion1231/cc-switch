@@ -44,7 +44,7 @@ const createSettings = (
   overrides: Partial<SettingsFormState> = {},
 ): SettingsFormState => ({
   showInTray: true,
-  minimizeToTrayOnClose: true,
+  closeBehavior: "tray",
   enableClaudePluginIntegration: false,
   claudeConfigDir: "/claude/custom",
   codexConfigDir: "/codex/custom",

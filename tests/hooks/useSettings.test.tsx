@@ -84,7 +84,7 @@ vi.mock("@/lib/api", () => ({
 const createSettingsFormMock = (overrides: Record<string, unknown> = {}) => ({
   settings: {
     showInTray: true,
-    minimizeToTrayOnClose: true,
+    closeBehavior: "tray",
     enableClaudePluginIntegration: false,
     skipClaudeOnboarding: true,
     claudeConfigDir: "/claude",
@@ -153,7 +153,7 @@ describe("useSettings hook", () => {
 
     serverSettings = {
       showInTray: true,
-      minimizeToTrayOnClose: true,
+      closeBehavior: "tray",
       enableClaudePluginIntegration: false,
       skipClaudeOnboarding: true,
       claudeConfigDir: "/server/claude",
