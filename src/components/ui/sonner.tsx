@@ -4,8 +4,6 @@ import { useTheme } from "@/components/theme-provider";
 export function Toaster() {
   const { theme } = useTheme();
 
-  // 将应用主题映射到 Sonner 的主题
-  // 如果是 "system"，Sonner 会自己处理
   const sonnerTheme = theme === "system" ? "system" : theme;
 
   return (
@@ -13,17 +11,18 @@ export function Toaster() {
       position="top-center"
       richColors
       theme={sonnerTheme}
+      gap={8}
       toastOptions={{
-        duration: 2000,
+        duration: 2500,
         classNames: {
           toast:
-            "group rounded-md border bg-background text-foreground shadow-lg",
+            "liquid-glass rounded-xl text-foreground",
           title: "text-sm font-semibold",
-          description: "text-sm text-muted-foreground",
+          description: "text-xs text-muted-foreground",
           closeButton:
-            "absolute right-2 top-2 rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+            "absolute right-2 top-2 rounded-full p-1 text-muted-foreground transition-colors hover:bg-white/30 dark:hover:bg-white/5 hover:text-foreground",
           actionButton:
-            "rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90",
+            "rounded-lg bg-primary/80 px-3 py-1 text-xs font-medium text-primary-foreground transition-all hover:bg-primary",
         },
       }}
     />

@@ -65,7 +65,12 @@ pub fn filter_private_params(body: Value) -> Value {
 /// ```
 pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -> Value {
     let whitelist_set: HashSet<&str> = whitelist.iter().map(|s| s.as_str()).collect();
-    filter_recursive_with_whitelist(body, &mut Vec::new(), &whitelist_set)
+    let mut removed_keys = Vec::new();
+    let result = filter_recursive_with_whitelist(body, &mut removed_keys, &whitelist_set);
+    if !removed_keys.is_empty() {
+        log::debug!("[BodyFilter] 过滤私有参数: {removed_keys:?}");
+    }
+    result
 }
 
 /// 递归过滤实现（支持白名单）
@@ -91,12 +96,6 @@ fn filter_recursive_with_whitelist(
                     }
                 })
                 .collect();
-
-            // 仅在有过滤时记录日志（避免每次请求都打印）
-            if !removed_keys.is_empty() {
-                log::debug!("[BodyFilter] 过滤私有参数: {removed_keys:?}");
-                removed_keys.clear();
-            }
 
             Value::Object(filtered)
         }

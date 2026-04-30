@@ -2,6 +2,7 @@
 //!
 //! 提供统一供应商的 CRUD 操作。
 
+use crate::crypto;
 use crate::database::{lock_conn, to_json_string, Database};
 use crate::error::AppError;
 use crate::provider::UniversalProvider;
@@ -26,8 +27,16 @@ impl Database {
             .ok();
 
         match result {
-            Some(json) => serde_json::from_str(&json)
-                .map_err(|e| AppError::Database(format!("解析统一供应商数据失败: {e}"))),
+            Some(json) => {
+                // Decrypt if the stored JSON was encrypted
+                let json = if crypto::is_encrypted_str(&json) {
+                    crypto::decrypt(&json).unwrap_or(json)
+                } else {
+                    json
+                };
+                serde_json::from_str(&json)
+                    .map_err(|e| AppError::Database(format!("解析统一供应商数据失败: {e}")))
+            }
             None => Ok(HashMap::new()),
         }
     }
@@ -63,9 +72,16 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let json = to_json_string(providers)?;
 
+        // Encrypt the JSON before storing (contains API keys)
+        let value = if json != "{}" && json != "null" {
+            crypto::encrypt(&json).unwrap_or(json)
+        } else {
+            json
+        };
+
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-            [UNIVERSAL_PROVIDERS_KEY, &json],
+            [UNIVERSAL_PROVIDERS_KEY, &value],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 

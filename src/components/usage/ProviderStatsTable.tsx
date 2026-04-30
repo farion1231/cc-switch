@@ -10,6 +10,7 @@ import {
 import { useProviderStats } from "@/lib/query/usage";
 import { fmtUsd } from "./format";
 import type { UsageRangeSelection } from "@/types/usage";
+import { Loader2 } from "lucide-react";
 
 interface ProviderStatsTableProps {
   range: UsageRangeSelection;
@@ -28,11 +29,15 @@ export function ProviderStatsTable({
   });
 
   if (isLoading) {
-    return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;
+    return (
+      <div className="h-[200px] liquid-glass rounded-2xl flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/30" />
+      </div>
+    );
   }
 
   return (
-    <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-hidden">
+    <div className="liquid-glass rounded-2xl overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow>

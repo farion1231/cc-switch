@@ -7,6 +7,44 @@ use crate::error::AppError;
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
+// Default proxy configuration constants
+mod proxy_defaults {
+    // Claude defaults (more aggressive retries, longer timeouts)
+    pub const CLAUDE_MAX_RETRIES: i32 = 6;
+    pub const CLAUDE_STREAMING_FIRST_BYTE_TIMEOUT: i32 = 90;
+    pub const CLAUDE_STREAMING_IDLE_TIMEOUT: i32 = 180;
+    pub const CLAUDE_CIRCUIT_FAILURE_THRESHOLD: i32 = 8;
+    pub const CLAUDE_CIRCUIT_SUCCESS_THRESHOLD: i32 = 3;
+    pub const CLAUDE_CIRCUIT_TIMEOUT_SECONDS: i32 = 90;
+    pub const CLAUDE_CIRCUIT_ERROR_RATE_THRESHOLD: f64 = 0.7;
+    pub const CLAUDE_CIRCUIT_MIN_REQUESTS: i32 = 15;
+
+    // Codex defaults
+    pub const CODEX_MAX_RETRIES: i32 = 3;
+    pub const CODEX_STREAMING_FIRST_BYTE_TIMEOUT: i32 = 60;
+    pub const CODEX_STREAMING_IDLE_TIMEOUT: i32 = 120;
+    pub const CODEX_CIRCUIT_FAILURE_THRESHOLD: i32 = 4;
+    pub const CODEX_CIRCUIT_SUCCESS_THRESHOLD: i32 = 2;
+    pub const CODEX_CIRCUIT_TIMEOUT_SECONDS: i32 = 60;
+    pub const CODEX_CIRCUIT_ERROR_RATE_THRESHOLD: f64 = 0.6;
+    pub const CODEX_CIRCUIT_MIN_REQUESTS: i32 = 10;
+
+    // Gemini defaults
+    pub const GEMINI_MAX_RETRIES: i32 = 5;
+    pub const GEMINI_STREAMING_FIRST_BYTE_TIMEOUT: i32 = 60;
+    pub const GEMINI_STREAMING_IDLE_TIMEOUT: i32 = 120;
+    pub const GEMINI_CIRCUIT_FAILURE_THRESHOLD: i32 = 4;
+    pub const GEMINI_CIRCUIT_SUCCESS_THRESHOLD: i32 = 2;
+    pub const GEMINI_CIRCUIT_TIMEOUT_SECONDS: i32 = 60;
+    pub const GEMINI_CIRCUIT_ERROR_RATE_THRESHOLD: f64 = 0.6;
+    pub const GEMINI_CIRCUIT_MIN_REQUESTS: i32 = 10;
+
+    // Shared defaults
+    pub const DEFAULT_NON_STREAMING_TIMEOUT: i32 = 600;
+    pub const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1";
+    pub const DEFAULT_LISTEN_PORT: i32 = 15721;
+}
+
 #[derive(Serialize)]
 struct LegacySkillMigrationRow {
     directory: String,
@@ -147,8 +185,18 @@ impl Database {
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('claude', 6, 90, 180, 600, 8, 3, 90, 0.7, 15)",
-                [],
+                VALUES ('claude', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    proxy_defaults::CLAUDE_MAX_RETRIES,
+                    proxy_defaults::CLAUDE_STREAMING_FIRST_BYTE_TIMEOUT,
+                    proxy_defaults::CLAUDE_STREAMING_IDLE_TIMEOUT,
+                    proxy_defaults::DEFAULT_NON_STREAMING_TIMEOUT,
+                    proxy_defaults::CLAUDE_CIRCUIT_FAILURE_THRESHOLD,
+                    proxy_defaults::CLAUDE_CIRCUIT_SUCCESS_THRESHOLD,
+                    proxy_defaults::CLAUDE_CIRCUIT_TIMEOUT_SECONDS,
+                    proxy_defaults::CLAUDE_CIRCUIT_ERROR_RATE_THRESHOLD,
+                    proxy_defaults::CLAUDE_CIRCUIT_MIN_REQUESTS,
+                ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
             conn.execute(
@@ -156,8 +204,18 @@ impl Database {
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('codex', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
-                [],
+                VALUES ('codex', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    proxy_defaults::CODEX_MAX_RETRIES,
+                    proxy_defaults::CODEX_STREAMING_FIRST_BYTE_TIMEOUT,
+                    proxy_defaults::CODEX_STREAMING_IDLE_TIMEOUT,
+                    proxy_defaults::DEFAULT_NON_STREAMING_TIMEOUT,
+                    proxy_defaults::CODEX_CIRCUIT_FAILURE_THRESHOLD,
+                    proxy_defaults::CODEX_CIRCUIT_SUCCESS_THRESHOLD,
+                    proxy_defaults::CODEX_CIRCUIT_TIMEOUT_SECONDS,
+                    proxy_defaults::CODEX_CIRCUIT_ERROR_RATE_THRESHOLD,
+                    proxy_defaults::CODEX_CIRCUIT_MIN_REQUESTS,
+                ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
             conn.execute(
@@ -165,8 +223,18 @@ impl Database {
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10)",
-                [],
+                VALUES ('gemini', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    proxy_defaults::GEMINI_MAX_RETRIES,
+                    proxy_defaults::GEMINI_STREAMING_FIRST_BYTE_TIMEOUT,
+                    proxy_defaults::GEMINI_STREAMING_IDLE_TIMEOUT,
+                    proxy_defaults::DEFAULT_NON_STREAMING_TIMEOUT,
+                    proxy_defaults::GEMINI_CIRCUIT_FAILURE_THRESHOLD,
+                    proxy_defaults::GEMINI_CIRCUIT_SUCCESS_THRESHOLD,
+                    proxy_defaults::GEMINI_CIRCUIT_TIMEOUT_SECONDS,
+                    proxy_defaults::GEMINI_CIRCUIT_ERROR_RATE_THRESHOLD,
+                    proxy_defaults::GEMINI_CIRCUIT_MIN_REQUESTS,
+                ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         }

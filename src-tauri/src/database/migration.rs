@@ -4,6 +4,7 @@
 
 use super::{lock_conn, to_json_string, Database};
 use crate::app_config::MultiAppConfig;
+use crate::crypto;
 use crate::error::AppError;
 use rusqlite::{params, Connection};
 
@@ -80,6 +81,14 @@ impl Database {
                 let mut meta_clone = provider.meta.clone().unwrap_or_default();
                 let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
+                let config_json = to_json_string(&provider.settings_config)?;
+                let encrypted_config = if config_json != "null" && config_json != "{}" {
+                    crypto::encrypt(&config_json)
+                        .unwrap_or(config_json)
+                } else {
+                    config_json
+                };
+
                 tx.execute(
                     "INSERT OR REPLACE INTO providers (
                         id, app_type, name, settings_config, website_url, category,
@@ -89,7 +98,7 @@ impl Database {
                         id,
                         app_type,
                         provider.name,
-                        to_json_string(&provider.settings_config)?,
+                        encrypted_config,
                         provider.website_url,
                         provider.category,
                         provider.created_at,

@@ -239,7 +239,7 @@ function App() {
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
   const addActionButtonClass =
-    "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
+    "bg-primary/80 hover:bg-primary text-primary-foreground backdrop-blur-sm shadow-sm hover:shadow-md rounded-full w-8 h-8 transition-all duration-200";
 
   const {
     isRunning: isProxyRunning,
@@ -959,13 +959,13 @@ function App() {
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
-                <AnimatePresence mode="wait">
+                <AnimatePresence mode="popLayout">
                   <motion.div
                     key={activeApp}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.15 }}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, transition: { duration: 0.1 } }}
+                    transition={{ type: "spring", stiffness: 500, damping: 32, mass: 0.7 }}
                     className="space-y-4"
                   >
                     <ProviderList
@@ -1025,14 +1025,14 @@ function App() {
     })();
 
     return (
-      <AnimatePresence mode="wait">
+      <AnimatePresence mode="popLayout">
         <motion.div
           key={currentView}
           className="flex-1 min-h-0"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, transition: { duration: 0.08 } }}
+          transition={{ type: "spring", stiffness: 500, damping: 35, mass: 0.6 }}
         >
           {content}
         </motion.div>
@@ -1042,7 +1042,7 @@ function App() {
 
   return (
     <div
-      className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30 pb-4"
+      className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/20 pb-4"
       style={{ overflowX: "hidden", paddingTop: contentTopOffset }}
     >
       {(dragBarHeight > 0 || useAppWindowControls) && (
@@ -1061,9 +1061,9 @@ function App() {
                 size="icon"
                 onClick={() => void handleWindowMinimize()}
                 title={t("header.windowMinimize")}
-                className="h-7 w-7"
+                className="h-6 w-6 rounded-md"
               >
-                <Minus className="w-4 h-4" />
+                <Minus className="w-3.5 h-3.5" />
               </Button>
               <Button
                 variant="ghost"
@@ -1074,12 +1074,12 @@ function App() {
                     ? t("header.windowRestore")
                     : t("header.windowMaximize")
                 }
-                className="h-7 w-7"
+                className="h-6 w-6 rounded-md"
               >
                 {isWindowMaximized ? (
-                  <Minimize2 className="w-4 h-4" />
+                  <Minimize2 className="w-3.5 h-3.5" />
                 ) : (
-                  <Maximize2 className="w-4 h-4" />
+                  <Maximize2 className="w-3.5 h-3.5" />
                 )}
               </Button>
               <Button
@@ -1087,9 +1087,9 @@ function App() {
                 size="icon"
                 onClick={() => void handleWindowClose()}
                 title={t("header.windowClose")}
-                className="h-7 w-7 hover:bg-red-500/15 hover:text-red-500"
+                className="h-6 w-6 rounded-md hover:bg-destructive/15 hover:text-destructive"
               >
-                <X className="w-4 h-4" />
+                <X className="w-3.5 h-3.5" />
               </Button>
             </div>
           )}
@@ -1121,7 +1121,7 @@ function App() {
       )}
 
       <header
-        className="fixed z-50 w-full transition-all duration-300 bg-background/80 backdrop-blur-md"
+        className="fixed z-50 w-full transition-all duration-300 glass-header"
         {...DRAG_REGION_ATTR}
         style={
           {
@@ -1185,14 +1185,20 @@ function App() {
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
-                      "text-xl font-semibold transition-colors",
+                      "text-lg font-bold tracking-tight transition-colors duration-200",
                       isProxyRunning && isCurrentAppTakeoverActive
                         ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
-                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
+                        : "text-foreground/90 hover:text-foreground",
                     )}
                   >
                     CC Switch
                   </a>
+                  {isProxyRunning && isCurrentAppTakeoverActive && (
+                    <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-2xs font-semibold text-emerald-600 dark:text-emerald-400 ring-1 ring-emerald-500/20">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      LIVE
+                    </span>
+                  )}
                 </div>
                 <Button
                   variant="ghost"
@@ -1367,7 +1373,7 @@ function App() {
                       compact={isToolbarCompact}
                     />
 
-                    <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
+                    <div className="flex items-center gap-0.5 p-0.5 liquid-glass-subtle rounded-xl">
                       <AnimatePresence mode="wait">
                         <motion.div
                           key={
@@ -1541,7 +1547,7 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
+      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in-up">
         {isOpenClawView && openclawHealthWarnings.length > 0 && (
           <OpenClawHealthBanner warnings={openclawHealthWarnings} />
         )}

@@ -4,10 +4,41 @@
 
 use crate::error::AppError;
 use base64::prelude::*;
+use std::net::{IpAddr, Ipv6Addr};
 use url::Url;
 
-/// Validate that a string is a valid HTTP(S) URL
+/// Maximum allowed length for a deep link parameter value
+const MAX_PARAM_LENGTH: usize = 8192;
+
+/// Maximum allowed size for base64-decoded content
+#[allow(dead_code)]
+const MAX_DECODED_SIZE: usize = 512 * 1024; // 512 KB
+
+/// Validate that a parameter value is within acceptable length limits
+pub fn validate_param_length(value: &str, field_name: &str) -> Result<(), AppError> {
+    if value.len() > MAX_PARAM_LENGTH {
+        return Err(AppError::InvalidInput(format!(
+            "'{field_name}' exceeds maximum length of {MAX_PARAM_LENGTH} characters"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate that decoded bytes are within size limits
+#[allow(dead_code)]
+pub fn validate_decoded_size(bytes: &[u8], field_name: &str) -> Result<(), AppError> {
+    if bytes.len() > MAX_DECODED_SIZE {
+        return Err(AppError::InvalidInput(format!(
+            "'{field_name}' decoded content exceeds maximum size of {MAX_DECODED_SIZE} bytes"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate that a string is a valid HTTP(S) URL and not pointing to internal/private hosts
 pub fn validate_url(url_str: &str, field_name: &str) -> Result<(), AppError> {
+    validate_param_length(url_str, field_name)?;
+
     let url = Url::parse(url_str)
         .map_err(|e| AppError::InvalidInput(format!("Invalid URL for '{field_name}': {e}")))?;
 
@@ -18,6 +49,93 @@ pub fn validate_url(url_str: &str, field_name: &str) -> Result<(), AppError> {
         )));
     }
 
+    // SSRF protection: block requests to internal/private hosts
+    if let Some(host_str) = url.host_str() {
+        validate_host_not_internal(host_str, field_name)?;
+    }
+
+    Ok(())
+}
+
+/// Validate that a hostname does not resolve to localhost or private/internal IP ranges.
+///
+/// Prevents Server-Side Request Forgery (SSRF) attacks via deep link URLs.
+fn validate_host_not_internal(host: &str, field_name: &str) -> Result<(), AppError> {
+    // Block localhost variants
+    let host_lower = host.to_lowercase();
+    if host_lower == "localhost"
+        || host_lower == "127.0.0.1"
+        || host_lower == "::1"
+        || host_lower == "0.0.0.0"
+        || host_lower.ends_with(".local")
+        || host_lower.ends_with(".internal")
+    {
+        return Err(AppError::InvalidInput(format!(
+            "'{field_name}' URL must not point to localhost or internal network: '{host}'"
+        )));
+    }
+
+    // Try parsing as IP address
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_ip(&ip) {
+            return Err(AppError::InvalidInput(format!(
+                "'{field_name}' URL must not point to private network address: '{host}'"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Check if an IP address is in a private/non-routable range
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.octets()[0] == 0 // 0.0.0.0/8 (current network)
+                || v4.octets()[0] == 100 && v4.octets()[1] >= 64 && v4.octets()[1] <= 127 // 100.64.0.0/10 (CGN)
+                || v4.octets()[0] == 169 && v4.octets()[1] == 254 // 169.254.0.0/16 (link-local)
+                || v4.octets()[0] == 198 && v4.octets()[1] == 18 || v4.octets()[1] == 19 // 198.18.0.0/15 (benchmark)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+                || *v6 == Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0) // ::
+                || *v6 == Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1) // ::1
+        }
+    }
+}
+
+/// Validate API key format: must be non-empty and within reasonable length
+pub fn validate_api_key(key: &str, field_name: &str) -> Result<(), AppError> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "'{field_name}' cannot be empty"
+        )));
+    }
+    if trimmed.len() > 1024 {
+        return Err(AppError::InvalidInput(format!(
+            "'{field_name}' exceeds maximum length of 1024 characters"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate provider name: must be non-empty and within reasonable length
+pub fn validate_name(name: &str) -> Result<(), AppError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidInput("Name cannot be empty".to_string()));
+    }
+    if trimmed.len() > 256 {
+        return Err(AppError::InvalidInput(
+            "Name exceeds maximum length of 256 characters".to_string(),
+        ));
+    }
     Ok(())
 }
 

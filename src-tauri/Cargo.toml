@@ -76,6 +76,9 @@ indexmap = { version = "2", features = ["serde"] }
 rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
+aes-gcm = "0.10"
+rand = "0.8"
+hostname = "0.4"
 json5 = "0.4"
 json-five = "0.3.1"
 
@@ -92,11 +95,11 @@ winreg = "0.52"
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 
-# Optimize release binary size to help reduce AppImage footprint
+# Fast compilation for release builds
 [profile.release]
-codegen-units = 1
-lto = "thin"
-opt-level = "s"
+codegen-units = 16
+lto = false
+opt-level = 2
 # 使用 unwind 以便 panic hook 能捕获 backtrace（abort 会直接终止无法捕获）
 panic = "unwind"
 strip = "symbols"

@@ -2,7 +2,7 @@
 //!
 //! Parses ccswitch:// URLs into DeepLinkImportRequest structures.
 
-use super::utils::validate_url;
+use super::utils::{validate_api_key, validate_name, validate_url};
 use super::DeepLinkImportRequest;
 use crate::error::AppError;
 use std::collections::HashMap;
@@ -93,10 +93,18 @@ fn parse_provider_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'name' parameter".to_string()))?
         .clone();
 
+    // Validate name
+    validate_name(&name)?;
+
     // Make these optional for config file auto-fill (v3.8+)
     let homepage = params.get("homepage").cloned();
     let endpoint = params.get("endpoint").cloned();
     let api_key = params.get("apiKey").cloned();
+
+    // Validate API key if provided
+    if let Some(ref key) = api_key {
+        validate_api_key(key, "apiKey")?;
+    }
 
     // Validate URLs only if provided
     if let Some(ref hp) = homepage {
@@ -201,6 +209,9 @@ fn parse_prompt_deeplink(
         .get("name")
         .ok_or_else(|| AppError::InvalidInput("Missing 'name' parameter for prompt".to_string()))?
         .clone();
+
+    // Validate name
+    validate_name(&name)?;
 
     let content = params
         .get("content")
@@ -323,9 +334,22 @@ fn parse_skill_deeplink(
         .clone();
 
     // Validate repo format (should be "owner/name")
-    if !repo.contains('/') || repo.split('/').count() != 2 {
+    let parts: Vec<&str> = repo.split('/').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
         return Err(AppError::InvalidInput(format!(
             "Invalid repo format: expected 'owner/name', got '{repo}'"
+        )));
+    }
+    // Validate owner and name contain only valid GitHub username/repo characters
+    let valid_repo = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 100
+            && s.chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    };
+    if !valid_repo(parts[0]) || !valid_repo(parts[1]) {
+        return Err(AppError::InvalidInput(format!(
+            "Invalid repo format: owner and name must contain only alphanumeric, '-', '_', or '.' characters and be under 100 chars each"
         )));
     }
 

@@ -138,50 +138,6 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// 更新代理配置（热更新）
-///
-/// 可在运行时调用以更改代理设置，无需重启应用。
-/// 注意：此函数同时验证和应用，如果需要先验证后持久化再应用，
-/// 请使用 validate_proxy + apply_proxy 组合。
-///
-/// # Arguments
-/// * `proxy_url` - 新的代理 URL，None 或空字符串表示直连
-#[allow(dead_code)]
-pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
-    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
-
-    // 更新客户端
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
-            "Failed to update proxy: lock poisoned".to_string()
-        })?;
-        *client = new_client;
-    } else {
-        // 如果还没初始化，则初始化
-        return init(proxy_url);
-    }
-
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = effective_url.map(|s| s.to_string());
-    }
-
-    log::info!(
-        "[GlobalProxy] Updated: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
-    );
-
-    Ok(())
-}
-
 /// 获取全局 HTTP 客户端
 ///
 /// 返回配置了代理的客户端（如果已配置代理），否则返回跟随系统代理的客户端。

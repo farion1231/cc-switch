@@ -9,7 +9,6 @@ import type { AppTypeFilter, UsageRangeSelection } from "@/types/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
-  ListFilter,
   Activity,
   RefreshCw,
   Coins,
@@ -28,7 +27,7 @@ import { cn } from "@/lib/utils";
 import { getLocaleFromLanguage } from "./format";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = [
   "all",
@@ -38,11 +37,19 @@ const APP_FILTER_OPTIONS: AppTypeFilter[] = [
   "hermes",
 ];
 
+const TIME_PRESETS: { key: UsageRangeSelection["preset"]; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "7d", label: "7D" },
+  { key: "14d", label: "14D" },
+  { key: "30d", label: "30D" },
+];
+
 export function UsageDashboard() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<UsageRangeSelection>({ preset: "today" });
+  const [range, setRange] = useState<UsageRangeSelection>({ preset: "30d" });
   const [appType, setAppType] = useState<AppTypeFilter>("all");
+  const [activeTab, setActiveTab] = useState<"overview" | "models">("overview");
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
 
   const refreshIntervalOptionsMs = [0, 5000, 10000, 30000, 60000] as const;
@@ -64,7 +71,6 @@ export function UsageDashboard() {
     if (range.preset !== "custom") {
       return getUsageRangePresetLabel(range.preset, t);
     }
-
     return `${new Date(resolvedRange.startDate * 1000).toLocaleString(locale)} - ${new Date(
       resolvedRange.endDate * 1000,
     ).toLocaleString(locale)}`;
@@ -72,147 +78,161 @@ export function UsageDashboard() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
-      className="space-y-8 pb-8"
+      transition={{ type: "spring", stiffness: 500, damping: 35, mass: 0.6 }}
+      className="space-y-6 pb-8"
     >
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-2xl font-bold">{t("usage.title")}</h2>
-            <p className="text-sm text-muted-foreground">
-              {t("usage.subtitle")}
-            </p>
-          </div>
-        </div>
+      {/* Top bar: Tabs left, time filters right */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v as "overview" | "models")}
+          >
+            <TabsList>
+              <TabsTrigger value="overview" className="gap-1.5">
+                <BarChart3 className="h-3.5 w-3.5" />
+                {t("usage.overview", "Overview")}
+              </TabsTrigger>
+              <TabsTrigger value="models" className="gap-1.5">
+                <Activity className="h-3.5 w-3.5" />
+                {t("usage.models", "Models")}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
 
-        <div className="rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-4">
-          <div className="flex flex-wrap items-center gap-1.5">
+          {/* App filter pills */}
+          <div className="flex items-center gap-1">
             {APP_FILTER_OPTIONS.map((type) => (
               <button
                 key={type}
                 type="button"
                 onClick={() => setAppType(type)}
                 className={cn(
-                  "px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                  "px-3 py-1 rounded-lg text-xs font-medium transition-all duration-200",
                   appType === type
-                    ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
-                    : "text-muted-foreground hover:text-primary hover:bg-muted/50 border border-transparent",
+                    ? "liquid-glass-subtle text-foreground"
+                    : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-white/20 dark:hover:bg-white/5",
                 )}
               >
                 {t(`usage.appFilter.${type}`)}
               </button>
             ))}
-
-            <div className="ml-auto flex items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2 text-xs text-muted-foreground"
-                title={t("common.refresh", "刷新")}
-                onClick={changeRefreshInterval}
-              >
-                <RefreshCw className="mr-1 h-3.5 w-3.5" />
-                {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
-              </Button>
-
-              <UsageDateRangePicker
-                selection={range}
-                triggerLabel={rangeLabel}
-                onApply={(nextRange) => setRange(nextRange)}
-              />
-            </div>
           </div>
+        </div>
+
+        {/* Right side: time presets + refresh */}
+        <div className="flex items-center gap-1.5">
+          {TIME_PRESETS.map((preset) => (
+            <button
+              key={preset.key}
+              type="button"
+              onClick={() => setRange({ preset: preset.key })}
+              className={cn(
+                "px-3 py-1 rounded-lg text-xs font-medium transition-all duration-200",
+                range.preset === preset.key
+                  ? "liquid-glass-subtle text-foreground"
+                  : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-white/20 dark:hover:bg-white/5",
+              )}
+            >
+              {preset.label}
+            </button>
+          ))}
+
+          <UsageDateRangePicker
+            selection={range}
+            triggerLabel={range.preset === "custom" ? rangeLabel : "Custom"}
+            onApply={(nextRange) => setRange(nextRange)}
+          />
+
+          <div className="w-px h-5 bg-border/30 mx-1" />
+
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-muted-foreground/60"
+            title={t("common.refresh", "刷新")}
+            onClick={changeRefreshInterval}
+          >
+            <RefreshCw className="h-3 w-3" />
+          </Button>
         </div>
       </div>
 
-      <UsageSummaryCards
-        range={range}
-        appType={appType}
-        refreshIntervalMs={refreshIntervalMs}
-      />
-
-      <UsageTrendChart
-        range={range}
-        rangeLabel={rangeLabel}
-        appType={appType}
-        refreshIntervalMs={refreshIntervalMs}
-      />
-
-      <div className="space-y-4">
-        <Tabs defaultValue="logs" className="w-full">
-          <div className="flex items-center justify-between mb-4">
-            <TabsList className="bg-muted/50">
-              <TabsTrigger value="logs" className="gap-2">
-                <ListFilter className="h-4 w-4" />
-                {t("usage.requestLogs")}
-              </TabsTrigger>
-              <TabsTrigger value="providers" className="gap-2">
-                <Activity className="h-4 w-4" />
-                {t("usage.providerStats")}
-              </TabsTrigger>
-              <TabsTrigger value="models" className="gap-2">
-                <BarChart3 className="h-4 w-4" />
-                {t("usage.modelStats")}
-              </TabsTrigger>
-            </TabsList>
-          </div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-          >
-            <TabsContent value="logs" className="mt-0">
-              <RequestLogTable
-                range={range}
-                rangeLabel={rangeLabel}
-                appType={appType}
-                refreshIntervalMs={refreshIntervalMs}
-                onRangeChange={setRange}
-              />
-            </TabsContent>
-
-            <TabsContent value="providers" className="mt-0">
-              <ProviderStatsTable
-                range={range}
-                appType={appType}
-                refreshIntervalMs={refreshIntervalMs}
-              />
-            </TabsContent>
-
-            <TabsContent value="models" className="mt-0">
-              <ModelStatsTable
-                range={range}
-                appType={appType}
-                refreshIntervalMs={refreshIntervalMs}
-              />
-            </TabsContent>
-          </motion.div>
-        </Tabs>
-      </div>
-
-      <Accordion type="multiple" defaultValue={[]} className="w-full space-y-4">
-        <AccordionItem
-          value="pricing"
-          className="rounded-xl glass-card overflow-hidden"
+      {/* Content based on active tab */}
+      {activeTab === "overview" ? (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+          className="space-y-6"
         >
-          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+          {/* Summary cards */}
+          <UsageSummaryCards
+            range={range}
+            appType={appType}
+            refreshIntervalMs={refreshIntervalMs}
+          />
+
+          {/* Stacked bar chart */}
+          <UsageTrendChart
+            range={range}
+            rangeLabel={rangeLabel}
+            appType={appType}
+            refreshIntervalMs={refreshIntervalMs}
+          />
+
+          {/* Request logs table */}
+          <RequestLogTable
+            range={range}
+            rangeLabel={rangeLabel}
+            appType={appType}
+            refreshIntervalMs={refreshIntervalMs}
+            onRangeChange={setRange}
+          />
+        </motion.div>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+          className="space-y-6"
+        >
+          {/* Model stats with visual bars */}
+          <ModelStatsTable
+            range={range}
+            appType={appType}
+            refreshIntervalMs={refreshIntervalMs}
+          />
+
+          {/* Provider stats */}
+          <ProviderStatsTable
+            range={range}
+            appType={appType}
+            refreshIntervalMs={refreshIntervalMs}
+          />
+        </motion.div>
+      )}
+
+      {/* Pricing config (always visible, collapsed) */}
+      <Accordion type="multiple" defaultValue={[]} className="w-full">
+        <AccordionItem value="pricing" className="liquid-glass rounded-2xl overflow-hidden">
+          <AccordionTrigger className="px-5 py-4 hover:no-underline hover:bg-white/20 dark:hover:bg-white/5 data-[state=open]:bg-white/20 dark:data-[state=open]:bg-white/5">
             <div className="flex items-center gap-3">
-              <Coins className="h-5 w-5 text-yellow-500" />
+              <Coins className="h-4 w-4 text-amber-500" />
               <div className="text-left">
-                <h3 className="text-base font-semibold">
+                <h3 className="text-sm font-semibold">
                   {t("settings.advanced.pricing.title")}
                 </h3>
-                <p className="text-sm text-muted-foreground font-normal">
+                <p className="text-xs text-muted-foreground font-normal">
                   {t("settings.advanced.pricing.description")}
                 </p>
               </div>
             </div>
           </AccordionTrigger>
-          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+          <AccordionContent className="px-5 pb-5 pt-3 border-t border-white/10 dark:border-white/5">
             <PricingConfigPanel />
           </AccordionContent>
         </AccordionItem>

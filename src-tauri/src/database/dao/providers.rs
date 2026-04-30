@@ -1,9 +1,37 @@
+use crate::crypto;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
+
+/// Encrypt settings_config JSON string before storing in database.
+/// Returns the original string if encryption is not possible (empty or error).
+fn encrypt_settings_config(plain: &str) -> Result<String, AppError> {
+    if plain.is_empty() {
+        return Ok(plain.to_string());
+    }
+    // Only encrypt if it contains anything meaningful
+    if plain == "null" || plain == "{}" {
+        return Ok(plain.to_string());
+    }
+    crypto::encrypt(plain)
+        .ok_or_else(|| AppError::Database("Failed to encrypt settings_config".to_string()))
+}
+
+/// Decrypt settings_config JSON string if encrypted, otherwise pass through unchanged.
+/// Backward-compatible with existing plaintext data.
+fn decrypt_settings_config_str(data: &str) -> Result<String, AppError> {
+    if data.is_empty() || data == "{}" || data == "null" {
+        return Ok(data.to_string());
+    }
+    if !crypto::is_encrypted_str(data) {
+        return Ok(data.to_string());
+    }
+    crypto::decrypt(data)
+        .ok_or_else(|| AppError::Database("Failed to decrypt settings_config".to_string()))
+}
 
 type OmoProviderRow = (
     String,
@@ -43,8 +71,9 @@ impl Database {
                 let meta_str: String = row.get(10)?;
                 let in_failover_queue: bool = row.get(11)?;
 
-                let settings_config =
-                    serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
+                let settings_config = decrypt_settings_config_str(&settings_config_str)
+                    .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null))
+                    .unwrap_or(serde_json::Value::Null);
                 let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
 
                 Ok((
@@ -150,7 +179,9 @@ impl Database {
                 let meta_str: String = row.get(9)?;
                 let in_failover_queue: bool = row.get(10)?;
 
-                let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
+                let settings_config = decrypt_settings_config_str(&settings_config_str)
+                    .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null))
+                    .unwrap_or(serde_json::Value::Null);
                 let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
 
                 Ok(Provider {
@@ -216,9 +247,11 @@ impl Database {
                 WHERE id = ?13 AND app_type = ?14",
                 params![
                     provider.name,
-                    serde_json::to_string(&provider.settings_config).map_err(|e| {
-                        AppError::Database(format!("Failed to serialize settings_config: {e}"))
-                    })?,
+                    encrypt_settings_config(
+                        &serde_json::to_string(&provider.settings_config).map_err(|e| {
+                            AppError::Database(format!("Failed to serialize settings_config: {e}"))
+                        })?
+                    )?,
                     provider.website_url,
                     provider.category,
                     provider.created_at,
@@ -246,8 +279,10 @@ impl Database {
                     provider.id,
                     app_type,
                     provider.name,
-                    serde_json::to_string(&provider.settings_config)
-                        .map_err(|e| AppError::Database(format!("Failed to serialize settings_config: {e}")))?,
+                    encrypt_settings_config(
+                        &serde_json::to_string(&provider.settings_config)
+                            .map_err(|e| AppError::Database(format!("Failed to serialize settings_config: {e}")))?
+                    )?,
                     provider.website_url,
                     provider.category,
                     provider.created_at,
@@ -316,15 +351,12 @@ impl Database {
         settings_config: &serde_json::Value,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        let serialized = serde_json::to_string(settings_config)
+            .map_err(|e| AppError::Database(format!("Failed to serialize settings_config: {e}")))?;
+        let encrypted = encrypt_settings_config(&serialized)?;
         conn.execute(
             "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
-            params![
-                serde_json::to_string(settings_config).map_err(|e| AppError::Database(format!(
-                    "Failed to serialize settings_config: {e}"
-                )))?,
-                provider_id,
-                app_type
-            ],
+            params![encrypted, provider_id, app_type],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
@@ -471,7 +503,14 @@ impl Database {
                 Err(e) => return Err(AppError::Database(e.to_string())),
             };
 
-        let settings_config = serde_json::from_str(&settings_config_str).map_err(|e| {
+        let settings_config = serde_json::from_str(
+            &decrypt_settings_config_str(&settings_config_str).map_err(|e| {
+                AppError::Database(format!(
+                    "Failed to decrypt {category} provider settings_config (provider_id={id}): {e}"
+                ))
+            })?,
+        )
+        .map_err(|e| {
             AppError::Database(format!(
                 "Failed to parse {category} provider settings_config (provider_id={id}): {e}"
             ))
