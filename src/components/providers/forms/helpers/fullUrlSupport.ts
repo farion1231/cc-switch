@@ -49,9 +49,7 @@ export function supportsFullUrlMode({
   }
 
   if (appId === "openclaw") {
-    return openclawApi
-      ? SUPPORTED_OPENCLAW_PROTOCOLS.has(openclawApi)
-      : false;
+    return openclawApi ? SUPPORTED_OPENCLAW_PROTOCOLS.has(openclawApi) : false;
   }
 
   return false;

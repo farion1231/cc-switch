@@ -1577,11 +1577,7 @@ mod tests {
 
             let headers = String::from_utf8_lossy(&buf[..header_end]);
             let request_line = headers.lines().next().unwrap();
-            let path = request_line
-                .split_whitespace()
-                .nth(1)
-                .unwrap()
-                .to_string();
+            let path = request_line.split_whitespace().nth(1).unwrap().to_string();
             *captured_path_for_task.lock().unwrap() = Some(path);
 
             let content_length = headers

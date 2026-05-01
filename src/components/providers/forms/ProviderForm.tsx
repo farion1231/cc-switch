@@ -688,12 +688,7 @@ export function ProviderForm({
         opencodeNpm: opencodeForm.opencodeNpm,
         openclawApi: openclawForm.openclawApi,
       }),
-    [
-      appId,
-      category,
-      opencodeForm.opencodeNpm,
-      openclawForm.openclawApi,
-    ],
+    [appId, category, opencodeForm.opencodeNpm, openclawForm.openclawApi],
   );
   const effectiveIsFullUrl = supportsFullUrl && localIsFullUrl;
   const {
