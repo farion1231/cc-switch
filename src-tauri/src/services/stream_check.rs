@@ -1928,6 +1928,22 @@ mod tests {
         assert_eq!(url, "https://relay.example/custom/generate-content?alt=sse");
     }
 
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native_cloudflare_vertex_full_url() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent",
+            AuthStrategy::Google,
+            "gemini_native",
+            true,
+            "gemini-2.5-flash",
+        );
+
+        assert_eq!(
+            url,
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse"
+        );
+    }
+
     /// Regression: Gemini SDK outputs commonly surface model ids as the
     /// resource-name form `models/gemini-2.5-pro`. Interpolating that raw
     /// value used to produce `/v1beta/models/models/gemini-2.5-pro:...`
