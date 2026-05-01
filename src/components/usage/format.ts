@@ -1,3 +1,5 @@
+import { getLocaleFromLanguage as getLocaleFromAppLanguage } from "@/lib/locale";
+
 export function parseFiniteNumber(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -32,8 +34,5 @@ export function fmtUsd(
 }
 
 export function getLocaleFromLanguage(language: string): string {
-  if (!language) return "en-US";
-  if (language.startsWith("zh")) return "zh-CN";
-  if (language.startsWith("ja")) return "ja-JP";
-  return "en-US";
+  return getLocaleFromAppLanguage(language);
 }

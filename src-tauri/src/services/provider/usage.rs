@@ -63,10 +63,10 @@ pub(crate) async fn execute_and_format_usage_result(
 
             let msg = match err {
                 AppError::Localized { zh, en, .. } => {
-                    if lang == "en" {
-                        en
-                    } else {
+                    if lang.starts_with("zh") {
                         zh
+                    } else {
+                        en
                     }
                 }
                 other => other.to_string(),

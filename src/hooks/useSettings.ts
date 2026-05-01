@@ -12,8 +12,7 @@ import {
   type ResolvedDirectories,
 } from "./useDirectorySettings";
 import { useSettingsMetadata } from "./useSettingsMetadata";
-
-type Language = "zh" | "en" | "ja";
+import type { Language } from "@/i18n/languages";
 
 interface SaveResult {
   requiresRestart: boolean;

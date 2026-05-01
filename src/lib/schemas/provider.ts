@@ -1,11 +1,21 @@
 import { z } from "zod";
+import { getActiveLanguage } from "@/lib/locale";
+
+function t(messages: Record<"zh" | "en" | "ja" | "ru", string>): string {
+  return messages[getActiveLanguage()] ?? messages.en;
+}
 
 /**
  * 解析 JSON 语法错误，提取位置信息
  */
 function parseJsonError(error: unknown): string {
   if (!(error instanceof SyntaxError)) {
-    return "配置 JSON 格式错误";
+    return t({
+      zh: "配置 JSON 格式错误",
+      en: "Configuration JSON format is invalid",
+      ja: "設定 JSON 形式が無効です",
+      ru: "Неверный формат JSON в конфигурации",
+    });
   }
 
   const message = error.message;
@@ -14,7 +24,13 @@ function parseJsonError(error: unknown): string {
   const positionMatch = message.match(/at position (\d+)/i);
   if (positionMatch) {
     const position = parseInt(positionMatch[1], 10);
-    return `JSON 格式错误：${message.split(" in JSON")[0]}（位置：${position}）`;
+    const detail = message.split(" in JSON")[0];
+    return t({
+      zh: `JSON 格式错误：${detail}（位置：${position}）`,
+      en: `Invalid JSON format: ${detail} (position: ${position})`,
+      ja: `JSON 形式が無効です: ${detail}（位置: ${position}）`,
+      ru: `Неверный формат JSON: ${detail} (позиция: ${position})`,
+    });
   }
 
   // Firefox: "JSON.parse: unexpected character at line 1 column 23"
@@ -22,7 +38,12 @@ function parseJsonError(error: unknown): string {
   if (lineColumnMatch) {
     const line = lineColumnMatch[1];
     const column = lineColumnMatch[2];
-    return `JSON 格式错误：第 ${line} 行，第 ${column} 列`;
+    return t({
+      zh: `JSON 格式错误：第 ${line} 行，第 ${column} 列`,
+      en: `Invalid JSON format: line ${line}, column ${column}`,
+      ja: `JSON 形式が無効です: ${line} 行 ${column} 列`,
+      ru: `Неверный формат JSON: строка ${line}, столбец ${column}`,
+    });
   }
 
   // 通用情况：提取关键错误信息
@@ -32,16 +53,40 @@ function parseJsonError(error: unknown): string {
     .replace(/token/gi, "符号")
     .replace(/Expected/gi, "预期");
 
-  return `JSON 格式错误：${cleanMessage}`;
+  return t({
+    zh: `JSON 格式错误：${cleanMessage}`,
+    en: `Invalid JSON format: ${cleanMessage}`,
+    ja: `JSON 形式が無効です: ${cleanMessage}`,
+    ru: `Неверный формат JSON: ${cleanMessage}`,
+  });
 }
 
 export const providerSchema = z.object({
   name: z.string(), // 必填校验移至 handleSubmit 中用 toast 提示
-  websiteUrl: z.string().url("请输入有效的网址").optional().or(z.literal("")),
+  websiteUrl: z
+    .string()
+    .url(
+      t({
+        zh: "请输入有效的网址",
+        en: "Please enter a valid URL",
+        ja: "有効な URL を入力してください",
+        ru: "Введите действительный URL",
+      }),
+    )
+    .optional()
+    .or(z.literal("")),
   notes: z.string().optional(),
   settingsConfig: z
     .string()
-    .min(1, "请填写配置内容")
+    .min(
+      1,
+      t({
+        zh: "请填写配置内容",
+        en: "Please fill in the configuration",
+        ja: "設定内容を入力してください",
+        ru: "Укажите содержимое конфигурации",
+      }),
+    )
     .superRefine((value, ctx) => {
       try {
         JSON.parse(value);

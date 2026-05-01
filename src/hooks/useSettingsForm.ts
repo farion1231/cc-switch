@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
-
-type Language = "zh" | "en" | "ja";
+import type { Language } from "@/i18n/languages";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
@@ -12,7 +11,11 @@ export type SettingsFormState = Omit<Settings, "language"> & {
 const normalizeLanguage = (lang?: string | null): Language => {
   if (!lang) return "zh";
   const normalized = lang.toLowerCase();
-  return normalized === "en" || normalized === "ja" ? normalized : "zh";
+  return normalized === "en" ||
+    normalized === "ja" ||
+    normalized === "ru"
+    ? normalized
+    : "zh";
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -52,7 +55,7 @@ export function useSettingsForm(): UseSettingsFormResult {
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("language");
-      if (stored === "en" || stored === "zh" || stored === "ja") {
+      if (stored === "en" || stored === "zh" || stored === "ja" || stored === "ru") {
         return stored as Language;
       }
     }
