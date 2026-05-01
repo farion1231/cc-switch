@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,6 +29,19 @@ export const IconPicker: React.FC<IconPickerProps> = ({
   const isSearchImageUrl = isHttpsIconUrl(trimmedQuery);
   const isImageUrl = isHttpsIconUrl(debouncedTrimmedQuery);
 
+  useEffect(() => {
+    if (isImageUrl) {
+      if (value !== debouncedTrimmedQuery) {
+        onValueChange(debouncedTrimmedQuery);
+      }
+      return;
+    }
+
+    if (!debouncedTrimmedQuery && isHttpsIconUrl(value)) {
+      onValueChange("");
+    }
+  }, [debouncedTrimmedQuery, isImageUrl, onValueChange, value]);
+
   // 过滤图标列表
   const filteredIcons = useMemo(() => {
     if (isSearchImageUrl) return [];
@@ -50,20 +63,7 @@ export const IconPicker: React.FC<IconPickerProps> = ({
           })}
           value={searchQuery}
           onChange={(e) => {
-            const nextValue = e.target.value;
-            const trimmedValue = nextValue.trim();
-            setSearchQuery(nextValue);
-
-            if (isHttpsIconUrl(trimmedValue)) {
-              if (value !== trimmedValue) {
-                onValueChange(trimmedValue);
-              }
-              return;
-            }
-
-            if (!trimmedValue && isHttpsIconUrl(value)) {
-              onValueChange("");
-            }
+            setSearchQuery(e.target.value);
           }}
           className="mt-2"
         />
