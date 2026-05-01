@@ -64,6 +64,7 @@ use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 fn redact_url_for_log(url_str: &str) -> String {
     match url::Url::parse(url_str) {
@@ -264,6 +265,7 @@ pub fn run() {
                         tray::apply_tray_policy(window.app_handle(), false);
                     }
                 } else {
+                    api.prevent_close();
                     window.app_handle().exit(0);
                 }
             }
@@ -272,6 +274,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .build(),
+        )
         .setup(|app| {
             let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -1351,6 +1358,7 @@ pub fn run() {
 
             let app_handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
+                save_window_state_before_exit(&app_handle);
                 cleanup_before_exit(&app_handle).await;
                 log::info!("清理完成，退出应用");
 
@@ -1756,4 +1764,22 @@ fn show_database_init_error_dialog(
             exit_text.to_string(),
         ))
         .blocking_show()
+}
+
+// ============================================================
+// 在应用主动退出前显式持久化窗口状态
+// ============================================================
+
+fn window_state_flags() -> StateFlags {
+    StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED
+}
+
+/// 当前应用的退出路径会拦截 `ExitRequested` 并最终直接 `std::process::exit(0)`，
+/// 这里需要在真正结束进程前手动落盘，避免 window-state 插件的默认退出钩子被绕过。
+pub fn save_window_state_before_exit(app_handle: &tauri::AppHandle) {
+    if let Err(err) = app_handle.save_window_state(window_state_flags()) {
+        log::error!("退出前保存窗口状态失败: {err}");
+    } else {
+        log::info!("已在退出前保存窗口状态");
+    }
 }
