@@ -167,6 +167,26 @@ impl WebDavSyncSettings {
     }
 }
 
+/// 配置目录 Profile，包含一个环境的所有工具配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigDirProfile {
+    pub id: String,
+    pub name: String,
+    pub claude: Option<String>,
+    pub codex: Option<String>,
+    pub gemini: Option<String>,
+    pub opencode: Option<String>,
+    pub openclaw: Option<String>,
+    pub hermes: Option<String>,
+    pub current_provider_claude: Option<String>,
+    pub current_provider_codex: Option<String>,
+    pub current_provider_gemini: Option<String>,
+    pub current_provider_opencode: Option<String>,
+    pub current_provider_openclaw: Option<String>,
+    pub current_provider_hermes: Option<String>,
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -282,6 +302,12 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup_retain_count: Option<u32>,
 
+    // ===== 配置目录 Profile =====
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_dir_profiles: Vec<ConfigDirProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_config_dir_profile_id: Option<String>,
+
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
     /// - macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty" | "wezterm" | "kaku"
@@ -337,6 +363,8 @@ impl Default for AppSettings {
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
+            config_dir_profiles: Vec::new(),
+            active_config_dir_profile_id: None,
             preferred_terminal: None,
         }
     }
@@ -767,4 +795,127 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
             sync.status = status;
         }
     })
+}
+
+// ===== ConfigDirProfile 管理函数 =====
+
+/// 获取当前激活的 Profile
+pub fn get_active_config_dir_profile() -> Option<ConfigDirProfile> {
+    let settings = settings_store().read().ok()?;
+    let active_id = settings.active_config_dir_profile_id.as_ref()?;
+    settings
+        .config_dir_profiles
+        .iter()
+        .find(|p| &p.id == active_id)
+        .cloned()
+}
+
+/// 按 ID 获取 Profile
+pub fn get_config_dir_profile(id: &str) -> Option<ConfigDirProfile> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .config_dir_profiles
+        .iter()
+        .find(|p| p.id == id)
+        .cloned()
+}
+
+/// 获取所有 Profile
+pub fn get_all_config_dir_profiles() -> Vec<ConfigDirProfile> {
+    settings_store()
+        .read()
+        .ok()
+        .map(|s| s.config_dir_profiles.clone())
+        .unwrap_or_default()
+}
+
+/// 创建或更新 Profile
+pub fn upsert_config_dir_profile(profile: ConfigDirProfile) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        if let Some(existing) = settings
+            .config_dir_profiles
+            .iter_mut()
+            .find(|p| p.id == profile.id)
+        {
+            *existing = profile;
+        } else {
+            settings.config_dir_profiles.push(profile);
+        }
+    })
+}
+
+/// 删除 Profile
+pub fn delete_config_dir_profile(id: &str) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        settings.config_dir_profiles.retain(|p| p.id != id);
+        if settings.active_config_dir_profile_id.as_deref() == Some(id) {
+            settings.active_config_dir_profile_id = settings
+                .config_dir_profiles
+                .first()
+                .map(|p| p.id.clone());
+        }
+    })
+}
+
+/// 切换激活的 Profile
+pub fn set_active_config_dir_profile(id: &str) -> Result<(), AppError> {
+    let settings = get_settings();
+    if !settings
+        .config_dir_profiles
+        .iter()
+        .any(|p| p.id == id)
+    {
+        return Err(AppError::Message(format!("Profile {} 不存在", id)));
+    }
+    mutate_settings(|settings| {
+        settings.active_config_dir_profile_id = Some(id.to_string());
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_profile(id: &str) -> ConfigDirProfile {
+        ConfigDirProfile {
+            id: id.to_string(),
+            name: format!("Profile {}", id),
+            claude: None,
+            codex: None,
+            gemini: None,
+            opencode: None,
+            openclaw: None,
+            hermes: None,
+            current_provider_claude: None,
+            current_provider_codex: None,
+            current_provider_gemini: None,
+            current_provider_opencode: None,
+            current_provider_openclaw: None,
+            current_provider_hermes: None,
+        }
+    }
+
+    #[test]
+    fn test_profile_struct_has_all_fields() {
+        let p = make_test_profile("test");
+        assert_eq!(p.id, "test");
+        assert_eq!(p.name, "Profile test");
+        assert!(p.claude.is_none());
+        assert!(p.current_provider_claude.is_none());
+    }
+
+    #[test]
+    fn test_profile_serialization() {
+        let p = make_test_profile("win");
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("currentProviderClaude"));
+        assert!(json.contains("win"));
+    }
+
+    #[test]
+    fn test_app_settings_has_profile_fields() {
+        let s = AppSettings::default();
+        assert!(s.config_dir_profiles.is_empty());
+        assert!(s.active_config_dir_profile_id.is_none());
+    }
 }

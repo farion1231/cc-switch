@@ -331,6 +331,30 @@ pub async fn set_common_config_snippet(
     Ok(())
 }
 
+// ===== ConfigDirProfile 管理命令 =====
+
+#[tauri::command]
+pub fn get_config_dir_profiles() -> Vec<crate::settings::ConfigDirProfile> {
+    crate::settings::get_all_config_dir_profiles()
+}
+
+#[tauri::command]
+pub fn upsert_config_dir_profile(
+    profile: crate::settings::ConfigDirProfile,
+) -> Result<(), String> {
+    crate::settings::upsert_config_dir_profile(profile).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_config_dir_profile(id: String) -> Result<(), String> {
+    crate::settings::delete_config_dir_profile(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_active_config_dir_profile(id: String) -> Result<(), String> {
+    crate::settings::set_active_config_dir_profile(&id).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate_common_config_snippet;

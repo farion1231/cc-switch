@@ -1327,6 +1327,11 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // ConfigDirProfile management
+            commands::get_config_dir_profiles,
+            commands::upsert_config_dir_profile,
+            commands::delete_config_dir_profile,
+            commands::set_active_config_dir_profile,
         ]);
 
     let app = builder
