@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
+import type { ConfigDirProfile } from "@/types";
 
 type AppDirectoryKey =
   | "claude"
@@ -100,6 +101,14 @@ export interface UseDirectorySettingsResult {
   resetDirectory: (app: AppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
   resetAllDirectories: (overrides?: ResolvedAppDirectoryOverrides) => void;
+  // Profile management
+  profiles: ConfigDirProfile[];
+  activeProfileId: string | undefined;
+  getActiveProfile: () => ConfigDirProfile | undefined;
+  createProfile: (name: string) => Promise<ConfigDirProfile>;
+  updateProfile: (profile: ConfigDirProfile) => Promise<void>;
+  deleteProfile: (id: string) => Promise<void>;
+  switchProfile: (id: string) => Promise<void>;
 }
 
 export type ResolvedAppDirectoryOverrides = Partial<
@@ -134,6 +143,12 @@ export function useDirectorySettings({
     hermes: "",
   });
   const [isLoading, setIsLoading] = useState(true);
+
+  // Profile state
+  const [profiles, setProfiles] = useState<ConfigDirProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string | undefined>(
+    settings?.activeConfigDirProfileId,
+  );
 
   const defaultsRef = useRef<ResolvedDirectories>({
     appConfig: "",
@@ -228,6 +243,25 @@ export function useDirectorySettings({
       active = false;
     };
   }, []);
+
+  // Load profile data
+  useEffect(() => {
+    settingsApi
+      .getConfigDirProfiles()
+      .then((profiles) => {
+        setProfiles(profiles);
+      })
+      .catch(() => {
+        // Silently ignore if profiles API is not available yet
+      });
+  }, []);
+
+  // Load active profile ID from settings
+  useEffect(() => {
+    if (settings?.activeConfigDirProfileId) {
+      setActiveProfileId(settings.activeConfigDirProfileId);
+    }
+  }, [settings?.activeConfigDirProfileId]);
 
   const updateDirectoryState = useCallback(
     (key: DirectoryKey, value?: string) => {
@@ -356,6 +390,67 @@ export function useDirectorySettings({
     [],
   );
 
+  const getActiveProfile = useCallback(() => {
+    return profiles.find((p) => p.id === activeProfileId);
+  }, [profiles, activeProfileId]);
+
+  const createProfile = useCallback(async (name: string) => {
+    const id = `profile-${Date.now()}`;
+    const profile: ConfigDirProfile = { id, name };
+    await settingsApi.upsertConfigDirProfile(profile);
+    setProfiles((prev) => [...prev, profile]);
+    return profile;
+  }, []);
+
+  const updateProfile = useCallback(async (profile: ConfigDirProfile) => {
+    await settingsApi.upsertConfigDirProfile(profile);
+    setProfiles((prev) =>
+      prev.map((p) => (p.id === profile.id ? profile : p)),
+    );
+  }, []);
+
+  const deleteProfile = useCallback(
+    async (id: string) => {
+      await settingsApi.deleteConfigDirProfile(id);
+      setProfiles((prev) => prev.filter((p) => p.id !== id));
+      if (activeProfileId === id) {
+        setActiveProfileId(undefined);
+      }
+    },
+    [activeProfileId],
+  );
+
+  const switchProfile = useCallback(
+    async (id: string) => {
+      await settingsApi.setActiveConfigDirProfile(id);
+      setActiveProfileId(id);
+      // Reload resolved directories after switching
+      const newActive = profiles.find((p) => p.id === id);
+      if (newActive) {
+        const newResolvedDirs: ResolvedDirectories = {
+          ...defaultsRef.current,
+          appConfig: appConfigDir || defaultsRef.current.appConfig,
+        };
+        for (const [appId, meta] of Object.entries(APP_DIRECTORY_META)) {
+          const dirPath = (newActive as unknown as Record<
+            string,
+            string | undefined
+          >)[meta.key];
+          if (dirPath) {
+            newResolvedDirs[appId as AppId] = dirPath;
+          } else {
+            const fallback =
+              (await settingsApi.getConfigDir(appId as AppId)) ||
+              defaultsRef.current[meta.key];
+            newResolvedDirs[appId as AppId] = fallback;
+          }
+        }
+        setResolvedDirs(newResolvedDirs);
+      }
+    },
+    [activeProfileId, profiles, appConfigDir],
+  );
+
   return {
     appConfigDir,
     resolvedDirs,
@@ -368,5 +463,13 @@ export function useDirectorySettings({
     resetDirectory,
     resetAppConfigDir,
     resetAllDirectories,
+    // Profile management
+    profiles,
+    activeProfileId,
+    getActiveProfile,
+    createProfile,
+    updateProfile,
+    deleteProfile,
+    switchProfile,
   };
 }

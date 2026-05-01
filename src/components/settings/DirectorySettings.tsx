@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
+import type { ConfigDirProfile } from "@/types";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
 interface DirectorySettingsProps {
@@ -21,6 +22,13 @@ interface DirectorySettingsProps {
   onDirectoryChange: (app: AppId, value?: string) => void;
   onBrowseDirectory: (app: AppId) => Promise<void>;
   onResetDirectory: (app: AppId) => Promise<void>;
+  // Profile management
+  profiles?: ConfigDirProfile[];
+  activeProfileId?: string;
+  onCreateProfile?: (name: string) => Promise<ConfigDirProfile>;
+  onUpdateProfile?: (profile: ConfigDirProfile) => Promise<void>;
+  onDeleteProfile?: (id: string) => Promise<void>;
+  onSwitchProfile?: (id: string) => Promise<void>;
 }
 
 export function DirectorySettings({
@@ -38,11 +46,60 @@ export function DirectorySettings({
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
+  profiles,
+  activeProfileId,
+  onCreateProfile,
+  onDeleteProfile,
+  onSwitchProfile,
 }: DirectorySettingsProps) {
   const { t } = useTranslation();
 
   return (
     <div className="space-y-6">
+      {/* Profile 选择器 */}
+      {profiles && profiles.length > 0 && (
+        <div className="rounded-lg border border-border/50 p-4">
+          <h3 className="mb-3 text-sm font-medium text-muted-foreground">
+            环境配置集
+          </h3>
+          <div className="flex gap-2">
+            <select
+              value={activeProfileId || ""}
+              onChange={(e) => onSwitchProfile?.(e.target.value)}
+              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => {
+                const name = prompt("Profile 名称:");
+                if (name) onCreateProfile?.(name);
+              }}
+              className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
+            >
+              新建
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (activeProfileId && profiles.length > 1) {
+                  onDeleteProfile?.(activeProfileId);
+                }
+              }}
+              disabled={!activeProfileId || profiles.length <= 1}
+              className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+            >
+              删除
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* CC Switch 配置目录 - 独立区块 */}
       <section className="space-y-4">
         <header className="space-y-1">

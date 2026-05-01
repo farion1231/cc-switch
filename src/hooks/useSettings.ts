@@ -11,6 +11,7 @@ import {
   useDirectorySettings,
   type ResolvedDirectories,
 } from "./useDirectorySettings";
+import type { ConfigDirProfile } from "@/types";
 import { useSettingsMetadata } from "./useSettingsMetadata";
 
 type Language = "zh" | "en" | "ja";
@@ -43,6 +44,14 @@ export interface UseSettingsResult {
   ) => Promise<SaveResult | null>;
   resetSettings: () => void;
   acknowledgeRestart: () => void;
+  // Profile management
+  profiles: ConfigDirProfile[];
+  activeProfileId: string | undefined;
+  getActiveProfile: () => ConfigDirProfile | undefined;
+  createProfile: (name: string) => Promise<ConfigDirProfile>;
+  updateProfile: (profile: ConfigDirProfile) => Promise<void>;
+  deleteProfile: (id: string) => Promise<void>;
+  switchProfile: (id: string) => Promise<void>;
 }
 
 export type { SettingsFormState, ResolvedDirectories };
@@ -89,6 +98,13 @@ export function useSettings(): UseSettingsResult {
     resetDirectory,
     resetAppConfigDir,
     resetAllDirectories,
+    profiles,
+    activeProfileId,
+    getActiveProfile,
+    createProfile,
+    updateProfile,
+    deleteProfile,
+    switchProfile,
   } = useDirectorySettings({
     settings,
     onUpdateSettings: updateSettings,
@@ -505,5 +521,13 @@ export function useSettings(): UseSettingsResult {
     autoSaveSettings,
     resetSettings,
     acknowledgeRestart,
+    // Profile management
+    profiles,
+    activeProfileId,
+    getActiveProfile,
+    createProfile,
+    updateProfile,
+    deleteProfile,
+    switchProfile,
   };
 }

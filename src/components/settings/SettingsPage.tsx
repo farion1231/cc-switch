@@ -82,6 +82,12 @@ export function SettingsPage({
     autoSaveSettings,
     requiresRestart,
     acknowledgeRestart,
+    profiles,
+    activeProfileId,
+    createProfile,
+    updateProfile,
+    deleteProfile,
+    switchProfile,
   } = useSettings();
 
   const {
@@ -321,6 +327,12 @@ export function SettingsPage({
                             onDirectoryChange={updateDirectory}
                             onBrowseDirectory={browseDirectory}
                             onResetDirectory={resetDirectory}
+                            profiles={profiles}
+                            activeProfileId={activeProfileId}
+                            onCreateProfile={createProfile}
+                            onUpdateProfile={updateProfile}
+                            onDeleteProfile={deleteProfile}
+                            onSwitchProfile={switchProfile}
                           />
                         </AccordionContent>
                       </AccordionItem>
