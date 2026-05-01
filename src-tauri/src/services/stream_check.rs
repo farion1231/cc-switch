@@ -1516,6 +1516,7 @@ impl StreamCheckService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ProviderMeta;
 
     fn make_provider(settings_config: serde_json::Value) -> Provider {
         Provider::with_id(
@@ -1791,6 +1792,68 @@ mod tests {
         );
 
         assert_eq!(url, "https://relay.example/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_openclaw_full_url_uses_configured_url() {
+        let mut provider = make_provider(serde_json::json!({
+            "baseUrl": "https://relay.example/custom/chat/completions",
+            "apiKey": "k",
+            "api": "openai-completions",
+            "models": [],
+        }));
+        provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..ProviderMeta::default()
+        });
+
+        let base_url = StreamCheckService::extract_openclaw_base_url(&provider).unwrap();
+        let url = StreamCheckService::resolve_claude_stream_url(
+            &base_url,
+            AuthStrategy::Bearer,
+            "openai_chat",
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.is_full_url)
+                .unwrap_or(false),
+            "gpt-5.4",
+        );
+
+        assert_eq!(url, "https://relay.example/custom/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_opencode_full_url_uses_configured_url() {
+        let mut provider = make_provider(serde_json::json!({
+            "npm": "@ai-sdk/openai",
+            "options": {
+                "baseURL": "https://relay.example/custom/responses",
+                "apiKey": "k",
+            },
+            "models": {},
+        }));
+        provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..ProviderMeta::default()
+        });
+
+        let base_url =
+            StreamCheckService::resolve_opencode_base_url(&provider, Some("@ai-sdk/openai"))
+                .unwrap();
+        let url = StreamCheckService::resolve_claude_stream_url(
+            &base_url,
+            AuthStrategy::Bearer,
+            "openai_responses",
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.is_full_url)
+                .unwrap_or(false),
+            "gpt-5.4",
+        );
+
+        assert_eq!(url, "https://relay.example/custom/responses");
     }
 
     #[test]
