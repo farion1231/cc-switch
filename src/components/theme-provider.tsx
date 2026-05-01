@@ -5,6 +5,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { isLinux } from "@/lib/platform";
 import { invoke } from "@tauri-apps/api/core";
 
 type Theme = "light" | "dark" | "system";
@@ -147,7 +148,12 @@ export function ThemeProvider({
         );
 
         // Use View Transitions API if available, otherwise fall back to instant change
-        if (document.startViewTransition) {
+        // Disable for Linux, since WebKitGTK crashes on `document.startViewTransition`
+        if (
+          typeof document !== "undefined" &&
+          document.startViewTransition &&
+          !isLinux()
+        ) {
           document.startViewTransition(() => {
             setThemeState(nextTheme);
           });
