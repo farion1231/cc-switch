@@ -296,12 +296,20 @@ impl ProxyService {
             .map(|c| c.enabled)
             .unwrap_or(false);
 
+        let hermes_enabled = self
+            .db
+            .get_proxy_config_for_app("hermes")
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false);
+
         Ok(ProxyTakeoverStatus {
             claude: claude_enabled,
             codex: codex_enabled,
             gemini: gemini_enabled,
             opencode: opencode_enabled,
             openclaw: openclaw_enabled,
+            hermes: hermes_enabled,
         })
     }
 

@@ -33,7 +33,7 @@ import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
 
-const PRICING_APPS = ["claude", "codex", "gemini", "openclaw"] as const;
+const PRICING_APPS = ["claude", "codex", "gemini", "openclaw", "hermes"] as const;
 type PricingApp = (typeof PRICING_APPS)[number];
 type PricingModelSource = "request" | "response";
 
