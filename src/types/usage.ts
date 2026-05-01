@@ -129,7 +129,7 @@ export interface UsageRangeSelection {
   customEndDate?: number;
 }
 
-export type AppTypeFilter = "all" | "claude" | "codex" | "gemini" | "hermes";
+export type AppTypeFilter = "all" | "claude" | "codex" | "gemini" | "opencode" | "openclaw" | "hermes";
 
 export interface StatsFilters {
   timeRange: UsageRangePreset;
