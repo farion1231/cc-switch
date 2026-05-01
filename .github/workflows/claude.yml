@@ -50,5 +50,6 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: >-
+            --model claude-opus-4-7
             --disallowedTools Edit,Write,MultiEdit,NotebookEdit
             --append-system-prompt "You are operating in REVIEW-ONLY mode for cc-switch. Only post review comments. Never modify files, push commits, or create PRs. Focus on code quality, security, and correctness."
