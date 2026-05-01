@@ -269,9 +269,40 @@ export function useDirectorySettings({
       if (key === "appConfig") {
         setAppConfigDir(sanitized);
       } else {
-        onUpdateSettings({
-          [DIRECTORY_KEY_TO_SETTINGS_FIELD[key]]: sanitized,
-        });
+        // 如果有 active profile，更新 profile 内部字段
+        if (activeProfileId) {
+          const activeProfile = profiles.find((p) => p.id === activeProfileId);
+          if (activeProfile) {
+            const profileKey =
+              DIRECTORY_KEY_TO_SETTINGS_FIELD[key].replace(
+                "ConfigDir",
+                "",
+              ) as keyof ConfigDirProfile;
+            const updatedProfile: ConfigDirProfile = {
+              ...activeProfile,
+              [profileKey]: sanitized,
+            };
+            // 保存到后端
+            settingsApi.upsertConfigDirProfile(updatedProfile).catch((err) => {
+              console.error("[useDirectorySettings] Failed to update profile", err);
+            });
+            // 更新本地状态
+            setProfiles((prev) =>
+              prev.map((p) => (p.id === activeProfileId ? updatedProfile : p)),
+            );
+            // 同步到 settings
+            onUpdateSettings({
+              configDirProfiles: profiles.map((p) =>
+                p.id === activeProfileId ? updatedProfile : p,
+              ),
+            });
+          }
+        } else {
+          // 没有 active profile，更新顶层 settings 字段（向后兼容）
+          onUpdateSettings({
+            [DIRECTORY_KEY_TO_SETTINGS_FIELD[key]]: sanitized,
+          });
+        }
       }
 
       setResolvedDirs((prev) => {
@@ -282,7 +313,7 @@ export function useDirectorySettings({
         return { ...prev, [key]: next };
       });
     },
-    [onUpdateSettings],
+    [onUpdateSettings, activeProfileId, profiles],
   );
 
   const updateAppConfigDir = useCallback(
@@ -398,32 +429,54 @@ export function useDirectorySettings({
     const id = `profile-${Date.now()}`;
     const profile: ConfigDirProfile = { id, name };
     await settingsApi.upsertConfigDirProfile(profile);
+    await settingsApi.setActiveConfigDirProfile(id);
     setProfiles((prev) => [...prev, profile]);
+    setActiveProfileId(id);
+    // 同步到 settings，让父组件知道 active profile 变化了
+    onUpdateSettings({
+      configDirProfiles: [...profiles, profile],
+      activeConfigDirProfileId: id,
+    });
     return profile;
-  }, []);
+  }, [profiles, onUpdateSettings]);
 
   const updateProfile = useCallback(async (profile: ConfigDirProfile) => {
     await settingsApi.upsertConfigDirProfile(profile);
-    setProfiles((prev) =>
-      prev.map((p) => (p.id === profile.id ? profile : p)),
-    );
-  }, []);
+    const newProfiles = profiles.map((p) => (p.id === profile.id ? profile : p));
+    setProfiles(newProfiles);
+    // 同步到 settings
+    onUpdateSettings({
+      configDirProfiles: newProfiles,
+    });
+  }, [profiles, onUpdateSettings]);
 
   const deleteProfile = useCallback(
     async (id: string) => {
       await settingsApi.deleteConfigDirProfile(id);
-      setProfiles((prev) => prev.filter((p) => p.id !== id));
+      const newProfiles = profiles.filter((p) => p.id !== id);
+      setProfiles(newProfiles);
+      // 同步到 settings
+      onUpdateSettings({
+        configDirProfiles: newProfiles,
+      });
       if (activeProfileId === id) {
         setActiveProfileId(undefined);
+        onUpdateSettings({
+          activeConfigDirProfileId: undefined,
+        });
       }
     },
-    [activeProfileId],
+    [activeProfileId, profiles, onUpdateSettings],
   );
 
   const switchProfile = useCallback(
     async (id: string) => {
       await settingsApi.setActiveConfigDirProfile(id);
       setActiveProfileId(id);
+      // 同步到 settings
+      onUpdateSettings({
+        activeConfigDirProfileId: id,
+      });
       // Reload resolved directories after switching
       const newActive = profiles.find((p) => p.id === id);
       if (newActive) {
@@ -448,7 +501,7 @@ export function useDirectorySettings({
         setResolvedDirs(newResolvedDirs);
       }
     },
-    [activeProfileId, profiles, appConfigDir],
+    [profiles, appConfigDir, onUpdateSettings],
   );
 
   return {
