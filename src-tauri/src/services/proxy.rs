@@ -283,25 +283,11 @@ impl ProxyService {
             .await
             .map(|c| c.enabled)
             .unwrap_or(false);
-        let opencode_enabled = self
-            .db
-            .get_proxy_config_for_app("opencode")
-            .await
-            .map(|c| c.enabled)
-            .unwrap_or(false);
-        let openclaw_enabled = self
-            .db
-            .get_proxy_config_for_app("openclaw")
-            .await
-            .map(|c| c.enabled)
-            .unwrap_or(false);
+        // OpenCode, OpenClaw, and Hermes don't support proxy takeover features
+        let opencode_enabled = false;
+        let openclaw_enabled = false;
+        let hermes_enabled = false;
 
-        let hermes_enabled = self
-            .db
-            .get_proxy_config_for_app("hermes")
-            .await
-            .map(|c| c.enabled)
-            .unwrap_or(false);
 
         Ok(ProxyTakeoverStatus {
             claude: claude_enabled,

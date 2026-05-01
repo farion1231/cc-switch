@@ -727,6 +727,18 @@ impl Database {
                       row.get::<_, f64>(3)?, row.get::<_, i32>(4)?))
         ).unwrap_or((5, 2, 60, 0.5, 10));
 
+        // Read live_takeover_active from old table (column may have been added via ALTER TABLE)
+        let old_live_takeover: i32 = if Self::has_column(conn, "proxy_config", "live_takeover_active")? {
+            conn.query_row(
+                "SELECT live_takeover_active FROM proxy_config WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+        } else {
+            0
+        };
+
         let get_bool = |key: &str| -> bool {
             conn.query_row("SELECT value FROM settings WHERE key = ?", [key], |r| {
                 r.get::<_, String>(0)
@@ -789,6 +801,7 @@ impl Database {
             circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
             circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+            live_takeover_active INTEGER NOT NULL DEFAULT 0,
             default_cost_multiplier TEXT NOT NULL DEFAULT '1',
             pricing_model_source TEXT NOT NULL DEFAULT 'response',
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -800,11 +813,12 @@ impl Database {
                 "INSERT INTO proxy_config_new (app_type, proxy_enabled, listen_address, listen_port, enable_logging,
                  enabled, auto_failover_enabled, max_retries, streaming_first_byte_timeout, streaming_idle_timeout,
                  non_streaming_timeout, circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                 circuit_error_rate_threshold, circuit_min_requests)
-                 VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                 circuit_error_rate_threshold, circuit_min_requests, live_takeover_active)
+                 VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 rusqlite::params![app, old_config.0, old_config.1, old_config.3,
                     if takeover { 1 } else { 0 }, if failover { 1 } else { 0 },
-                    retries, fb, idle, old_config.6, cb_f, cb_s, cb_t, cb_r, cb_m]
+                    retries, fb, idle, old_config.6, cb_f, cb_s, cb_t, cb_r, cb_m,
+                    old_live_takeover]
             ).map_err(|e| AppError::Database(format!("插入 {app} 配置失败: {e}")))?;
         }
 
