@@ -24,15 +24,17 @@ export const IconPicker: React.FC<IconPickerProps> = ({
     isHttpsIconUrl(value) ? (value ?? "") : "",
   );
   const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
+  const trimmedQuery = searchQuery.trim();
   const debouncedTrimmedQuery = debouncedSearchQuery.trim();
+  const isSearchImageUrl = isHttpsIconUrl(trimmedQuery);
   const isImageUrl = isHttpsIconUrl(debouncedTrimmedQuery);
 
   // 过滤图标列表
   const filteredIcons = useMemo(() => {
-    if (isImageUrl) return [];
+    if (isSearchImageUrl) return [];
     if (!searchQuery) return iconList;
     return searchIcons(searchQuery);
-  }, [isImageUrl, searchQuery]);
+  }, [isSearchImageUrl, searchQuery]);
 
   return (
     <div className="space-y-4">
@@ -121,7 +123,7 @@ export const IconPicker: React.FC<IconPickerProps> = ({
         </div>
       )}
 
-      {!isImageUrl && filteredIcons.length === 0 && (
+      {!isSearchImageUrl && filteredIcons.length === 0 && (
         <div className="text-center py-8 text-muted-foreground">
           {t("iconPicker.noResults", { defaultValue: "未找到匹配的图标" })}
         </div>

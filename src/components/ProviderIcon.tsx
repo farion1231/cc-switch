@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getIcon,
   hasIcon,
@@ -26,6 +26,8 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   className,
   showFallback = true,
 }) => {
+  const [imgError, setImgError] = useState(false);
+
   // 获取内联 SVG 字符串
   const iconSvg = useMemo(() => {
     if (icon && !isUrlIcon(icon) && hasIcon(icon)) {
@@ -44,6 +46,10 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     }
     return "";
   }, [icon]);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [iconUrl]);
 
   // 计算尺寸样式
   const sizeStyle = useMemo(() => {
@@ -85,7 +91,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   }
 
   // URL-based 图标（大型 SVG / 光栅图片）：以 <img> 渲染
-  if (iconUrl) {
+  if (iconUrl && !imgError) {
     return (
       <img
         src={iconUrl}
@@ -96,6 +102,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
         )}
         style={{ width: sizeStyle.width, height: sizeStyle.height }}
         loading="lazy"
+        onError={() => setImgError(true)}
       />
     );
   }
