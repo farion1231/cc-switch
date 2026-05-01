@@ -245,6 +245,24 @@ export interface RemoteSnapshotInfo {
   remotePath: string;
 }
 
+// ===== 配置目录 Profile =====
+export interface ConfigDirProfile {
+  id: string;
+  name: string;
+  claude?: string;
+  codex?: string;
+  gemini?: string;
+  opencode?: string;
+  openclaw?: string;
+  hermes?: string;
+  currentProviderClaude?: string;
+  currentProviderCodex?: string;
+  currentProviderGemini?: string;
+  currentProviderOpencode?: string;
+  currentProviderOpenclaw?: string;
+  currentProviderHermes?: string;
+}
+
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
 export interface Settings {
@@ -317,6 +335,10 @@ export interface Settings {
 
   // ===== WebDAV v2 同步设置 =====
   webdavSync?: WebDavSyncSettings;
+
+  // ===== 配置目录 Profile =====
+  configDirProfiles?: ConfigDirProfile[];
+  activeConfigDirProfileId?: string;
 
   // ===== 备份策略设置 =====
   // Auto-backup interval in hours (0=disabled, default 24)

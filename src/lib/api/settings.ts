@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Settings, WebDavSyncSettings, RemoteSnapshotInfo } from "@/types";
+import type { Settings, WebDavSyncSettings, RemoteSnapshotInfo, ConfigDirProfile } from "@/types";
 import type { AppId } from "./types";
 
 export interface ConfigTransferResult {
@@ -214,6 +214,24 @@ export const settingsApi = {
 
   async setLogConfig(config: LogConfig): Promise<boolean> {
     return await invoke("set_log_config", { config });
+  },
+
+  // ─── Config Dir Profile ─────────────────────────────────
+
+  async getConfigDirProfiles(): Promise<ConfigDirProfile[]> {
+    return invoke<ConfigDirProfile[]>("get_config_dir_profiles");
+  },
+
+  async upsertConfigDirProfile(profile: ConfigDirProfile): Promise<void> {
+    return invoke("upsert_config_dir_profile", { profile });
+  },
+
+  async deleteConfigDirProfile(id: string): Promise<void> {
+    return invoke("delete_config_dir_profile", { id });
+  },
+
+  async setActiveConfigDirProfile(id: string): Promise<void> {
+    return invoke("set_active_config_dir_profile", { id });
   },
 };
 
