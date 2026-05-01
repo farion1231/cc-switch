@@ -48,7 +48,7 @@ impl TrayTexts {
                 no_providers_label: "(нет провайдеров)",
                 lightweight_mode: "Облегченный режим",
                 quit: "Выход",
-                _auto_label: "Авто (фейловер)",
+                _auto_label: "Авто (аварийное переключение)",
             },
             _ => Self {
                 show_main: "打开主界面",
