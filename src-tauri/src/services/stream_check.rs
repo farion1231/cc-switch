@@ -1109,8 +1109,23 @@ impl StreamCheckService {
         timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         let npm = Self::extract_opencode_npm(provider);
+        let explicit_base_url = Self::extract_opencode_base_url(provider);
         // 若用户未显式填 baseURL，则根据 npm 回退到 AI SDK 包自带的默认端点
         let base_url = Self::resolve_opencode_base_url(provider, npm.as_deref())?;
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+
+        if is_full_url && explicit_base_url.is_none() {
+            return Err(AppError::localized(
+                "opencode_full_url_requires_explicit_base_url",
+                "OpenCode 的 full URL 模式要求显式配置 `options.baseURL`，不能使用 SDK 回退默认端点。",
+                "OpenCode full URL mode requires an explicit `options.baseURL` and cannot use the SDK fallback endpoint.",
+            ));
+        }
+
         let api_key = Self::extract_opencode_api_key(provider)?;
         let extra_headers = Self::extract_opencode_headers(provider);
 
@@ -1941,6 +1956,36 @@ mod tests {
 
         assert_eq!(result.0, 200);
         assert_eq!(server.wait_for_path().await, "/custom/responses");
+    }
+
+    #[tokio::test]
+    async fn opencode_full_url_with_fallback_base_url_returns_helpful_error() {
+        let mut provider = make_provider(serde_json::json!({
+            "npm": "@ai-sdk/openai",
+            "options": {
+                "apiKey": "k",
+            },
+            "models": {},
+        }));
+        provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..ProviderMeta::default()
+        });
+
+        let client = crate::proxy::http_client::get();
+        let error = StreamCheckService::check_opencode_stream(
+            &client,
+            &provider,
+            "gpt-5.4",
+            "ping",
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("full URL"));
+        assert!(error_text.contains("baseURL"));
     }
 
     #[test]
