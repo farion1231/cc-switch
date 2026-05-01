@@ -238,6 +238,50 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
+  it("warns but still switches OpenCode full URL providers when proxy is not running", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        isFullUrl: true,
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("opencode", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("warns but still switches OpenClaw full URL providers when proxy is not running", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        isFullUrl: true,
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("openclaw", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     settingsApiGetMock.mockResolvedValueOnce({

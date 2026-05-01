@@ -173,7 +173,10 @@ export function useProviderActions(
           });
         } else if (
           provider.meta?.isFullUrl &&
-          (activeApp === "claude" || activeApp === "codex")
+          (activeApp === "claude" ||
+            activeApp === "codex" ||
+            activeApp === "opencode" ||
+            activeApp === "openclaw")
         ) {
           proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
             defaultValue: "开启了完整 URL 连接模式",
