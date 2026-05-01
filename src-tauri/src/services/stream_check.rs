@@ -1517,6 +1517,10 @@ impl StreamCheckService {
 mod tests {
     use super::*;
     use crate::provider::ProviderMeta;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
 
     fn make_provider(settings_config: serde_json::Value) -> Provider {
         Provider::with_id(
@@ -1525,6 +1529,95 @@ mod tests {
             settings_config,
             None,
         )
+    }
+
+    struct TestServer {
+        base_url: String,
+        captured_path: Arc<Mutex<Option<String>>>,
+        handle: JoinHandle<()>,
+    }
+
+    impl TestServer {
+        async fn wait_for_path(self) -> String {
+            self.handle.await.unwrap();
+            self.captured_path
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("server should capture request path")
+        }
+    }
+
+    async fn start_test_server() -> TestServer {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let captured_path = Arc::new(Mutex::new(None));
+        let captured_path_for_task = Arc::clone(&captured_path);
+
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0_u8; 8192];
+            let mut received = 0_usize;
+            let header_end;
+            loop {
+                let read = socket.read(&mut buf[received..]).await.unwrap();
+                assert!(read > 0, "request closed before headers were complete");
+                received += read;
+                if let Some(pos) = buf[..received]
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                {
+                    header_end = pos + 4;
+                    break;
+                }
+                if received == buf.len() {
+                    buf.resize(buf.len() * 2, 0);
+                }
+            }
+
+            let headers = String::from_utf8_lossy(&buf[..header_end]);
+            let request_line = headers.lines().next().unwrap();
+            let path = request_line
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .to_string();
+            *captured_path_for_task.lock().unwrap() = Some(path);
+
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+
+            while received < header_end + content_length {
+                if received == buf.len() {
+                    buf.resize(buf.len() * 2, 0);
+                }
+                let read = socket.read(&mut buf[received..]).await.unwrap();
+                assert!(read > 0, "request closed before body was complete");
+                received += read;
+            }
+
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nok",
+                )
+                .await
+                .unwrap();
+        });
+
+        TestServer {
+            base_url: format!("http://127.0.0.1:{}", addr.port()),
+            captured_path,
+            handle,
+        }
     }
 
     #[test]
@@ -1794,10 +1887,11 @@ mod tests {
         assert_eq!(url, "https://relay.example/v1/chat/completions");
     }
 
-    #[test]
-    fn test_resolve_claude_stream_url_for_openclaw_full_url_uses_configured_url() {
+    #[tokio::test]
+    async fn test_openclaw_full_url_uses_configured_url() {
+        let server = start_test_server().await;
         let mut provider = make_provider(serde_json::json!({
-            "baseUrl": "https://relay.example/custom/chat/completions",
+            "baseUrl": format!("{}/custom/chat/completions", server.base_url),
             "apiKey": "k",
             "api": "openai-completions",
             "models": [],
@@ -1807,28 +1901,28 @@ mod tests {
             ..ProviderMeta::default()
         });
 
-        let base_url = StreamCheckService::extract_openclaw_base_url(&provider).unwrap();
-        let url = StreamCheckService::resolve_claude_stream_url(
-            &base_url,
-            AuthStrategy::Bearer,
-            "openai_chat",
-            provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.is_full_url)
-                .unwrap_or(false),
+        let client = crate::proxy::http_client::get();
+        let result = StreamCheckService::check_additive_app_stream(
+            &client,
+            &provider,
             "gpt-5.4",
-        );
+            "ping",
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(url, "https://relay.example/custom/chat/completions");
+        assert_eq!(result.0, 200);
+        assert_eq!(server.wait_for_path().await, "/custom/chat/completions");
     }
 
-    #[test]
-    fn test_resolve_claude_stream_url_for_opencode_full_url_uses_configured_url() {
+    #[tokio::test]
+    async fn test_opencode_full_url_uses_configured_url() {
+        let server = start_test_server().await;
         let mut provider = make_provider(serde_json::json!({
             "npm": "@ai-sdk/openai",
             "options": {
-                "baseURL": "https://relay.example/custom/responses",
+                "baseURL": format!("{}/custom/responses", server.base_url),
                 "apiKey": "k",
             },
             "models": {},
@@ -1838,22 +1932,19 @@ mod tests {
             ..ProviderMeta::default()
         });
 
-        let base_url =
-            StreamCheckService::resolve_opencode_base_url(&provider, Some("@ai-sdk/openai"))
-                .unwrap();
-        let url = StreamCheckService::resolve_claude_stream_url(
-            &base_url,
-            AuthStrategy::Bearer,
-            "openai_responses",
-            provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.is_full_url)
-                .unwrap_or(false),
+        let client = crate::proxy::http_client::get();
+        let result = StreamCheckService::check_opencode_stream(
+            &client,
+            &provider,
             "gpt-5.4",
-        );
+            "ping",
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(url, "https://relay.example/custom/responses");
+        assert_eq!(result.0, 200);
+        assert_eq!(server.wait_for_path().await, "/custom/responses");
     }
 
     #[test]
