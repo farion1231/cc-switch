@@ -1091,6 +1091,26 @@ export function ProviderForm({
       settingsConfig = values.settingsConfig.trim();
     }
 
+    let submittedSettingsConfig: Record<string, unknown> | null = null;
+    try {
+      submittedSettingsConfig = JSON.parse(settingsConfig) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      submittedSettingsConfig = null;
+    }
+
+    const submittedOpencodeNpm =
+      typeof submittedSettingsConfig?.npm === "string"
+        ? submittedSettingsConfig.npm
+        : opencodeForm.opencodeNpm;
+
+    const submittedOpenclawApi =
+      typeof submittedSettingsConfig?.api === "string"
+        ? submittedSettingsConfig.api
+        : openclawForm.openclawApi;
+
     const payload: ProviderFormValues = {
       ...values,
       name: values.name.trim(),
@@ -1233,8 +1253,8 @@ export function ProviderForm({
       isFullUrl: shouldPersistFullUrl({
         appId,
         category,
-        opencodeNpm: opencodeForm.opencodeNpm,
-        openclawApi: openclawForm.openclawApi,
+        opencodeNpm: submittedOpencodeNpm,
+        openclawApi: submittedOpenclawApi,
         isFullUrl: localIsFullUrl,
       })
         ? true

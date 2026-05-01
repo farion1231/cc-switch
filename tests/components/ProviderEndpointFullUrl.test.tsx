@@ -48,7 +48,20 @@ vi.mock("@/components/providers/forms/ProviderAdvancedConfig", () => ({
 }));
 
 vi.mock("@/components/ConfirmDialog", () => ({
-  ConfirmDialog: () => null,
+  ConfirmDialog: ({
+    isOpen,
+    confirmText,
+    onConfirm,
+  }: {
+    isOpen?: boolean;
+    confirmText?: string;
+    onConfirm?: () => void | Promise<void>;
+  }) =>
+    isOpen ? (
+      <button type="button" onClick={() => void onConfirm?.()}>
+        {confirmText ?? "确认"}
+      </button>
+    ) : null,
 }));
 
 function renderWithQueryClient(ui: ReactElement) {
@@ -86,6 +99,73 @@ function renderProviderForm(
 }
 
 describe("Provider endpoint full URL wiring", () => {
+  it("OpenCode submit does not persist full URL after JSON editor changes npm to unsupported value", async () => {
+    const handleSubmit = vi.fn();
+
+    renderWithQueryClient(
+      <ProviderForm
+        appId="opencode"
+        submitLabel="保存"
+        onSubmit={handleSubmit}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("provider.name"), {
+      target: {
+        value: "OpenCode Submit",
+      },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("opencode.providerKeyPlaceholder"),
+      {
+        target: {
+          value: "opencode-test-key",
+        },
+      },
+    );
+    fireEvent.click(screen.getByLabelText("完整 URL"));
+
+    fireEvent.change(screen.getByLabelText("settings config"), {
+      target: {
+        value: JSON.stringify(
+          {
+            npm: "@ai-sdk/google",
+            options: {
+              baseURL: "https://example.com/v1beta",
+              apiKey: "sk-test",
+            },
+            models: {
+              "gemini-2.5-pro": {},
+            },
+          },
+          null,
+          2,
+        ),
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    const saveAnywayButton = await screen
+      .findByRole("button", {
+        name: /providerForm\.softValidation\.saveAnyway|仍要保存/,
+      })
+      .catch(() => null);
+    if (saveAnywayButton) {
+      fireEvent.click(saveAnywayButton);
+    }
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+
+    expect(handleSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.not.objectContaining({
+          isFullUrl: true,
+        }),
+      }),
+    );
+  });
+
   it("OpenCode shows full URL toggle and forwards isFullUrl=true for supported npm packages", async () => {
     fetchModelsForConfigMock.mockResolvedValueOnce([]);
 
