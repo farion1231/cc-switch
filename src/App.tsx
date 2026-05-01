@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -88,6 +88,8 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { ProfileSwitcher } from "@/components/ProfileSwitcher";
+import { useSettings } from "@/hooks/useSettings";
 
 type View =
   | "providers"
@@ -173,6 +175,11 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  const {
+    profiles,
+    activeProfileId,
+    switchProfile,
+  } = useSettings();
   const useAppWindowControls =
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
@@ -642,6 +649,24 @@ function App() {
       toast.error(detail);
     }
   };
+
+  const handleProfileSwitch = useCallback(
+    async (id: string) => {
+      await switchProfile(id);
+      // Refresh providers query for current app
+      await queryClient.invalidateQueries({
+        queryKey: ["providers", activeApp],
+      });
+      await refetch();
+      // Update tray menu
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (error) {
+        console.warn("[App] Failed to update tray menu after profile switch", error);
+      }
+    },
+    [switchProfile, queryClient, activeApp, refetch],
+  );
 
   const handleEditProvider = async ({
     provider,
@@ -1194,6 +1219,13 @@ function App() {
                     CC Switch
                   </a>
                 </div>
+                {profiles.length > 0 && (
+                  <ProfileSwitcher
+                    profiles={profiles}
+                    activeProfileId={activeProfileId}
+                    onSwitchProfile={handleProfileSwitch}
+                  />
+                )}
                 <Button
                   variant="ghost"
                   size="icon"

@@ -56,50 +56,6 @@ export function DirectorySettings({
 
   return (
     <div className="space-y-6">
-      {/* Profile 选择器 */}
-      {profiles && profiles.length > 0 && (
-        <div className="rounded-lg border border-border/50 p-4">
-          <h3 className="mb-3 text-sm font-medium text-muted-foreground">
-            环境配置集
-          </h3>
-          <div className="flex gap-2">
-            <select
-              value={activeProfileId || ""}
-              onChange={(e) => onSwitchProfile?.(e.target.value)}
-              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => {
-                const name = prompt("Profile 名称:");
-                if (name) onCreateProfile?.(name);
-              }}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
-            >
-              新建
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (activeProfileId && profiles.length > 1) {
-                  onDeleteProfile?.(activeProfileId);
-                }
-              }}
-              disabled={!activeProfileId || profiles.length <= 1}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
-            >
-              删除
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* CC Switch 配置目录 - 独立区块 */}
       <section className="space-y-4">
         <header className="space-y-1">
@@ -147,6 +103,50 @@ export function DirectorySettings({
             {t("settings.configDirectoryDescription")}
           </p>
         </header>
+
+        {/* Profile 选择器 - 放在配置目录覆盖区块内，Claude Code 配置目录前面 */}
+        {profiles && profiles.length > 0 && (
+          <div className="rounded-lg border border-border/50 p-4">
+            <h4 className="mb-3 text-sm font-medium text-muted-foreground">
+              环境配置集
+            </h4>
+            <div className="flex gap-2">
+              <select
+                value={activeProfileId || ""}
+                onChange={(e) => onSwitchProfile?.(e.target.value)}
+                className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                {profiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  const name = prompt("Profile 名称:");
+                  if (name) onCreateProfile?.(name);
+                }}
+                className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
+              >
+                新建
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeProfileId && profiles.length > 1) {
+                    onDeleteProfile?.(activeProfileId);
+                  }
+                }}
+                disabled={!activeProfileId || profiles.length <= 1}
+                className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        )}
 
         <DirectoryInput
           label={t("settings.claudeConfigDir")}

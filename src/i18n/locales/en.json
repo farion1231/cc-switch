@@ -97,6 +97,13 @@
     "windowRestore": "Restore window",
     "windowClose": "Close window"
   },
+  "profileSwitcher": {
+    "title": "Environment Profile",
+    "manage": "Manage Profiles",
+    "noProfile": "Default",
+    "switchSuccess": "Switched to {{name}}",
+    "switchFailed": "Failed to switch profile"
+  },
   "provider": {
     "tabProvider": "Provider",
     "tabUniversal": "Universal",

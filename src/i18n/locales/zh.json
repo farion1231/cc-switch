@@ -97,6 +97,13 @@
     "windowRestore": "还原窗口",
     "windowClose": "关闭窗口"
   },
+  "profileSwitcher": {
+    "title": "环境配置集",
+    "manage": "管理配置集",
+    "noProfile": "默认",
+    "switchSuccess": "已切换到 {{name}}",
+    "switchFailed": "切换配置集失败"
+  },
   "provider": {
     "tabProvider": "供应商",
     "tabUniversal": "统一供应商",
