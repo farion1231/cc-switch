@@ -16,7 +16,9 @@ use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
-use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
+use crate::proxy::providers::{
+    get_adapter, AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter,
+};
 
 /// 健康状态枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -433,12 +435,13 @@ impl StreamCheckService {
             let os_name = Self::get_os_name();
             let arch_name = Self::get_arch_name();
 
-            request_builder =
-                request_builder.header("authorization", format!("Bearer {}", auth.api_key));
-
-            // Only Anthropic official strategy adds x-api-key
-            if auth.strategy == AuthStrategy::Anthropic {
-                request_builder = request_builder.header("x-api-key", &auth.api_key);
+            // 鉴权头复用 ClaudeAdapter::get_auth_headers，与代理路径（forwarder）保持单一真理来源。
+            // - AuthStrategy::Anthropic  → x-api-key
+            // - AuthStrategy::ClaudeAuth → Authorization: Bearer
+            // - AuthStrategy::Bearer     → Authorization: Bearer
+            // 避免之前"无条件 Bearer + 条件 x-api-key 双发"导致的假阴性 / auth conflict。
+            for (name, value) in ClaudeAdapter::new().get_auth_headers(auth) {
+                request_builder = request_builder.header(name, value);
             }
 
             request_builder = request_builder
