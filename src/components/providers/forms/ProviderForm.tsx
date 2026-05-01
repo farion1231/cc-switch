@@ -695,6 +695,7 @@ export function ProviderForm({
       openclawForm.openclawApi,
     ],
   );
+  const effectiveIsFullUrl = supportsFullUrl && localIsFullUrl;
   const {
     data: openclawLiveProviderIds = [],
     isLoading: isOpenclawLiveProviderIdsLoading,
@@ -1920,7 +1921,7 @@ export function ProviderForm({
               baseUrl={opencodeForm.opencodeBaseUrl}
               onBaseUrlChange={opencodeForm.handleOpencodeBaseUrlChange}
               showFullUrlToggle={supportsFullUrl}
-              isFullUrl={localIsFullUrl}
+              isFullUrl={effectiveIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
               models={opencodeForm.opencodeModels}
               onModelsChange={opencodeForm.handleOpencodeModelsChange}
@@ -1957,7 +1958,7 @@ export function ProviderForm({
               baseUrl={openclawForm.openclawBaseUrl}
               onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
               showFullUrlToggle={supportsFullUrl}
-              isFullUrl={localIsFullUrl}
+              isFullUrl={effectiveIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
               apiKey={openclawForm.openclawApiKey}
               onApiKeyChange={openclawForm.handleOpenclawApiKeyChange}

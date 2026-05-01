@@ -122,7 +122,9 @@ describe("Provider endpoint full URL wiring", () => {
     );
   });
 
-  it("OpenCode hides the full URL toggle for unsupported npm packages", () => {
+  it("OpenCode hides the full URL toggle for unsupported npm packages and fetches with full URL disabled", async () => {
+    fetchModelsForConfigMock.mockResolvedValueOnce([]);
+
     renderProviderForm("opencode", {
       name: "OpenCode Unsupported",
       category: "custom",
@@ -140,6 +142,20 @@ describe("Provider endpoint full URL wiring", () => {
     });
 
     expect(screen.queryByLabelText("完整 URL")).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "providerForm.fetchModels",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(fetchModelsForConfigMock).toHaveBeenCalledWith(
+        "https://example.com/v1beta",
+        "sk-test",
+        false,
+      ),
+    );
   });
 
   it("OpenClaw shows full URL toggle and forwards isFullUrl=true for supported protocols", async () => {
@@ -176,7 +192,9 @@ describe("Provider endpoint full URL wiring", () => {
     );
   });
 
-  it("OpenClaw hides the full URL toggle for unsupported protocols", () => {
+  it("OpenClaw hides the full URL toggle for unsupported protocols and fetches with full URL disabled", async () => {
+    fetchModelsForConfigMock.mockResolvedValueOnce([]);
+
     renderProviderForm("openclaw", {
       name: "OpenClaw Unsupported",
       category: "custom",
@@ -192,5 +210,19 @@ describe("Provider endpoint full URL wiring", () => {
     });
 
     expect(screen.queryByLabelText("完整 URL")).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "providerForm.fetchModels",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(fetchModelsForConfigMock).toHaveBeenCalledWith(
+        "https://example.com/google",
+        "sk-openclaw",
+        false,
+      ),
+    );
   });
 });
