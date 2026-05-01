@@ -77,6 +77,15 @@ import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import {
   useDisableCurrentOmo,
@@ -626,6 +635,11 @@ function App() {
   }, []);
 
   const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
+  const [terminalLaunchOptions, setTerminalLaunchOptions] = useState<{
+    provider: Provider;
+    cwd: string;
+  } | null>(null);
+  const [bypassPermissions, setBypassPermissions] = useState(false);
   const openHermesWebUI = useOpenHermesWebUI(() =>
     setLaunchDashboardOpen(true),
   );
@@ -811,8 +825,29 @@ function App() {
         return;
       }
 
+      setTerminalLaunchOptions({ provider, cwd: selectedDir });
+      setBypassPermissions(false);
+    } catch (error) {
+      console.error("[App] Failed to open terminal", error);
+      const errorMessage = extractErrorMessage(error);
+      toast.error(
+        t("provider.terminalOpenFailed", {
+          defaultValue: "打开终端失败",
+        }) + (errorMessage ? `: ${errorMessage}` : ""),
+      );
+    }
+  };
+
+  const handleConfirmTerminalLaunch = async () => {
+    if (!terminalLaunchOptions) return;
+    const { provider, cwd } = terminalLaunchOptions;
+    const bypass = bypassPermissions;
+    setTerminalLaunchOptions(null);
+    setBypassPermissions(false);
+    try {
       await providersApi.openTerminal(provider.id, activeApp, {
-        cwd: selectedDir,
+        cwd,
+        bypassPermissions: bypass || undefined,
       });
       toast.success(
         t("provider.terminalOpened", {
@@ -1626,6 +1661,63 @@ function App() {
         }}
         onCancel={() => setLaunchDashboardOpen(false)}
       />
+
+      <Dialog
+        open={Boolean(terminalLaunchOptions)}
+        onOpenChange={(open) => {
+          if (!open) setTerminalLaunchOptions(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader className="space-y-3 border-b-0 bg-transparent pb-0">
+            <DialogTitle className="text-lg font-semibold">
+              {t("provider.openTerminal", { defaultValue: "打开终端" })}
+            </DialogTitle>
+            <DialogDescription className="text-sm leading-relaxed">
+              {t("provider.terminalLaunchDescription", {
+                defaultValue: "使用该供应商配置启动 Claude Code 终端。",
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-start gap-2 px-6 py-2">
+            <Checkbox
+              id="bypass-permissions"
+              checked={bypassPermissions}
+              onCheckedChange={(checked) =>
+                setBypassPermissions(checked === true)
+              }
+              className="mt-0.5"
+            />
+            <label
+              htmlFor="bypass-permissions"
+              className="text-sm leading-snug cursor-pointer"
+            >
+              {t("provider.bypassPermissions", {
+                defaultValue: "跳过权限检查 (--dangerously-skip-permissions)",
+              })}
+            </label>
+          </div>
+          {bypassPermissions && (
+            <p className="text-xs text-destructive px-6 pb-1">
+              {t("provider.bypassPermissionsWarning", {
+                defaultValue:
+                  "警告：此选项将禁用所有权限提示和安全检查，仅在可信环境中使用。",
+              })}
+            </p>
+          )}
+          <DialogFooter className="flex gap-2 border-t-0 bg-transparent pt-2 sm:justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setTerminalLaunchOptions(null)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={handleConfirmTerminalLaunch}>
+              {t("provider.launchTerminal", { defaultValue: "启动" })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <DeepLinkImportDialog />
       <FirstRunNoticeDialog />

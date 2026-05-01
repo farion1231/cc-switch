@@ -23,6 +23,7 @@ export interface SwitchResult {
 
 export interface OpenTerminalOptions {
   cwd?: string;
+  bypassPermissions?: boolean;
 }
 
 export const providersApi = {
@@ -104,11 +105,12 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
-    const { cwd } = options ?? {};
+    const { cwd, bypassPermissions } = options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
+      bypassPermissions,
     });
   },
 
