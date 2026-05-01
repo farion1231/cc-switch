@@ -639,6 +639,27 @@ pub fn get_hermes_override_dir() -> Option<PathBuf> {
 /// 如果本地没有设置，调用者应该 fallback 到数据库的 `is_current` 字段。
 pub fn get_current_provider(app_type: &AppType) -> Option<String> {
     let settings = settings_store().read().ok()?;
+    // Priority: active profile fields > top-level fields
+    if let Some(active_id) = &settings.active_config_dir_profile_id {
+        if let Some(profile) = settings
+            .config_dir_profiles
+            .iter()
+            .find(|p| &p.id == active_id)
+        {
+            let value = match app_type {
+                AppType::Claude => &profile.current_provider_claude,
+                AppType::Codex => &profile.current_provider_codex,
+                AppType::Gemini => &profile.current_provider_gemini,
+                AppType::OpenCode => &profile.current_provider_opencode,
+                AppType::OpenClaw => &profile.current_provider_openclaw,
+                AppType::Hermes => &profile.current_provider_hermes,
+            };
+            if let Some(v) = value {
+                return Some(v.clone());
+            }
+        }
+    }
+    // Fallback to top-level fields for backward compatibility
     match app_type {
         AppType::Claude => settings.current_provider_claude.clone(),
         AppType::Codex => settings.current_provider_codex.clone(),
@@ -655,13 +676,36 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
 /// 传入 `None` 会清除当前供应商设置。
 pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), AppError> {
     let id_owned = id.map(|s| s.to_string());
-    mutate_settings(|settings| match app_type {
-        AppType::Claude => settings.current_provider_claude = id_owned.clone(),
-        AppType::Codex => settings.current_provider_codex = id_owned.clone(),
-        AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
-        AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
-        AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
-        AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
+    let cloned_app_type = app_type.clone();
+    let cloned_id = id_owned.clone();
+    mutate_settings(|settings| {
+        // If there's an active profile, update the profile's fields
+        if let Some(active_id) = &settings.active_config_dir_profile_id {
+            if let Some(profile) = settings
+                .config_dir_profiles
+                .iter_mut()
+                .find(|p| &p.id == active_id)
+            {
+                match cloned_app_type {
+                    AppType::Claude => profile.current_provider_claude = cloned_id.clone(),
+                    AppType::Codex => profile.current_provider_codex = cloned_id.clone(),
+                    AppType::Gemini => profile.current_provider_gemini = cloned_id.clone(),
+                    AppType::OpenCode => profile.current_provider_opencode = cloned_id.clone(),
+                    AppType::OpenClaw => profile.current_provider_openclaw = cloned_id.clone(),
+                    AppType::Hermes => profile.current_provider_hermes = cloned_id.clone(),
+                }
+                return;
+            }
+        }
+        // Fallback to top-level fields for backward compatibility
+        match cloned_app_type {
+            AppType::Claude => settings.current_provider_claude = cloned_id.clone(),
+            AppType::Codex => settings.current_provider_codex = cloned_id.clone(),
+            AppType::Gemini => settings.current_provider_gemini = cloned_id.clone(),
+            AppType::OpenCode => settings.current_provider_opencode = cloned_id.clone(),
+            AppType::OpenClaw => settings.current_provider_openclaw = cloned_id.clone(),
+            AppType::Hermes => settings.current_provider_hermes = cloned_id.clone(),
+        }
     })
 }
 
@@ -917,5 +961,25 @@ mod tests {
         let s = AppSettings::default();
         assert!(s.config_dir_profiles.is_empty());
         assert!(s.active_config_dir_profile_id.is_none());
+    }
+
+    #[test]
+    fn test_get_current_provider_fallbacks_to_top_level() {
+        // Without any profiles, get_current_provider should fallback to
+        // the top-level field (whatever its current value is).
+        // Verify the fallback path is taken by checking that the result
+        // matches the top-level field, not a profile field.
+        let settings = get_settings();
+        // If there's no active profile, we're guaranteed to use the top-level fallback path
+        if settings.active_config_dir_profile_id.is_none()
+            || settings
+                .config_dir_profiles
+                .iter()
+                .find(|p| Some(&p.id) == settings.active_config_dir_profile_id.as_ref())
+                .is_none()
+        {
+            let result = get_current_provider(&AppType::Claude);
+            assert_eq!(result, settings.current_provider_claude);
+        }
     }
 }
