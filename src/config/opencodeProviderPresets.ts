@@ -485,7 +485,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
-    websiteUrl: "https://www.kimi.com/coding/docs/",
+    websiteUrl: "https://www.kimi.com/code/docs/",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",

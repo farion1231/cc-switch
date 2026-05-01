@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
-use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+use crate::codex_config::{
+    get_codex_auth_path, get_codex_config_path, write_codex_live_atomic_with_stable_provider,
+};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
@@ -528,29 +530,55 @@ pub(crate) fn strip_common_config_from_live_settings(
                 app_type.as_str(),
                 provider.id
             );
-            return live_settings;
+            return restore_live_settings_for_provider_backfill(app_type, provider, live_settings);
         }
     };
 
-    if !provider_uses_common_config(app_type, provider, snippet.as_deref()) {
-        return live_settings;
-    }
-
-    let Some(snippet_text) = snippet.as_deref() else {
-        return live_settings;
+    let backfill_settings = if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
+        match snippet.as_deref() {
+            Some(snippet_text) => {
+                match remove_common_config_from_settings(app_type, &live_settings, snippet_text) {
+                    Ok(settings) => settings,
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to strip common config for {} provider '{}': {err}",
+                            app_type.as_str(),
+                            provider.id
+                        );
+                        live_settings
+                    }
+                }
+            }
+            None => live_settings,
+        }
+    } else {
+        live_settings
     };
 
-    match remove_common_config_from_settings(app_type, &live_settings, snippet_text) {
-        Ok(settings) => settings,
-        Err(err) => {
-            log::warn!(
-                "Failed to strip common config for {} provider '{}': {err}",
-                app_type.as_str(),
-                provider.id
-            );
-            live_settings
-        }
+    restore_live_settings_for_provider_backfill(app_type, provider, backfill_settings)
+}
+
+fn restore_live_settings_for_provider_backfill(
+    app_type: &AppType,
+    provider: &Provider,
+    live_settings: Value,
+) -> Value {
+    if !matches!(app_type, AppType::Codex) {
+        return live_settings;
     }
+
+    let mut settings = live_settings;
+    if let Err(err) = crate::codex_config::restore_codex_settings_config_model_provider_for_backfill(
+        &mut settings,
+        &provider.settings_config,
+    ) {
+        log::warn!(
+            "Failed to restore Codex provider id while backfilling '{}': {err}",
+            provider.id
+        );
+    }
+
+    settings
 }
 
 pub(crate) fn normalize_provider_common_config_for_storage(
@@ -683,10 +711,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
             })?;
 
-            let auth_path = get_codex_auth_path();
-            write_json_file(&auth_path, auth)?;
-            let config_path = get_codex_config_path();
-            std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
+            write_codex_live_atomic_with_stable_provider(auth, Some(config_str))?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly

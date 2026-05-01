@@ -151,6 +151,110 @@ fn import_mcp_from_claude_creates_config_and_enables_servers() {
 }
 
 #[test]
+fn import_mcp_from_codex_does_not_rewrite_codex_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let config_path = codex_dir.join("config.toml");
+    let original = r#"# keep user formatting intact
+model = "gpt-5"
+
+[mcp.servers.legacy]
+type = "stdio"
+command = "echo"
+
+[mcp_servers.echo]
+type = "stdio"
+command = "echo"
+"#;
+    fs::write(&config_path, original).expect("seed codex config");
+
+    let state = create_test_state().expect("create test state");
+    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    assert!(changed > 0, "should import servers from Codex config");
+
+    let after = fs::read_to_string(&config_path).expect("read codex config");
+    assert_eq!(
+        after, original,
+        "importing from Codex should not rewrite ~/.codex/config.toml"
+    );
+}
+
+#[test]
+fn import_mcp_from_claude_does_not_sync_existing_codex_enabled_server() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let codex_config_path = codex_dir.join("config.toml");
+    let codex_original = r#"[mcp.servers.keep_me]
+type = "stdio"
+command = "echo"
+"#;
+    fs::write(&codex_config_path, codex_original).expect("seed codex config");
+
+    let claude_json = json!({
+        "mcpServers": {
+            "shared": {
+                "type": "stdio",
+                "command": "echo"
+            }
+        }
+    });
+    fs::write(
+        get_claude_mcp_path(),
+        serde_json::to_string_pretty(&claude_json).expect("serialize claude mcp"),
+    )
+    .expect("seed claude mcp");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "shared".to_string(),
+            name: "shared".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("seed existing mcp server");
+
+    let changed = McpService::import_from_claude(&state).expect("import from claude");
+    assert_eq!(changed, 0, "existing server should not count as new");
+
+    let after = fs::read_to_string(&codex_config_path).expect("read codex config");
+    assert_eq!(
+        after, codex_original,
+        "importing from Claude should not sync an existing Codex-enabled server"
+    );
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let shared = servers.get("shared").expect("shared server exists");
+    assert!(
+        shared.apps.claude,
+        "import should enable Claude in database"
+    );
+    assert!(shared.apps.codex, "existing Codex flag should be preserved");
+}
+
+#[test]
 fn import_mcp_from_claude_invalid_json_preserves_state() {
     use support::create_test_state;
 
