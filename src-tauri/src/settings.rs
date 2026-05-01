@@ -446,6 +446,7 @@ impl AppSettings {
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(mut settings) => {
                     settings.normalize_paths();
+                    Self::migrate_legacy_fields_to_profile(&mut settings);
                     settings
                 }
                 Err(err) => {
@@ -460,6 +461,55 @@ impl AppSettings {
         } else {
             Self::default()
         }
+    }
+
+    /// Migrate legacy top-level config dir and current provider fields to a default profile.
+    /// Called during settings load when config_dir_profiles is empty but legacy fields exist.
+    fn migrate_legacy_fields_to_profile(settings: &mut AppSettings) {
+        // Only migrate when no profiles exist
+        if !settings.config_dir_profiles.is_empty() {
+            return;
+        }
+
+        // Only migrate when there's at least one legacy field with a value
+        let has_legacy_dirs = settings.claude_config_dir.is_some()
+            || settings.codex_config_dir.is_some()
+            || settings.gemini_config_dir.is_some()
+            || settings.opencode_config_dir.is_some()
+            || settings.openclaw_config_dir.is_some()
+            || settings.hermes_config_dir.is_some();
+        let has_legacy_providers = settings.current_provider_claude.is_some()
+            || settings.current_provider_codex.is_some()
+            || settings.current_provider_gemini.is_some()
+            || settings.current_provider_opencode.is_some()
+            || settings.current_provider_openclaw.is_some()
+            || settings.current_provider_hermes.is_some();
+
+        if !has_legacy_dirs && !has_legacy_providers {
+            return;
+        }
+
+        let profile = ConfigDirProfile {
+            id: "default".to_string(),
+            name: "默认".to_string(),
+            claude: settings.claude_config_dir.clone(),
+            codex: settings.codex_config_dir.clone(),
+            gemini: settings.gemini_config_dir.clone(),
+            opencode: settings.opencode_config_dir.clone(),
+            openclaw: settings.openclaw_config_dir.clone(),
+            hermes: settings.hermes_config_dir.clone(),
+            current_provider_claude: settings.current_provider_claude.clone(),
+            current_provider_codex: settings.current_provider_codex.clone(),
+            current_provider_gemini: settings.current_provider_gemini.clone(),
+            current_provider_opencode: settings.current_provider_opencode.clone(),
+            current_provider_openclaw: settings.current_provider_openclaw.clone(),
+            current_provider_hermes: settings.current_provider_hermes.clone(),
+        };
+
+        settings.config_dir_profiles.push(profile);
+        settings.active_config_dir_profile_id = Some("default".to_string());
+
+        log::info!("已将旧配置目录和供应商设置迁移到 '默认' Profile");
     }
 }
 
@@ -571,6 +621,7 @@ where
     Ok(())
 }
 
+
 /// 从文件重新加载设置到内存缓存
 /// 用于导入配置等场景，确保内存缓存与文件同步
 pub fn reload_settings() -> Result<(), AppError> {
@@ -585,6 +636,18 @@ pub fn reload_settings() -> Result<(), AppError> {
 
 pub fn get_claude_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    // Priority: active profile field > top-level field
+    if let Some(active_id) = &settings.active_config_dir_profile_id {
+        if let Some(profile) = settings
+            .config_dir_profiles
+            .iter()
+            .find(|p| &p.id == active_id)
+        {
+            if let Some(path) = &profile.claude {
+                return Some(resolve_override_path(path));
+            }
+        }
+    }
     settings
         .claude_config_dir
         .as_ref()
@@ -593,6 +656,18 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
 
 pub fn get_codex_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    // Priority: active profile field > top-level field
+    if let Some(active_id) = &settings.active_config_dir_profile_id {
+        if let Some(profile) = settings
+            .config_dir_profiles
+            .iter()
+            .find(|p| &p.id == active_id)
+        {
+            if let Some(path) = &profile.codex {
+                return Some(resolve_override_path(path));
+            }
+        }
+    }
     settings
         .codex_config_dir
         .as_ref()
@@ -601,6 +676,18 @@ pub fn get_codex_override_dir() -> Option<PathBuf> {
 
 pub fn get_gemini_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    // Priority: active profile field > top-level field
+    if let Some(active_id) = &settings.active_config_dir_profile_id {
+        if let Some(profile) = settings
+            .config_dir_profiles
+            .iter()
+            .find(|p| &p.id == active_id)
+        {
+            if let Some(path) = &profile.gemini {
+                return Some(resolve_override_path(path));
+            }
+        }
+    }
     settings
         .gemini_config_dir
         .as_ref()
@@ -609,6 +696,18 @@ pub fn get_gemini_override_dir() -> Option<PathBuf> {
 
 pub fn get_opencode_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    // Priority: active profile field > top-level field
+    if let Some(active_id) = &settings.active_config_dir_profile_id {
+        if let Some(profile) = settings
+            .config_dir_profiles
+            .iter()
+            .find(|p| &p.id == active_id)
+        {
+            if let Some(path) = &profile.opencode {
+                return Some(resolve_override_path(path));
+            }
+        }
+    }
     settings
         .opencode_config_dir
         .as_ref()
@@ -617,6 +716,18 @@ pub fn get_opencode_override_dir() -> Option<PathBuf> {
 
 pub fn get_openclaw_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    // Priority: active profile field > top-level field
+    if let Some(active_id) = &settings.active_config_dir_profile_id {
+        if let Some(profile) = settings
+            .config_dir_profiles
+            .iter()
+            .find(|p| &p.id == active_id)
+        {
+            if let Some(path) = &profile.openclaw {
+                return Some(resolve_override_path(path));
+            }
+        }
+    }
     settings
         .openclaw_config_dir
         .as_ref()
@@ -625,6 +736,18 @@ pub fn get_openclaw_override_dir() -> Option<PathBuf> {
 
 pub fn get_hermes_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    // Priority: active profile field > top-level field
+    if let Some(active_id) = &settings.active_config_dir_profile_id {
+        if let Some(profile) = settings
+            .config_dir_profiles
+            .iter()
+            .find(|p| &p.id == active_id)
+        {
+            if let Some(path) = &profile.hermes {
+                return Some(resolve_override_path(path));
+            }
+        }
+    }
     settings
         .hermes_config_dir
         .as_ref()
@@ -981,5 +1104,77 @@ mod tests {
             let result = get_current_provider(&AppType::Claude);
             assert_eq!(result, settings.current_provider_claude);
         }
+    }
+
+    #[test]
+    fn test_migrate_legacy_fields_creates_default_profile() {
+        let mut s = AppSettings::default();
+        s.claude_config_dir = Some("/path/to/.claude".to_string());
+        s.current_provider_claude = Some("provider-1".to_string());
+        assert!(s.config_dir_profiles.is_empty());
+
+        AppSettings::migrate_legacy_fields_to_profile(&mut s);
+
+        assert_eq!(s.config_dir_profiles.len(), 1);
+        assert_eq!(s.config_dir_profiles[0].id, "default");
+        assert_eq!(s.config_dir_profiles[0].claude, Some("/path/to/.claude".to_string()));
+        assert_eq!(s.config_dir_profiles[0].current_provider_claude, Some("provider-1".to_string()));
+        assert_eq!(s.active_config_dir_profile_id, Some("default".to_string()));
+    }
+
+    #[test]
+    fn test_migrate_skips_when_profiles_exist() {
+        let mut s = AppSettings::default();
+        s.claude_config_dir = Some("/path/to/.claude".to_string());
+        // Pre-existing profile
+        s.config_dir_profiles.push(ConfigDirProfile {
+            id: "existing".to_string(),
+            name: "Existing".to_string(),
+            claude: None,
+            codex: None,
+            gemini: None,
+            opencode: None,
+            openclaw: None,
+            hermes: None,
+            current_provider_claude: None,
+            current_provider_codex: None,
+            current_provider_gemini: None,
+            current_provider_opencode: None,
+            current_provider_openclaw: None,
+            current_provider_hermes: None,
+        });
+        assert_eq!(s.config_dir_profiles.len(), 1);
+
+        AppSettings::migrate_legacy_fields_to_profile(&mut s);
+
+        // Should NOT create another profile
+        assert_eq!(s.config_dir_profiles.len(), 1);
+    }
+
+    #[test]
+    fn test_migrate_includes_current_provider_fields() {
+        let mut s = AppSettings::default();
+        s.current_provider_gemini = Some("gemini-provider-xyz".to_string());
+        assert!(s.config_dir_profiles.is_empty());
+
+        AppSettings::migrate_legacy_fields_to_profile(&mut s);
+
+        assert_eq!(s.config_dir_profiles.len(), 1);
+        assert_eq!(
+            s.config_dir_profiles[0].current_provider_gemini,
+            Some("gemini-provider-xyz".to_string())
+        );
+    }
+
+    #[test]
+    fn test_migrate_empty_settings_does_nothing() {
+        let mut s = AppSettings::default();
+        assert!(s.config_dir_profiles.is_empty());
+
+        AppSettings::migrate_legacy_fields_to_profile(&mut s);
+
+        // No legacy fields, so no migration
+        assert!(s.config_dir_profiles.is_empty());
+        assert!(s.active_config_dir_profile_id.is_none());
     }
 }
