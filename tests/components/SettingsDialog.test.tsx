@@ -18,6 +18,7 @@ vi.mock("sonner", () => ({
 const tMock = vi.fn((key: string) => key);
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: tMock }),
+  initReactI18next: { type: "3rdParty", init: () => {} },
 }));
 
 vi.mock("@/hooks/useProxyStatus", () => ({

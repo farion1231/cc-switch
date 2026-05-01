@@ -18,6 +18,7 @@ vi.mock("react-i18next", () => ({
       language: "en",
     },
   }),
+  initReactI18next: { type: "3rdParty", init: () => {} },
 }));
 
 vi.mock("@/lib/query/usage", () => ({

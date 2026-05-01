@@ -60,7 +60,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       }
     }
     return normalizeLanguage(i18n.language);
-  }, [i18n]);
+  }, []);
 
   const syncLanguage = useCallback(
     (lang: Language) => {
@@ -69,7 +69,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         void i18n.changeLanguage(lang);
       }
     },
-    [i18n],
+    [],
   );
 
   // 初始化设置数据
