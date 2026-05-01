@@ -99,6 +99,10 @@ import {
   OPENCLAW_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
+import {
+  shouldPersistFullUrl,
+  supportsFullUrlMode,
+} from "./helpers/fullUrlSupport";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
@@ -191,9 +195,15 @@ export function ProviderForm({
   const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
     () => initialData?.meta?.endpointAutoSelect ?? true,
   );
-  const supportsFullUrl = appId === "claude" || appId === "codex";
   const [localIsFullUrl, setLocalIsFullUrl] = useState<boolean>(() => {
-    if (!supportsFullUrl) return false;
+    if (
+      appId !== "claude" &&
+      appId !== "codex" &&
+      appId !== "opencode" &&
+      appId !== "openclaw"
+    ) {
+      return false;
+    }
     return initialData?.meta?.isFullUrl ?? false;
   });
 
@@ -233,7 +243,12 @@ export function ProviderForm({
     }
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setLocalIsFullUrl(
-      supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
+      appId === "claude" ||
+        appId === "codex" ||
+        appId === "opencode" ||
+        appId === "openclaw"
+        ? (initialData?.meta?.isFullUrl ?? false)
+        : false,
     );
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setPricingConfig({
@@ -245,7 +260,7 @@ export function ProviderForm({
         initialData?.meta?.pricingModelSource,
       ),
     });
-  }, [appId, initialData, supportsFullUrl]);
+  }, [appId, initialData]);
 
   const defaultValues: ProviderFormData = useMemo(
     () => ({
@@ -665,6 +680,21 @@ export function ProviderForm({
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
+  const supportsFullUrl = useMemo(
+    () =>
+      supportsFullUrlMode({
+        appId,
+        category,
+        opencodeNpm: opencodeForm.opencodeNpm,
+        openclawApi: openclawForm.openclawApi,
+      }),
+    [
+      appId,
+      category,
+      opencodeForm.opencodeNpm,
+      openclawForm.openclawApi,
+    ],
+  );
   const {
     data: openclawLiveProviderIds = [],
     isLoading: isOpenclawLiveProviderIdsLoading,
@@ -1204,10 +1234,15 @@ export function ProviderForm({
         localApiKeyField !== "ANTHROPIC_AUTH_TOKEN"
           ? localApiKeyField
           : undefined,
-      isFullUrl:
-        supportsFullUrl && category !== "official" && localIsFullUrl
-          ? true
-          : undefined,
+      isFullUrl: shouldPersistFullUrl({
+        appId,
+        category,
+        opencodeNpm: opencodeForm.opencodeNpm,
+        openclawApi: openclawForm.openclawApi,
+        isFullUrl: localIsFullUrl,
+      })
+        ? true
+        : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -1884,6 +1919,9 @@ export function ProviderForm({
               partnerPromotionKey={opencodePartnerPromotionKey}
               baseUrl={opencodeForm.opencodeBaseUrl}
               onBaseUrlChange={opencodeForm.handleOpencodeBaseUrlChange}
+              showFullUrlToggle={supportsFullUrl}
+              isFullUrl={localIsFullUrl}
+              onFullUrlChange={setLocalIsFullUrl}
               models={opencodeForm.opencodeModels}
               onModelsChange={opencodeForm.handleOpencodeModelsChange}
               extraOptions={opencodeForm.opencodeExtraOptions}
@@ -1918,6 +1956,9 @@ export function ProviderForm({
             <OpenClawFormFields
               baseUrl={openclawForm.openclawBaseUrl}
               onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
+              showFullUrlToggle={supportsFullUrl}
+              isFullUrl={localIsFullUrl}
+              onFullUrlChange={setLocalIsFullUrl}
               apiKey={openclawForm.openclawApiKey}
               onApiKeyChange={openclawForm.handleOpenclawApiKeyChange}
               category={category}

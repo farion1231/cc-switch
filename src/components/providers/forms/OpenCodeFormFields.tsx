@@ -27,7 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ApiKeySection } from "./shared";
+import { ApiKeySection, EndpointField } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -217,6 +217,9 @@ interface OpenCodeFormFieldsProps {
   // Base URL
   baseUrl: string;
   onBaseUrlChange: (value: string) => void;
+  showFullUrlToggle?: boolean;
+  isFullUrl: boolean;
+  onFullUrlChange: (value: boolean) => void;
 
   // Models
   models: Record<string, OpenCodeModel>;
@@ -239,6 +242,9 @@ export function OpenCodeFormFields({
   partnerPromotionKey,
   baseUrl,
   onBaseUrlChange,
+  showFullUrlToggle,
+  isFullUrl,
+  onFullUrlChange,
   models,
   onModelsChange,
   extraOptions,
@@ -258,7 +264,7 @@ export function OpenCodeFormFields({
       return;
     }
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey)
+    fetchModelsForConfig(baseUrl, apiKey, isFullUrl)
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
@@ -274,7 +280,7 @@ export function OpenCodeFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, t]);
+  }, [baseUrl, apiKey, isFullUrl, t]);
 
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
@@ -545,24 +551,21 @@ export function OpenCodeFormFields({
         partnerPromotionKey={partnerPromotionKey}
       />
 
-      {/* Base URL */}
-      <div className="space-y-2">
-        <FormLabel htmlFor="opencode-baseurl">
-          {t("opencode.baseUrl", { defaultValue: "Base URL" })}
-        </FormLabel>
-        <Input
-          id="opencode-baseurl"
-          value={baseUrl}
-          onChange={(e) => onBaseUrlChange(e.target.value)}
-          placeholder="https://api.example.com/v1"
-        />
-        <p className="text-xs text-muted-foreground">
-          {t("opencode.baseUrlHint", {
-            defaultValue:
-              "The base URL for the API endpoint. Leave empty to use the default endpoint for official SDKs.",
-          })}
-        </p>
-      </div>
+      <EndpointField
+        id="opencode-baseurl"
+        label={t("opencode.baseUrl", { defaultValue: "Base URL" })}
+        value={baseUrl}
+        onChange={onBaseUrlChange}
+        placeholder="https://api.example.com/v1"
+        hint={t("opencode.baseUrlHint", {
+          defaultValue:
+            "The base URL for the API endpoint. Leave empty to use the default endpoint for official SDKs.",
+        })}
+        showManageButton={false}
+        showFullUrlToggle={showFullUrlToggle}
+        isFullUrl={isFullUrl}
+        onFullUrlChange={onFullUrlChange}
+      />
 
       {/* Extra Options Editor */}
       <div className="space-y-3">
