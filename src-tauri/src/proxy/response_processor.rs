@@ -39,6 +39,11 @@ pub(crate) fn decompress_body(
 ) -> Result<Vec<u8>, std::io::Error> {
     match content_encoding {
         "gzip" | "x-gzip" => {
+            // gzip magic bytes: 1f 8b。上游代理（如 MiFE）可能已剥
+            // 离 gzip 包装但保留 content-encoding 头，跳过无效解压。
+            if body.len() < 2 || body[0] != 0x1f || body[1] != 0x8b {
+                return Ok(body.to_vec());
+            }
             let mut decoder = flate2::read::GzDecoder::new(body);
             let mut decompressed = Vec::new();
             decoder.read_to_end(&mut decompressed)?;
@@ -1051,5 +1056,28 @@ mod tests {
             Decimal::from_str("1.5").unwrap()
         );
         Ok(())
+    }
+
+    /// MiFE 代理场景：content-encoding: gzip 但 body 是纯 JSON
+    /// 应返回 Ok(原始字节) 而非 Err，让 read_decoded_body 能剥离误导头
+    #[test]
+    fn test_decompress_body_returns_ok_for_non_gzip_body_with_misleading_header() {
+        let plain_json = br#"{"key":"value"}"#;
+        let result = super::decompress_body("gzip", plain_json).unwrap();
+        assert_eq!(result, plain_json, "非 gzip body 应原样返回 Ok");
+    }
+
+    /// 真正的 gzip 压缩数据仍能正确解压
+    #[test]
+    fn test_decompress_body_still_handles_real_gzip() {
+        use std::io::Write;
+        let json = br#"{"real":"gzip"}"#;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(json).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(compressed.starts_with(&[0x1f, 0x8b]));
+
+        let result = super::decompress_body("gzip", &compressed).unwrap();
+        assert_eq!(result, json);
     }
 }
