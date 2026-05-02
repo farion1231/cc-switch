@@ -1190,8 +1190,9 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 /// 雪崩请求；互斥锁被毒化时以上次状态为准继续推进，不会永久阻塞。
 ///
 /// 刷新面与 `format_usage_detail_line` 的展示面严格对齐 —— 每次悬停最多发
-/// `TRAY_SECTIONS.len()` 次外部请求，script 优先（覆盖 coding_plan / balance /
-/// Copilot / 自定义脚本），否则当前 provider 必须是 `official` 才查订阅。
+/// `TRAY_SECTIONS.len()` 次外部请求，official 优先查订阅（双轨 provider 也走
+/// 这条），否则脚本启用时刷脚本缓存（coding_plan / balance / Copilot / 自定义
+/// 脚本），其余情况不发请求。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
     use futures::future::join_all;
