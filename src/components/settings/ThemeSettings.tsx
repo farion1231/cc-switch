@@ -19,21 +19,21 @@ export function ThemeSettings() {
       <div className="inline-flex gap-1 rounded-md border border-border-default bg-background p-1">
         <ThemeButton
           active={theme === "light"}
-          onClick={(e) => setTheme("light", e)}
+          onClick={() => setTheme("light")}
           icon={Sun}
         >
           {t("settings.themeLight")}
         </ThemeButton>
         <ThemeButton
           active={theme === "dark"}
-          onClick={(e) => setTheme("dark", e)}
+          onClick={() => setTheme("dark")}
           icon={Moon}
         >
           {t("settings.themeDark")}
         </ThemeButton>
         <ThemeButton
           active={theme === "system"}
-          onClick={(e) => setTheme("system", e)}
+          onClick={() => setTheme("system")}
           icon={Monitor}
         >
           {t("settings.themeSystem")}

@@ -17,7 +17,7 @@ interface ThemeProviderProps {
 
 interface ThemeContextValue {
   theme: Theme;
-  setTheme: (theme: Theme, event?: React.MouseEvent) => void;
+  setTheme: (theme: Theme) => void;
 }
 
 const ThemeProviderContext = createContext<ThemeContextValue | undefined>(
