@@ -295,14 +295,13 @@ export function useDirectorySettings({
               console.error("[useDirectorySettings] Failed to update profile", err);
             });
             // 更新本地状态
-            setProfiles((prev) =>
-              prev.map((p) => (p.id === activeProfileId ? updatedProfile : p)),
+            const newProfiles = profiles.map((p) =>
+              p.id === activeProfileId ? updatedProfile : p,
             );
-            // 同步到 settings
+            setProfiles(newProfiles);
+            // 同步到 settings（使用已计算的新数组，避免 stale closure）
             onUpdateSettings({
-              configDirProfiles: profiles.map((p) =>
-                p.id === activeProfileId ? updatedProfile : p,
-              ),
+              configDirProfiles: newProfiles,
             });
           }
         } else {
@@ -453,11 +452,13 @@ export function useDirectorySettings({
     const profile: ConfigDirProfile = { id, name };
     await settingsApi.upsertConfigDirProfile(profile);
     await settingsApi.setActiveConfigDirProfile(id);
-    setProfiles((prev) => [...prev, profile]);
+    // 计算新数组一次，避免 stale closure
+    const newProfiles = [...profiles, profile];
+    setProfiles(newProfiles);
     setActiveProfileId(id);
     // 同步到 settings，让父组件知道 active profile 变化了
     onUpdateSettings({
-      configDirProfiles: [...profiles, profile],
+      configDirProfiles: newProfiles,
       activeConfigDirProfileId: id,
     });
     return profile;
@@ -511,10 +512,9 @@ export function useDirectorySettings({
           appConfig: appConfigDir || defaultsRef.current.appConfig,
         };
         for (const [appId, meta] of Object.entries(APP_DIRECTORY_META)) {
-          const dirPath = (newActive as unknown as Record<
-            string,
-            string | undefined
-          >)[meta.key];
+          // 使用类型安全的属性访问
+          const key = meta.key as keyof ConfigDirProfile;
+          const dirPath = newActive[key] as string | undefined;
           if (dirPath) {
             newResolvedDirs[appId as AppId] = dirPath;
           } else {

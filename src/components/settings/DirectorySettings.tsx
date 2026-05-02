@@ -65,6 +65,7 @@ export function DirectorySettings({
   const [createInput, setCreateInput] = useState("");
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [renameInput, setRenameInput] = useState("");
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   return (
     <div className="space-y-6">
@@ -125,7 +126,9 @@ export function DirectorySettings({
             <div className="flex gap-2">
               <select
                 value={activeProfileId || ""}
-                onChange={(e) => onSwitchProfile?.(e.target.value)}
+                onChange={(e) => {
+                  void onSwitchProfile?.(e.target.value);
+                }}
                 className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 {profiles.map((profile) => (
@@ -163,11 +166,11 @@ export function DirectorySettings({
               <button
                 type="button"
                 onClick={() => {
-                  if (activeProfileId && profiles.length > 1) {
-                    onDeleteProfile?.(activeProfileId);
+                  if (activeProfileId && profiles && profiles.length > 1) {
+                    setShowDeleteDialog(true);
                   }
                 }}
-                disabled={!activeProfileId || profiles.length <= 1}
+                disabled={!activeProfileId || !profiles || profiles.length <= 1}
                 className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
               >
                 {t("settings.profile.delete")}
@@ -305,6 +308,38 @@ export function DirectorySettings({
               disabled={!renameInput.trim()}
             >
               {t("common.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Profile Dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("settings.profile.deleteTitle")}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground">
+              {t("settings.profile.deleteConfirm", {
+                defaultValue: "确定要删除此环境配置集吗？删除后无法恢复。",
+              })}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (activeProfileId) {
+                  onDeleteProfile?.(activeProfileId);
+                }
+                setShowDeleteDialog(false);
+              }}
+            >
+              {t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

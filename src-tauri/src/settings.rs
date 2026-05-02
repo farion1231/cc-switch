@@ -491,7 +491,7 @@ impl AppSettings {
 
         let profile = ConfigDirProfile {
             id: "default".to_string(),
-            name: "默认".to_string(),
+            name: "Default".to_string(),
             claude: settings.claude_config_dir.clone(),
             codex: settings.codex_config_dir.clone(),
             gemini: settings.gemini_config_dir.clone(),
@@ -607,14 +607,14 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
 where
-    F: FnOnce(&mut AppSettings),
+    F: FnOnce(&mut AppSettings) -> Result<(), AppError>,
 {
     let mut guard = settings_store().write().unwrap_or_else(|e| {
         log::warn!("设置锁已毒化，使用恢复值: {e}");
         e.into_inner()
     });
     let mut next = guard.clone();
-    mutator(&mut next);
+    mutator(&mut next)?;
     next.normalize_paths();
     save_settings_file(&next)?;
     *guard = next;
@@ -817,7 +817,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
                     AppType::OpenClaw => profile.current_provider_openclaw = cloned_id.clone(),
                     AppType::Hermes => profile.current_provider_hermes = cloned_id.clone(),
                 }
-                return;
+                return Ok(());
             }
         }
         // Fallback to top-level fields for backward compatibility
@@ -829,6 +829,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
             AppType::OpenClaw => settings.current_provider_openclaw = cloned_id.clone(),
             AppType::Hermes => settings.current_provider_hermes = cloned_id.clone(),
         }
+        Ok(())
     })
 }
 
@@ -897,6 +898,7 @@ pub fn get_skill_storage_location() -> SkillStorageLocation {
 pub fn set_skill_storage_location(location: SkillStorageLocation) -> Result<(), AppError> {
     mutate_settings(|s| {
         s.skill_storage_location = location;
+        Ok(())
     })
 }
 
@@ -952,6 +954,7 @@ pub fn get_webdav_sync_settings() -> Option<WebDavSyncSettings> {
 pub fn set_webdav_sync_settings(settings: Option<WebDavSyncSettings>) -> Result<(), AppError> {
     mutate_settings(|current| {
         current.webdav_sync = settings;
+        Ok(())
     })
 }
 
@@ -961,6 +964,7 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
         if let Some(sync) = current.webdav_sync.as_mut() {
             sync.status = status;
         }
+        Ok(())
     })
 }
 
@@ -1008,6 +1012,7 @@ pub fn upsert_config_dir_profile(profile: ConfigDirProfile) -> Result<(), AppErr
         } else {
             settings.config_dir_profiles.push(profile);
         }
+        Ok(())
     })
 }
 
@@ -1021,21 +1026,19 @@ pub fn delete_config_dir_profile(id: &str) -> Result<(), AppError> {
                 .first()
                 .map(|p| p.id.clone());
         }
+        Ok(())
     })
 }
 
-/// 切换激活的 Profile
+/// 切换激活的 Profile（检查在写锁内部进行，避免 TOCTOU）
 pub fn set_active_config_dir_profile(id: &str) -> Result<(), AppError> {
-    let settings = get_settings();
-    if !settings
-        .config_dir_profiles
-        .iter()
-        .any(|p| p.id == id)
-    {
-        return Err(AppError::Message(format!("Profile {} 不存在", id)));
-    }
+    let id = id.to_string();
     mutate_settings(|settings| {
-        settings.active_config_dir_profile_id = Some(id.to_string());
+        if !settings.config_dir_profiles.iter().any(|p| p.id == id) {
+            return Err(AppError::Message(format!("Profile {} 不存在", id)));
+        }
+        settings.active_config_dir_profile_id = Some(id);
+        Ok(())
     })
 }
 
