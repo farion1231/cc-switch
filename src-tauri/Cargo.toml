@@ -12,7 +12,7 @@ rust-version = "1.85.0"
 
 [lib]
 name = "cc_switch_lib"
-crate-type = ["staticlib", "rlib"]
+crate-type = ["staticlib", "cdylib", "rlib"]
 doctest = false
 
 [features]

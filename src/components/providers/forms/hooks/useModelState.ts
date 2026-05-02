@@ -44,7 +44,7 @@ function parseModelsFromConfig(settingsConfig: string) {
 
 /**
  * 管理模型选择状态
- * 支持 ANTHROPIC_MODEL, ANTHROPIC_REASONING_MODEL 和各类型默认模型
+ * 支持 ANTHROPIC_MODEL 和各类型默认模型；旧 reasoning/small-fast 键仅用于读取兼容
  */
 export function useModelState({
   settingsConfig,
@@ -157,12 +157,13 @@ export function useModelState({
 
         // 新键仅写入；旧键不再写入
         const trimmed = value.trim();
-        if (trimmed) {
+        if (field !== "ANTHROPIC_REASONING_MODEL" && trimmed) {
           env[field] = trimmed;
         } else {
           delete env[field];
         }
         // 删除旧键
+        delete env["ANTHROPIC_REASONING_MODEL"];
         delete env["ANTHROPIC_SMALL_FAST_MODEL"];
 
         const updatedConfig = JSON.stringify(currentConfig, null, 2);
