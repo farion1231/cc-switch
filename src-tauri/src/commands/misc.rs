@@ -758,8 +758,13 @@ pub async fn open_provider_terminal(
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref(), bypassPermissions.unwrap_or(false))
-        .map_err(|e| format!("启动终端失败: {e}"))?;
+    launch_terminal_with_env(
+        env_vars,
+        &providerId,
+        launch_cwd.as_deref(),
+        bypassPermissions.unwrap_or(false),
+    )
+    .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
 }
@@ -913,7 +918,12 @@ fn write_claude_config(
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>, bypass_permissions: bool, env_vars: &[(String, String)]) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: &std::path::Path,
+    cwd: Option<&Path>,
+    bypass_permissions: bool,
+    env_vars: &[(String, String)],
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -923,7 +933,11 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>, bypa
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
-    let bypass_flag = if bypass_permissions { " --dangerously-skip-permissions" } else { "" };
+    let bypass_flag = if bypass_permissions {
+        " --dangerously-skip-permissions"
+    } else {
+        ""
+    };
 
     let export_commands: String = env_vars
         .iter()
@@ -1160,7 +1174,12 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>, bypass_permissions: bool, env_vars: &[(String, String)]) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: &std::path::Path,
+    cwd: Option<&Path>,
+    bypass_permissions: bool,
+    env_vars: &[(String, String)],
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -1183,7 +1202,11 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>, bypa
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
-    let bypass_flag = if bypass_permissions { " --dangerously-skip-permissions" } else { "" };
+    let bypass_flag = if bypass_permissions {
+        " --dangerously-skip-permissions"
+    } else {
+        ""
+    };
 
     let export_commands: String = env_vars
         .iter()
@@ -1294,11 +1317,21 @@ fn launch_windows_terminal(
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
-    let bypass_flag = if bypass_permissions { " --dangerously-skip-permissions" } else { "" };
+    let bypass_flag = if bypass_permissions {
+        " --dangerously-skip-permissions"
+    } else {
+        ""
+    };
 
     let set_commands: String = env_vars
         .iter()
-        .map(|(k, v)| format!("set \"{}={}\"", escape_windows_batch_value(k), escape_windows_batch_value(v)))
+        .map(|(k, v)| {
+            format!(
+                "set \"{}={}\"",
+                escape_windows_batch_value(k),
+                escape_windows_batch_value(v)
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
 
