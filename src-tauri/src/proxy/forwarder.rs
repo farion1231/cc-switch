@@ -1762,7 +1762,16 @@ impl RequestForwarder {
             }
 
             let headers = response.headers().clone();
-            let body_bytes = response.bytes().await?;
+            let mut body_bytes = response.bytes().await?;
+
+            // 解压 content-encoding（hyper 不自动解压）
+            if let Some(encoding) = super::response_processor::get_content_encoding(&headers) {
+                if let Ok(decompressed) =
+                    super::response_processor::decompress_body(&encoding, &body_bytes)
+                {
+                    body_bytes = bytes::Bytes::from(decompressed);
+                }
+            }
 
             if is_valid_response_body(&body_bytes) {
                 let response = ProxyResponse::Buffered {
@@ -1784,7 +1793,19 @@ impl RequestForwarder {
             }
         } else {
             let status_code = status.as_u16();
-            let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
+            let headers = response.headers().clone();
+            let mut error_body = response.bytes().await?.to_vec();
+
+            // 解压 content-encoding
+            if let Some(encoding) = super::response_processor::get_content_encoding(&headers) {
+                if let Ok(decompressed) =
+                    super::response_processor::decompress_body(&encoding, &error_body)
+                {
+                    error_body = decompressed;
+                }
+            }
+
+            let body_text = String::from_utf8(error_body).ok();
 
             Err(ProxyError::UpstreamError {
                 status: status_code,
@@ -2959,5 +2980,32 @@ mod tests {
     fn invalid_empty_json() {
         let body = b"{}";
         assert!(!super::is_valid_response_body(body));
+    }
+
+    /// gzip 压缩的合法响应体在解压后应被识别为有效
+    ///
+    /// 模拟小米 mimo API 等上游返回 gzip 压缩的 200 响应。
+    /// forwarder 的 hyper 路径需要先解压再调 is_valid_response_body。
+    #[test]
+    fn gzip_compressed_valid_body_passes_after_decompress() {
+        use std::io::Write;
+
+        let valid_json = br#"{"id":"msg_01","type":"message","role":"assistant","content":[{"type":"text","text":"Hi"}],"model":"claude-3","usage":{"input_tokens":10,"output_tokens":5}}"#;
+
+        // 模拟上游 gzip 压缩响应体
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(valid_json).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // 压缩字节直接校验应失败（不是合法 JSON）
+        assert!(!super::is_valid_response_body(&compressed));
+
+        // 通过 response_processor 的解压逻辑还原后，应通过校验
+        let decompressed =
+            super::super::response_processor::decompress_body("gzip", &compressed).unwrap();
+        assert!(
+            super::is_valid_response_body(&decompressed),
+            "gzip 解压后的合法响应体应通过 is_valid_response_body 校验"
+        );
     }
 }

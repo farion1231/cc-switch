@@ -33,7 +33,10 @@ use tokio::sync::Mutex;
 /// 根据 content-encoding 解压响应体字节
 ///
 /// reqwest 自动解压已禁用（为了透传 accept-encoding），需要手动解压。
-fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+pub(crate) fn decompress_body(
+    content_encoding: &str,
+    body: &[u8],
+) -> Result<Vec<u8>, std::io::Error> {
     match content_encoding {
         "gzip" | "x-gzip" => {
             let mut decoder = flate2::read::GzDecoder::new(body);
@@ -60,7 +63,7 @@ fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::
 }
 
 /// 从响应头提取 content-encoding（忽略 identity 和 chunked）
-fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
     headers
         .get("content-encoding")
         .and_then(|v| v.to_str().ok())
