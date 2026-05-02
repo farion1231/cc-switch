@@ -2294,6 +2294,9 @@
     }
   },
   "universalProvider": {
+    "duplicate": "复制",
+    "duplicatedAndSynced": "统一供应商已复制并同步",
+    "duplicateError": "复制统一供应商失败",
     "title": "统一供应商",
     "description": "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
     "add": "添加统一供应商",
