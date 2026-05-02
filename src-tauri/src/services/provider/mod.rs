@@ -1933,6 +1933,18 @@ impl ProviderService {
         import_default_config(state, app_type)
     }
 
+    pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+        import_opencode_providers_from_live(state)
+    }
+
+    pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+        import_openclaw_providers_from_live(state)
+    }
+
+    pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+        import_hermes_providers_from_live(state)
+    }
+
     /// Read current live settings (re-export)
     pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         read_live_settings(app_type)

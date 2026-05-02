@@ -316,6 +316,7 @@ fn execute_command(command: CliCommand) -> Result<String, CliError> {
 
 fn execute_provider_command(command: ProviderCommand) -> Result<String, CliError> {
     let state = build_state()?;
+    init_provider_data(&state);
 
     match command {
         ProviderCommand::List { app_type } => {
@@ -368,6 +369,51 @@ fn build_state() -> Result<AppState, CliError> {
     let db = Database::init()
         .map_err(|err| CliError::new(format!("failed to initialize database: {err}")))?;
     Ok(AppState::new(Arc::new(db)))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StartupProviderImport {
+    Default(AppType),
+    SeedOfficial,
+    OpenCodeLive,
+    OpenClawLive,
+    HermesLive,
+}
+
+fn startup_provider_import_plan() -> Vec<StartupProviderImport> {
+    let mut plan: Vec<_> = AppType::all()
+        .filter(|app| !app.is_additive_mode())
+        .map(StartupProviderImport::Default)
+        .collect();
+    plan.extend([
+        StartupProviderImport::SeedOfficial,
+        StartupProviderImport::OpenCodeLive,
+        StartupProviderImport::OpenClawLive,
+        StartupProviderImport::HermesLive,
+    ]);
+    plan
+}
+
+fn init_provider_data(state: &AppState) {
+    for step in startup_provider_import_plan() {
+        match step {
+            StartupProviderImport::Default(app_type) => {
+                let _ = ProviderService::import_default_config(state, app_type);
+            }
+            StartupProviderImport::SeedOfficial => {
+                let _ = state.db.init_default_official_providers();
+            }
+            StartupProviderImport::OpenCodeLive => {
+                let _ = ProviderService::import_opencode_providers_from_live(state);
+            }
+            StartupProviderImport::OpenClawLive => {
+                let _ = ProviderService::import_openclaw_providers_from_live(state);
+            }
+            StartupProviderImport::HermesLive => {
+                let _ = ProviderService::import_hermes_providers_from_live(state);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -424,12 +470,7 @@ fn init_webui_state() -> Result<AppState, CliError> {
     let state = build_state()?;
 
     let _ = state.db.init_default_skill_repos();
-
-    for app_type in AppType::all().filter(|app| !app.is_additive_mode()) {
-        let _ = ProviderService::import_default_config(&state, app_type);
-    }
-
-    let _ = state.db.init_default_official_providers();
+    init_provider_data(&state);
 
     Ok(state)
 }
@@ -1161,5 +1202,16 @@ mod tests {
             format_provider_list(&AppType::Claude, &providers, "first"),
             "CURRENT\tID\tNAME\tCATEGORY\n*\tfirst\tFirst Provider\tcustom\n"
         );
+    }
+
+    #[test]
+    fn startup_provider_import_plan_covers_additive_live_imports() {
+        let plan = startup_provider_import_plan();
+
+        assert!(plan.contains(&StartupProviderImport::Default(AppType::Claude)));
+        assert!(plan.contains(&StartupProviderImport::SeedOfficial));
+        assert!(plan.contains(&StartupProviderImport::OpenCodeLive));
+        assert!(plan.contains(&StartupProviderImport::OpenClawLive));
+        assert!(plan.contains(&StartupProviderImport::HermesLive));
     }
 }
