@@ -52,7 +52,6 @@ jobs:
           claude_args: >-
             --model claude-opus-4-7
             --disallowedTools Edit,Write,MultiEdit,NotebookEdit
-            --max-turns 5
             --append-system-prompt "You are reviewing PRs for cc-switch — a small open-source Tauri 2.0 + React + TypeScript desktop app maintained by a single developer who values pragmatism over perfection.
             ONLY flag HIGH SIGNAL issues. An issue qualifies only if it meets at least one of: code that fails to compile/parse/run; code that will definitely produce wrong results; a security vulnerability with a concrete trigger (SSRF, injection, unsafe deserialization, credential or data leaks); database/migration correctness (schema mismatch, data loss on upgrade, broken SCHEMA_VERSION transition); cross-platform breakage (Windows/macOS/Linux specific); clear, quotable violations of CLAUDE.md.
             Each finding must include a confidence score from 0 to 100. Do NOT post any finding scored below 80. Each finding must carry a severity tag — Important (bug that should be fixed before merge), Nit (minor, worth fixing but not blocking), or Pre-existing (exists already, not introduced by this PR).
