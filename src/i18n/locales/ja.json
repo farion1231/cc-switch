@@ -354,7 +354,7 @@
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします",
         "extraInputsStrip": "Extra Inputs 自動除去",
-        "extraInputsStripDescription": "プロバイダが \"Extra inputs are not permitted\" エラーを返した場合、サポートされていないフィールドを自動的に抽出・除去し、同じプロバイダで再試行します。ブロックされたフィールドは1時間キャッシュされ、以降のリクエストでは事前に除去されます。"
+        "extraInputsStripDescription": "プロバイダがサポートしていない可能性のあるフィールド（Anthropic 固有の context_management など）を自動検出・除去し、再試行します。サポートされていないフィールドはプロバイダごとに1時間キャッシュされ、以降のリクエストでは事前にフィルタリングされます。"
       },
       "optimizer": {
         "title": "Bedrock リクエストオプティマイザー",

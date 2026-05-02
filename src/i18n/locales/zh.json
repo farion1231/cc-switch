@@ -354,7 +354,7 @@
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次",
         "extraInputsStrip": "Extra Inputs 自动剥离",
-        "extraInputsStripDescription": "当上游返回 \"Extra inputs are not permitted\" 错误时，自动提取并移除不支持的字段，然后重试同一供应商。不支持的字段会被缓存 1 小时，后续请求直接预过滤。"
+        "extraInputsStripDescription": "自动检测并移除可能不被上游支持的字段（如 Anthropic 独有的 context_management 等），然后重试。不支持的字段按供应商缓存 1 小时，后续请求直接预过滤。"
       },
       "optimizer": {
         "title": "Bedrock 请求优化器",
