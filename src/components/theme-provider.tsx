@@ -5,7 +5,6 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { isLinux } from "@/lib/platform";
 import { invoke } from "@tauri-apps/api/core";
 
 type Theme = "light" | "dark" | "system";
@@ -131,35 +130,9 @@ export function ThemeProvider({
   const value = useMemo<ThemeContextValue>(
     () => ({
       theme,
-      setTheme: (nextTheme: Theme, event?: React.MouseEvent) => {
-        // Skip if same theme
+      setTheme: (nextTheme: Theme) => {
         if (nextTheme === theme) return;
-
-        // Set transition origin coordinates from click event
-        const x = event?.clientX ?? window.innerWidth / 2;
-        const y = event?.clientY ?? window.innerHeight / 2;
-        document.documentElement.style.setProperty(
-          "--theme-transition-x",
-          `${x}px`,
-        );
-        document.documentElement.style.setProperty(
-          "--theme-transition-y",
-          `${y}px`,
-        );
-
-        // Use View Transitions API if available, otherwise fall back to instant change
-        // Disable for Linux, since WebKitGTK crashes on `document.startViewTransition`
-        if (
-          typeof document !== "undefined" &&
-          document.startViewTransition &&
-          !isLinux()
-        ) {
-          document.startViewTransition(() => {
-            setThemeState(nextTheme);
-          });
-        } else {
-          setThemeState(nextTheme);
-        }
+        setThemeState(nextTheme);
       },
     }),
     [theme],
