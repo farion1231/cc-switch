@@ -50,7 +50,7 @@ export function useSettingsForm(): UseSettingsFormResult {
     null,
   );
 
-  const initialLanguageRef = useRef<Language>("zh");
+  const initialLanguageRef = useRef<Language>(DEFAULT_LANGUAGE);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
