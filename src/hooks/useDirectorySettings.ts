@@ -105,6 +105,14 @@ export interface UseDirectorySettingsResult {
   profiles: ConfigDirProfile[];
   activeProfileId: string | undefined;
   getActiveProfile: () => ConfigDirProfile | undefined;
+  getActiveProfileDirectoryValues: () => {
+    claude?: string;
+    codex?: string;
+    gemini?: string;
+    opencode?: string;
+    openclaw?: string;
+    hermes?: string;
+  } | null;
   createProfile: (name: string) => Promise<ConfigDirProfile>;
   updateProfile: (profile: ConfigDirProfile) => Promise<void>;
   deleteProfile: (id: string) => Promise<void>;
@@ -425,6 +433,21 @@ export function useDirectorySettings({
     return profiles.find((p) => p.id === activeProfileId);
   }, [profiles, activeProfileId]);
 
+  const getActiveProfileDirectoryValues = useCallback(() => {
+    const activeProfile = profiles.find((p) => p.id === activeProfileId);
+    if (!activeProfile) {
+      return null;
+    }
+    return {
+      claude: activeProfile.claude,
+      codex: activeProfile.codex,
+      gemini: activeProfile.gemini,
+      opencode: activeProfile.opencode,
+      openclaw: activeProfile.openclaw,
+      hermes: activeProfile.hermes,
+    };
+  }, [activeProfileId, profiles]);
+
   const createProfile = useCallback(async (name: string) => {
     const id = `profile-${Date.now()}`;
     const profile: ConfigDirProfile = { id, name };
@@ -523,6 +546,7 @@ export function useDirectorySettings({
     profiles,
     activeProfileId,
     getActiveProfile,
+    getActiveProfileDirectoryValues,
     createProfile,
     updateProfile,
     deleteProfile,

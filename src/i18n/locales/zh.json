@@ -574,6 +574,15 @@
         }
       }
     },
+    "profile": {
+      "sectionTitle": "环境配置集",
+      "createTitle": "新建配置集",
+      "renameTitle": "重命名配置集",
+      "namePlaceholder": "输入配置集名称",
+      "create": "新建",
+      "rename": "重命名",
+      "delete": "删除"
+    },
     "configDirectoryOverride": "配置目录覆盖（高级）",
     "configDirectoryDescription": "在 WSL 等环境使用 Claude Code 或 Codex 的时候，可手动指定为 WSL 里的配置目录，供应商数据与主环境保持一致。",
     "appConfigDir": "CC Switch 配置目录",

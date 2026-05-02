@@ -84,6 +84,7 @@ export function SettingsPage({
     acknowledgeRestart,
     profiles,
     activeProfileId,
+    getActiveProfileDirectoryValues,
     createProfile,
     updateProfile,
     deleteProfile,
@@ -318,12 +319,12 @@ export function SettingsPage({
                             onAppConfigChange={updateAppConfigDir}
                             onBrowseAppConfig={browseAppConfigDir}
                             onResetAppConfig={resetAppConfigDir}
-                            claudeDir={settings.claudeConfigDir}
-                            codexDir={settings.codexConfigDir}
-                            geminiDir={settings.geminiConfigDir}
-                            opencodeDir={settings.opencodeConfigDir}
-                            openclawDir={settings.openclawConfigDir}
-                            hermesDir={settings.hermesConfigDir}
+                            claudeDir={getActiveProfileDirectoryValues()?.claude ?? settings.claudeConfigDir}
+                            codexDir={getActiveProfileDirectoryValues()?.codex ?? settings.codexConfigDir}
+                            geminiDir={getActiveProfileDirectoryValues()?.gemini ?? settings.geminiConfigDir}
+                            opencodeDir={getActiveProfileDirectoryValues()?.opencode ?? settings.opencodeConfigDir}
+                            openclawDir={getActiveProfileDirectoryValues()?.openclaw ?? settings.openclawConfigDir}
+                            hermesDir={getActiveProfileDirectoryValues()?.hermes ?? settings.hermesConfigDir}
                             onDirectoryChange={updateDirectory}
                             onBrowseDirectory={browseDirectory}
                             onResetDirectory={resetDirectory}

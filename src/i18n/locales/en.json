@@ -574,6 +574,15 @@
         }
       }
     },
+    "profile": {
+      "sectionTitle": "Environment Profile",
+      "createTitle": "Create Profile",
+      "renameTitle": "Rename Profile",
+      "namePlaceholder": "Enter profile name",
+      "create": "Create",
+      "rename": "Rename",
+      "delete": "Delete"
+    },
     "configDirectoryOverride": "Configuration Directory Override (Advanced)",
     "configDirectoryDescription": "When using Claude Code or Codex in environments like WSL, you can manually specify the configuration directory to the one in WSL to keep provider data consistent with the main environment.",
     "appConfigDir": "CC Switch Configuration Directory",

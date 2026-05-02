@@ -1,7 +1,14 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { FolderSearch, Undo2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ConfigDirProfile } from "@/types";
@@ -49,10 +56,15 @@ export function DirectorySettings({
   profiles,
   activeProfileId,
   onCreateProfile,
+  onUpdateProfile,
   onDeleteProfile,
   onSwitchProfile,
 }: DirectorySettingsProps) {
   const { t } = useTranslation();
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [createInput, setCreateInput] = useState("");
+  const [showRenameDialog, setShowRenameDialog] = useState(false);
+  const [renameInput, setRenameInput] = useState("");
 
   return (
     <div className="space-y-6">
@@ -108,7 +120,7 @@ export function DirectorySettings({
         {profiles && profiles.length > 0 && (
           <div className="rounded-lg border border-border/50 p-4">
             <h4 className="mb-3 text-sm font-medium text-muted-foreground">
-              环境配置集
+              {t("settings.profile.sectionTitle")}
             </h4>
             <div className="flex gap-2">
               <select
@@ -125,12 +137,28 @@ export function DirectorySettings({
               <button
                 type="button"
                 onClick={() => {
-                  const name = prompt("Profile 名称:");
-                  if (name) onCreateProfile?.(name);
+                  if (activeProfileId) {
+                    const profile = profiles.find((p) => p.id === activeProfileId);
+                    if (profile) {
+                      setRenameInput(profile.name);
+                      setShowRenameDialog(true);
+                    }
+                  }
+                }}
+                disabled={!activeProfileId}
+                className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+              >
+                {t("settings.profile.rename")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCreateInput("");
+                  setShowCreateDialog(true);
                 }}
                 className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
               >
-                新建
+                {t("settings.profile.create")}
               </button>
               <button
                 type="button"
@@ -142,7 +170,7 @@ export function DirectorySettings({
                 disabled={!activeProfileId || profiles.length <= 1}
                 className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
               >
-                删除
+                {t("settings.profile.delete")}
               </button>
             </div>
           </div>
@@ -214,6 +242,73 @@ export function DirectorySettings({
           onReset={() => onResetDirectory("hermes")}
         />
       </section>
+
+      {/* Create Profile Dialog */}
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("settings.profile.createTitle")}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={createInput}
+              onChange={(e) => setCreateInput(e.target.value)}
+              placeholder={t("settings.profile.namePlaceholder")}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={() => {
+                if (createInput.trim() && onCreateProfile) {
+                  onCreateProfile(createInput.trim());
+                }
+                setShowCreateDialog(false);
+              }}
+              disabled={!createInput.trim()}
+            >
+              {t("common.create")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Profile Dialog */}
+      <Dialog open={showRenameDialog} onOpenChange={setShowRenameDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("settings.profile.renameTitle")}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={renameInput}
+              onChange={(e) => setRenameInput(e.target.value)}
+              placeholder={t("settings.profile.namePlaceholder")}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRenameDialog(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={() => {
+                if (renameInput.trim() && activeProfileId && onUpdateProfile) {
+                  const profile = profiles?.find((p) => p.id === activeProfileId);
+                  if (profile) {
+                    onUpdateProfile({ ...profile, name: renameInput.trim() });
+                  }
+                }
+                setShowRenameDialog(false);
+              }}
+              disabled={!renameInput.trim()}
+            >
+              {t("common.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

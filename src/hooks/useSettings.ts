@@ -48,6 +48,14 @@ export interface UseSettingsResult {
   profiles: ConfigDirProfile[];
   activeProfileId: string | undefined;
   getActiveProfile: () => ConfigDirProfile | undefined;
+  getActiveProfileDirectoryValues: () => {
+    claude?: string;
+    codex?: string;
+    gemini?: string;
+    opencode?: string;
+    openclaw?: string;
+    hermes?: string;
+  } | null;
   createProfile: (name: string) => Promise<ConfigDirProfile>;
   updateProfile: (profile: ConfigDirProfile) => Promise<void>;
   deleteProfile: (id: string) => Promise<void>;
@@ -101,6 +109,7 @@ export function useSettings(): UseSettingsResult {
     profiles,
     activeProfileId,
     getActiveProfile,
+    getActiveProfileDirectoryValues,
     createProfile,
     updateProfile,
     deleteProfile,
@@ -525,6 +534,7 @@ export function useSettings(): UseSettingsResult {
     profiles,
     activeProfileId,
     getActiveProfile,
+    getActiveProfileDirectoryValues,
     createProfile,
     updateProfile,
     deleteProfile,
