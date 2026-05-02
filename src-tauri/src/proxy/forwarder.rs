@@ -2065,19 +2065,13 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
         .find_map(|value| value.as_str().map(ToString::to_string))
 }
 
-/// 通过各家协议的类型标记字段判断 200 响应体是否为合法的成功响应。
+/// 判断 200 响应体是否为合法的成功响应。
 ///
 /// 背景：某些上游会对错误响应仍然返回 HTTP 200 + 错误 JSON body，
 /// 此时需要把它转为 UpstreamError 走重试/整流。
 ///
-/// 本代理支持的 8 种 ProviderType 最终只映射到 4 种 wire format；
-/// 按协议 discriminator 匹配：
-/// - Anthropic Messages（Claude/ClaudeAuth/OpenRouter 默认）：`type == "message"`
-///   （错误响应为 `type == "error"`）
-/// - OpenAI Chat Completions（GitHubCopilot）：`object == "chat.completion"`
-/// - OpenAI Responses API（Codex/CodexOAuth）：`object == "response"`
-/// - Gemini generateContent（Gemini/GeminiCli）：协议无 discriminator 字段，
-///   退化为检查 `candidates`（正常响应）或 `promptFeedback`（prompt 被安全策略拦截的响应）
+/// 策略：检测 JSON 中是否存在 `error` 字段。有则判定为上游错误，
+/// 没有则信任 HTTP 200 状态码。这样无需穷举各协议的成功响应格式。
 fn is_valid_response_body(body: &[u8]) -> bool {
     let Ok(json) = serde_json::from_slice::<Value>(body) else {
         return false;
@@ -2086,20 +2080,7 @@ fn is_valid_response_body(body: &[u8]) -> bool {
         return false;
     };
 
-    // Anthropic Messages
-    let type_str = obj.get("type").and_then(|v| v.as_str());
-    if type_str == Some("message") {
-        return true;
-    }
-
-    // OpenAI Chat Completions / Responses API
-    let object_str = obj.get("object").and_then(|v| v.as_str());
-    if matches!(object_str, Some("chat.completion") | Some("response")) {
-        return true;
-    }
-
-    // Gemini generateContent（无 discriminator，按 key 识别）
-    obj.contains_key("candidates") || obj.contains_key("promptFeedback")
+    !obj.contains_key("error")
 }
 
 fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
@@ -2959,14 +2940,15 @@ mod tests {
     }
 
     #[test]
-    fn invalid_openai_unknown_object() {
+    fn valid_json_without_error_key() {
         let body = br#"{"id":"x","object":"chat.completion.chunk","choices":[]}"#;
-        assert!(!super::is_valid_response_body(body));
+        assert!(super::is_valid_response_body(body));
     }
 
     #[test]
-    fn invalid_custom_error() {
-        let body = br#"{"message":"something went wrong","code":"INTERNAL_ERROR"}"#;
+    fn invalid_json_with_error_key() {
+        let body =
+            br#"{"message":"something went wrong","code":"INTERNAL_ERROR","error":"bad request"}"#;
         assert!(!super::is_valid_response_body(body));
     }
 
@@ -2977,9 +2959,9 @@ mod tests {
     }
 
     #[test]
-    fn invalid_empty_json() {
+    fn valid_empty_json_no_error() {
         let body = b"{}";
-        assert!(!super::is_valid_response_body(body));
+        assert!(super::is_valid_response_body(body));
     }
 
     /// gzip 压缩的合法响应体在解压后应被识别为有效
@@ -3006,6 +2988,36 @@ mod tests {
         assert!(
             super::is_valid_response_body(&decompressed),
             "gzip 解压后的合法响应体应通过 is_valid_response_body 校验"
+        );
+    }
+
+    /// Gemini :countTokens 合法响应应通过校验
+    #[test]
+    fn valid_gemini_count_tokens_response() {
+        let body = br#"{"totalTokens": 1234, "totalBillableCharacters": 567}"#;
+        assert!(
+            super::is_valid_response_body(body),
+            "Gemini :countTokens 响应应被识别为合法"
+        );
+    }
+
+    /// Gemini :embedContent 合法响应应通过校验
+    #[test]
+    fn valid_gemini_embed_content_response() {
+        let body = br#"{"embedding": {"values": [0.1, 0.2, 0.3]}}"#;
+        assert!(
+            super::is_valid_response_body(body),
+            "Gemini :embedContent 响应应被识别为合法"
+        );
+    }
+
+    /// Gemini :batchEmbedContents 合法响应应通过校验
+    #[test]
+    fn valid_gemini_batch_embed_contents_response() {
+        let body = br#"{"embeddings": [{"values": [0.1]}, {"values": [0.2]}]}"#;
+        assert!(
+            super::is_valid_response_body(body),
+            "Gemini :batchEmbedContents 响应应被识别为合法"
         );
     }
 }
