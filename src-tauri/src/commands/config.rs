@@ -355,6 +355,11 @@ pub fn set_active_config_dir_profile(id: String) -> Result<(), String> {
     crate::settings::set_active_config_dir_profile(&id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn get_active_config_dir_profile() -> Option<crate::settings::ConfigDirProfile> {
+    crate::settings::get_active_config_dir_profile()
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate_common_config_snippet;

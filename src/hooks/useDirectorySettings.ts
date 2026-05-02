@@ -460,9 +460,12 @@ export function useDirectorySettings({
         configDirProfiles: newProfiles,
       });
       if (activeProfileId === id) {
-        setActiveProfileId(undefined);
+        // 从后端重新获取实际的 activeProfileId（后端会自动选择第一个剩余 profile）
+        const actualActiveProfile = await settingsApi.getActiveConfigDirProfile();
+        const actualActiveId = actualActiveProfile?.id;
+        setActiveProfileId(actualActiveId);
         onUpdateSettings({
-          activeConfigDirProfileId: undefined,
+          activeConfigDirProfileId: actualActiveId,
         });
       }
     },

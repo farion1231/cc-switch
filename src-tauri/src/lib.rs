@@ -1332,6 +1332,7 @@ pub fn run() {
             commands::upsert_config_dir_profile,
             commands::delete_config_dir_profile,
             commands::set_active_config_dir_profile,
+            commands::get_active_config_dir_profile,
         ]);
 
     let app = builder

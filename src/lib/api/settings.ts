@@ -233,6 +233,10 @@ export const settingsApi = {
   async setActiveConfigDirProfile(id: string): Promise<void> {
     return invoke("set_active_config_dir_profile", { id });
   },
+
+  async getActiveConfigDirProfile(): Promise<ConfigDirProfile | null> {
+    return invoke<ConfigDirProfile | null>("get_active_config_dir_profile");
+  },
 };
 
 export interface RectifierConfig {
