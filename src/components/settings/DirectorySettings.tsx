@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FolderSearch, Undo2 } from "lucide-react";
+import { FolderSearch, Undo2, Plus, Pencil, Trash2, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -149,8 +149,9 @@ export function DirectorySettings({
                   }
                 }}
                 disabled={!activeProfileId}
-                className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
               >
+                <Pencil className="h-3.5 w-3.5" />
                 {t("settings.profile.rename")}
               </button>
               <button
@@ -159,8 +160,9 @@ export function DirectorySettings({
                   setCreateInput("");
                   setShowCreateDialog(true);
                 }}
-                className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
+                className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
               >
+                <Plus className="h-3.5 w-3.5" />
                 {t("settings.profile.create")}
               </button>
               <button
@@ -171,8 +173,9 @@ export function DirectorySettings({
                   }
                 }}
                 disabled={!activeProfileId || !profiles || profiles.length <= 1}
-                className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
               >
+                <Trash2 className="h-3.5 w-3.5" />
                 {t("settings.profile.delete")}
               </button>
             </div>
@@ -250,13 +253,17 @@ export function DirectorySettings({
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t("settings.profile.createTitle")}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5" />
+              {t("settings.profile.createTitle")}
+            </DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <Input
               value={createInput}
               onChange={(e) => setCreateInput(e.target.value)}
               placeholder={t("settings.profile.namePlaceholder")}
+              className="text-sm"
             />
           </div>
           <DialogFooter>
@@ -282,13 +289,17 @@ export function DirectorySettings({
       <Dialog open={showRenameDialog} onOpenChange={setShowRenameDialog}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t("settings.profile.renameTitle")}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5" />
+              {t("settings.profile.renameTitle")}
+            </DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <Input
               value={renameInput}
               onChange={(e) => setRenameInput(e.target.value)}
               placeholder={t("settings.profile.namePlaceholder")}
+              className="text-sm"
             />
           </div>
           <DialogFooter>
@@ -317,14 +328,17 @@ export function DirectorySettings({
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t("settings.profile.deleteTitle")}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              {t("settings.profile.deleteTitle")}
+            </DialogTitle>
           </DialogHeader>
           <div className="py-4">
-            <p className="text-sm text-muted-foreground">
-              {t("settings.profile.deleteConfirm", {
-                defaultValue: "确定要删除此环境配置集吗？删除后无法恢复。",
-              })}
-            </p>
+            <div className="rounded-lg bg-destructive/10 p-4">
+              <p className="text-sm text-destructive">
+                {t("settings.profile.deleteConfirm")}
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
