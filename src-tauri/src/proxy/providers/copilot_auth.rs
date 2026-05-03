@@ -1144,14 +1144,17 @@ impl CopilotAuthManager {
 
         if self.storage_path.exists() {
             if let Err(err) = std::fs::remove_file(&self.storage_path) {
-                // NotFound 可以忽略（文件可能已被删除）
-                // 其他错误只记录警告，不阻止登出（内存状态已清理，用户体验上已登出）
                 if err.kind() != std::io::ErrorKind::NotFound {
-                    log::warn!(
+                    log::error!(
                         "[CopilotAuth] 删除认证文件失败 {}: {}，内存状态已清理",
                         self.storage_path.display(),
                         err
                     );
+                    return Err(CopilotAuthError::IoError(format!(
+                        "删除认证文件失败 {}: {}",
+                        self.storage_path.display(),
+                        err
+                    )));
                 }
             }
         }
@@ -2332,7 +2335,7 @@ mod tests {
         }
 
         let result = manager.clear_auth().await;
-        assert!(result.is_ok());
+        assert!(result.is_err());
 
         // But memory state should already be cleaned
         let accounts = manager.accounts.read().await;
