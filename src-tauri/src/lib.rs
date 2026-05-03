@@ -213,9 +213,10 @@ pub fn run() {
                 log::debug!("  arg[{i}]: {}", redact_url_for_log(arg));
             }
 
-            if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式重建窗口失败: {e}");
+            // 第二实例触发：仅恢复主窗口，保留用户偏好
+            if crate::lightweight::is_lightweight_runtime() {
+                if let Err(e) = crate::lightweight::exit_lightweight_runtime(app) {
+                    log::error!("退出轻量运行期重建窗口失败: {e}");
                 }
             }
 
@@ -253,7 +254,15 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let settings = crate::settings::get_settings();
 
-                if settings.minimize_to_tray_on_close {
+                if settings.lightweight_mode {
+                    // 偏好为轻量：进入轻量运行期（销毁窗口、隐藏 dock），偏好保持
+                    api.prevent_close();
+                    if let Err(e) =
+                        crate::lightweight::enter_lightweight_runtime(window.app_handle())
+                    {
+                        log::error!("关窗口时进入轻量运行期失败: {e}");
+                    }
+                } else if settings.minimize_to_tray_on_close {
                     api.prevent_close();
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
@@ -732,9 +741,10 @@ pub fn run() {
                     let urls = event.urls();
                     log::info!("Received {} URL(s)", urls.len());
 
-                    if crate::lightweight::is_lightweight_mode() {
-                        if let Err(e) = crate::lightweight::exit_lightweight_mode(&app_handle) {
-                            log::error!("退出轻量模式重建窗口失败: {e}");
+                    // Deep link 唤起：仅恢复运行期窗口，偏好保持
+                    if crate::lightweight::is_lightweight_runtime() {
+                        if let Err(e) = crate::lightweight::exit_lightweight_runtime(&app_handle) {
+                            log::error!("退出轻量运行期重建窗口失败: {e}");
                         }
                     }
 
@@ -1003,7 +1013,15 @@ pub fn run() {
                 // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
                 #[cfg(target_os = "linux")]
                 let _ = window.set_decorations(!settings.use_app_window_controls);
-                if settings.silent_startup {
+                if settings.lightweight_mode {
+                    // 用户偏好轻量：直接进入轻量运行期（销毁主窗口、隐藏 dock）
+                    // 优先级高于 silent_startup，因为轻量模式更激进
+                    if let Err(e) = crate::lightweight::enter_lightweight_runtime(app.handle()) {
+                        log::error!("启动时进入轻量运行期失败：{e}");
+                    } else {
+                        log::info!("轻量运行期：跟随用户偏好启动");
+                    }
+                } else if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
@@ -1377,9 +1395,10 @@ pub fn run() {
                         let _ = window.show();
                         let _ = window.set_focus();
                         tray::apply_tray_policy(app_handle, true);
-                    } else if crate::lightweight::is_lightweight_mode() {
-                        if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
-                            log::error!("退出轻量模式重建窗口失败: {e}");
+                    } else if crate::lightweight::is_lightweight_runtime() {
+                        // Reopen（点 dock / Spotlight 唤起）：仅恢复运行期窗口，偏好保持
+                        if let Err(e) = crate::lightweight::exit_lightweight_runtime(app_handle) {
+                            log::error!("退出轻量运行期重建窗口失败: {e}");
                         }
                     }
                 }
@@ -1390,10 +1409,12 @@ pub fn run() {
                         log::info!("RunEvent::Opened with URL: {url_str}");
 
                         if url_str.starts_with("ccswitch://") {
-                            if crate::lightweight::is_lightweight_mode() {
-                                if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
+                            // Deep link 唤起：仅恢复运行期窗口，偏好保持
+                            if crate::lightweight::is_lightweight_runtime() {
+                                if let Err(e) =
+                                    crate::lightweight::exit_lightweight_runtime(app_handle)
                                 {
-                                    log::error!("退出轻量模式重建窗口失败: {e}");
+                                    log::error!("退出轻量运行期重建窗口失败: {e}");
                                 }
                             }
 
