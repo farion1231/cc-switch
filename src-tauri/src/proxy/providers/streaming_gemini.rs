@@ -651,9 +651,26 @@ mod tests {
             "data: {\"responseId\":\"resp_2\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call_1\",\"name\":\"get_weather\",\"args\":{\"city\":\"Tokyo\"}},\"thoughtSignature\":\"sig-1\"}]}}],\"usageMetadata\":{\"promptTokenCount\":5,\"totalTokenCount\":8}}\n\n",
         ]);
 
-        assert!(output.contains("\"type\":\"tool_use\""));
-        assert!(output.contains("\"name\":\"get_weather\""));
-        assert!(output.contains("\"input\":{}"));
+        let events: Vec<Value> = output
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block.lines().find_map(|line| strip_sse_field(line, "data"))?;
+                serde_json::from_str::<Value>(data).ok()
+            })
+            .collect();
+        let tool_start = events
+            .iter()
+            .find(|event| {
+                event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("tool_use")
+            })
+            .unwrap();
+
+        assert_eq!(tool_start["content_block"]["name"], json!("get_weather"));
+        assert_eq!(tool_start["content_block"]["input"], json!({}));
         assert!(output.contains("\"type\":\"input_json_delta\""));
         assert!(output.contains("\"stop_reason\":\"tool_use\""));
     }
