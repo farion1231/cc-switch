@@ -494,14 +494,7 @@ async fn web_invoke(
 async fn serve_webui_asset(uri: Uri) -> Response {
     let path = normalize_request_path(uri.path());
     let asset = webui_assets::get(&path)
-        .or_else(|| {
-            if path.contains('.') {
-                None
-            } else {
-                webui_assets::get("index.html")
-            }
-        })
-        .or_else(|| webui_assets::get("index.html"));
+        .or_else(|| should_fallback_to_index(&path).then(|| webui_assets::get("index.html"))?);
 
     match asset {
         Some(asset) if asset.path == "index.html" => html_response(asset.bytes),
@@ -517,6 +510,10 @@ fn normalize_request_path(path: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+fn should_fallback_to_index(path: &str) -> bool {
+    !path.contains('.')
 }
 
 fn html_response(bytes: &'static [u8]) -> Response {
@@ -576,18 +573,11 @@ fn webui_tauri_shim() -> &'static str {
 }
 
 async fn invoke_web_command(state: &AppState, cmd: &str, args: Value) -> Result<Value, String> {
+    if let Some(value) = invoke_web_command_without_state(cmd, args.clone())? {
+        return Ok(value);
+    }
+
     match cmd {
-        "plugin:event|listen" | "plugin:event|unlisten" => Ok(Value::Null),
-        "plugin:app|version" | "plugin:app|get_version" => json_value(env!("CARGO_PKG_VERSION")),
-        "plugin:path|resolve_directory" => resolve_directory_arg(&args),
-        "plugin:path|join" => join_path_arg(&args),
-        "plugin:dialog|message" | "plugin:dialog|ask" | "plugin:dialog|confirm" => Ok(Value::Null),
-        "plugin:process|exit" | "plugin:process|relaunch" => Ok(Value::Null),
-        "set_window_theme" => Ok(Value::Null),
-        "update_tray_menu" => json_value(false),
-        "get_init_error" => json_value(Option::<Value>::None),
-        "get_migration_result" => json_value(false),
-        "get_skills_migration_result" => json_value(Option::<Value>::None),
         "get_settings" => json_value(cc_switch_lib::get_settings().await?),
         "save_settings" => {
             let settings: AppSettings = deserialize_arg(&args, "settings")?;
@@ -851,6 +841,41 @@ async fn invoke_web_command(state: &AppState, cmd: &str, args: Value) -> Result<
             "command '{other}' is not available in CLI WebUI yet"
         )),
     }
+}
+
+fn invoke_web_command_without_state(cmd: &str, args: Value) -> Result<Option<Value>, String> {
+    let value = match cmd {
+        "plugin:event|listen" => json_value(0_u64)?,
+        "plugin:event|unlisten" => Value::Null,
+        "plugin:app|version" | "plugin:app|get_version" => json_value(env!("CARGO_PKG_VERSION"))?,
+        "plugin:path|resolve_directory" => resolve_directory_arg(&args)?,
+        "plugin:path|join" => join_path_arg(&args)?,
+        "plugin:dialog|message" | "plugin:dialog|ask" | "plugin:dialog|confirm" => Value::Null,
+        "plugin:process|exit" | "plugin:process|relaunch" => Value::Null,
+        "plugin:window|is_maximized"
+        | "plugin:window|is_minimized"
+        | "plugin:window|is_fullscreen"
+        | "plugin:window|is_focused"
+        | "plugin:window|is_decorated"
+        | "plugin:window|is_resizable"
+        | "plugin:window|is_visible" => Value::Bool(false),
+        "plugin:window|set_decorations"
+        | "plugin:window|minimize"
+        | "plugin:window|toggle_maximize"
+        | "plugin:window|maximize"
+        | "plugin:window|unmaximize"
+        | "plugin:window|close"
+        | "plugin:window|start_dragging" => Value::Null,
+        "set_window_theme" => Value::Null,
+        "update_tray_menu" => Value::Bool(false),
+        "check_env_conflicts" => json_value(Vec::<Value>::new())?,
+        "get_init_error" => json_value(Option::<Value>::None)?,
+        "get_migration_result" => Value::Bool(false),
+        "get_skills_migration_result" => json_value(Option::<Value>::None)?,
+        _ => return Ok(None),
+    };
+
+    Ok(Some(value))
 }
 
 fn json_value<T: Serialize>(value: T) -> Result<Value, String> {
@@ -1163,6 +1188,29 @@ mod tests {
     fn rejects_invalid_webui_port() {
         let err = parse_cli_command(&strings(&["webui", "--port", "0"])).unwrap_err();
         assert_eq!(err.message, "port must be greater than 0");
+    }
+
+    #[test]
+    fn missing_asset_with_extension_does_not_fallback_to_index() {
+        assert!(!should_fallback_to_index("assets/missing.js"));
+        assert!(!should_fallback_to_index("style.css"));
+    }
+
+    #[test]
+    fn route_path_without_extension_falls_back_to_index() {
+        assert!(should_fallback_to_index("settings"));
+        assert!(should_fallback_to_index("providers/claude"));
+    }
+
+    #[test]
+    fn webui_window_command_stubs_return_safe_values() {
+        let result =
+            invoke_web_command_without_state("plugin:window|is_maximized", Value::Null).unwrap();
+        assert_eq!(result, Some(Value::Bool(false)));
+
+        let result =
+            invoke_web_command_without_state("plugin:window|set_decorations", Value::Null).unwrap();
+        assert_eq!(result, Some(Value::Null));
     }
 
     #[test]
