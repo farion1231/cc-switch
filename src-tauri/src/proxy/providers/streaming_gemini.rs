@@ -653,6 +653,7 @@ mod tests {
 
         assert!(output.contains("\"type\":\"tool_use\""));
         assert!(output.contains("\"name\":\"get_weather\""));
+        assert!(output.contains("\"input\":{}"));
         assert!(output.contains("\"type\":\"input_json_delta\""));
         assert!(output.contains("\"stop_reason\":\"tool_use\""));
     }
