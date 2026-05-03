@@ -172,12 +172,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                     && payload.get("role").and_then(Value::as_str) == Some("user")
                 {
                     let text = payload.get("content").map(extract_text).unwrap_or_default();
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty()
-                        && !trimmed.starts_with("# AGENTS.md")
-                        && !trimmed.starts_with("<environment_context>")
-                    {
-                        first_user_message = Some(trimmed.to_string());
+                    if let Some(candidate) = title_candidate_from_user_message(&text) {
+                        first_user_message = Some(candidate);
                     }
                 }
             }
@@ -243,6 +239,28 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("codex resume {session_id}")),
     })
+}
+
+fn title_candidate_from_user_message(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("# AGENTS.md")
+        || trimmed.starts_with("<environment_context>")
+    {
+        return None;
+    }
+
+    if trimmed.starts_with("# Context from my IDE setup:") {
+        return trimmed
+            .find("## My request for Codex:")
+            .and_then(|marker_start| {
+                let request_start = marker_start + "## My request for Codex:".len();
+                let request = trimmed[request_start..].trim();
+                (!request.is_empty()).then(|| request.to_string())
+            });
+    }
+
+    Some(trimmed.to_string())
 }
 
 fn is_subagent_source(source: Option<&Value>) -> bool {
@@ -373,6 +391,44 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         // Should skip environment_context injection and use the real user message
+        assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
+    }
+
+    #[test]
+    fn parse_session_extracts_vscode_ide_request_as_title() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: clinical-osce-agent/项目开发文档.md\\n\\n## Open tabs:\\n- start-dev.py: clinical-osce-agent/start-dev.py\\n\\n## My request for Codex:\\nAnalyze why Codex session titles all look the same\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(
+            meta.title.as_deref(),
+            Some("Analyze why Codex session titles all look the same")
+        );
+    }
+
+    #[test]
+    fn parse_session_skips_vscode_ide_context_without_request() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: app.ts\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
     }
 
