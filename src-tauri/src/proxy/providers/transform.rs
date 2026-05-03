@@ -118,7 +118,7 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
 ///
-/// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi
+/// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi/DeepSeek
 /// `reasoning_content` 兼容字段的 provider。默认转换保持通用 OpenAI-compatible
 /// 请求体，避免向严格后端发送未知字段。
 pub fn anthropic_to_openai_with_reasoning_content(
@@ -332,7 +332,7 @@ fn convert_message_to_openai(
     if let Some(blocks) = content.as_array() {
         let mut content_parts = Vec::new();
         let mut tool_calls = Vec::new();
-        // reasoning_parts: 仅在兼容 Moonshot/Kimi thinking tool-call 路径时
+        // reasoning_parts: 仅在兼容 Moonshot/Kimi/DeepSeek thinking tool-call 路径时
         // 生成 reasoning_content，通用 OpenAI-compatible 路径不发送该非标准字段。
         let mut reasoning_parts = Vec::new();
 
