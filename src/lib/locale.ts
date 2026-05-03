@@ -14,7 +14,11 @@ export function getLocaleFromLanguage(language: string): string {
 }
 
 export function getActiveLanguage(): Language {
-  const language = (i18n.resolvedLanguage || i18n.language || DEFAULT_LANGUAGE).toLowerCase();
+  const language = (
+    i18n.resolvedLanguage ||
+    i18n.language ||
+    DEFAULT_LANGUAGE
+  ).toLowerCase();
   const activeLanguage = SUPPORTED_LANGUAGES.find((supportedLanguage) =>
     language.startsWith(supportedLanguage),
   );

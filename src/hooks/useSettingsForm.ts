@@ -65,15 +65,12 @@ export function useSettingsForm(): UseSettingsFormResult {
     return normalizeLanguage(i18n.language);
   }, []);
 
-  const syncLanguage = useCallback(
-    (lang: Language) => {
-      const current = normalizeLanguage(i18n.language);
-      if (current !== lang) {
-        void i18n.changeLanguage(lang);
-      }
-    },
-    [],
-  );
+  const syncLanguage = useCallback((lang: Language) => {
+    const current = normalizeLanguage(i18n.language);
+    if (current !== lang) {
+      void i18n.changeLanguage(lang);
+    }
+  }, []);
 
   // 初始化设置数据
   useEffect(() => {

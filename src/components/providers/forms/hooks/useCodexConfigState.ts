@@ -113,7 +113,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         const lang = getActiveLanguage();
         if (lang === "zh") return "Auth JSON 必须是对象";
-        if (lang === "ja") return "Auth JSON はオブジェクトである必要があります";
+        if (lang === "ja")
+          return "Auth JSON はオブジェクトである必要があります";
         if (lang === "ru") return "Auth JSON должен быть объектом";
         return "Auth JSON must be an object";
       }
