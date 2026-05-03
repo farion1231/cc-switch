@@ -77,6 +77,8 @@ pub fn read_opencode_config() -> Result<Value, AppError> {
     })
 }
 
+/// Note: writes via `serde_json::to_string_pretty`, which strips comments
+/// and trailing commas from `.jsonc` files.
 pub fn write_opencode_config(config: &Value) -> Result<(), AppError> {
     let path = get_opencode_config_path();
     write_json_file(&path, config)?;
@@ -243,60 +245,80 @@ pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
     use tempfile::TempDir;
 
-    fn setup_test_env() -> (TempDir, PathBuf) {
-        let temp_dir = TempDir::new().unwrap();
-        let opencode_dir = temp_dir.path().join(".config").join("opencode");
+    /// RAII helper that points `get_home_dir()` at a temp directory by
+    /// setting `CC_SWITCH_TEST_HOME` (the only env var the codebase honors —
+    /// see `config.rs` `get_home_dir`; `HOME` is intentionally *not* used
+    /// because it's unreliable on Windows). Saves and restores the prior
+    /// value via `OsString` so non-UTF-8 paths survive the round-trip.
+    struct TempHome {
+        dir: TempDir,
+        original_test_home: Option<std::ffi::OsString>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            Self {
+                dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn setup_test_env() -> (TempHome, PathBuf) {
+        let home = TempHome::new();
+        let opencode_dir = home.dir.path().join(".config").join("opencode");
         fs::create_dir_all(&opencode_dir).unwrap();
-        (temp_dir, opencode_dir)
+        (home, opencode_dir)
     }
 
     #[test]
+    #[serial]
     fn test_read_opencode_config_prefers_jsonc() {
-        let (_temp, opencode_dir) = setup_test_env();
+        let (_home, opencode_dir) = setup_test_env();
 
-        // Create both .json and .jsonc files
         let json_path = opencode_dir.join("opencode.json");
         let jsonc_path = opencode_dir.join("opencode.jsonc");
 
         fs::write(&json_path, r#"{"provider": {"test-json": {}}}"#).unwrap();
         fs::write(&jsonc_path, r#"{"provider": {"test-jsonc": {}}}"#).unwrap();
 
-        // Set override dir to use temp directory
-        std::env::set_var("HOME", opencode_dir.parent().unwrap().parent().unwrap());
-
-        // Should prefer .jsonc file
         let path = get_opencode_config_path();
         assert!(path.ends_with("opencode.jsonc"));
-
-        // Clean up env var
-        std::env::remove_var("HOME");
     }
 
     #[test]
+    #[serial]
     fn test_read_opencode_config_fallback_to_json() {
-        let (_temp, opencode_dir) = setup_test_env();
+        let (_home, opencode_dir) = setup_test_env();
 
-        // Create only .json file
         let json_path = opencode_dir.join("opencode.json");
         fs::write(&json_path, r#"{"provider": {"test": {}}}"#).unwrap();
 
-        std::env::set_var("HOME", opencode_dir.parent().unwrap().parent().unwrap());
-
-        // Should fallback to .json file
         let path = get_opencode_config_path();
         assert!(path.ends_with("opencode.json"));
-
-        std::env::remove_var("HOME");
     }
 
     #[test]
+    #[serial]
     fn test_read_opencode_config_with_comments() {
-        let (_temp, opencode_dir) = setup_test_env();
+        let (_home, opencode_dir) = setup_test_env();
 
-        // Create .jsonc file with comments
         let jsonc_path = opencode_dir.join("opencode.jsonc");
         let config_with_comments = r#"{
             // This is a comment
@@ -311,9 +333,6 @@ mod tests {
         }"#;
         fs::write(&jsonc_path, config_with_comments).unwrap();
 
-        std::env::set_var("HOME", opencode_dir.parent().unwrap().parent().unwrap());
-
-        // Should successfully parse config with comments
         let config = read_opencode_config().unwrap();
         assert!(config.get("provider").is_some());
         assert!(config["provider"]
@@ -321,15 +340,13 @@ mod tests {
             .and_then(|p| p.get("apiKey"))
             .and_then(|k| k.as_str())
             == Some("test-key"));
-
-        std::env::remove_var("HOME");
     }
 
     #[test]
+    #[serial]
     fn test_read_opencode_config_trailing_commas() {
-        let (_temp, opencode_dir) = setup_test_env();
+        let (_home, opencode_dir) = setup_test_env();
 
-        // Create .jsonc file with trailing commas
         let jsonc_path = opencode_dir.join("opencode.jsonc");
         let config_with_trailing = r#"{
             "$schema": "https://opencode.ai/config.json",
@@ -342,12 +359,7 @@ mod tests {
         }"#;
         fs::write(&jsonc_path, config_with_trailing).unwrap();
 
-        std::env::set_var("HOME", opencode_dir.parent().unwrap().parent().unwrap());
-
-        // Should successfully parse config with trailing commas
         let config = read_opencode_config().unwrap();
         assert!(config.get("provider").is_some());
-
-        std::env::remove_var("HOME");
     }
 }
