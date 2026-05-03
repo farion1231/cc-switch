@@ -1075,7 +1075,9 @@ mod tests {
             .iter()
             .find(|event| {
                 event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
-                    && event.pointer("/content_block/type").and_then(|v| v.as_str())
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
                         == Some("tool_use")
             })
             .unwrap();
@@ -1120,7 +1122,9 @@ mod tests {
             .iter()
             .find(|event| {
                 event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
-                    && event.pointer("/content_block/type").and_then(|v| v.as_str())
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
                         == Some("tool_use")
             })
             .unwrap();
