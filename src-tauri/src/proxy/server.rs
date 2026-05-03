@@ -10,7 +10,8 @@
 
 use super::{
     failover_switch::FailoverSwitchManager, handlers, log_codes::srv as log_srv,
-    provider_router::ProviderRouter, types::*, ProxyError,
+    provider_router::ProviderRouter, providers::gemini_shadow::GeminiShadowStore, types::*,
+    ProxyError,
 };
 use crate::database::Database;
 use axum::{
@@ -23,7 +24,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
-use tower_http::cors::{Any, CorsLayer};
 
 /// 代理服务器状态（共享）
 #[derive(Clone)]
@@ -36,6 +36,8 @@ pub struct ProxyState {
     pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     /// 共享的 ProviderRouter（持有熔断器状态，跨请求保持）
     pub provider_router: Arc<ProviderRouter>,
+    /// Gemini Native shadow state，用于 thoughtSignature / tool call 回放
+    pub gemini_shadow: Arc<GeminiShadowStore>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -69,6 +71,7 @@ impl ProxyServer {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             provider_router,
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
             app_handle,
             failover_manager,
         };
@@ -275,11 +278,6 @@ impl ProxyServer {
     }
 
     fn build_router(&self) -> Router {
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
-
         Router::new()
             // 健康检查
             .route("/health", get(handlers::health_check))
@@ -328,7 +326,6 @@ impl ProxyServer {
             .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
-            .layer(cors)
             .with_state(self.state.clone())
     }
 

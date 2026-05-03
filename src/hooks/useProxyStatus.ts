@@ -57,6 +57,7 @@ export function useProxyStatus() {
         t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.server.startFailed", {
+          detail,
           defaultValue: `启动代理服务失败: ${detail}`,
         }),
       );
@@ -87,6 +88,7 @@ export function useProxyStatus() {
         t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.stopWithRestoreFailed", {
+          detail,
           defaultValue: `停止失败: ${detail}`,
         }),
       );
@@ -129,6 +131,7 @@ export function useProxyStatus() {
         t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.takeover.failed", {
+          detail,
           defaultValue: `操作失败: ${detail}`,
         }),
       );

@@ -9,7 +9,7 @@
 //! 与 Chat Completions 的 delta chunk 模型完全不同，需要独立的状态机处理。
 
 use super::transform_responses::{build_anthropic_usage_from_responses, map_responses_stop_reason};
-use crate::proxy::sse::strip_sse_field;
+use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
@@ -122,10 +122,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                     crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                     // SSE 事件由 \n\n 分隔
-                    while let Some(pos) = buffer.find("\n\n") {
-                        let block = buffer[..pos].to_string();
-                        buffer = buffer[pos + 2..].to_string();
-
+                    while let Some(block) = take_sse_block(&mut buffer) {
                         if block.trim().is_empty() {
                             continue;
                         }
@@ -173,9 +170,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                 }
 
                                 has_sent_message_start = true;
-                                // Build usage with cache tokens if available
+                                // Build usage with defensive null handling
+                                // Some() wrapper ensures build function always receives valid input
+                                // Fallback to empty object {} if usage field missing, ensuring message_start
+                                // event always has valid usage structure for VSCode Extension compatibility
                                 let start_usage = build_anthropic_usage_from_responses(
-                                    response_obj.get("usage"),
+                                    Some(response_obj.get("usage").unwrap_or(&json!({}))),
                                 );
 
                                 let event = json!({
@@ -673,9 +673,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                 }
                                 fallback_open_index = None;
 
-                                let usage_json = response_obj.get("usage").map(|u| {
-                                    build_anthropic_usage_from_responses(Some(u))
-                                });
+                                // Defensive: Always build usage_json, even if usage field missing
+                                // Some() wrapper with fallback to {} ensures build_anthropic_usage_from_responses
+                                // always receives valid input, preventing null pointer errors in VSCode Extension
+                                let usage_json = build_anthropic_usage_from_responses(
+                                    Some(response_obj.get("usage").unwrap_or(&json!({})))
+                                );
 
                                 // Emit message_delta (with usage + stop_reason)
                                 let delta_event = json!({

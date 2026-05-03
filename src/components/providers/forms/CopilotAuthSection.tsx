@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -45,6 +46,19 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
 }) => {
   const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
+  const [deploymentType, setDeploymentType] = React.useState<
+    "github.com" | "enterprise"
+  >("github.com");
+  const [enterpriseDomain, setEnterpriseDomain] = React.useState("");
+
+  // 根据部署类型计算实际的 GitHub 域名
+  const effectiveGithubDomain =
+    deploymentType === "enterprise" && enterpriseDomain.trim()
+      ? enterpriseDomain
+          .trim()
+          .replace(/^https?:\/\//, "")
+          .replace(/\/$/, "")
+      : undefined;
 
   const {
     accounts,
@@ -63,7 +77,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     setDefaultAccount,
     cancelAuth,
     logout,
-  } = useCopilotAuth();
+  } = useCopilotAuth(effectiveGithubDomain);
 
   // 复制用户码
   const copyUserCode = async () => {
@@ -111,6 +125,41 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
               })
             : t("copilot.notAuthenticated", "未认证")}
         </Badge>
+      </div>
+
+      {/* GitHub 部署类型选择 */}
+      <div className="space-y-2">
+        <Label className="text-sm text-muted-foreground">
+          {t("copilot.deploymentType", "GitHub 部署类型")}
+        </Label>
+        <Select
+          value={deploymentType}
+          onValueChange={(v) =>
+            setDeploymentType(v as "github.com" | "enterprise")
+          }
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="github.com">
+              {t("copilot.deploymentGitHubCom", "GitHub.com")}
+            </SelectItem>
+            <SelectItem value="enterprise">
+              {t("copilot.deploymentEnterprise", "GitHub Enterprise Server")}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        {deploymentType === "enterprise" && (
+          <Input
+            placeholder={t(
+              "copilot.enterpriseDomainPlaceholder",
+              "例如：company.ghe.com",
+            )}
+            value={enterpriseDomain}
+            onChange={(e) => setEnterpriseDomain(e.target.value)}
+          />
+        )}
       </div>
 
       {migrationError && (
@@ -179,6 +228,12 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
                       {t("copilot.defaultAccount", "默认")}
                     </Badge>
                   )}
+                  {account.github_domain &&
+                    account.github_domain !== "github.com" && (
+                      <Badge variant="outline" className="text-xs">
+                        {account.github_domain}
+                      </Badge>
+                    )}
                   {selectedAccountId === account.id && (
                     <Badge variant="outline" className="text-xs">
                       {t("copilot.selected", "已选中")}
@@ -223,6 +278,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
           onClick={addAccount}
           className="w-full"
           variant="outline"
+          disabled={deploymentType === "enterprise" && !enterpriseDomain.trim()}
         >
           <Github className="mr-2 h-4 w-4" />
           {t("copilot.loginWithGitHub", "使用 GitHub 登录")}
@@ -236,7 +292,10 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
           onClick={addAccount}
           className="w-full"
           variant="outline"
-          disabled={isAddingAccount}
+          disabled={
+            isAddingAccount ||
+            (deploymentType === "enterprise" && !enterpriseDomain.trim())
+          }
         >
           <Plus className="mr-2 h-4 w-4" />
           {t("copilot.addAnotherAccount", "添加其他账号")}

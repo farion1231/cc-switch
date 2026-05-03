@@ -233,14 +233,21 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> UsageResult {
 
     let total_balance = parse_f64_field(data, "totalBalance").unwrap_or(0.0);
 
+    let unit = if is_cn { "CNY" } else { "USD" };
+    let plan_name = if is_cn {
+        "SiliconFlow"
+    } else {
+        "SiliconFlow (EN)"
+    };
+
     UsageResult {
         success: true,
         data: Some(vec![UsageData {
-            plan_name: Some("SiliconFlow".to_string()),
+            plan_name: Some(plan_name.to_string()),
             remaining: Some(total_balance),
             total: None,
             used: None,
-            unit: Some("CNY".to_string()),
+            unit: Some(unit.to_string()),
             is_valid: Some(true),
             invalid_message: None,
             extra: None,

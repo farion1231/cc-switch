@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "3.13.0"
+version = "3.14.1"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -35,6 +35,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-deep-link = "2"
+tauri-plugin-window-state = "2"
 dirs = "5.0"
 toml = "0.8"
 toml_edit = "0.22"

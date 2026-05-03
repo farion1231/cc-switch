@@ -317,6 +317,25 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
+    name: "Compshare Coding Plan",
+    nameKey: "providerForm.presets.ucloudCoding",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "compshare_coding",
+      "https://cp.compshare.cn/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://cp.compshare.cn/v1"],
+    category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "ucloud", // 促销信息 i18n key（复用）
+    icon: "ucloud",
+    iconColor: "#000000",
+  },
+  {
     name: "Micu",
     websiteUrl: "https://www.openclaudecode.cn",
     apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
@@ -331,23 +350,6 @@ requires_openai_auth = true`,
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "micu", // 促销信息 i18n key
     icon: "micu",
-    iconColor: "#000000",
-  },
-  {
-    name: "X-Code API",
-    websiteUrl: "https://x-code.cc",
-    apiKeyUrl: "https://x-code.cc",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "x-code",
-      "https://x-code.cc/v1",
-      "gpt-5.4",
-    ),
-    endpointCandidates: ["https://x-code.cc/v1"],
-    category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "x-code", // 促销信息 i18n key
-    icon: "xcode",
     iconColor: "#000000",
   },
   {
@@ -382,6 +384,23 @@ requires_openai_auth = true`,
     icon: "lioncc",
   },
   {
+    name: "DDSHub",
+    websiteUrl: "https://www.ddshub.cc",
+    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ddshub",
+      "https://www.ddshub.cc",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://www.ddshub.cc"],
+    isPartner: true,
+    partnerPromotionKey: "ddshub",
+    icon: "dds",
+    iconColor: "#000000",
+  },
+  {
     name: "E-FlowCode",
     websiteUrl: "https://e-flowcode.cc",
     apiKeyUrl: "https://e-flowcode.cc",
@@ -407,8 +426,24 @@ model_auto_compact_token_limit = 9000000`,
     iconColor: "#000000",
   },
   {
+    name: "LemonData",
+    websiteUrl: "https://lemondata.cc",
+    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "lemondata",
+      "https://api.lemondata.cc/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://api.lemondata.cc/v1"],
+    isPartner: true,
+    partnerPromotionKey: "lemondata",
+    icon: "lemondata",
+  },
+  {
     name: "PIPELLM",
-    websiteUrl: "https://www.pipellm.ai",
+    websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
     auth: {
       OPENAI_API_KEY: "",

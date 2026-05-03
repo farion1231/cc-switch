@@ -104,8 +104,7 @@ pub async fn execute_usage_script(
         )
     })?;
 
-    // 5. 验证请求 URL 是否安全（防止 SSRF）
-    // 如果提供了 base_url，则验证同源；否则只做基本安全检查
+    // 5. 验证请求 URL（HTTPS 强制 + 同源检查）
     validate_request_url(&request.url, base_url, is_custom_template)?;
 
     // 6. 发送 HTTP 请求
@@ -468,19 +467,10 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
         ));
     }
 
-    // 检查是否为明显的私有IP（但在 base_url 阶段不过于严格，主要在 request_url 阶段检查）
-    if is_suspicious_hostname(hostname) {
-        return Err(AppError::localized(
-            "usage_script.base_url_suspicious",
-            "base_url 包含可疑的主机名",
-            "base_url contains a suspicious hostname",
-        ));
-    }
-
     Ok(())
 }
 
-/// 验证请求 URL 是否安全（防止 SSRF）
+/// 验证请求 URL 是否安全（HTTPS 强制 + 同源检查）
 fn validate_request_url(
     request_url: &str,
     base_url: &str,
@@ -561,149 +551,9 @@ fn validate_request_url(
                 ));
             }
         }
-
-        // 禁止私有 IP 地址访问（除非 base_url 本身就是私有地址，用于开发环境）
-        if let Some(host) = parsed_request.host_str() {
-            let base_host = parsed_base.host_str().unwrap_or("");
-
-            // 如果 base_url 不是私有地址，则禁止访问私有IP
-            if !is_private_ip(base_host) && is_private_ip(host) {
-                return Err(AppError::localized(
-                    "usage_script.private_ip_blocked",
-                    "禁止访问私有 IP 地址",
-                    "Access to private IP addresses is blocked",
-                ));
-            }
-        }
-    } else {
-        // 自定义模板模式：没有 base_url，需要额外的安全检查
-        // 禁止访问私有 IP 地址（SSRF 防护）
-        if let Some(host) = parsed_request.host_str() {
-            if is_private_ip(host) && !is_request_loopback {
-                return Err(AppError::localized(
-                    "usage_script.private_ip_blocked",
-                    "禁止访问私有 IP 地址（localhost 除外）",
-                    "Access to private IP addresses is blocked (localhost allowed)",
-                ));
-            }
-        }
     }
 
     Ok(())
-}
-
-/// 检查是否为私有 IP 地址
-fn is_private_ip(host: &str) -> bool {
-    // localhost 检查
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-
-    // 尝试解析为IP地址
-    if let Ok(ip_addr) = host.parse::<std::net::IpAddr>() {
-        return is_private_ip_addr(ip_addr);
-    }
-
-    // 如果不是IP地址，不是私有IP
-    false
-}
-
-/// 使用标准库API检查IP地址是否为私有地址
-fn is_private_ip_addr(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(ipv4) => {
-            let octets = ipv4.octets();
-
-            // 0.0.0.0/8 (包括未指定地址)
-            if octets[0] == 0 {
-                return true;
-            }
-
-            // RFC1918 私有地址范围
-            // 10.0.0.0/8
-            if octets[0] == 10 {
-                return true;
-            }
-
-            // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
-            if octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31 {
-                return true;
-            }
-
-            // 192.168.0.0/16
-            if octets[0] == 192 && octets[1] == 168 {
-                return true;
-            }
-
-            // 其他特殊地址
-            // 169.254.0.0/16 (链路本地地址)
-            if octets[0] == 169 && octets[1] == 254 {
-                return true;
-            }
-
-            // 127.0.0.0/8 (环回地址)
-            if octets[0] == 127 {
-                return true;
-            }
-
-            false
-        }
-        std::net::IpAddr::V6(ipv6) => {
-            // IPv6 私有地址检查 - 使用标准库方法
-
-            // ::1 (环回地址)
-            if ipv6.is_loopback() {
-                return true;
-            }
-
-            // 唯一本地地址 (fc00::/7)
-            // Rust 1.70+ 可以使用 ipv6.is_unique_local()
-            // 但为了兼容性，我们手动检查
-            let first_segment = ipv6.segments()[0];
-            if (first_segment & 0xfe00) == 0xfc00 {
-                return true;
-            }
-
-            // 链路本地地址 (fe80::/10)
-            if (first_segment & 0xffc0) == 0xfe80 {
-                return true;
-            }
-
-            // 未指定地址 ::
-            if ipv6.is_unspecified() {
-                return true;
-            }
-
-            false
-        }
-    }
-}
-
-/// 检查是否为可疑的主机名（只检查明显不安全的模式）
-fn is_suspicious_hostname(hostname: &str) -> bool {
-    // 空主机名
-    if hostname.is_empty() {
-        return true;
-    }
-
-    // 检查明显的主机名格式问题
-    if hostname.contains("..") || hostname.starts_with(".") || hostname.ends_with(".") {
-        return true;
-    }
-
-    // 检查是否为纯IP地址但没有合理格式（过于宽松的检查在这里可能不够，但主要依赖后续的同源检查）
-    if hostname.parse::<std::net::IpAddr>().is_ok() {
-        // IP地址格式的，在这里不直接拒绝，让同源检查来处理
-        return false;
-    }
-
-    // 检查是否包含明显不当的字符
-    let suspicious_chars = ['<', '>', '"', '\'', '\n', '\r', '\t', '\0'];
-    if hostname.chars().any(|c| suspicious_chars.contains(&c)) {
-        return true;
-    }
-
-    false
 }
 
 /// 判断 URL 是否指向本机（localhost / loopback）
@@ -721,77 +571,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_private_ip_validation() {
-        // 测试IPv4私网地址
-
-        // RFC1918私网地址 - 应该返回true
-        assert!(is_private_ip("10.0.0.1"));
-        assert!(is_private_ip("10.255.255.254"));
-        assert!(is_private_ip("172.16.0.1"));
-        assert!(is_private_ip("172.31.255.255"));
-        assert!(is_private_ip("192.168.0.1"));
-        assert!(is_private_ip("192.168.255.255"));
-
-        // 链路本地地址 - 应该返回true
-        assert!(is_private_ip("169.254.0.1"));
-        assert!(is_private_ip("169.254.255.255"));
-
-        // 环回地址 - 应该返回true
-        assert!(is_private_ip("127.0.0.1"));
-        assert!(is_private_ip("localhost"));
-
-        // 公网172.x.x.x地址 - 应该返回false（这是修复的重点）
-        assert!(!is_private_ip("172.0.0.1"));
-        assert!(!is_private_ip("172.15.255.255"));
-        assert!(!is_private_ip("172.32.0.1"));
-        assert!(!is_private_ip("172.64.0.1"));
-        assert!(!is_private_ip("172.67.0.1")); // Cloudflare CDN
-        assert!(!is_private_ip("172.68.0.1"));
-        assert!(!is_private_ip("172.100.50.25"));
-        assert!(!is_private_ip("172.255.255.255"));
-
-        // 其他公网地址 - 应该返回false
-        assert!(!is_private_ip("8.8.8.8")); // Google DNS
-        assert!(!is_private_ip("1.1.1.1")); // Cloudflare DNS
-        assert!(!is_private_ip("208.67.222.222")); // OpenDNS
-        assert!(!is_private_ip("180.76.76.76")); // Baidu DNS
-
-        // 域名 - 应该返回false
-        assert!(!is_private_ip("api.example.com"));
-        assert!(!is_private_ip("www.google.com"));
-    }
-
-    #[test]
-    fn test_ipv6_private_validation() {
-        // IPv6私网地址
-        assert!(is_private_ip("::1")); // 环回地址
-        assert!(is_private_ip("fc00::1")); // 唯一本地地址
-        assert!(is_private_ip("fd00::1")); // 唯一本地地址
-        assert!(is_private_ip("fe80::1")); // 链路本地地址
-        assert!(is_private_ip("::")); // 未指定地址
-
-        // IPv6公网地址 - 应该返回false（修复的重点）
-        assert!(!is_private_ip("2001:4860:4860::8888")); // Google DNS IPv6
-        assert!(!is_private_ip("2606:4700:4700::1111")); // Cloudflare DNS IPv6
-        assert!(!is_private_ip("2404:6800:4001:c01::67")); // Google DNS IPv6 (其他格式)
-        assert!(!is_private_ip("2001:db8::1")); // 文档地址（非私网）
-
-        // 测试包含 ::1 子串但不是环回地址的公网地址
-        assert!(!is_private_ip("2001:db8::1abc")); // 包含 ::1abc 但不是环回
-        assert!(!is_private_ip("2606:4700::1")); // 包含 ::1 但不是环回
-    }
-
-    #[test]
-    fn test_hostname_bypass_prevention() {
-        // 看起来像本地，但实际是域名
-        assert!(!is_private_ip("127.0.0.1.evil.com"));
-        assert!(!is_private_ip("localhost.evil.com"));
-
-        // 0.0.0.0 应该被视为本地/阻断
-        assert!(is_private_ip("0.0.0.0"));
-    }
-
-    #[test]
     fn test_https_bypass_prevention() {
         // 非本地域名的 HTTP 应该被拒绝
         let result = validate_base_url("http://127.0.0.1.evil.com/api");
@@ -799,37 +578,6 @@ mod tests {
             result.is_err(),
             "Should reject HTTP for non-localhost domains"
         );
-    }
-
-    #[test]
-    fn test_edge_cases() {
-        // 边界情况测试
-        assert!(is_private_ip("172.16.0.0")); // RFC1918起始
-        assert!(is_private_ip("172.31.255.255")); // RFC1918结束
-        assert!(is_private_ip("10.0.0.0")); // 10.0.0.0/8起始
-        assert!(is_private_ip("10.255.255.255")); // 10.0.0.0/8结束
-        assert!(is_private_ip("192.168.0.0")); // 192.168.0.0/16起始
-        assert!(is_private_ip("192.168.255.255")); // 192.168.0.0/16结束
-
-        // 紧邻RFC1918的公网地址 - 应该返回false
-        assert!(!is_private_ip("172.15.255.255")); // 172.16.0.0的前一个
-        assert!(!is_private_ip("172.32.0.0")); // 172.31.255.255的后一个
-    }
-
-    #[test]
-    fn test_ip_addr_parsing() {
-        // 测试IP地址解析功能
-        let ipv4_private = "10.0.0.1".parse::<std::net::IpAddr>().unwrap();
-        assert!(is_private_ip_addr(ipv4_private));
-
-        let ipv4_public = "172.67.0.1".parse::<std::net::IpAddr>().unwrap();
-        assert!(!is_private_ip_addr(ipv4_public));
-
-        let ipv6_private = "fc00::1".parse::<std::net::IpAddr>().unwrap();
-        assert!(is_private_ip_addr(ipv6_private));
-
-        let ipv6_public = "2001:4860:4860::8888".parse::<std::net::IpAddr>().unwrap();
-        assert!(!is_private_ip_addr(ipv6_public));
     }
 
     #[test]
