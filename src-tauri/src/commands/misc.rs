@@ -950,10 +950,12 @@ fn launch_macos_terminal(
         r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
-{export_commands}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
+(
+{export_commands}
 claude --settings "{config_path}"{bypass_flag}
+)
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
@@ -1218,10 +1220,12 @@ fn launch_linux_terminal(
         r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
-{export_commands}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
+(
+{export_commands}
 claude --settings "{config_path}"{bypass_flag}
+)
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
@@ -1335,15 +1339,21 @@ fn launch_windows_terminal(
         .collect::<Vec<_>>()
         .join("\n");
 
+    let unset_commands: String = env_vars
+        .iter()
+        .map(|(k, _)| format!("set {}=", k))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let content = format!(
         "@echo off
 {cwd_command}
-{set_commands}
 echo Using provider-specific claude config:
 echo {}
-claude --settings \"{}\"{}
+{set_commands}
+call claude --settings \"{}\"{}
+{unset_commands}
 del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
 ",
         config_path_for_batch,
         config_path_for_batch,
@@ -1351,6 +1361,7 @@ del \"%~f0\" >nul 2>&1
         config_path_for_batch,
         cwd_command = cwd_command,
         set_commands = set_commands,
+        unset_commands = unset_commands,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -1421,6 +1432,7 @@ fn build_windows_cwd_command(cwd: Option<&Path>) -> String {
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn escape_windows_batch_value(value: &str) -> String {
     value
+        .replace('"', "")
         .replace('^', "^^")
         .replace('%', "%%")
         .replace('&', "^&")
