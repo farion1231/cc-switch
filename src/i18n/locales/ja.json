@@ -2529,6 +2529,87 @@
     "suggestedDefaults": "推奨デフォルト設定を適用",
     "suggestedDefaultsHint": "このプリセットの推奨デフォルトモデル設定を使用します"
   },
+  "modelVerify": {
+    "title": "モデル真正性チェック",
+    "secretNotice": "API Key は今回の検出リクエストにのみ使用され、プロバイダー、設定、ローカルストレージには保存されません。結果は弱いフィンガープリント推定であり、バックエンドモデル ID の確定証明ではありません。",
+    "protocol": "プロトコル",
+    "protocols": {
+      "openAiChat": "OpenAI Chat Completions",
+      "anthropicMessages": "Anthropic Messages",
+      "geminiGenerateContent": "Gemini generateContent"
+    },
+    "baseUrl": "Base URL",
+    "apiKey": "API Key",
+    "model": "モデル",
+    "remark": "メモ",
+    "fetchModels": "モデル一覧を取得",
+    "organization": "Organization ID",
+    "apiVersion": "API バージョン",
+    "timeout": "タイムアウト（秒）",
+    "run": "検出を実行",
+    "runFailed": "検出に失敗しました",
+    "waiting": "待機中",
+    "showApiKey": "表示",
+    "hideApiKey": "非表示",
+    "copyApiKey": "コピー",
+    "validation": {
+      "required": "Base URL、API Key、モデル名を入力してください"
+    },
+    "confidence": "信頼度",
+    "mismatchRisk": "不一致リスク",
+    "dilutionRisk": "疑似希釈リスク",
+    "totalLatency": "レイテンシ",
+    "tokensPerSecond": "tokens/秒",
+    "evidence": "証拠レベル",
+    "inputTokens": "入力 tokens",
+    "outputTokens": "出力 tokens",
+    "cachedInputTokens": "キャッシュ読取 tokens",
+    "probeCount": "プローブ数",
+    "evidenceLevel": {
+      "weak": "弱い証拠",
+      "medium": "中程度の証拠",
+      "strong": "比較的強い証拠"
+    },
+    "groupDescriptions": {
+      "knowledgeQa": "検証可能な小問で基礎知識と簡単な推論を確認します。",
+      "modelFeatures": "構造化出力、コード、指示追従などの行動特徴で能力階層を推定します。",
+      "protocolConsistency": "選択したプロトコルの主要フィールド、状態、互換性を確認します。",
+      "responseStructure": "レスポンス構造、モデルフィールド、usage/token フィールドを確認します。"
+    },
+    "diagnostics": {
+      "title": "診断情報",
+      "description": "これらは主スコアには影響しません。エラー形式と自己申告 ID は中継ゲートウェイやモデルポリシーで変わりやすいため、調査用の手がかりとしてのみ表示します。"
+    },
+    "history": {
+      "title": "最近の検出履歴",
+      "open": "最近の検出履歴（{{count}}）",
+      "empty": "検出履歴はまだありません",
+      "time": "時間",
+      "model": "モデル",
+      "protocol": "インターフェース",
+      "remark": "メモ",
+      "score": "スコア",
+      "status": "状態",
+      "baseUrl": "Base URL",
+      "clear": "キャッシュを消去",
+      "cleared": "検出履歴を消去しました",
+      "prev": "前へ",
+      "next": "次へ",
+      "page": "{{current}} / {{total}} ページ",
+      "count": "全 {{count}} 件",
+      "copied": "API Key をコピーしました",
+      "noApiKey": "コピーできる API Key がありません"
+    },
+    "json": {
+      "collapse": "折りたたむ",
+      "expand": "展開"
+    },
+    "status": {
+      "passed": "合格",
+      "warning": "警告",
+      "failed": "失敗"
+    }
+  },
   "subscription": {
     "title": "サブスクリプションクォータ",
     "fiveHour": "5時間",
