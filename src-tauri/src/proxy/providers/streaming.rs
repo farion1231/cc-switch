@@ -452,7 +452,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                             "content_block": {
                                                                 "type": "tool_use",
                                                                 "id": id,
-                                                                "name": name
+                                                                "name": name,
+                                                                "input": {}
                                                             }
                                                         });
                                                         let sse_data = format!("event: content_block_start\ndata: {}\n\n",
@@ -561,7 +562,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                     "content_block": {
                                                         "type": "tool_use",
                                                         "id": id,
-                                                        "name": name
+                                                        "name": name,
+                                                        "input": {}
                                                     }
                                                 });
                                                 let sse_data = format!("event: content_block_start\ndata: {}\n\n",

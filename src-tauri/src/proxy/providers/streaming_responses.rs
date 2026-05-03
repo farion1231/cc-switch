@@ -433,7 +433,8 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                             "content_block": {
                                                 "type": "tool_use",
                                                 "id": call_id,
-                                                "name": name
+                                                "name": name,
+                                                "input": {}
                                             }
                                         });
                                         let sse = format!("event: content_block_start\ndata: {}\n\n",
@@ -481,7 +482,8 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                                 "name": data
                                                     .get("name")
                                                     .and_then(|v| v.as_str())
-                                                    .unwrap_or("")
+                                                    .unwrap_or(""),
+                                                "input": {}
                                             }
                                         });
                                         let start_sse = format!("event: content_block_start\ndata: {}\n\n",

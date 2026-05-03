@@ -530,7 +530,8 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
                 "content_block": {
                     "type": "tool_use",
                     "id": tool_call.id.clone().unwrap_or_default(),
-                    "name": tool_call.name
+                    "name": tool_call.name,
+                    "input": {}
                 }
             });
             yield Ok(encode_sse("content_block_start", &start_event));
