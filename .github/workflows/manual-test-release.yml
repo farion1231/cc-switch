@@ -139,7 +139,9 @@ jobs:
             echo "No macOS .app found" >&2
             exit 1
           fi
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/CC-Switch-${TAG}-macOS-Unsigned.zip"
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/CC-Switch-${TAG}-macOS-Adhoc-Signed.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -176,12 +178,18 @@ jobs:
           body: |
             Test release built from this fork.
 
-            These artifacts are unsigned test builds. macOS and Windows may show security warnings.
+            These artifacts are test builds. macOS uses ad-hoc signing and is not notarized, so Gatekeeper may show security warnings.
 
             Downloads:
             - Windows: Portable zip
             - Linux: AppImage / deb / rpm
-            - macOS: unsigned app zip
+            - macOS: ad-hoc signed app zip
+
+            macOS test build:
+            1. Unzip the macOS file.
+            2. If macOS says the app is damaged, run:
+               `xattr -dr com.apple.quarantine "/Applications/CC Switch.app"`
+            3. Then open it again.
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
