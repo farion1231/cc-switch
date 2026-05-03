@@ -654,7 +654,9 @@ mod tests {
         let events: Vec<Value> = output
             .split("\n\n")
             .filter_map(|block| {
-                let data = block.lines().find_map(|line| strip_sse_field(line, "data"))?;
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
                 serde_json::from_str::<Value>(data).ok()
             })
             .collect();
