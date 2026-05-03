@@ -1146,7 +1146,7 @@
       "importSummary": "インポート完了: 追加 {{added}} 件、更新 {{refreshed}} 件、既存有効化 {{enabledOnly}} 件。",
       "importWarningTitle": "一部の MCP 項目をスキップしました",
       "importConflictItem": "{{id}}（{{sourceApp}} から） は既存アプリ {{existingApps}} と競合しています",
-      "importInvalidItem": "{{id}}（{{sourceApp}} から） は不正なためスキップしました",
+      "importInvalidItem": "{{id}}（{{sourceApp}} から） は不正なためスキップしました: {{message}}",
       "importWarningMore": "ほか {{count}} 件あります。",
       "importWarningHint": "1 つの ID は 1 つの統一 MCP サーバーを表します。定義が異なる場合は CC-Switch で統一するか、外部アプリ側で名前を変更してください。",
       "apps": {

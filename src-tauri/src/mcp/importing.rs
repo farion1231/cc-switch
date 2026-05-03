@@ -111,6 +111,19 @@ pub(crate) fn conflict_issue(
     }
 }
 
+pub(crate) fn source_import_error_issue(
+    source_app: AppType,
+    message: impl Into<String>,
+) -> McpImportIssue {
+    McpImportIssue {
+        id: format!("{}:import", source_app.as_str()),
+        source_app,
+        kind: McpImportIssueKind::Invalid,
+        message: message.into(),
+        existing_apps: Vec::new(),
+    }
+}
+
 pub(crate) fn build_imported_server(
     id: impl Into<String>,
     source_app: AppType,
@@ -132,9 +145,9 @@ pub(crate) fn build_imported_server(
     }
 }
 
-fn is_owned_by_source_or_unassigned(server: &McpServer, source_app: &AppType) -> bool {
+fn is_owned_by_source(server: &McpServer, source_app: &AppType) -> bool {
     let enabled_apps = server.apps.enabled_apps();
-    enabled_apps.is_empty() || enabled_apps.iter().all(|app| app == source_app)
+    !enabled_apps.is_empty() && enabled_apps.iter().all(|app| app == source_app)
 }
 
 pub(crate) fn reconcile_imported_server(
@@ -150,17 +163,14 @@ pub(crate) fn reconcile_imported_server(
             Ok(ImportMergeAction::Added)
         }
         Some(existing) => {
-            let canonical_existing = normalize_server_spec(&existing.server).ok();
-            let same_spec = canonical_existing
-                .as_ref()
-                .map(|spec| spec == &imported.server)
-                .unwrap_or(false);
+            let canonical_existing = normalize_server_spec(&existing.server)?;
+            let same_spec = canonical_existing == imported.server;
 
             if same_spec {
                 let mut changed = false;
 
-                if canonical_existing.as_ref().is_some_and(|spec| spec != &existing.server) {
-                    existing.server = canonical_existing.expect("checked Some above");
+                if canonical_existing != existing.server {
+                    existing.server = canonical_existing;
                     changed = true;
                 }
 
@@ -180,7 +190,7 @@ pub(crate) fn reconcile_imported_server(
                 });
             }
 
-            if is_owned_by_source_or_unassigned(existing, &source_app) {
+            if is_owned_by_source(existing, &source_app) {
                 existing.server = imported.server;
                 existing.apps.set_enabled_for(&source_app, true);
                 return Ok(ImportMergeAction::Refreshed);
@@ -190,6 +200,108 @@ pub(crate) fn reconcile_imported_server(
                 existing_apps: existing.apps.enabled_apps(),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_config::McpApps;
+    use serde_json::json;
+
+    fn server(id: &str, app: AppType, spec: Value) -> McpServer {
+        build_imported_server(id.to_string(), app, spec)
+    }
+
+    #[test]
+    fn reconcile_does_not_overwrite_disabled_entry() {
+        let mut servers = HashMap::new();
+        servers.insert(
+            "shared".to_string(),
+            McpServer {
+                id: "shared".to_string(),
+                name: "shared".to_string(),
+                server: json!({
+                    "type": "stdio",
+                    "command": "local"
+                }),
+                apps: McpApps::default(),
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: Vec::new(),
+            },
+        );
+
+        let action = reconcile_imported_server(
+            &mut servers,
+            server(
+                "shared",
+                AppType::Codex,
+                json!({
+                    "type": "stdio",
+                    "command": "external"
+                }),
+            ),
+            AppType::Codex,
+        )
+        .expect("reconcile should succeed");
+
+        assert_eq!(
+            action,
+            ImportMergeAction::Conflict {
+                existing_apps: Vec::new()
+            }
+        );
+        assert_eq!(
+            servers["shared"].server.get("command").and_then(|v| v.as_str()),
+            Some("local")
+        );
+        assert!(servers["shared"].apps.is_empty());
+    }
+
+    #[test]
+    fn reconcile_surfaces_invalid_existing_spec() {
+        let mut servers = HashMap::new();
+        servers.insert(
+            "shared".to_string(),
+            McpServer {
+                id: "shared".to_string(),
+                name: "shared".to_string(),
+                server: json!({
+                    "type": "stdio"
+                }),
+                apps: McpApps {
+                    claude: true,
+                    codex: false,
+                    gemini: false,
+                    opencode: false,
+                },
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: Vec::new(),
+            },
+        );
+
+        let err = reconcile_imported_server(
+            &mut servers,
+            server(
+                "shared",
+                AppType::Codex,
+                json!({
+                    "type": "stdio",
+                    "command": "echo"
+                }),
+            ),
+            AppType::Codex,
+        )
+        .expect_err("invalid existing spec should bubble up");
+
+        assert!(
+            err.to_string().contains("stdio 类型的 MCP 服务器缺少 command 字段"),
+            "unexpected error: {err}"
+        );
     }
 }
 

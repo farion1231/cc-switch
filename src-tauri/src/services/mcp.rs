@@ -184,16 +184,16 @@ impl McpService {
         Ok(())
     }
 
-    fn import_from_app_detailed(
+    fn prepare_import_from_app_detailed(
         state: &AppState,
         source_app: AppType,
-    ) -> Result<McpImportResult, AppError> {
+    ) -> Result<(McpImportResult, Vec<McpServer>), AppError> {
         let parsed = match &source_app {
             AppType::Claude => mcp::parse_import_from_claude()?,
             AppType::Codex => mcp::parse_import_from_codex()?,
             AppType::Gemini => mcp::parse_import_from_gemini()?,
             AppType::OpenCode => mcp::parse_import_from_opencode()?,
-            AppType::OpenClaw => return Ok(McpImportResult::default()),
+            AppType::OpenClaw => return Ok((McpImportResult::default(), Vec::new())),
         };
 
         let mut result = McpImportResult::default();
@@ -202,7 +202,7 @@ impl McpService {
         }
 
         if parsed.servers.is_empty() {
-            return Ok(result);
+            return Ok((result, Vec::new()));
         }
 
         let mut servers: HashMap<String, McpServer> =
@@ -231,24 +231,60 @@ impl McpService {
             }
         }
 
-        for id in changed_ids {
-            let server = servers
+        let changed_servers = changed_ids
+            .into_iter()
+            .map(|id| {
+                servers
                 .get(&id)
                 .cloned()
-                .expect("changed server must exist after reconciliation");
+                .expect("changed server must exist after reconciliation")
+            })
+            .collect();
+
+        Ok((result, changed_servers))
+    }
+
+    fn persist_import_changes(
+        state: &AppState,
+        changed_servers: Vec<McpServer>,
+    ) -> Result<(), AppError> {
+        for server in changed_servers {
             state.db.save_mcp_server(&server)?;
             Self::sync_server_to_apps(state, &server)?;
         }
 
+        Ok(())
+    }
+
+    fn import_from_app_detailed(
+        state: &AppState,
+        source_app: AppType,
+    ) -> Result<McpImportResult, AppError> {
+        let (result, changed_servers) = Self::prepare_import_from_app_detailed(state, source_app)?;
+        Self::persist_import_changes(state, changed_servers)?;
         Ok(result)
     }
 
     pub fn import_from_apps_detailed(state: &AppState) -> Result<McpImportResult, AppError> {
         let mut result = McpImportResult::default();
-        result.merge(Self::import_from_app_detailed(state, AppType::Claude)?);
-        result.merge(Self::import_from_app_detailed(state, AppType::Codex)?);
-        result.merge(Self::import_from_app_detailed(state, AppType::Gemini)?);
-        result.merge(Self::import_from_app_detailed(state, AppType::OpenCode)?);
+
+        for source_app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ] {
+            match Self::prepare_import_from_app_detailed(state, source_app.clone()) {
+                Ok((app_result, changed_servers)) => {
+                    Self::persist_import_changes(state, changed_servers)?;
+                    result.merge(app_result);
+                }
+                Err(err) => {
+                    result.push_issue(mcp::source_import_error_issue(source_app, err.to_string()))
+                }
+            }
+        }
+
         Ok(result)
     }
 

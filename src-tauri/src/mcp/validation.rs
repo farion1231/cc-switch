@@ -55,10 +55,10 @@ pub fn normalize_server_spec(spec: &Value) -> Result<Value, AppError> {
         Some(_) => {
             return Err(AppError::McpValidation(INVALID_TYPE.into()));
         }
-        None if has_command => "stdio".to_string(),
         None if has_url => {
             return Err(AppError::McpValidation(TYPE_REQUIRED_FOR_URL.into()));
         }
+        None if has_command => "stdio".to_string(),
         None => "stdio".to_string(),
     };
 
@@ -108,4 +108,24 @@ pub fn extract_server_spec(entry: &Value) -> Result<Value, AppError> {
     }
 
     Ok(server.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn normalize_rejects_url_without_explicit_remote_type_even_with_command() {
+        let err = normalize_server_spec(&json!({
+            "command": "node",
+            "url": "https://example.com/mcp"
+        }))
+        .expect_err("url without explicit type should be rejected");
+
+        assert!(
+            err.to_string().contains(TYPE_REQUIRED_FOR_URL),
+            "unexpected error: {err}"
+        );
+    }
 }

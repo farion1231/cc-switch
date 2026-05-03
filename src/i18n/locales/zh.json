@@ -1146,7 +1146,7 @@
       "importSummary": "导入完成：新增 {{added}} 个，刷新 {{refreshed}} 个，仅启用来源应用 {{enabledOnly}} 个。",
       "importWarningTitle": "部分 MCP 条目已跳过",
       "importConflictItem": "{{id}}（来自 {{sourceApp}}）与现有应用定义冲突：{{existingApps}}",
-      "importInvalidItem": "{{id}}（来自 {{sourceApp}}）配置无效，已跳过",
+      "importInvalidItem": "{{id}}（来自 {{sourceApp}}）配置无效，已跳过：{{message}}",
       "importWarningMore": "另有 {{count}} 个条目未在此显示。",
       "importWarningHint": "统一 MCP 中同一 ID 代表同一个服务器。如定义不同，请在 CC-Switch 中统一，或在外部应用中改名。",
       "apps": {

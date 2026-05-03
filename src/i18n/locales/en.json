@@ -1146,7 +1146,7 @@
       "importSummary": "Import complete: added {{added}}, refreshed {{refreshed}}, enabled existing {{enabledOnly}}.",
       "importWarningTitle": "Some MCP entries were skipped",
       "importConflictItem": "{{id}} (from {{sourceApp}}) conflicts with existing apps: {{existingApps}}",
-      "importInvalidItem": "{{id}} (from {{sourceApp}}) is invalid and was skipped",
+      "importInvalidItem": "{{id}} (from {{sourceApp}}) is invalid and was skipped: {{message}}",
       "importWarningMore": "And {{count}} more item(s).",
       "importWarningHint": "One ID represents one unified MCP server. If definitions differ, reconcile them in CC-Switch or rename them in the external app.",
       "apps": {

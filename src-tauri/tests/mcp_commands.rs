@@ -638,6 +638,115 @@ command = "echo"
 }
 
 #[test]
+fn import_from_apps_detailed_continues_when_one_source_parse_fails() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).expect("create claude dir");
+    fs::write(
+        home.join(".claude.json"),
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                "claude-ok": {
+                    "type": "stdio",
+                    "command": "echo"
+                }
+            }
+        }))
+        .expect("serialize claude config"),
+    )
+    .expect("seed claude config");
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(codex_dir.join("config.toml"), "not = [valid toml")
+        .expect("seed invalid codex config");
+
+    let state = create_test_state().expect("create test state");
+    let result = McpService::import_from_apps_detailed(&state).expect("import from apps");
+
+    assert_eq!(result.added, 1, "valid Claude source should still import");
+    assert_eq!(result.refreshed, 0);
+    assert_eq!(result.enabled_only, 0);
+    assert_eq!(result.conflicts, 0);
+    assert_eq!(result.invalid, 1, "invalid Codex source should become a warning");
+    assert!(
+        result.issues.iter().any(|issue| {
+            issue.source_app == AppType::Codex
+                && issue.kind == cc_switch_lib::McpImportIssueKind::Invalid
+                && issue.message.contains("config.toml")
+        }),
+        "should report the broken Codex source as an invalid import issue"
+    );
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("claude-ok").expect("claude server should be imported");
+    assert!(entry.apps.claude);
+    assert_eq!(
+        entry.server.get("command").and_then(|v| v.as_str()),
+        Some("echo")
+    );
+}
+
+#[test]
+fn import_from_apps_detailed_preserves_all_disabled_entry() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(
+        codex_dir.join("config.toml"),
+        r#"[mcp_servers.shared]
+type = "stdio"
+command = "echo"
+"#,
+    )
+    .expect("seed codex config");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "shared".to_string(),
+            name: "shared".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "local"
+            }),
+            apps: McpApps::default(),
+            description: Some("disabled locally".to_string()),
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("seed disabled shared server");
+
+    let result = McpService::import_from_apps_detailed(&state).expect("import from apps");
+    assert_eq!(result.added, 0);
+    assert_eq!(result.refreshed, 0);
+    assert_eq!(result.enabled_only, 0);
+    assert_eq!(result.conflicts, 1, "disabled local entry should not be overwritten");
+    assert_eq!(result.invalid, 0);
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("shared").expect("shared entry");
+    assert!(
+        entry.apps.is_empty(),
+        "conflicting import should not enable any source app"
+    );
+    assert_eq!(
+        entry.server.get("command").and_then(|v| v.as_str()),
+        Some("local"),
+        "existing disabled entry should remain untouched"
+    );
+    assert_eq!(entry.description.as_deref(), Some("disabled locally"));
+}
+
+#[test]
 fn import_mcp_from_gemini_sse_url_only_is_valid() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

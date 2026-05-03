@@ -85,6 +85,7 @@ const UnifiedMcpPanel = React.forwardRef<
       return t("mcp.unifiedPanel.importInvalidItem", {
         id: issue.id,
         sourceApp,
+        message: issue.message,
       });
     });
 

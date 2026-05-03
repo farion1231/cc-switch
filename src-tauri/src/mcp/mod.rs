@@ -37,8 +37,8 @@ pub(crate) use claude::parse_import_from_claude;
 pub(crate) use codex::parse_import_from_codex;
 pub(crate) use gemini::parse_import_from_gemini;
 pub(crate) use importing::{
-    apply_parsed_import, build_imported_server, conflict_issue, invalid_issue, reconcile_imported_server,
-    ImportMergeAction, ParsedImport,
+    apply_parsed_import, build_imported_server, conflict_issue, invalid_issue,
+    reconcile_imported_server, source_import_error_issue, ImportMergeAction, ParsedImport,
 };
 pub(crate) use opencode::parse_import_from_opencode;
 pub(crate) use validation::normalize_server_spec;
