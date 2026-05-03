@@ -149,7 +149,7 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
             created_at: Some(created),
             last_active_at: Some(updated),
             source_path: Some(format!("sqlite:{db_display}:{session_id}")),
-            resume_command: Some(format!("opencode session resume {session_id}")),
+            resume_command: Some(format!("opencode -s {session_id}")),
         });
     }
     sessions
@@ -473,7 +473,7 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at: updated_at.or(created_at),
         source_path: Some(source_path),
-        resume_command: Some(format!("opencode session resume {session_id}")),
+        resume_command: Some(format!("opencode -s {session_id}")),
     })
 }
 
@@ -780,6 +780,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_session_uses_session_flag_resume_command() {
+        let temp = tempdir().expect("tempdir");
+        let storage = temp.path();
+        let session_id = "ses_json";
+        let project_id = "project-json";
+        let session_dir = storage.join("session").join(project_id);
+        std::fs::create_dir_all(&session_dir).expect("create session dir");
+
+        let session_file = session_dir.join(format!("{session_id}.json"));
+        std::fs::write(
+            &session_file,
+            format!(
+                r#"{{
+                  "id": "{session_id}",
+                  "projectID": "{project_id}",
+                  "directory": "/tmp/project",
+                  "time": {{ "created": 1, "updated": 2 }}
+                }}"#
+            ),
+        )
+        .expect("write session file");
+
+        let session = parse_session(storage, &session_file).expect("parse session");
+
+        assert_eq!(
+            session.resume_command.as_deref(),
+            Some("opencode -s ses_json")
+        );
+    }
+
+    #[test]
     #[allow(deprecated)] // set_var/remove_var deprecated since Rust 1.81; safe here under mutex
     fn scan_sessions_sqlite_reads_temp_database() {
         let _guard = opencode_env_lock().lock().expect("lock");
@@ -824,6 +855,10 @@ mod tests {
         assert_eq!(
             sessions[1].source_path.as_deref(),
             Some(expected_source.as_str())
+        );
+        assert_eq!(
+            sessions[1].resume_command.as_deref(),
+            Some("opencode -s ses_1")
         );
     }
 
