@@ -75,17 +75,28 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
+      - name: Disable updater artifacts for unsigned test builds
+        shell: bash
+        run: |
+          cat > tauri.test-release.conf.json <<'JSON'
+          {
+            "bundle": {
+              "createUpdaterArtifacts": false
+            }
+          }
+          JSON
+
       - name: Build Tauri app on Windows
         if: runner.os == 'Windows'
-        run: pnpm tauri build --no-bundle
+        run: pnpm tauri build --no-bundle --config tauri.test-release.conf.json
 
       - name: Build Tauri app on Linux
         if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles appimage,deb,rpm
+        run: pnpm tauri build --bundles appimage,deb,rpm --config tauri.test-release.conf.json
 
       - name: Build Tauri app on macOS
         if: runner.os == 'macOS'
-        run: pnpm tauri build --no-bundle
+        run: pnpm tauri build --bundles app --config tauri.test-release.conf.json
 
       - name: Prepare Windows assets
         if: runner.os == 'Windows'
@@ -123,7 +134,7 @@ jobs:
           set -euxo pipefail
           mkdir -p release-assets
           TAG="${{ inputs.tag }}"
-          APP_PATH=$(find src-tauri/target/release -maxdepth 1 -name "*.app" -type d | head -1)
+          APP_PATH=$(find src-tauri/target/release/bundle -name "*.app" -type d | head -1)
           if [ -z "$APP_PATH" ]; then
             echo "No macOS .app found" >&2
             exit 1
@@ -141,6 +152,7 @@ jobs:
     name: Publish prerelease
     runs-on: ubuntu-22.04
     needs: build
+    if: always()
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v8
@@ -148,6 +160,7 @@ jobs:
           pattern: release-assets-*
           path: release-assets
           merge-multiple: true
+          if-no-files-found: error
 
       - name: List assets
         shell: bash
