@@ -146,6 +146,24 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#1E88E5",
   },
   {
+    name: "SenseNova",
+    websiteUrl: "https://platform.sensenova.cn",
+    apiKeyUrl: "https://platform.sensenova.cn",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://token.sensenova.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "sensenova-6.7-flash-lite",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash",
+      },
+    },
+    category: "cn_official",
+    icon: "sensenova",
+    iconColor: "#1177E4",
+  },
+  {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",

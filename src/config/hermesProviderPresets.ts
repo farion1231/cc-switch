@@ -1130,4 +1130,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "mimo-v2-pro", provider: "xiaomi_mimo" },
     },
   },
+  {
+    name: "SenseNova",
+    websiteUrl: "https://platform.sensenova.cn",
+    apiKeyUrl: "https://platform.sensenova.cn",
+    settingsConfig: {
+      name: "sensenova",
+      base_url: "https://token.sensenova.cn/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "sensenova-6.7-flash-lite",
+          name: "SenseNova 6.7 Flash Lite",
+        },
+        {
+          id: "SenseChat-5",
+          name: "SenseChat 5",
+          context_length: 128000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "sensenova",
+    iconColor: "#1177E4",
+    suggestedDefaults: {
+      model: { default: "sensenova-6.7-flash-lite", provider: "sensenova" },
+    },
+  },
 ];

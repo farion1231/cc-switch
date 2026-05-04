@@ -1811,6 +1811,47 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "aws",
     iconColor: "#FF9900",
   },
+  {
+    name: "SenseNova",
+    websiteUrl: "https://platform.sensenova.cn",
+    apiKeyUrl: "https://platform.sensenova.cn",
+    settingsConfig: {
+      baseUrl: "https://token.sensenova.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "sensenova-6.7-flash-lite",
+          name: "SenseNova 6.7 Flash Lite",
+        },
+        {
+          id: "SenseChat-5",
+          name: "SenseChat 5",
+          contextWindow: 128000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "sensenova",
+    iconColor: "#1177E4",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "sensenova/sensenova-6.7-flash-lite",
+        fallbacks: ["sensenova/SenseChat-5"],
+      },
+      modelCatalog: {
+        "sensenova/sensenova-6.7-flash-lite": { alias: "Flash Lite" },
+        "sensenova/SenseChat-5": { alias: "SenseChat 5" },
+      },
+    },
+  },
 
   // ========== Custom Template ==========
   {

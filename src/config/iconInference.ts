@@ -28,6 +28,7 @@ const iconMappings = {
   perplexity: { icon: "perplexity", iconColor: "#20808D" },
   huggingface: { icon: "huggingface", iconColor: "#FFD21E" },
   novita: { icon: "novita", iconColor: "#000000" },
+  sensenova: { icon: "sensenova", iconColor: "#1177E4" },
 
   // 云平台
   aws: { icon: "aws", iconColor: "#FF9900" },
