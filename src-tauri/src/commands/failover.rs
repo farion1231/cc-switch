@@ -158,6 +158,15 @@ pub async fn set_auto_failover_enabled(
             "source": "failoverEnabled"
         });
         let _ = app.emit("provider-switched", event_data);
+
+        // 广播给远程浏览器（SSE）
+        let app_clone = app.clone();
+        let p1_provider_id = p1_provider_id.clone();
+        let app_type_clone = app_type.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::remote::broadcast_provider_switch(&app_clone, &app_type_clone, &p1_provider_id)
+                .await;
+        });
     }
 
     // 刷新托盘菜单，确保状态同步

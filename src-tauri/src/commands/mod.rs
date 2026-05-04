@@ -21,6 +21,7 @@ mod plugin;
 mod prompt;
 mod provider;
 mod proxy;
+pub(crate) mod remote;
 mod session_manager;
 mod settings;
 pub mod skill;

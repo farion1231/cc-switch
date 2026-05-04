@@ -100,12 +100,24 @@ pub fn switch_provider_test_hook(
 
 #[tauri::command]
 pub fn switch_provider(
+    app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
     app: String,
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
+    let result =
+        switch_provider_internal(&state, app_type.clone(), &id).map_err(|e| e.to_string())?;
+
+    // 广播给远程浏览器（SSE）
+    let app_handle = app_handle.clone();
+    let app_type_str = app_type.as_str().to_string();
+    let id_clone = id.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::remote::broadcast_provider_switch(&app_handle, &app_type_str, &id_clone).await;
+    });
+
+    Ok(result)
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {

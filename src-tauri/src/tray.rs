@@ -415,7 +415,16 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
         if let Err(e) = app.emit("provider-switched", event_data) {
             log::error!("发射 provider-switched 事件失败: {e}");
         }
+
+        // 广播给远程浏览器（SSE）
+        let app = app.clone();
+        let app_type_str = app_type_str.to_string();
+        let p1_provider_id = p1_provider_id.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::remote::broadcast_provider_switch(&app, &app_type_str, &p1_provider_id).await;
+        });
     }
+
     Ok(())
 }
 
@@ -436,7 +445,14 @@ fn handle_provider_click(
 
         // 切换供应商。需要本地路由的供应商也不在这里自动启动代理，
         // 由用户在页面/设置中手动开启。
-        crate::services::ProviderService::switch(app_state.inner(), app_type.clone(), provider_id)?;
+        // 通过 commands::switch_provider 统一入口，包含 SSE 广播
+        crate::commands::switch_provider(
+            app.clone(),
+            app_state.clone(),
+            app_type_str.to_string(),
+            provider_id.to_string(),
+        )
+        .map_err(AppError::Message)?;
 
         // 更新托盘菜单
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
@@ -459,7 +475,10 @@ fn handle_provider_click(
         if let Err(e) = app.emit("provider-switched", event_data) {
             log::error!("发射 provider-switched 事件失败: {e}");
         }
+
+        // Note: SSE broadcast is already handled inside commands::switch_provider
     }
+
     Ok(())
 }
 
