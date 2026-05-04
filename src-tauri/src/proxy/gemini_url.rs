@@ -81,6 +81,10 @@ fn should_normalize_gemini_full_url(base_url: &str) -> bool {
     let path = path.trim_end_matches('/');
     let on_google_host = is_google_gemini_host(extract_host(origin));
 
+    if matches_vertex_ai_publisher_model_path(path) {
+        return false;
+    }
+
     // Unconditional layer: only paths whose grammar is *intrinsically*
     // Gemini-specific — the `/models/...:generateContent` method-call
     // shape and the deep OpenAI-compat endpoints (`/openai/chat/completions`,
@@ -238,6 +242,27 @@ fn matches_structured_gemini_models_path(path: &str) -> bool {
     false
 }
 
+/// Vertex AI endpoint paths include project/location/publisher routing before
+/// `models/*:generateContent`; in full-URL mode that routing is user-provided
+/// and must not be collapsed into the public Gemini `/v1beta/models/*` shape.
+fn matches_vertex_ai_publisher_model_path(path: &str) -> bool {
+    let Some(projects_index) = path.find("/projects/") else {
+        return false;
+    };
+    let Some(publisher_models_index) = path.find("/publishers/google/models/") else {
+        return false;
+    };
+
+    if projects_index >= publisher_models_index
+        || !path[projects_index..publisher_models_index].contains("/locations/")
+    {
+        return false;
+    }
+
+    let after_model = &path[publisher_models_index + "/publishers/google/models/".len()..];
+    after_model.contains(":generateContent") || after_model.contains(":streamGenerateContent")
+}
+
 fn merge_queries(base_query: Option<&str>, endpoint_query: Option<&str>) -> Option<String> {
     let parts: Vec<&str> = [base_query, endpoint_query]
         .into_iter()
@@ -332,6 +357,20 @@ mod tests {
         );
 
         assert_eq!(url, "https://relay.example/custom/generate-content?alt=sse");
+    }
+
+    #[test]
+    fn preserves_cloudflare_vertex_ai_full_url_with_action() {
+        let url = resolve_gemini_native_url(
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent",
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+            true,
+        );
+
+        assert_eq!(
+            url,
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse"
+        );
     }
 
     #[test]

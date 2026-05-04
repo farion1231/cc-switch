@@ -169,7 +169,6 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_session' THEN 'Claude (Session)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
-         WHEN '_hermes_session' THEN 'Hermes (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -190,7 +189,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let proxy_data_source = data_source_expr("proxy_dedup");
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'hermes_session')
+            {data_source} IN ('session_log', 'codex_session', 'gemini_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
