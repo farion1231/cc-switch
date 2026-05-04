@@ -169,7 +169,7 @@ impl WebDavSyncSettings {
 
 /// 应用设置结构
 ///
-/// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
+/// 存储设备级别设置，保存在本地 `<app_config_dir>/settings.json`，不随数据库同步。
 /// 这确保了云同步场景下多设备可以独立运作。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -343,13 +343,8 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    fn settings_path() -> Option<PathBuf> {
-        // settings.json 保留用于旧版本迁移和无数据库场景
-        Some(
-            crate::config::get_home_dir()
-                .join(".cc-switch")
-                .join("settings.json"),
-        )
+    pub(crate) fn settings_path() -> PathBuf {
+        crate::config::get_app_config_dir().join("settings.json")
     }
 
     fn normalize_paths(&mut self) {
@@ -411,9 +406,7 @@ impl AppSettings {
     }
 
     fn load_from_file() -> Self {
-        let Some(path) = Self::settings_path() else {
-            return Self::default();
-        };
+        let path = Self::settings_path();
         if let Ok(content) = fs::read_to_string(&path) {
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(mut settings) => {
@@ -438,9 +431,7 @@ impl AppSettings {
 fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     let mut normalized = settings.clone();
     normalized.normalize_paths();
-    let Some(path) = AppSettings::settings_path() else {
-        return Err(AppError::Config("无法获取用户主目录".to_string()));
-    };
+    let path = AppSettings::settings_path();
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
