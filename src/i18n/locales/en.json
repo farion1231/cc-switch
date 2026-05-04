@@ -549,7 +549,8 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
-          "kaku": "Kaku"
+          "kaku": "Kaku",
+          "warp": "Warp"
         },
         "windows": {
           "cmd": "Command Prompt",
@@ -2237,6 +2238,8 @@
     "error": "{{providerName}} check error: {{error}}",
     "modelNotFound": "{{providerName}} test model {{model}} does not exist or has been deprecated",
     "modelNotFoundHint": "This model may have been retired by the provider. Update the default test model in \"Model Test Config\".",
+    "quotaExceeded": "{{providerName}} Coding Plan quota has been exceeded",
+    "quotaExceededHint": "Baidu Qianfan returned a Coding Plan quota-limit error. Wait for the 5-hour, weekly, or monthly quota refresh, or adjust the plan in the Qianfan console.",
     "httpHint": {
       "400": "Provider rejected request format. Health check probe may differ from actual usage.",
       "401": "API key may be invalid, or provider uses OAuth auth. Check failure doesn't mean it's unusable.",
@@ -2291,6 +2294,9 @@
     }
   },
   "universalProvider": {
+    "duplicate": "Duplicate",
+    "duplicatedAndSynced": "Universal provider duplicated and synced",
+    "duplicateError": "Failed to duplicate universal provider",
     "title": "Universal Provider",
     "description": "Universal providers manage Claude, Codex, and Gemini configurations simultaneously. Changes are automatically synced to all enabled apps.",
     "add": "Add Universal Provider",

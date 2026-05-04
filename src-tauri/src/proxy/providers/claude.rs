@@ -82,6 +82,40 @@ pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     )
 }
 
+fn is_moonshot_or_kimi_identifier(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains("moonshot") || value.contains("kimi")
+}
+
+fn should_preserve_reasoning_content_for_openai_chat(
+    provider: &Provider,
+    body: &serde_json::Value,
+) -> bool {
+    if body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .is_some_and(is_moonshot_or_kimi_identifier)
+    {
+        return true;
+    }
+
+    let settings = &provider.settings_config;
+    let base_urls = [
+        settings
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str()),
+        settings.get("base_url").and_then(|v| v.as_str()),
+        settings.get("baseURL").and_then(|v| v.as_str()),
+        settings.get("apiEndpoint").and_then(|v| v.as_str()),
+    ];
+
+    base_urls
+        .into_iter()
+        .flatten()
+        .any(is_moonshot_or_kimi_identifier)
+}
+
 pub fn transform_claude_request_for_api_format(
     body: serde_json::Value,
     provider: &Provider,
@@ -156,7 +190,12 @@ pub fn transform_claude_request_for_api_format(
             )
         }
         "openai_chat" => {
-            let mut result = super::transform::anthropic_to_openai(body)?;
+            let preserve_reasoning_content =
+                should_preserve_reasoning_content_for_openai_chat(provider, &body);
+            let mut result = super::transform::anthropic_to_openai_with_reasoning_content(
+                body,
+                preserve_reasoning_content,
+            )?;
             // Inject prompt_cache_key only if explicitly configured in meta
             if let Some(key) = provider
                 .meta
@@ -359,6 +398,33 @@ impl ClaudeAdapter {
         log::warn!("[Claude] 未找到有效的 API Key");
         None
     }
+
+    /// 根据 env 中填写的变量名推断 Anthropic 默认走哪种鉴权策略。
+    ///
+    /// 与 Anthropic SDK 原生语义保持一致：
+    /// - `ANTHROPIC_AUTH_TOKEN` → `ClaudeAuth`（发送 `Authorization: Bearer`）
+    /// - `ANTHROPIC_API_KEY`    → `Anthropic` （发送 `x-api-key`）
+    ///
+    /// 优先级与 [`extract_key`] 一致；两者都缺时返回 `None` 由调用方决定 fallback。
+    fn infer_anthropic_auth_strategy(&self, provider: &Provider) -> Option<AuthStrategy> {
+        let env = provider.settings_config.get("env")?;
+
+        let has_value = |key: &str| -> bool {
+            env.get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .is_some()
+        };
+
+        if has_value("ANTHROPIC_AUTH_TOKEN") {
+            return Some(AuthStrategy::ClaudeAuth);
+        }
+        if has_value("ANTHROPIC_API_KEY") {
+            return Some(AuthStrategy::Anthropic);
+        }
+        None
+    }
 }
 
 impl Default for ClaudeAdapter {
@@ -472,7 +538,16 @@ impl ProviderAdapter for ClaudeAdapter {
             ProviderType::Gemini => Some(AuthInfo::new(key, AuthStrategy::Google)),
             ProviderType::OpenRouter => Some(AuthInfo::new(key, AuthStrategy::Bearer)),
             ProviderType::ClaudeAuth => Some(AuthInfo::new(key, AuthStrategy::ClaudeAuth)),
-            _ => Some(AuthInfo::new(key, AuthStrategy::Anthropic)),
+            _ => {
+                // 按 env 中的变量名推断鉴权策略，对齐 Anthropic SDK 语义：
+                // ANTHROPIC_AUTH_TOKEN → Authorization: Bearer
+                // ANTHROPIC_API_KEY    → x-api-key
+                // 其他来源（apiKey 直填等）默认走 x-api-key（Anthropic 官方协议）。
+                let strategy = self
+                    .infer_anthropic_auth_strategy(provider)
+                    .unwrap_or(AuthStrategy::Anthropic);
+                Some(AuthInfo::new(key, strategy))
+            }
         }
     }
 
@@ -509,7 +584,13 @@ impl ProviderAdapter for ClaudeAdapter {
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
         let bearer = format!("Bearer {}", auth.api_key);
         match auth.strategy {
-            AuthStrategy::Anthropic | AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
+            AuthStrategy::Anthropic => {
+                vec![(
+                    HeaderName::from_static("x-api-key"),
+                    HeaderValue::from_str(&auth.api_key).unwrap(),
+                )]
+            }
+            AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
                 vec![(
                     HeaderName::from_static("authorization"),
                     HeaderValue::from_str(&bearer).unwrap(),
@@ -710,7 +791,9 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_auth_anthropic() {
+    fn test_extract_auth_anthropic_auth_token_uses_claude_auth_strategy() {
+        // ANTHROPIC_AUTH_TOKEN 在 Anthropic SDK 里语义就是 Authorization: Bearer，
+        // 因此走 ClaudeAuth strategy 而不是 Anthropic（x-api-key）。
         let adapter = ClaudeAdapter::new();
         let provider = create_provider(json!({
             "env": {
@@ -721,7 +804,7 @@ mod tests {
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-ant-test-key");
-        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
     }
 
     #[test]
@@ -737,6 +820,73 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-ant-test-key");
         assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
+    fn test_extract_auth_both_env_vars_prefer_auth_token() {
+        // 两个变量都填时，extract_key 选 AUTH_TOKEN，strategy 推断也必须保持一致。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-from-auth-token",
+                "ANTHROPIC_API_KEY": "sk-from-api-key"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-from-auth-token");
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
+    }
+
+    #[test]
+    fn test_extract_auth_apikey_field_fallback_uses_anthropic_strategy() {
+        // 当用户没填任一 ANTHROPIC_* env，而是直接使用 apiKey 字段时，
+        // 视为没有显式语义偏好，默认走 Anthropic 官方协议（x-api-key）。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiKey": "sk-direct",
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-direct");
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
+    fn test_get_auth_headers_anthropic_emits_x_api_key() {
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new("sk-ant-test".to_string(), AuthStrategy::Anthropic);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "x-api-key");
+        assert_eq!(headers[0].1.to_str().unwrap(), "sk-ant-test");
+    }
+
+    #[test]
+    fn test_get_auth_headers_claude_auth_emits_authorization_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new("sk-relay-test".to_string(), AuthStrategy::ClaudeAuth);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "authorization");
+        assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-relay-test");
+    }
+
+    #[test]
+    fn test_get_auth_headers_bearer_emits_authorization_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new("sk-or-test".to_string(), AuthStrategy::Bearer);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "authorization");
+        assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-or-test");
     }
 
     #[test]
@@ -1452,5 +1602,75 @@ mod tests {
                 .unwrap();
 
         assert_eq!(transformed["prompt_cache_key"], "claude-cache-route");
+    }
+
+    #[test]
+    fn test_transform_openai_chat_skips_reasoning_content_for_generic_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert!(msg.get("tool_calls").is_some());
+        assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_preserves_reasoning_content_for_kimi_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "kimi-k2.6",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
     }
 }

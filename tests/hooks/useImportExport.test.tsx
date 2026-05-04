@@ -16,16 +16,28 @@ vi.mock("sonner", () => ({
 
 const openFileDialogMock = vi.fn();
 const importConfigMock = vi.fn();
+const importConfigFromContentMock = vi.fn();
 const saveFileDialogMock = vi.fn();
 const exportConfigMock = vi.fn();
+const exportConfigAsContentMock = vi.fn();
+const canUseNativeOpenFileDialogMock = vi.fn();
+const canUseNativeSaveFileDialogMock = vi.fn();
 const syncCurrentProvidersLiveMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   settingsApi: {
+    canUseNativeOpenFileDialog: (...args: unknown[]) =>
+      canUseNativeOpenFileDialogMock(...args),
+    canUseNativeSaveFileDialog: (...args: unknown[]) =>
+      canUseNativeSaveFileDialogMock(...args),
     openFileDialog: (...args: unknown[]) => openFileDialogMock(...args),
     importConfigFromFile: (...args: unknown[]) => importConfigMock(...args),
+    importConfigFromContent: (...args: unknown[]) =>
+      importConfigFromContentMock(...args),
     saveFileDialog: (...args: unknown[]) => saveFileDialogMock(...args),
     exportConfigToFile: (...args: unknown[]) => exportConfigMock(...args),
+    exportConfigAsContent: (...args: unknown[]) =>
+      exportConfigAsContentMock(...args),
     syncCurrentProvidersLive: (...args: unknown[]) =>
       syncCurrentProvidersLiveMock(...args),
   },
@@ -34,8 +46,14 @@ vi.mock("@/lib/api", () => ({
 beforeEach(() => {
   openFileDialogMock.mockReset();
   importConfigMock.mockReset();
+  importConfigFromContentMock.mockReset();
   saveFileDialogMock.mockReset();
   exportConfigMock.mockReset();
+  exportConfigAsContentMock.mockReset();
+  canUseNativeOpenFileDialogMock.mockReset();
+  canUseNativeSaveFileDialogMock.mockReset();
+  canUseNativeOpenFileDialogMock.mockResolvedValue(true);
+  canUseNativeSaveFileDialogMock.mockResolvedValue(true);
   toastSuccessMock.mockReset();
   toastErrorMock.mockReset();
   toastWarningMock.mockReset();
@@ -72,6 +90,47 @@ describe("useImportExport Hook", () => {
     expect(toastErrorMock).toHaveBeenCalledTimes(1);
     expect(result.current.selectedFile).toBe("");
     expect(result.current.status).toBe("idle");
+  });
+
+  it("should import browser-selected SQL content when native open dialog is unavailable", async () => {
+    canUseNativeOpenFileDialogMock.mockResolvedValue(false);
+    importConfigFromContentMock.mockResolvedValue({
+      success: true,
+      backupId: "backup-browser",
+    });
+    const sqlContent = "-- CC Switch SQLite 导出\nSELECT 1;";
+    const { result } = renderHook(() => useImportExport());
+
+    await act(async () => {
+      const selectPromise = result.current.selectImportFile();
+      await Promise.resolve();
+      const input = document.querySelector(
+        'input[type="file"]',
+      ) as HTMLInputElement;
+      const file = new File([sqlContent], "browser-backup.sql", {
+        type: "application/sql",
+      });
+      Object.defineProperty(file, "text", {
+        configurable: true,
+        value: () => Promise.resolve(sqlContent),
+      });
+      Object.defineProperty(input, "files", {
+        configurable: true,
+        value: [file],
+      });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await selectPromise;
+    });
+
+    expect(result.current.selectedFile).toBe("browser-backup.sql");
+
+    await act(async () => {
+      await result.current.importConfig();
+    });
+
+    expect(importConfigFromContentMock).toHaveBeenCalledWith(sqlContent);
+    expect(importConfigMock).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("success");
   });
 
   it("should show error and return early when no file is selected for import", async () => {
@@ -176,6 +235,43 @@ describe("useImportExport Hook", () => {
       expect.stringContaining("/backup/export.json"),
       expect.objectContaining({ closeButton: true }),
     );
+  });
+
+  it("should export through browser download when native save dialog is unavailable", async () => {
+    canUseNativeSaveFileDialogMock.mockResolvedValue(false);
+    exportConfigAsContentMock.mockResolvedValue({
+      success: true,
+      content: "-- CC Switch SQLite 导出\nSELECT 1;",
+      filePath: "browser-export.sql",
+    });
+    const createObjectURLMock = vi.fn(() => "blob:cc-switch-export");
+    const revokeObjectURLMock = vi.fn();
+    Object.defineProperty(window.URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURLMock,
+    });
+    Object.defineProperty(window.URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURLMock,
+    });
+    const clickMock = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    const { result } = renderHook(() => useImportExport());
+
+    await act(async () => {
+      await result.current.exportConfig();
+    });
+
+    expect(saveFileDialogMock).not.toHaveBeenCalled();
+    expect(exportConfigMock).not.toHaveBeenCalled();
+    expect(exportConfigAsContentMock).toHaveBeenCalledTimes(1);
+    expect(createObjectURLMock).toHaveBeenCalledTimes(1);
+    expect(clickMock).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURLMock).toHaveBeenCalledWith("blob:cc-switch-export");
+    expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+
+    clickMock.mockRestore();
   });
 
   it("should show error message when export fails", async () => {

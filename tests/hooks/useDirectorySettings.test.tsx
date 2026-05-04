@@ -4,6 +4,7 @@ import { useDirectorySettings } from "@/hooks/useDirectorySettings";
 import type { SettingsFormState } from "@/hooks/useSettingsForm";
 
 const getAppConfigDirOverrideMock = vi.hoisted(() => vi.fn());
+const getAppConfigDirMock = vi.hoisted(() => vi.fn());
 const getConfigDirMock = vi.hoisted(() => vi.fn());
 const selectConfigDirectoryMock = vi.hoisted(() => vi.fn());
 const setAppConfigDirOverrideMock = vi.hoisted(() => vi.fn());
@@ -16,6 +17,7 @@ const toastErrorMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({
   settingsApi: {
     getAppConfigDirOverride: getAppConfigDirOverrideMock,
+    getAppConfigDir: getAppConfigDirMock,
     getConfigDir: getConfigDirMock,
     selectConfigDirectory: selectConfigDirectoryMock,
     setAppConfigDirOverride: setAppConfigDirOverrideMock,
@@ -64,6 +66,7 @@ describe("useDirectorySettings", () => {
     );
 
     getAppConfigDirOverrideMock.mockResolvedValue(null);
+    getAppConfigDirMock.mockResolvedValue("/home/mock/.cc-switch");
     getConfigDirMock.mockImplementation(async (app: string) => {
       if (app === "claude") return "/remote/claude";
       if (app === "codex") return "/remote/codex";
@@ -210,8 +213,8 @@ describe("useDirectorySettings", () => {
     expect(onUpdateSettings).toHaveBeenCalledWith({
       codexConfigDir: undefined,
     });
-    expect(result.current.resolvedDirs.claude).toBe("/home/mock/.claude");
-    expect(result.current.resolvedDirs.codex).toBe("/home/mock/.codex");
+    expect(result.current.resolvedDirs.claude).toBe("/remote/claude");
+    expect(result.current.resolvedDirs.codex).toBe("/remote/codex");
     expect(result.current.resolvedDirs.appConfig).toBe("/home/mock/.cc-switch");
   });
 

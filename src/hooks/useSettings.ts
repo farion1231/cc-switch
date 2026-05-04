@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import { providersApi, runtimeApi, settingsApi, type AppId } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
 import type { Settings } from "@/types";
@@ -349,7 +349,12 @@ export function useSettings(): UseSettingsResult {
 
         await saveMutation.mutateAsync(payload);
 
-        await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        const runtime = await runtimeApi.getCached();
+        const canOverrideAppConfigDir =
+          runtime.backend.capabilities.appConfigDirOverride === true;
+        if (canOverrideAppConfigDir) {
+          await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        }
 
         // 只在开机自启状态真正改变时调用系统 API
         if (
@@ -444,7 +449,9 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
-        const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);
+        const appDirChanged =
+          canOverrideAppConfigDir &&
+          sanitizedAppDir !== (previousAppDir ?? undefined);
         setRequiresRestart(appDirChanged);
 
         if (!options?.silent) {

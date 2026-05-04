@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
+  useRuntimeQuery,
   useSessionMessagesQuery,
   useSessionsQuery,
 } from "@/lib/query";
@@ -69,6 +70,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data, isLoading, refetch } = useSessionsQuery();
+  const { data: runtimeInfo } = useRuntimeQuery();
+  const canLaunchInteractiveTerminal =
+    runtimeInfo?.backend.capabilities.launchInteractiveTerminal === true &&
+    runtimeInfo.relation.coLocated;
   const sessions = data ?? [];
   const detailRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -215,7 +220,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const handleResume = async () => {
     if (!selectedSession?.resumeCommand) return;
 
-    if (!isMac()) {
+    if (!isMac() || !canLaunchInteractiveTerminal) {
       await handleCopy(
         selectedSession.resumeCommand,
         t("sessionManager.resumeCommandCopied"),
@@ -889,7 +894,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
                       {/* 右侧：操作按钮组 */}
                       <div className="flex items-center gap-2 shrink-0">
-                        {isMac() && (
+                        {isMac() && canLaunchInteractiveTerminal && (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button

@@ -549,7 +549,8 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
-          "kaku": "Kaku"
+          "kaku": "Kaku",
+          "warp": "Warp"
         },
         "windows": {
           "cmd": "コマンドプロンプト",
@@ -2237,6 +2238,8 @@
     "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}",
     "modelNotFound": "{{providerName}} のテストモデル {{model}} は存在しないか廃止されています",
     "modelNotFoundHint": "このモデルはプロバイダーにより廃止された可能性があります。「モデルテスト設定」でデフォルトのテストモデルを更新してください。",
+    "quotaExceeded": "{{providerName}} の Coding Plan 利用枠を超過しました",
+    "quotaExceededHint": "Baidu Qianfan が Coding Plan の利用枠超過エラーを返しました。5時間・週次・月次の利用枠更新を待つか、Qianfan コンソールでプランを確認してください。",
     "httpHint": {
       "400": "リクエスト形式が拒否されました。ヘルスチェックの形式は実際の使用と異なる場合があります。",
       "401": "APIキーが無効か、OAuthなどの認証方式を使用しています。チェック失敗は実際に使えないことを意味しません。",
@@ -2291,6 +2294,9 @@
     }
   },
   "universalProvider": {
+    "duplicate": "複製",
+    "duplicatedAndSynced": "統合プロバイダーを複製して同期しました",
+    "duplicateError": "統合プロバイダーの複製に失敗しました",
     "title": "統合プロバイダー",
     "description": "統合プロバイダーは Claude、Codex、Gemini の設定を同時に管理します。変更は有効なすべてのアプリに自動的に同期されます。",
     "add": "統合プロバイダーを追加",

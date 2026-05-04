@@ -6,6 +6,13 @@ fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
 ) -> crate::settings::AppSettings {
+    if incoming.webui_auth.token.is_none() {
+        incoming.webui_auth.token = existing.webui_auth.token.clone();
+    }
+    if incoming.client_backend.token.is_none() {
+        incoming.client_backend.token = existing.client_backend.token.clone();
+    }
+
     match (&mut incoming.webdav_sync, &existing.webdav_sync) {
         // incoming 没有 webdav → 保留现有
         (None, _) => {
@@ -42,6 +49,8 @@ pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<boo
 /// 重启应用程序（当 app_config_dir 变更后使用）
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
+    crate::save_window_state_before_exit(&app);
+
     // 在后台延迟重启，让函数有时间返回响应
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

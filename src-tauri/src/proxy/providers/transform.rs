@@ -6,6 +6,46 @@
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
+const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
+
+/// Strip only a leading Claude Code attribution line from system text.
+///
+/// Claude Code can send dynamic `x-anthropic-billing-header` metadata at the
+/// start of `system`. If forwarded into OpenAI Chat messages or Responses
+/// `instructions`, the rotating `cch=` value changes the prompt prefix on every
+/// request and prevents prefix cache reuse (#2350). Later occurrences are kept
+/// to avoid deleting user-authored prompt text.
+pub(crate) fn strip_leading_anthropic_billing_header(text: &str) -> &str {
+    if !text.starts_with(ANTHROPIC_BILLING_HEADER_PREFIX) {
+        return text;
+    }
+
+    let Some(line_end) = text
+        .as_bytes()
+        .iter()
+        .position(|byte| *byte == b'\n' || *byte == b'\r')
+    else {
+        return "";
+    };
+
+    let bytes = text.as_bytes();
+    let mut rest_start = line_end + 1;
+    if bytes[line_end] == b'\r' && bytes.get(line_end + 1) == Some(&b'\n') {
+        rest_start += 1;
+    }
+
+    let rest = &text[rest_start..];
+    if let Some(stripped) = rest.strip_prefix("\r\n") {
+        stripped
+    } else if let Some(stripped) = rest.strip_prefix('\n') {
+        stripped
+    } else if let Some(stripped) = rest.strip_prefix('\r') {
+        stripped
+    } else {
+        rest
+    }
+}
+
 /// Detect OpenAI o-series reasoning models (o1, o3, o4-mini, etc.)
 /// These models require `max_completion_tokens` instead of `max_tokens`.
 pub fn is_openai_o_series(model: &str) -> bool {
@@ -73,6 +113,18 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
 pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
+    anthropic_to_openai_with_reasoning_content(body, false)
+}
+
+/// Anthropic 请求 → OpenAI Chat Completions 请求
+///
+/// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi
+/// `reasoning_content` 兼容字段的 provider。默认转换保持通用 OpenAI-compatible
+/// 请求体，避免向严格后端发送未知字段。
+pub fn anthropic_to_openai_with_reasoning_content(
+    body: Value,
+    preserve_reasoning_content: bool,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
     // NOTE: 模型映射由上游统一处理（proxy::model_mapper），格式转换层只做结构转换。
@@ -85,12 +137,18 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
     // 处理 system prompt
     if let Some(system) = body.get("system") {
         if let Some(text) = system.as_str() {
-            // 单个字符串
-            messages.push(json!({"role": "system", "content": text}));
+            let text = strip_leading_anthropic_billing_header(text);
+            if !text.is_empty() {
+                messages.push(json!({"role": "system", "content": text}));
+            }
         } else if let Some(arr) = system.as_array() {
             // 多个 system message — preserve cache_control for compatible proxies
             for msg in arr {
                 if let Some(text) = msg.get("text").and_then(|t| t.as_str()) {
+                    let text = strip_leading_anthropic_billing_header(text);
+                    if text.is_empty() {
+                        continue;
+                    }
                     let mut sys_msg = json!({"role": "system", "content": text});
                     if let Some(cc) = msg.get("cache_control") {
                         sys_msg["cache_control"] = cc.clone();
@@ -106,7 +164,7 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
         for msg in msgs {
             let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
             let content = msg.get("content");
-            let converted = convert_message_to_openai(role, content)?;
+            let converted = convert_message_to_openai(role, content, preserve_reasoning_content)?;
             messages.extend(converted);
         }
     }
@@ -252,6 +310,7 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
 fn convert_message_to_openai(
     role: &str,
     content: Option<&Value>,
+    preserve_reasoning_content: bool,
 ) -> Result<Vec<Value>, ProxyError> {
     let mut result = Vec::new();
 
@@ -273,6 +332,9 @@ fn convert_message_to_openai(
     if let Some(blocks) = content.as_array() {
         let mut content_parts = Vec::new();
         let mut tool_calls = Vec::new();
+        // reasoning_parts: 仅在兼容 Moonshot/Kimi thinking tool-call 路径时
+        // 生成 reasoning_content，通用 OpenAI-compatible 路径不发送该非标准字段。
+        let mut reasoning_parts = Vec::new();
 
         for block in blocks {
             let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -332,7 +394,12 @@ fn convert_message_to_openai(
                     }));
                 }
                 "thinking" => {
-                    // 跳过 thinking blocks
+                    // 提取 thinking 内容，后续可作为 reasoning_content 传给需要它的上游。
+                    if let Some(thinking) = block.get("thinking").and_then(|t| t.as_str()) {
+                        if !thinking.is_empty() {
+                            reasoning_parts.push(thinking.to_string());
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -364,6 +431,15 @@ fn convert_message_to_openai(
             // 工具调用
             if !tool_calls.is_empty() {
                 msg["tool_calls"] = json!(tool_calls);
+            }
+
+            if preserve_reasoning_content && role == "assistant" && !tool_calls.is_empty() {
+                let reasoning_content = if reasoning_parts.is_empty() {
+                    "tool call".to_string()
+                } else {
+                    reasoning_parts.join("\n")
+                };
+                msg["reasoning_content"] = json!(reasoning_content);
             }
 
             result.push(msg);
@@ -609,6 +685,80 @@ mod tests {
     }
 
     #[test]
+    fn test_anthropic_to_openai_strips_leading_billing_header_from_system_string() {
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n\nYou are a helpful assistant.",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "You are a helpful assistant."
+        );
+        assert_eq!(result["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_billing_header_from_system_array_parts() {
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n"},
+                {"type": "text", "text": "Stable prompt"}
+            ],
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(result["messages"][0]["content"], "Stable prompt");
+        assert_eq!(result["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_preserves_prompt_after_billing_header_in_same_part() {
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n\nStable prompt part 1"},
+                {"type": "text", "text": "Stable prompt part 2"}
+            ],
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "Stable prompt part 1\nStable prompt part 2"
+        );
+        assert_eq!(result["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_keeps_non_leading_billing_header_text() {
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": "Keep this literal:\nx-anthropic-billing-header: example",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "Keep this literal:\nx-anthropic-billing-header: example"
+        );
+    }
+
+    #[test]
     fn test_anthropic_to_openai_with_tools() {
         let input = json!({
             "model": "claude-3-opus",
@@ -710,6 +860,88 @@ mod tests {
         assert_eq!(msg["role"], "assistant");
         assert!(msg.get("tool_calls").is_some());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+        assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_preserves_reasoning_content() {
+        let input = json!({
+            "model": "kimi-k2.6",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_injects_placeholder_reasoning_content_when_missing() {
+        let input = json!({
+            "model": "kimi-k2.6",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert_eq!(msg["reasoning_content"], "tool call");
+        assert!(msg.get("tool_calls").is_some());
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_does_not_emit_reasoning_content_by_default() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let msg = &result["messages"][0];
+        assert_eq!(msg["role"], "assistant");
+        assert!(msg.get("tool_calls").is_some());
+        assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_skips_thinking_only_message() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "No visible content yet."}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"].as_array().unwrap().len(), 0);
     }
 
     #[test]
@@ -755,6 +987,34 @@ mod tests {
         assert_eq!(result["stop_reason"], "end_turn");
         assert_eq!(result["usage"]["input_tokens"], 10);
         assert_eq!(result["usage"]["output_tokens"], 5);
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_preserves_id_for_usage_dedup() {
+        let input = json!({
+            "id": "chatcmpl-claude-compatible",
+            "object": "chat.completion",
+            "model": "claude-sonnet-4-5",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        let usage = crate::proxy::usage::parser::TokenUsage::from_claude_response(&result)
+            .expect("converted Anthropic response should parse usage");
+
+        assert_eq!(
+            usage.message_id.as_deref(),
+            Some("chatcmpl-claude-compatible")
+        );
+        assert_eq!(
+            usage.dedup_request_id(),
+            "session:chatcmpl-claude-compatible"
+        );
     }
 
     #[test]

@@ -287,6 +287,10 @@ export interface Settings {
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
 
+  // ===== 前端后端连接设置 =====
+  clientBackend?: ClientBackendConnectionSettings;
+  webuiAuth?: WebUiAuthSettings;
+
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
   claudeConfigDir?: string;
@@ -330,6 +334,20 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+}
+
+export type BackendConnectionMode = "local" | "remote";
+export type WebUiAuthMode = "none" | "token";
+
+export interface ClientBackendConnectionSettings {
+  mode: BackendConnectionMode;
+  url?: string;
+  token?: string;
+}
+
+export interface WebUiAuthSettings {
+  mode: WebUiAuthMode;
+  token?: string;
 }
 
 export interface SessionMeta {

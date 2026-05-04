@@ -20,6 +20,16 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: tMock }),
 }));
 
+const runtimeQueryState = vi.hoisted(() => ({
+  current: {
+    data: undefined as any,
+  },
+}));
+
+vi.mock("@/lib/query", () => ({
+  useRuntimeQuery: () => runtimeQueryState.current,
+}));
+
 vi.mock("@/hooks/useProxyStatus", () => ({
   useProxyStatus: () => ({
     status: null,
@@ -207,24 +217,18 @@ vi.mock("@/components/settings/WindowSettings", () => ({
 
 vi.mock("@/components/settings/DirectorySettings", () => ({
   DirectorySettings: ({
-    onBrowseDirectory,
     onResetDirectory,
     onDirectoryChange,
-    onBrowseAppConfig,
     onResetAppConfig,
     onAppConfigChange,
   }: any) => (
     <div>
-      <button onClick={() => onBrowseDirectory("claude")}>
-        browse-directory
-      </button>
       <button onClick={() => onResetDirectory("claude")}>
         reset-directory
       </button>
       <button onClick={() => onDirectoryChange("codex", "/new/path")}>
         change-directory
       </button>
-      <button onClick={() => onBrowseAppConfig()}>browse-app-config</button>
       <button onClick={() => onResetAppConfig()}>reset-app-config</button>
       <button onClick={() => onAppConfigChange("/app/new")}>
         change-app-config
@@ -243,7 +247,55 @@ vi.mock("@/components/settings/WebdavSyncSection", () => ({
   ),
 }));
 
+vi.mock("@/components/settings/BackendConnectionSettings", () => ({
+  BackendConnectionSettings: () => <div>backend-connection-settings</div>,
+}));
+
+vi.mock("@/components/settings/AppVisibilitySettings", () => ({
+  AppVisibilitySettings: () => <div>app-visibility-settings</div>,
+}));
+
+vi.mock("@/components/settings/SkillStorageLocationSettings", () => ({
+  SkillStorageLocationSettings: () => <div>skill-storage-settings</div>,
+}));
+
+vi.mock("@/components/settings/SkillSyncMethodSettings", () => ({
+  SkillSyncMethodSettings: () => <div>skill-sync-settings</div>,
+}));
+
 let settingsApi: any;
+
+const createRuntimeInfo = (remote = false) => ({
+  client: {
+    shell: remote ? "browser" : "desktop",
+    os: remote ? "unknown" : "linux",
+  },
+  backend: {
+    os: "linux",
+    headless: remote,
+    remote,
+    capabilities: {
+      readConfig: true,
+      writeConfig: true,
+      openLocalFolder: !remote,
+      pickDirectory: !remote,
+      serverDirectoryBrowse: true,
+      appConfigDirOverride: !remote,
+      saveFileDialog: !remote,
+      openFileDialog: !remote,
+      launchInteractiveTerminal: !remote,
+      launchBackgroundProcess: false,
+      autoLaunch: !remote,
+      toolVersionCheck: !remote,
+      windowControls: !remote,
+      dragRegion: false,
+      tray: !remote,
+    },
+  },
+  relation: {
+    coLocated: !remote,
+  },
+});
 
 const renderSettingsPage = (
   props?: Partial<ComponentProps<typeof SettingsPage>>,
@@ -264,6 +316,7 @@ describe("SettingsPage Component", () => {
   beforeEach(async () => {
     tMock.mockImplementation((key: string) => key);
     settingsMock = createSettingsMock();
+    runtimeQueryState.current = { data: createRuntimeInfo(false) };
     importExportMock = createImportExportMock();
     useImportExportSpy.mockReset();
     useImportExportSpy.mockImplementation(
@@ -344,9 +397,7 @@ describe("SettingsPage Component", () => {
     fireEvent.click(screen.getByText("settings.advanced.data.title"));
 
     // 有文件时，点击导入按钮执行 importConfig
-    fireEvent.click(
-      screen.getByRole("button", { name: /settings\.import/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /settings\.import/ }));
     expect(importExportMock.importConfig).toHaveBeenCalled();
 
     fireEvent.click(
@@ -357,6 +408,43 @@ describe("SettingsPage Component", () => {
     // 清除选择按钮
     fireEvent.click(screen.getByRole("button", { name: "common.clear" }));
     expect(importExportMock.clearSelection).toHaveBeenCalled();
+  });
+
+  it("should hide unsupported desktop-only settings when backend is remote headless", () => {
+    runtimeQueryState.current = { data: createRuntimeInfo(true) };
+
+    renderSettingsPage();
+
+    expect(screen.getByText("settings.tabGeneral")).toBeInTheDocument();
+    expect(screen.getByText("settings.tabProxy")).toBeInTheDocument();
+    expect(screen.getByText("settings.tabAdvanced")).toBeInTheDocument();
+    expect(screen.getByText("common.about")).toBeInTheDocument();
+    expect(screen.queryByText("settings.tabAuth")).not.toBeInTheDocument();
+    expect(screen.queryByText("usage.title")).not.toBeInTheDocument();
+    expect(screen.queryByText("window-settings")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("skill-storage-settings"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("settings.tabAdvanced"));
+    expect(
+      screen.getByText("settings.advanced.configDir.title"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("settings.advanced.data.title"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("settings.advanced.backup.title"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("settings.advanced.cloudSync.title"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("settings.advanced.modelTest.title"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("settings.advanced.logConfig.title"),
+    ).not.toBeInTheDocument();
   });
 
   it("should pass onImportSuccess callback to useImportExport hook", async () => {
@@ -444,9 +532,6 @@ describe("SettingsPage Component", () => {
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
     fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
 
-    fireEvent.click(screen.getByText("browse-directory"));
-    expect(settingsMock.browseDirectory).toHaveBeenCalledWith("claude");
-
     fireEvent.click(screen.getByText("reset-directory"));
     expect(settingsMock.resetDirectory).toHaveBeenCalledWith("claude");
 
@@ -455,9 +540,6 @@ describe("SettingsPage Component", () => {
       "codex",
       "/new/path",
     );
-
-    fireEvent.click(screen.getByText("browse-app-config"));
-    expect(settingsMock.browseAppConfigDir).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByText("reset-app-config"));
     expect(settingsMock.resetAppConfigDir).toHaveBeenCalledTimes(1);

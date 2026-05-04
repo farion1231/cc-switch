@@ -34,7 +34,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 vi.mock("@/config/mcpPresets", () => ({
-  mcpPresets: [
+  getMcpPresetsForServerOs: () => [
     {
       id: "preset-stdio",
       server: { type: "stdio", command: "preset-cmd" },
@@ -138,6 +138,16 @@ vi.mock("@/hooks/useMcp", async () => {
     }),
   };
 });
+
+vi.mock("@/lib/query", () => ({
+  useRuntimeQuery: () => ({
+    data: {
+      backend: {
+        os: "unknown",
+      },
+    },
+  }),
+}));
 
 describe("McpFormModal", () => {
   beforeEach(() => {

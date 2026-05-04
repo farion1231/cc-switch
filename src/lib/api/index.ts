@@ -12,6 +12,8 @@ export { proxyApi } from "./proxy";
 export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
 export { workspaceApi } from "./workspace";
+export { runtimeApi } from "./runtime";
+export type { RuntimeInfo, RuntimeOs, ClientShell } from "./runtime";
 export * as configApi from "./config";
 export * as authApi from "./auth";
 export * as copilotApi from "./copilot";

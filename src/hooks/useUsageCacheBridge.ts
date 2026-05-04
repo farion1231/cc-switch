@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { type UnlistenFn } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
+import { listenBackendEvent } from "@/lib/api/events";
 import type { AppId } from "@/lib/api/types";
 import type { UsageResult } from "@/types";
 import type { SubscriptionQuota } from "@/types/subscription";
@@ -33,7 +34,7 @@ export function useUsageCacheBridge() {
     let disposed = false;
 
     (async () => {
-      const off = await listen<UsageCacheUpdatedPayload>(
+      const off = await listenBackendEvent<UsageCacheUpdatedPayload>(
         "usage-cache-updated",
         (event) => {
           const payload = event.payload;

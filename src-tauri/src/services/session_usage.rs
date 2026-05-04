@@ -13,6 +13,9 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
+use crate::services::usage_stats::{
+    effective_usage_log_filter, should_skip_session_insert, DedupKey,
+};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -305,8 +308,10 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     Ok((imported, skipped))
 }
 
-/// 获取文件的同步状态
-fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
+/// 获取 session_log_sync 表中某条目的同步进度。
+///
+/// Shared by all session_usage_* parsers.
+pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
     let conn = lock_conn!(db.conn);
     let result = conn.query_row(
         "SELECT last_modified, last_line_offset FROM session_log_sync WHERE file_path = ?1",
@@ -316,8 +321,10 @@ fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError
     Ok(result.unwrap_or((0, 0)))
 }
 
-/// 更新文件的同步状态
-fn update_sync_state(
+/// 更新 session_log_sync 表中某条目的同步进度。
+///
+/// Shared by all session_usage_* parsers.
+pub(crate) fn update_sync_state(
     db: &Database,
     file_path: &str,
     last_modified: i64,
@@ -346,25 +353,10 @@ fn insert_session_log_entry(
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
-    // 检查是否已存在
-    let exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = ?1",
-            rusqlite::params![request_id],
-            |row| row.get::<_, i64>(0).map(|c| c > 0),
-        )
-        .unwrap_or(false);
-
-    if exists {
-        return Ok(false);
-    }
-
-    // 解析时间戳
     let created_at = msg
         .timestamp
         .as_ref()
         .and_then(|ts| {
-            // 尝试解析 ISO 8601 时间戳
             chrono::DateTime::parse_from_rfc3339(ts)
                 .ok()
                 .map(|dt| dt.timestamp())
@@ -375,6 +367,19 @@ fn insert_session_log_entry(
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0)
         });
+
+    let dedup_key = DedupKey {
+        app_type: "claude",
+        model: &msg.model,
+        input_tokens: msg.input_tokens,
+        output_tokens: msg.output_tokens,
+        cache_read_tokens: msg.cache_read_tokens,
+        cache_creation_tokens: msg.cache_creation_tokens,
+        created_at,
+    };
+    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+        return Ok(false);
+    }
 
     // 计算费用
     let usage = TokenUsage {
@@ -531,13 +536,17 @@ fn try_find_pricing(
 pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>, AppError> {
     let conn = lock_conn!(db.conn);
 
-    let mut stmt = conn.prepare(
-        "SELECT COALESCE(data_source, 'proxy') as ds, COUNT(*) as cnt,
-                COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as cost
-         FROM proxy_request_logs
+    let effective_filter = effective_usage_log_filter("l");
+    let sql = format!(
+        "SELECT COALESCE(l.data_source, 'proxy') as ds, COUNT(*) as cnt,
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as cost
+         FROM proxy_request_logs l
+         WHERE {effective_filter}
          GROUP BY ds
-         ORDER BY cnt DESC",
-    )?;
+         ORDER BY cnt DESC"
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt.query_map([], |row| {
         Ok(DataSourceSummary {
@@ -635,5 +644,59 @@ mod tests {
 
         messages.insert("msg_1".to_string(), final_entry);
         assert_eq!(messages.get("msg_1").unwrap().output_tokens, 1349);
+    }
+
+    #[test]
+    fn test_insert_claude_session_skips_matching_proxy_log() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "proxy-different-id",
+                    "openai-compatible",
+                    "claude",
+                    "claude-sonnet-4-5",
+                    "claude-sonnet-4-5",
+                    100,
+                    20,
+                    10,
+                    5,
+                    "0.10",
+                    100,
+                    200,
+                    1000,
+                    "proxy"
+                ],
+            )?;
+        }
+
+        let msg = ParsedAssistantUsage {
+            message_id: "msg_1".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            input_tokens: 100,
+            output_tokens: 20,
+            cache_read_tokens: 10,
+            cache_creation_tokens: 5,
+            stop_reason: Some("end_turn".to_string()),
+            timestamp: Some("1970-01-01T00:16:45Z".to_string()),
+            session_id: Some("session-1".to_string()),
+        };
+
+        let inserted = insert_session_log_entry(&db, "session:msg_1", &msg)?;
+        assert!(!inserted);
+
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(count, 1);
+
+        Ok(())
     }
 }

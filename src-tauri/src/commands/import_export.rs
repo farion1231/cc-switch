@@ -37,6 +37,24 @@ pub async fn export_config_to_file(
     .map_err(|e: AppError| e.to_string())
 }
 
+/// 导出数据库为 SQL 文本，用于浏览器 WebUI 下载
+#[tauri::command]
+pub async fn export_config_as_content(state: State<'_, AppState>) -> Result<Value, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let content = db.export_sql_string()?;
+        Ok::<_, AppError>(json!({
+            "success": true,
+            "message": "SQL exported successfully",
+            "filePath": "cc-switch-export.sql",
+            "content": content
+        }))
+    })
+    .await
+    .map_err(|e| format!("导出配置失败: {e}"))?
+    .map_err(|e: AppError| e.to_string())
+}
+
 /// 从 SQL 备份导入数据库
 #[tauri::command]
 pub async fn import_config_from_file(
@@ -48,6 +66,27 @@ pub async fn import_config_from_file(
     tauri::async_runtime::spawn_blocking(move || {
         let path_buf = PathBuf::from(&filePath);
         let backup_id = db.import_sql(&path_buf)?;
+        let warning = post_sync_warning_from_result(Ok(run_post_import_sync(db_for_sync)));
+        if let Some(msg) = warning.as_ref() {
+            log::warn!("[Import] post-import sync warning: {msg}");
+        }
+        Ok::<_, AppError>(success_payload_with_warning(backup_id, warning))
+    })
+    .await
+    .map_err(|e| format!("导入配置失败: {e}"))?
+    .map_err(|e: AppError| e.to_string())
+}
+
+/// 从 SQL 文本导入数据库，用于浏览器 WebUI 上传
+#[tauri::command]
+pub async fn import_config_from_content(
+    content: String,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let db = state.db.clone();
+    let db_for_sync = db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let backup_id = db.import_sql_string(&content)?;
         let warning = post_sync_warning_from_result(Ok(run_post_import_sync(db_for_sync)));
         if let Some(msg) = warning.as_ref() {
             log::warn!("[Import] post-import sync warning: {msg}");

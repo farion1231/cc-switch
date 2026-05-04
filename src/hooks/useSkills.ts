@@ -21,10 +21,11 @@ import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
  * 使用 staleTime: Infinity 和 placeholderData: keepPreviousData
  * 实现首次进入使用缓存，只有刷新时才重新获取
  */
-export function useInstalledSkills() {
+export function useInstalledSkills(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["skills", "installed"],
     queryFn: () => skillsApi.getInstalled(),
+    enabled: options.enabled ?? true,
     staleTime: Infinity,
     placeholderData: keepPreviousData,
   });

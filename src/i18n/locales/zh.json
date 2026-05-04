@@ -549,7 +549,8 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
-          "kaku": "Kaku"
+          "kaku": "Kaku",
+          "warp": "Warp"
         },
         "windows": {
           "cmd": "命令提示符",
@@ -2237,6 +2238,8 @@
     "error": "{{providerName}} 检查出错: {{error}}",
     "modelNotFound": "{{providerName}} 测试模型 {{model}} 不存在或已下架",
     "modelNotFoundHint": "该模型可能已被供应商弃用。请在\"模型测试配置\"中更新默认测试模型。",
+    "quotaExceeded": "{{providerName}} Coding Plan 额度已用尽",
+    "quotaExceededHint": "百度千帆返回了 Coding Plan 超额错误。请等待 5 小时/每周/每月额度刷新，或在千帆控制台切换套餐。",
     "httpHint": {
       "400": "供应商拒绝了请求格式。健康检查的探测格式可能与实际使用不同。",
       "401": "API Key 可能无效，或供应商使用 OAuth 等认证方式。检查失败不代表实际不可用。",
@@ -2291,6 +2294,9 @@
     }
   },
   "universalProvider": {
+    "duplicate": "复制",
+    "duplicatedAndSynced": "统一供应商已复制并同步",
+    "duplicateError": "复制统一供应商失败",
     "title": "统一供应商",
     "description": "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
     "add": "添加统一供应商",

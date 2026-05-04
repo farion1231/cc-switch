@@ -8,7 +8,10 @@ import { Input } from "@/components/ui/input";
 import JsonEditor from "@/components/JsonEditor";
 import type { AppId } from "@/lib/api/types";
 import { McpServer, McpServerSpec } from "@/types";
-import { mcpPresets, getMcpPresetWithDescription } from "@/config/mcpPresets";
+import {
+  getMcpPresetsForServerOs,
+  getMcpPresetWithDescription,
+} from "@/config/mcpPresets";
 import McpWizardModal from "./McpWizardModal";
 import {
   extractErrorMessage,
@@ -24,6 +27,7 @@ import { parseSmartMcpJson } from "@/utils/formatters";
 import { useMcpValidation } from "./useMcpValidation";
 import { useUpsertMcpServer } from "@/hooks/useMcp";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { useRuntimeQuery } from "@/lib/query";
 
 interface McpFormModalProps {
   editingId?: string;
@@ -45,6 +49,11 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   defaultEnabledApps = ["claude", "codex", "gemini"],
 }) => {
   const { t } = useTranslation();
+  const { data: runtimeInfo } = useRuntimeQuery();
+  const mcpPresets = useMemo(
+    () => getMcpPresetsForServerOs(runtimeInfo?.backend.os ?? "unknown"),
+    [runtimeInfo?.backend.os],
+  );
   const { formatTomlError, validateTomlConfig, validateJsonConfig } =
     useMcpValidation();
 

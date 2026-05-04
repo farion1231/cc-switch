@@ -1,5 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@/lib/api/transport";
+import { type UnlistenFn } from "@tauri-apps/api/event";
+import { listenBackendEvent } from "./events";
+import { runtimeApi } from "./runtime";
 import type {
   Provider,
   UniversalProvider,
@@ -88,7 +90,7 @@ export const providersApi = {
   async onSwitched(
     handler: (event: ProviderSwitchEvent) => void,
   ): Promise<UnlistenFn> {
-    return await listen("provider-switched", (event) => {
+    return await listenBackendEvent("provider-switched", (event) => {
       const payload = event.payload as ProviderSwitchEvent;
       handler(payload);
     });
@@ -104,6 +106,14 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
+    const runtime = await runtimeApi.getCached();
+    if (
+      !runtime.relation.coLocated ||
+      !runtime.backend.capabilities.launchInteractiveTerminal
+    ) {
+      return false;
+    }
+
     const { cwd } = options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,

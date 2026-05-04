@@ -1,5 +1,5 @@
 // 配置相关 API
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/api/transport";
 
 export type AppType = "claude" | "codex" | "gemini" | "omo" | "omo_slim";
 

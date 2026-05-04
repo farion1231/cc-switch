@@ -67,6 +67,79 @@ impl VisibleApps {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendConnectionMode {
+    #[default]
+    Local,
+    Remote,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientBackendConnectionSettings {
+    #[serde(default)]
+    pub mode: BackendConnectionMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+impl ClientBackendConnectionSettings {
+    fn normalize(&mut self) {
+        self.url = self
+            .url
+            .as_ref()
+            .map(|value| value.trim().trim_end_matches('/'))
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+        self.token = self
+            .token
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+
+        if matches!(self.mode, BackendConnectionMode::Local) {
+            self.url = None;
+            self.token = None;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WebUiAuthMode {
+    None,
+    #[default]
+    Token,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WebUiAuthSettings {
+    #[serde(default)]
+    pub mode: WebUiAuthMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+impl WebUiAuthSettings {
+    fn normalize(&mut self) {
+        self.token = self
+            .token
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+
+        if matches!(self.mode, WebUiAuthMode::None) {
+            self.token = None;
+        }
+    }
+}
+
 /// WebDAV 同步状态（持久化同步进度信息）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -224,6 +297,14 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
 
+    // ===== 前端后端连接设置 =====
+    /// Desktop 前端连接的后端。local 使用内置 Tauri 后端；remote 连接 headless WebUI 后端。
+    #[serde(default)]
+    pub client_backend: ClientBackendConnectionSettings,
+    /// CLI WebUI 后端的 HTTP 认证策略。默认 token；本地受信部署可设为 none。
+    #[serde(default)]
+    pub webui_auth: WebUiAuthSettings,
+
     // ===== 设备级目录覆盖 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_dir: Option<String>,
@@ -319,6 +400,8 @@ impl Default for AppSettings {
             common_config_confirmed: None,
             language: None,
             visible_apps: None,
+            client_backend: ClientBackendConnectionSettings::default(),
+            webui_auth: WebUiAuthSettings::default(),
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
@@ -353,6 +436,9 @@ impl AppSettings {
     }
 
     fn normalize_paths(&mut self) {
+        self.client_backend.normalize();
+        self.webui_auth.normalize();
+
         self.claude_config_dir = self
             .claude_config_dir
             .as_ref()
@@ -511,6 +597,8 @@ pub fn get_settings_for_frontend() -> AppSettings {
     if let Some(sync) = &mut settings.webdav_sync {
         sync.password.clear();
     }
+    settings.client_backend.token = None;
+    settings.webui_auth.token = None;
     settings.webdav_backup = None;
     settings
 }

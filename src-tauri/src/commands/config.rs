@@ -8,6 +8,8 @@ use crate::app_config::AppType;
 use crate::codex_config;
 use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::settings;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
 
 #[tauri::command]
 pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
@@ -186,10 +188,161 @@ pub async fn pick_directory(
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerDirectoryEntry {
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerDirectoryListing {
+    pub path: String,
+    pub parent: Option<String>,
+    pub entries: Vec<ServerDirectoryEntry>,
+}
+
+fn expand_server_directory_path(path: Option<String>) -> Result<PathBuf, String> {
+    let raw = path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    match raw {
+        None => dirs::home_dir().ok_or_else(|| "无法解析服务端 home 目录".to_string()),
+        Some(value) if value == "~" => {
+            dirs::home_dir().ok_or_else(|| "无法解析服务端 home 目录".to_string())
+        }
+        Some(value) if value.starts_with("~/") || value.starts_with("~\\") => {
+            let home = dirs::home_dir().ok_or_else(|| "无法解析服务端 home 目录".to_string())?;
+            Ok(home.join(&value[2..]))
+        }
+        Some(value) => Ok(PathBuf::from(value)),
+    }
+}
+
+fn path_to_display(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn server_directory_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home);
+    }
+    roots.extend([
+        config::get_app_config_dir(),
+        config::get_claude_config_dir(),
+        codex_config::get_codex_config_dir(),
+        crate::gemini_config::get_gemini_dir(),
+        crate::opencode_config::get_opencode_dir(),
+        crate::openclaw_config::get_openclaw_dir(),
+        crate::hermes_config::get_hermes_dir(),
+    ]);
+
+    let mut canonical_roots: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        let canonical = std::fs::canonicalize(&root).unwrap_or(root);
+        if !canonical_roots
+            .iter()
+            .any(|existing| existing == &canonical)
+        {
+            canonical_roots.push(canonical);
+        }
+    }
+    canonical_roots
+}
+
+fn is_path_in_allowed_roots(path: &Path, roots: &[PathBuf]) -> bool {
+    roots
+        .iter()
+        .any(|root| path == root || path.starts_with(root))
+}
+
+fn canonical_existing_dir(path: &Path) -> Result<PathBuf, String> {
+    if !path.exists() {
+        return Err(format!("目录不存在: {}", path_to_display(path)));
+    }
+    if !path.is_dir() {
+        return Err(format!("不是目录: {}", path_to_display(path)));
+    }
+    std::fs::canonicalize(path).map_err(|err| format!("解析目录失败: {err}"))
+}
+
+fn list_server_directory_in_roots(
+    path: Option<String>,
+    roots: &[PathBuf],
+) -> Result<ServerDirectoryListing, String> {
+    let expanded = expand_server_directory_path(path)?;
+    let dir = canonical_existing_dir(&expanded)?;
+    if !is_path_in_allowed_roots(&dir, roots) {
+        return Err("目录不在允许浏览的服务端范围内".to_string());
+    }
+
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&dir).map_err(|err| format!("读取目录失败: {err}"))? {
+        let entry = entry.map_err(|err| format!("读取目录项失败: {err}"))?;
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+            continue;
+        }
+        let Ok(entry_canonical) = canonical_existing_dir(&entry_path) else {
+            continue;
+        };
+        if !is_path_in_allowed_roots(&entry_canonical, roots) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        entries.push(ServerDirectoryEntry {
+            name,
+            path: path_to_display(&entry_canonical),
+        });
+    }
+
+    entries.sort_by_key(|entry| entry.name.to_lowercase());
+
+    Ok(ServerDirectoryListing {
+        parent: dir
+            .parent()
+            .filter(|parent| is_path_in_allowed_roots(parent, roots))
+            .map(path_to_display),
+        path: path_to_display(&dir),
+        entries,
+    })
+}
+
+fn list_server_directory_impl(path: Option<String>) -> Result<ServerDirectoryListing, String> {
+    list_server_directory_in_roots(path, &server_directory_roots())
+}
+
+#[tauri::command]
+pub async fn list_server_directory(path: Option<String>) -> Result<ServerDirectoryListing, String> {
+    list_server_directory_impl(path)
+}
+
+#[tauri::command]
+pub async fn validate_server_directory(path: String) -> Result<bool, String> {
+    let dir = expand_server_directory_path(Some(path))?;
+    if !dir.is_dir() {
+        return Ok(false);
+    }
+    let canonical = canonical_existing_dir(&dir)?;
+    Ok(is_path_in_allowed_roots(
+        &canonical,
+        &server_directory_roots(),
+    ))
+}
+
 #[tauri::command]
 pub async fn get_app_config_path() -> Result<String, String> {
     let config_path = config::get_app_config_path();
     Ok(config_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn get_app_config_dir() -> Result<String, String> {
+    let config_dir = config::get_app_config_dir();
+    Ok(config_dir.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -333,7 +486,57 @@ pub async fn set_common_config_snippet(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_common_config_snippet;
+    use super::{list_server_directory_in_roots, validate_common_config_snippet};
+    use std::path::PathBuf;
+
+    #[test]
+    fn server_directory_listing_returns_sorted_child_directories_only() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("zeta")).unwrap();
+        std::fs::create_dir(temp.path().join("alpha")).unwrap();
+        std::fs::write(temp.path().join("file.txt"), "ignored").unwrap();
+
+        let roots = vec![PathBuf::from(temp.path())];
+        let listing =
+            list_server_directory_in_roots(Some(temp.path().to_string_lossy().to_string()), &roots)
+                .unwrap();
+
+        let names: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["alpha", "zeta"]);
+        assert_eq!(listing.path, temp.path().to_string_lossy().to_string());
+        assert!(listing.parent.is_none());
+    }
+
+    #[test]
+    fn server_directory_listing_rejects_paths_outside_allowed_roots() {
+        let allowed = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let roots = vec![PathBuf::from(allowed.path())];
+
+        let err = list_server_directory_in_roots(
+            Some(outside.path().to_string_lossy().to_string()),
+            &roots,
+        )
+        .expect_err("outside root should be rejected");
+
+        assert!(err.contains("允许浏览"));
+    }
+
+    #[test]
+    fn server_directory_listing_hides_parent_outside_allowed_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let roots = vec![PathBuf::from(root.path())];
+
+        let listing =
+            list_server_directory_in_roots(Some(root.path().to_string_lossy().to_string()), &roots)
+                .unwrap();
+
+        assert!(listing.parent.is_none());
+    }
 
     #[test]
     fn validate_common_config_snippet_accepts_comment_only_codex_snippet() {

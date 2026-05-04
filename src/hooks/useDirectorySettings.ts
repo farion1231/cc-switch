@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
@@ -24,17 +23,13 @@ export interface ResolvedDirectories {
   hermes: string;
 }
 
-// Single source of truth for per-app directory metadata.
-const APP_DIRECTORY_META: Record<
-  AppId,
-  { key: AppDirectoryKey; defaultFolder: string }
-> = {
-  claude: { key: "claude", defaultFolder: ".claude" },
-  codex: { key: "codex", defaultFolder: ".codex" },
-  gemini: { key: "gemini", defaultFolder: ".gemini" },
-  opencode: { key: "opencode", defaultFolder: ".config/opencode" },
-  openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
-  hermes: { key: "hermes", defaultFolder: ".hermes" },
+const APP_DIRECTORY_META: Record<AppId, { key: AppDirectoryKey }> = {
+  claude: { key: "claude" },
+  codex: { key: "codex" },
+  gemini: { key: "gemini" },
+  opencode: { key: "opencode" },
+  openclaw: { key: "openclaw" },
+  hermes: { key: "hermes" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -57,8 +52,7 @@ const sanitizeDir = (value?: string | null): string | undefined => {
 
 const computeDefaultAppConfigDir = async (): Promise<string | undefined> => {
   try {
-    const home = await homeDir();
-    return await join(home, ".cc-switch");
+    return await settingsApi.getAppConfigDir();
   } catch (error) {
     console.error(
       "[useDirectorySettings] Failed to resolve default app config dir",
@@ -72,8 +66,7 @@ const computeDefaultConfigDir = async (
   app: AppId,
 ): Promise<string | undefined> => {
   try {
-    const home = await homeDir();
-    return await join(home, APP_DIRECTORY_META[app].defaultFolder);
+    return await settingsApi.getConfigDir(app);
   } catch (error) {
     console.error(
       "[useDirectorySettings] Failed to resolve default config dir",

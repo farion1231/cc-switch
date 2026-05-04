@@ -229,6 +229,11 @@ describe("SettingsPage integration", () => {
     expect(appInput.value).toBe("/home/mock/.cc-switch");
 
     fireEvent.click(browseButtons[0]);
+    fireEvent.click(await screen.findByText("picked"));
+    await screen.findByDisplayValue("/home/mock/.cc-switch/picked");
+    fireEvent.click(
+      screen.getByRole("button", { name: /选择|common\.select/ }),
+    );
     await waitFor(() =>
       expect(appInput.value).toBe("/home/mock/.cc-switch/picked"),
     );
@@ -243,12 +248,17 @@ describe("SettingsPage integration", () => {
     await waitFor(() => expect(claudeInput.value).toBe("/custom/claude"));
 
     fireEvent.click(browseButtons[1]);
+    fireEvent.click(await screen.findByText("picked"));
+    await screen.findByDisplayValue("/custom/claude/picked");
+    fireEvent.click(
+      screen.getByRole("button", { name: /选择|common\.select/ }),
+    );
     await waitFor(() =>
       expect(claudeInput.value).toBe("/custom/claude/picked"),
     );
 
     fireEvent.click(resetButtons[1]);
-    await waitFor(() => expect(claudeInput.value).toBe("/home/mock/.claude"));
+    await waitFor(() => expect(claudeInput.value).toBe("/default/claude"));
   });
 
   it("notifies when export fails", async () => {

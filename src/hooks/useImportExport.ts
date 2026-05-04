@@ -28,6 +28,86 @@ export interface UseImportExportResult {
   resetStatus: () => void;
 }
 
+interface BrowserImportFile {
+  name: string;
+  content: string;
+}
+
+const readFileText = (file: File): Promise<string> => {
+  if (typeof file.text === "function") {
+    return file.text();
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsText(file);
+  });
+};
+
+const selectBrowserSqlFile = (): Promise<BrowserImportFile | null> =>
+  new Promise((resolve, reject) => {
+    const input = document.createElement("input");
+    let settled = false;
+
+    const cleanup = () => {
+      input.remove();
+    };
+
+    const finish = (value: BrowserImportFile | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    input.type = "file";
+    input.accept = ".sql,application/sql,text/plain";
+    input.style.display = "none";
+    input.addEventListener("change", async () => {
+      try {
+        const file = input.files?.[0];
+        if (!file) {
+          finish(null);
+          return;
+        }
+        finish({
+          name: file.name,
+          content: await readFileText(file),
+        });
+      } catch (error) {
+        fail(error);
+      }
+    });
+    input.addEventListener("cancel", () => finish(null), { once: true });
+    document.body.appendChild(input);
+    input.click();
+  });
+
+const downloadBrowserFile = (filename: string, content: string): void => {
+  const blob = new Blob([content], { type: "application/sql;charset=utf-8" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  try {
+    link.click();
+  } finally {
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  }
+};
+
 export function useImportExport(
   options: UseImportExportOptions = {},
 ): UseImportExportResult {
@@ -39,19 +119,35 @@ export function useImportExport(
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [backupId, setBackupId] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [browserImportContent, setBrowserImportContent] = useState<
+    string | null
+  >(null);
 
   const clearSelection = useCallback(() => {
     setSelectedFile("");
     setStatus("idle");
     setErrorMessage(null);
     setBackupId(null);
+    setBrowserImportContent(null);
   }, []);
 
   const selectImportFile = useCallback(async () => {
     try {
+      if (!(await settingsApi.canUseNativeOpenFileDialog())) {
+        const file = await selectBrowserSqlFile();
+        if (file) {
+          setSelectedFile(file.name);
+          setBrowserImportContent(file.content);
+          setStatus("idle");
+          setErrorMessage(null);
+        }
+        return;
+      }
+
       const filePath = await settingsApi.openFileDialog();
       if (filePath) {
         setSelectedFile(filePath);
+        setBrowserImportContent(null);
         setStatus("idle");
         setErrorMessage(null);
       }
@@ -82,7 +178,10 @@ export function useImportExport(
     setErrorMessage(null);
 
     try {
-      const result = await settingsApi.importConfigFromFile(selectedFile);
+      const result =
+        browserImportContent !== null
+          ? await settingsApi.importConfigFromContent(browserImportContent)
+          : await settingsApi.importConfigFromFile(selectedFile);
       if (!result.success) {
         setStatus("error");
         const message =
@@ -138,13 +237,34 @@ export function useImportExport(
     } finally {
       setIsImporting(false);
     }
-  }, [isImporting, onImportSuccess, selectedFile, t]);
+  }, [browserImportContent, isImporting, onImportSuccess, selectedFile, t]);
 
   const exportConfig = useCallback(async () => {
     try {
       const now = new Date();
       const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
       const defaultName = `cc-switch-export-${stamp}.sql`;
+      if (!(await settingsApi.canUseNativeSaveFileDialog())) {
+        const result = await settingsApi.exportConfigAsContent();
+        if (result.success && result.content !== undefined) {
+          const displayPath = result.filePath ?? defaultName;
+          downloadBrowserFile(displayPath, result.content);
+          toast.success(
+            t("settings.configExported", {
+              defaultValue: "配置已导出",
+            }) + `\n${displayPath}`,
+            { closeButton: true },
+          );
+        } else {
+          toast.error(
+            t("settings.exportFailed", {
+              defaultValue: "导出配置失败",
+            }) + (result.message ? `: ${result.message}` : ""),
+          );
+        }
+        return;
+      }
+
       const destination = await settingsApi.saveFileDialog(defaultName);
       if (!destination) {
         toast.error(
