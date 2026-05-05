@@ -28,6 +28,8 @@ import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
 import { isWindows } from "@/lib/platform";
+import { EnvironmentDoctorPanel } from "./EnvironmentDoctorPanel";
+import { doctorApi, type DiagnosisResult } from "@/lib/api/doctor";
 
 interface AboutSectionProps {
   isPortable: boolean;
@@ -97,6 +99,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [toolVersions, setToolVersions] = useState<ToolVersion[]>([]);
   const [isLoadingTools, setIsLoadingTools] = useState(true);
+
+  // 环境诊断状态
+  const [diagnosis, setDiagnosis] = useState<DiagnosisResult | null>(null);
+  const [isInstalling, setIsInstalling] = useState(false);
+  const [isFixing, setIsFixing] = useState(false);
 
   const {
     hasUpdate,
@@ -206,6 +213,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         if (active) {
           setVersion(appVersion);
         }
+
+        // 执行环境诊断（非 Windows 平台）
+        if (!isWindows()) {
+          await runDiagnosis();
+        }
       } catch (error) {
         console.error("[AboutSection] Failed to load info", error);
         if (active) {
@@ -308,6 +320,61 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       toast.error(t("settings.installCommandsCopyFailed"));
     }
   }, [t]);
+
+  // 环境诊断相关函数
+  const runDiagnosis = useCallback(async () => {
+    try {
+      const result = await doctorApi.diagnoseEnvironment();
+      setDiagnosis(result);
+    } catch (error) {
+      console.error("[AboutSection] Failed to diagnose environment", error);
+      // 静默失败，不影响其他功能
+    }
+  }, []);
+
+  const handleInstall = useCallback(async (tool: string) => {
+    setIsInstalling(true);
+    try {
+      const result = await doctorApi.installTool(tool);
+      if (result.success) {
+        toast.success(t("doctor.installSuccess", { tool }));
+        await runDiagnosis(); // 重新诊断
+      } else {
+        toast.error(t("doctor.installFailed", { error: result.message }));
+      }
+    } catch (error) {
+      console.error("[AboutSection] Failed to install tool", error);
+      toast.error(t("doctor.installFailed", { error: String(error) }));
+    } finally {
+      setIsInstalling(false);
+    }
+  }, [t, runDiagnosis]);
+
+  const handleFix = useCallback(async () => {
+    if (!diagnosis) return;
+
+    setIsFixing(true);
+    try {
+      const fixableIssues = diagnosis.issues.filter((i) => i.auto_fixable);
+      const result = await doctorApi.fixEnvironment(fixableIssues);
+
+      if (result.fixed.length > 0) {
+        toast.success(t("doctor.fixSuccess", { count: result.fixed.length }));
+      }
+
+      if (result.failed.length > 0) {
+        const failedMessages = result.failed.map(([id, err]) => `${id}: ${err}`).join("\n");
+        toast.error(t("doctor.fixFailed", { error: failedMessages }));
+      }
+
+      await runDiagnosis(); // 重新诊断
+    } catch (error) {
+      console.error("[AboutSection] Failed to fix environment", error);
+      toast.error(t("doctor.fixFailed", { error: String(error) }));
+    } finally {
+      setIsFixing(false);
+    }
+  }, [t, diagnosis, runDiagnosis]);
 
   const displayVersion = version ?? t("common.unknown");
 
@@ -423,6 +490,17 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           </motion.div>
         )}
       </motion.div>
+
+      {/* 环境诊断面板 */}
+      {!isWindows() && diagnosis && (
+        <EnvironmentDoctorPanel
+          diagnosis={diagnosis}
+          onInstall={handleInstall}
+          onFix={handleFix}
+          isInstalling={isInstalling}
+          isFixing={isFixing}
+        />
+      )}
 
       {!isWindows() && (
         <div className="space-y-3">

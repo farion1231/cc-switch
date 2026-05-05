@@ -670,6 +670,20 @@
     "installFailed": "安装失败：{{error}}",
     "fixSuccess": "成功修复 {{count}} 个问题",
     "fixFailed": "修复失败：{{error}}",
+    "autoFixable": "可自动修复",
+    "issuesFound": "发现 {{count}} 个问题",
+    "status": {
+      "healthy": "环境正常",
+      "needsInstall": "需要安装",
+      "needsRepair": "需要修复",
+      "partiallyHealthy": "部分工具有问题"
+    },
+    "severity": {
+      "critical": "严重",
+      "high": "高",
+      "medium": "中",
+      "low": "低"
+    },
     "issues": {
       "notInstalled": "{{tool}} 未安装",
       "envConflict": "环境变量冲突：{{var}}",

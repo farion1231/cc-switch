@@ -670,6 +670,20 @@
     "installFailed": "Installation failed: {{error}}",
     "fixSuccess": "Successfully fixed {{count}} issue(s)",
     "fixFailed": "Fix failed: {{error}}",
+    "autoFixable": "Auto-fixable",
+    "issuesFound": "{{count}} issue(s) found",
+    "status": {
+      "healthy": "Environment is healthy",
+      "needsInstall": "Installation required",
+      "needsRepair": "Repair required",
+      "partiallyHealthy": "Some tools have issues"
+    },
+    "severity": {
+      "critical": "Critical",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
     "issues": {
       "notInstalled": "{{tool}} is not installed",
       "envConflict": "Environment variable conflict: {{var}}",
