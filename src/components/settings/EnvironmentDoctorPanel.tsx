@@ -132,55 +132,12 @@ export function EnvironmentDoctorPanel({
       transition={{ duration: 0.3, delay: 0.2 }}
       className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-6 space-y-4 shadow-sm"
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {getStatusIcon()}
-          <div>
-            <h3 className="text-lg font-semibold">{t("doctor.environmentStatus")}</h3>
-            <p className="text-sm text-muted-foreground">{getStatusText()}</p>
-          </div>
+      <div className="flex items-center gap-3">
+        {getStatusIcon()}
+        <div>
+          <h3 className="text-lg font-semibold">{t("doctor.environmentStatus")}</h3>
+          <p className="text-sm text-muted-foreground">{getStatusText()}</p>
         </div>
-
-        {/* 操作按钮 */}
-        {diagnosis.overall_status === "NeedsInstall" && (() => {
-          // 从 issues 中提取需要安装的工具
-          const installIssue = diagnosis.issues.find(
-            (issue) => issue.category === "NotInstalled" && issue.fix_action?.type === "InstallTool"
-          );
-          const toolToInstall = installIssue?.fix_action?.tool || "claude";
-
-          return (
-            <Button onClick={() => onInstall(toolToInstall)} disabled={isInstalling}>
-              {isInstalling ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {t("doctor.installing")}
-                </>
-              ) : (
-                <>
-                  <Download className="h-4 w-4" />
-                  {t("doctor.oneClickInstall")}
-                </>
-              )}
-            </Button>
-          );
-        })()}
-
-        {diagnosis.overall_status === "NeedsRepair" && (
-          <Button onClick={onFix} disabled={isFixing} variant="destructive">
-            {isFixing ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {t("doctor.fixing")}
-              </>
-            ) : (
-              <>
-                <Wrench className="h-4 w-4" />
-                {t("doctor.oneClickFix")}
-              </>
-            )}
-          </Button>
-        )}
       </div>
 
       {/* 问题列表 */}
@@ -194,6 +151,56 @@ export function EnvironmentDoctorPanel({
           ))}
         </div>
       )}
+
+      {/* 操作按钮区域 */}
+      {diagnosis.overall_status === "NeedsInstall" && (() => {
+        // 从 issues 中提取需要安装的工具
+        const installIssue = diagnosis.issues.find(
+          (issue) => issue.category === "NotInstalled" && issue.fix_action?.type === "InstallTool"
+        );
+        const toolToInstall = installIssue?.fix_action?.tool || "claude";
+
+        return (
+          <div className="flex justify-end pt-2">
+            <Button onClick={() => onInstall(toolToInstall)} disabled={isInstalling}>
+              {isInstalling ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t("doctor.installing")}
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4" />
+                  {t("doctor.oneClickInstall")}
+                </>
+              )}
+            </Button>
+          </div>
+        );
+      })()}
+
+      {diagnosis.overall_status === "NeedsRepair" && (() => {
+        // 检查是否有可自动修复的问题
+        const hasAutoFixableIssues = diagnosis.issues.some((issue) => issue.auto_fixable);
+
+        return hasAutoFixableIssues ? (
+          <div className="flex justify-end pt-2">
+            <Button onClick={onFix} disabled={isFixing} variant="destructive">
+              {isFixing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t("doctor.fixing")}
+                </>
+              ) : (
+                <>
+                  <Wrench className="h-4 w-4" />
+                  {t("doctor.oneClickFix")}
+                </>
+              )}
+            </Button>
+          </div>
+        ) : null;
+      })()}
 
       {/* 健康状态 */}
       {diagnosis.overall_status === "Healthy" && (
