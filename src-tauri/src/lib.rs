@@ -1240,6 +1240,7 @@ pub fn run() {
             commands::get_model_pricing,
             commands::update_model_pricing,
             commands::delete_model_pricing,
+            commands::backfill_missing_usage_costs,
             commands::check_provider_limits,
             // Session usage sync
             commands::sync_session_usage,

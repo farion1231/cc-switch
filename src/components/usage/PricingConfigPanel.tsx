@@ -26,10 +26,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
+import {
+  useModelPricing,
+  useDeleteModelPricing,
+  useBackfillMissingUsageCosts,
+} from "@/lib/query/usage";
 import { PricingEditModal } from "./PricingEditModal";
 import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
-import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
 
@@ -48,6 +52,7 @@ export function PricingConfigPanel() {
   const { t } = useTranslation();
   const { data: pricing, isLoading, error } = useModelPricing();
   const deleteMutation = useDeleteModelPricing();
+  const backfillMutation = useBackfillMissingUsageCosts();
   const [editingModel, setEditingModel] = useState<ModelPricing | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -183,6 +188,29 @@ export function PricingConfigPanel() {
     deleteMutation.mutate(modelId, {
       onSuccess: () => setDeleteConfirm(null),
     });
+  };
+
+  const handleBackfillMissingCosts = async () => {
+    try {
+      const result = await backfillMutation.mutateAsync();
+      if (result.backfilledCostRows > 0) {
+        toast.success(
+          t("usage.backfillMissingCostsDone", {
+            count: result.backfilledCostRows,
+          }),
+          { closeButton: true },
+        );
+        return;
+      }
+
+      toast.success(t("usage.backfillMissingCostsNone"), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(
+        t("usage.backfillMissingCostsFailed", { error: String(error) }),
+      );
+    }
   };
 
   const handleAddNew = () => {
@@ -343,16 +371,34 @@ export function PricingConfigPanel() {
           <h4 className="text-sm font-medium text-muted-foreground">
             {t("usage.modelPricingDesc")} {t("usage.perMillion")}
           </h4>
-          <Button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleAddNew();
-            }}
-            size="sm"
-          >
-            <Plus className="mr-1 h-4 w-4" />
-            {t("common.add")}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleBackfillMissingCosts();
+              }}
+              disabled={backfillMutation.isPending || !pricing?.length}
+              size="sm"
+            >
+              {backfillMutation.isPending ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1 h-4 w-4" />
+              )}
+              {t("usage.backfillMissingCosts")}
+            </Button>
+            <Button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleAddNew();
+              }}
+              size="sm"
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              {t("common.add")}
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-4">

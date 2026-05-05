@@ -1294,6 +1294,10 @@
     "editPricing": "编辑定价",
     "pricingAdded": "定价已添加",
     "pricingUpdated": "定价已更新",
+    "backfillMissingCosts": "补全历史成本",
+    "backfillMissingCostsDone": "已补全 {{count}} 条历史成本",
+    "backfillMissingCostsNone": "没有需要补全的历史成本",
+    "backfillMissingCostsFailed": "补全历史成本失败：{{error}}",
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
     "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)"
   },
