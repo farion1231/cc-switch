@@ -1150,6 +1150,7 @@ pub fn run() {
             commands::restore_env_backup,
             // Environment diagnosis
             commands::diagnose_environment,
+            commands::install_tool,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::get_skill_backups,

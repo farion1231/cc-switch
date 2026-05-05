@@ -1,4 +1,5 @@
 use crate::services::env_doctor::DiagnosisResult;
+use crate::services::installer::{self, InstallResult};
 
 /// 执行环境诊断
 ///
@@ -23,4 +24,125 @@ pub async fn diagnose_environment() -> Result<DiagnosisResult, String> {
     crate::services::env_doctor::diagnose_environment()
         .await
         .map_err(|e| format!("环境诊断失败: {}", e))
+}
+
+/// 安装指定工具
+///
+/// 支持的工具：
+/// - `claude`: Claude Code（通过官方安装脚本）
+/// - `codex`: Codex（通过 npm）
+/// - `gemini`: Gemini CLI（通过 npm）
+/// - `opencode`: OpenCode（通过官方安装脚本）
+///
+/// # 安装流程
+///
+/// 1. 检查 Node.js 是否已安装（Claude Code 和 OpenCode 除外）
+/// 2. 如果 Node.js 未安装或版本不满足要求（< 18.0.0），先安装 Node.js
+/// 3. 调用对应工具的安装函数
+///
+/// # 参数
+///
+/// - `tool`: 工具名称（claude/codex/gemini/opencode）
+///
+/// # 返回值
+///
+/// 返回 `InstallResult`，包含：
+/// - `success`: 是否安装成功
+/// - `message`: 安装结果消息
+/// - `installed_version`: 安装后的版本号（如果成功）
+///
+/// # 错误
+///
+/// 如果安装过程中发生错误，返回错误信息字符串
+///
+/// # 示例
+///
+/// ```rust
+/// // 安装 Claude Code
+/// let result = install_tool("claude".to_string()).await?;
+/// assert!(result.success);
+///
+/// // 安装 Codex（会先检查 Node.js）
+/// let result = install_tool("codex".to_string()).await?;
+/// ```
+#[tauri::command]
+pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
+    let tool_lower = tool.to_lowercase();
+
+    // Claude Code 和 OpenCode 不需要 Node.js
+    let needs_nodejs = !matches!(tool_lower.as_str(), "claude" | "opencode");
+
+    // 如果需要 Node.js，先检查并安装
+    if needs_nodejs {
+        let nodejs_installed = installer::check_nodejs_installed()
+            .map_err(|e| format!("检查 Node.js 失败: {}", e))?;
+
+        if !nodejs_installed {
+            log::info!("Node.js 未安装，开始安装 Node.js...");
+            let nodejs_result = installer::install_nodejs()
+                .map_err(|e| format!("安装 Node.js 失败: {}", e))?;
+
+            if !nodejs_result.success {
+                return Ok(InstallResult {
+                    success: false,
+                    message: format!(
+                        "安装 {} 需要先安装 Node.js，但 Node.js 安装失败: {}",
+                        tool, nodejs_result.message
+                    ),
+                    installed_version: None,
+                });
+            }
+            log::info!("Node.js 安装成功: {:?}", nodejs_result.installed_version);
+        } else {
+            // 检查版本是否满足要求
+            let version_sufficient = installer::check_nodejs_version_sufficient()
+                .map_err(|e| format!("检查 Node.js 版本失败: {}", e))?;
+
+            if !version_sufficient {
+                log::info!("Node.js 版本不满足要求（需要 >= 18.0.0），开始升级...");
+                let nodejs_result = installer::install_nodejs()
+                    .map_err(|e| format!("升级 Node.js 失败: {}", e))?;
+
+                if !nodejs_result.success {
+                    return Ok(InstallResult {
+                        success: false,
+                        message: format!(
+                            "安装 {} 需要 Node.js >= 18.0.0，但升级失败: {}",
+                            tool, nodejs_result.message
+                        ),
+                        installed_version: None,
+                    });
+                }
+                log::info!("Node.js 升级成功: {:?}", nodejs_result.installed_version);
+            }
+        }
+    }
+
+    // 根据工具名称调用对应的安装函数
+    match tool_lower.as_str() {
+        "claude" => {
+            log::info!("开始安装 Claude Code...");
+            installer::install_claude_code().map_err(|e| format!("安装 Claude Code 失败: {}", e))
+        }
+        "codex" => {
+            log::info!("开始安装 Codex...");
+            installer::install_codex().map_err(|e| format!("安装 Codex 失败: {}", e))
+        }
+        "gemini" => {
+            log::info!("开始安装 Gemini CLI...");
+            installer::install_gemini_cli().map_err(|e| format!("安装 Gemini CLI 失败: {}", e))
+        }
+        "opencode" => {
+            log::info!("开始安装 OpenCode...");
+            installer::install_opencode().map_err(|e| format!("安装 OpenCode 失败: {}", e))
+        }
+        _ => Ok(InstallResult {
+            success: false,
+            message: format!(
+                "不支持的工具: {}。支持的工具: claude, codex, gemini, opencode",
+                tool
+            ),
+            installed_version: None,
+        }),
+    }
 }
