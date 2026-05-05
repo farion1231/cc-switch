@@ -352,6 +352,13 @@
           "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
           "trace": "すべてのログ、最も詳細"
         }
+      },
+      "codexCompat": {
+        "title": "Codex: 暗号化コンテンツ修復",
+        "description": "APIキー切り替えによる暗号化コンテンツの復号失敗を自動修復",
+        "toggleTitle": "encrypted_content エラー自動修復",
+        "toggleDescription": "異なるAPIキーでは互いの暗号化推論ブロックを復号できません。有効にするとリクエストからencrypted_contentを自動除去してサイレントリトライし、推論品質に影響はありません。プロバイダー間でキーをローテーションする環境で推奨。",
+        "injectedErrorNote": "CC Switchがこのリクエストからencrypted_contentを自動的に除去しました。このエラーが続く場合は、--resumeでCodexセッションを再起動するか、プロキシ設定でこの機能を無効にしてください。"
       }
     },
     "language": "言語",

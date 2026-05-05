@@ -352,6 +352,13 @@
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
         }
+      },
+      "codexCompat": {
+        "title": "Codex: Encrypted Content Recovery",
+        "description": "Auto-recover from encrypted_content decryption failures caused by API key rotation",
+        "toggleTitle": "Auto-recover from encrypted_content errors",
+        "toggleDescription": "Different API keys cannot decrypt each other's encrypted reasoning blocks. When enabled, encrypted_content is automatically stripped from requests and retried silently — reasoning quality is unaffected. Strongly recommended when rotating API keys across providers.",
+        "injectedErrorNote": "encrypted_content was automatically stripped from this request by CC Switch. If this error persists, try restarting your Codex session with --resume, or disable this feature in proxy settings."
       }
     },
     "language": "Language",

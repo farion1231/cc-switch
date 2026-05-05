@@ -299,3 +299,23 @@ pub async fn set_log_config(
     );
     Ok(true)
 }
+
+/// 获取 encrypted_content 剥离开关状态（默认 true）
+#[tauri::command]
+pub async fn get_strip_encrypted_content_enabled(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<bool, String> {
+    let value = state.db.get_setting("strip_encrypted_content_enabled").map_err(|e| e.to_string())?;
+    Ok(value.map(|v| v != "false" && v != "0").unwrap_or(true))
+}
+
+/// 设置 encrypted_content 剥离开关
+#[tauri::command]
+pub async fn set_strip_encrypted_content_enabled(
+    state: tauri::State<'_, crate::AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    state.db.set_setting("strip_encrypted_content_enabled", if enabled { "true" } else { "false" })
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}

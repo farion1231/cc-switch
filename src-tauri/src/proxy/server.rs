@@ -42,6 +42,43 @@ pub struct ProxyState {
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
     pub failover_manager: Arc<FailoverSwitchManager>,
+    /// 记录各 provider 最近一次 encrypted_content 错误的时间戳 (provider_id -> unix_secs)
+    /// 用于智能剥离：有过错误记录的 provider 会被主动剥离，冷却后恢复
+    pub encrypted_content_errors: Arc<RwLock<std::collections::HashMap<String, i64>>>,
+}
+
+impl ProxyState {
+    /// Cooldown before re-enabling encrypted_content for a provider (30 minutes).
+    const ENCRYPTED_ERROR_COOLDOWN_SECS: i64 = 1800;
+
+    /// Check whether any provider has a recent encrypted_content error.
+    /// If so, we proactively strip to avoid hitting the error again.
+    pub fn has_recent_encrypted_error(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        if let Ok(errors) = self.encrypted_content_errors.try_read() {
+            errors
+                .values()
+                .any(|&ts| now - ts < Self::ENCRYPTED_ERROR_COOLDOWN_SECS)
+        } else {
+            false
+        }
+    }
+
+    /// Record an encrypted_content error for a provider.
+    pub fn record_encrypted_error(&self, provider_id: &str) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        if let Ok(mut errors) = self.encrypted_content_errors.try_write() {
+            errors.insert(provider_id.to_string(), now);
+            // Clean up expired entries while we're at it.
+            errors.retain(|_, ts| now - *ts < Self::ENCRYPTED_ERROR_COOLDOWN_SECS);
+        }
+    }
 }
 
 /// 代理HTTP服务器
@@ -74,6 +111,7 @@ impl ProxyServer {
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             app_handle,
             failover_manager,
+            encrypted_content_errors: Arc::new(RwLock::new(std::collections::HashMap::new())),
         };
 
         Self {

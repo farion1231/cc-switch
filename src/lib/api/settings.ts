@@ -215,6 +215,14 @@ export const settingsApi = {
   async setLogConfig(config: LogConfig): Promise<boolean> {
     return await invoke("set_log_config", { config });
   },
+
+  async getStripEncryptedContentEnabled(): Promise<boolean> {
+    return await invoke("get_strip_encrypted_content_enabled");
+  },
+
+  async setStripEncryptedContentEnabled(enabled: boolean): Promise<boolean> {
+    return await invoke("set_strip_encrypted_content_enabled", { enabled });
+  },
 };
 
 export interface RectifierConfig {

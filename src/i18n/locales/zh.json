@@ -352,6 +352,13 @@
           "debug": "详细信息，包含 SSE 流和请求/响应详情",
           "trace": "全部日志，最详细"
         }
+      },
+      "codexCompat": {
+        "title": "Codex: 加密内容修复",
+        "description": "检测并阻止因 API key 轮换导致的 invalid_encrypted_content 错误",
+        "toggleTitle": "encrypted_content 错误自动重试",
+        "toggleDescription": "Codex 返回携带的部分推理块加密, 区分apikey. 启用此选项将会在检测到 invalid_encrypted_content 错误时, 智能处理 include 参数和请求 input 中的 reasoning/compaction 条目, 尝试剥离 encrypted_content, 不会影响推理摘要和推理性能, cli 中无感。如果你经常切换 provider, 或者中转商存在多 apikey 轮换行为, 强烈建议开启此功能.",
+        "injectedErrorNote": "CC Switch 已自动从此请求中剥离 encrypted_content。如果此错误持续出现，请尝试用 --resume 重启 Codex 会话，或在代理设置中关闭此功能。"
       }
     },
     "language": "界面语言",

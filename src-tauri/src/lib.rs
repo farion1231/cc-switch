@@ -1066,6 +1066,8 @@ pub fn run() {
             commands::set_copilot_optimizer_config,
             commands::get_log_config,
             commands::set_log_config,
+            commands::get_strip_encrypted_content_enabled,
+            commands::set_strip_encrypted_content_enabled,
             commands::restart_app,
             commands::check_for_updates,
             commands::is_portable_mode,

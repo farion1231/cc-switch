@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Server,
+  Activity,
+  Zap,
+  Globe,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -18,6 +25,8 @@ import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import { settingsApi } from "@/lib/api/settings";
+import { toast } from "sonner";
 import type { SettingsFormState } from "@/hooks/useSettings";
 
 interface ProxyTabContentProps {
@@ -32,6 +41,7 @@ export function ProxyTabContent({
   const { t } = useTranslation();
   const [showProxyConfirm, setShowProxyConfirm] = useState(false);
   const [showFailoverConfirm, setShowFailoverConfirm] = useState(false);
+  const [stripEncryptedEnabled, setStripEncryptedEnabled] = useState(true);
 
   const {
     isRunning,
@@ -78,6 +88,24 @@ export function ProxyTabContent({
       await onAutoSave({ failoverConfirmed: true, enableFailoverToggle: true });
     } catch (error) {
       console.error("Failover confirm failed:", error);
+    }
+  };
+
+  useEffect(() => {
+    settingsApi
+      .getStripEncryptedContentEnabled()
+      .then(setStripEncryptedEnabled)
+      .catch(() => setStripEncryptedEnabled(true));
+  }, []);
+
+  const handleStripEncryptedChange = async (checked: boolean) => {
+    setStripEncryptedEnabled(checked);
+    try {
+      await settingsApi.setStripEncryptedContentEnabled(checked);
+    } catch (e) {
+      console.error("Failed to save encrypted content strip setting:", e);
+      toast.error(String(e));
+      setStripEncryptedEnabled(!checked);
     }
   };
 
@@ -158,6 +186,16 @@ export function ProxyTabContent({
                 )}
                 checked={settings?.enableFailoverToggle ?? false}
                 onCheckedChange={handleFailoverToggleChange}
+              />
+
+              <ToggleRow
+                icon={<ShieldCheck className="h-4 w-4 text-blue-500" />}
+                title={t("settings.advanced.codexCompat.toggleTitle")}
+                description={t(
+                  "settings.advanced.codexCompat.toggleDescription",
+                )}
+                checked={stripEncryptedEnabled}
+                onCheckedChange={handleStripEncryptedChange}
               />
 
               {!isRunning && (
