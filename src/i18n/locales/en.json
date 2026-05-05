@@ -2212,6 +2212,22 @@
       "disabled": "Logging disabled",
       "failed": "Failed to toggle logging"
     },
+    "sensitiveWord": {
+      "title": "Sensitive Word Filter",
+      "description": "Automatically filters sensitive words in requests and replaces them with ***",
+      "enabled": "Sensitive word filter enabled",
+      "disabled": "Sensitive word filter disabled",
+      "failed": "Failed to toggle sensitive word filter",
+      "pathPlaceholder": "/path/to/sensitive_words.txt",
+      "selectFile": "Select sensitive words file",
+      "pathSaved": "Sensitive words file path saved",
+      "pathSaveFailed": "Failed to save sensitive words file path",
+      "reload": "Reload sensitive words",
+      "reloadSuccess": "Sensitive words reloaded into cache",
+      "reloadFailed": "Failed to reload sensitive words: {{message}}",
+      "cacheLoaded": "{{count}} sensitive words are currently loaded in cache",
+      "cacheNotLoaded": "The current file has not been loaded into cache yet. Restart the app or click reload to apply it"
+    },
     "server": {
       "started": "Routing service started - {{address}}:{{port}}",
       "startFailed": "Failed to start routing service: {{detail}}"

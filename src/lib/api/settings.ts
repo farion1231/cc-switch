@@ -215,6 +215,22 @@ export const settingsApi = {
   async setLogConfig(config: LogConfig): Promise<boolean> {
     return await invoke("set_log_config", { config });
   },
+
+  async getSensitiveWordConfig(): Promise<SensitiveWordConfig> {
+    return await invoke("get_sensitive_word_config");
+  },
+
+  async setSensitiveWordConfig(config: SensitiveWordConfig): Promise<boolean> {
+    return await invoke("set_sensitive_word_config", { config });
+  },
+
+  async reloadSensitiveWordCache(): Promise<SensitiveWordCacheInfo> {
+    return await invoke("reload_sensitive_word_cache");
+  },
+
+  async getSensitiveWordCacheInfo(): Promise<SensitiveWordCacheInfo> {
+    return await invoke("get_sensitive_word_cache_info");
+  },
 };
 
 export interface RectifierConfig {
@@ -233,6 +249,18 @@ export interface OptimizerConfig {
 export interface LogConfig {
   enabled: boolean;
   level: "error" | "warn" | "info" | "debug" | "trace";
+}
+
+export interface SensitiveWordConfig {
+  enabled: boolean;
+  filePath: string;
+}
+
+export interface SensitiveWordCacheInfo {
+  loaded: boolean;
+  filePath: string;
+  words: string[];
+  modifiedAt: string | null;
 }
 
 export interface BackupEntry {
