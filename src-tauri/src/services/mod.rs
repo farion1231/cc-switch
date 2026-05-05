@@ -4,6 +4,7 @@ pub mod config;
 pub mod env_checker;
 pub mod env_doctor;
 pub mod env_manager;
+pub mod installer;
 pub mod mcp;
 pub mod model_fetch;
 pub mod omo;
@@ -24,6 +25,7 @@ pub mod webdav_auto_sync;
 pub mod webdav_sync;
 
 pub use config::ConfigService;
+pub use installer::InstallResult;
 pub use mcp::McpService;
 pub use omo::OmoService;
 pub use prompt::PromptService;
