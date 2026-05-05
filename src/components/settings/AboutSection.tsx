@@ -44,7 +44,7 @@ interface ToolVersion {
   wsl_distro: string | null;
 }
 
-const TOOL_NAMES = ["claude", "codex", "gemini", "opencode"] as const;
+const TOOL_NAMES = ["claude"] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
 
 type WslShellPreference = {
@@ -83,13 +83,7 @@ const ENV_BADGE_CONFIG: Record<
 };
 
 const ONE_CLICK_INSTALL_COMMANDS = `# Claude Code (Native install - recommended)
-curl -fsSL https://claude.ai/install.sh | bash
-# Codex
-npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
-# OpenCode
-curl -fsSL https://opencode.ai/install | bash`;
+curl -fsSL https://claude.ai/install.sh | bash`;
 
 export function AboutSection({ isPortable }: AboutSectionProps) {
   // ... (use hooks as before) ...
@@ -401,9 +395,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <img src={appIcon} alt="CC Switch" className="h-5 w-5" />
+              <img src={appIcon} alt="CC Doctor" className="h-5 w-5" />
               <h4 className="text-lg font-semibold text-foreground">
-                CC Switch
+                {t("welcome.title")}
               </h4>
             </div>
             <div className="flex items-center gap-2">
@@ -527,11 +521,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 px-1">
             {TOOL_NAMES.map((toolName, index) => {
               const tool = toolVersions.find((item) => item.name === toolName);
-              // Special case for OpenCode (capital C), others use capitalize
-              const displayName =
-                toolName === "opencode"
-                  ? "OpenCode"
-                  : toolName.charAt(0).toUpperCase() + toolName.slice(1);
+              // Claude Code 显示为 "Claude Code"
+              const displayName = "Claude Code";
               const title = tool?.version || tool?.error || t("common.unknown");
 
               return (
