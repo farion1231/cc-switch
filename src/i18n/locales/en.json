@@ -42,10 +42,10 @@
     "enabled": "Enabled",
     "notSet": "Not Set"
   },
-  “firstRunNotice”: {
-    “title”: “Welcome to CC Doctor”,
-    “bodyDefault”: “CC Doctor lets you switch between multiple Claude Code providers with a single click. If you already had Claude Code configured, CC Doctor has saved your existing setup as a provider named \”default\” so none of your previous configuration is lost.”,
-    “bodyOfficial”: “An “Official” preset is also included in the list — click it any time you want to switch back to the official default. CC Doctor automatically backs up your current config to “default” before switching, so you can move back and forth freely. That's how CC Doctor works 😊”,
+  "firstRunNotice": {
+    "title": "Welcome to CC Doctor",
+    "bodyDefault": "CC Doctor lets you switch between multiple Claude Code providers with a single click. If you already had Claude Code configured, CC Doctor has saved your existing setup as a provider named \"default\" so none of your previous configuration is lost.",
+    "bodyOfficial": "An \"Official\" preset is also included in the list — click it any time you want to switch back to the official default. CC Doctor automatically backs up your current config to \"default\" before switching, so you can move back and forth freely. That's how CC Doctor works 😊",
     "confirm": "Got it"
   },
   "apiKeyInput": {

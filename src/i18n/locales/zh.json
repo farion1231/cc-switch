@@ -42,10 +42,10 @@
     "enabled": "已开启",
     "notSet": "未设置"
   },
-  “firstRunNotice”: {
-    “title”: “欢迎使用 CC Doctor”,
-    “bodyDefault”: “CC Doctor 可以帮你在 Claude Code 的多个供应商之间一键切换。如果你之前已经配置过 Claude Code，CC Doctor 会自动把现有设置保存为名为 \”default\” 的供应商，保证你的配置不会丢失。”,
-    “bodyOfficial”: “列表里还预置了 “官方（Official）” 供应商，随时点一下即可切回官方默认配置。切换前 CC Doctor 会自动把当前配置备份回 default，可以放心来回切。CC Doctor 就是这样工作的 😊”,
+  "firstRunNotice": {
+    "title": "欢迎使用 CC Doctor",
+    "bodyDefault": "CC Doctor 可以帮你在 Claude Code 的多个供应商之间一键切换。如果你之前已经配置过 Claude Code，CC Doctor 会自动把现有设置保存为名为 \"default\" 的供应商，保证你的配置不会丢失。",
+    "bodyOfficial": "列表里还预置了 \"官方（Official）\" 供应商，随时点一下即可切回官方默认配置。切换前 CC Doctor 会自动把当前配置备份回 default，可以放心来回切。CC Doctor 就是这样工作的 😊",
     "confirm": "我知道了"
   },
   "apiKeyInput": {
@@ -738,7 +738,7 @@
     "deleting": "删除中...",
     "deleteTooltip": "永久删除此本地会话记录",
     "deleteConfirmTitle": "删除会话",
-    "deleteConfirmMessage": "将永久删除本地会话“{{title}}”\nSession ID: {{sessionId}}\n\n此操作不可恢复。",
+    "deleteConfirmMessage": "将永久删除本地会话\"{{title}}\"\nSession ID: {{sessionId}}\n\n此操作不可恢复。",
     "deleteConfirmAction": "删除会话",
     "sessionDeleted": "会话已删除",
     "deleteFailed": "删除会话失败: {{error}}",
@@ -1569,7 +1569,7 @@
       "profileFull": "完全访问",
       "profileUnset": "未设置",
       "unsupportedProfileTitle": "检测到不受支持的工具配置",
-      "unsupportedProfileDescription": "当前 tools.profile 的值“{{value}}”不在 OpenClaw 支持列表内。在你手动选择新值之前，它会被保留。",
+      "unsupportedProfileDescription": "当前 tools.profile 的值\"{{value}}\"不在 OpenClaw 支持列表内。在你手动选择新值之前，它会被保留。",
       "unsupportedProfileLabel": "不受支持",
       "allowList": "允许列表",
       "denyList": "拒绝列表",
@@ -1974,7 +1974,7 @@
     "success": "配置迁移成功",
     "skillsSuccess": "已自动导入 {{count}} 个技能到统一管理",
     "skillsFailed": "自动导入技能失败",
-    "skillsFailedDescription": "请打开 Skills 页面点击“导入已有”手动导入（或重启后再试）。"
+    "skillsFailedDescription": "请打开 Skills 页面点击\"导入已有\"手动导入（或重启后再试）。"
   },
   "agents": {
     "title": "智能体"
