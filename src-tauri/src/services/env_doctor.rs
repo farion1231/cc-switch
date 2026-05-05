@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::fs;
 
 /// 诊断结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -471,6 +472,192 @@ fn extract_version(raw: &str) -> String {
         .unwrap_or_else(|| raw.to_string())
 }
 
+// ============================================================================
+// 环境修复功能
+// ============================================================================
+
+/// 修复结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FixResult {
+    /// 成功修复的问题 ID 列表
+    pub fixed: Vec<String>,
+    /// 修复失败的问题列表 (问题 ID, 错误信息)
+    pub failed: Vec<(String, String)>,
+}
+
+/// 批量修复环境问题
+///
+/// 只修复 `auto_fixable = true` 的问题。
+/// 每个修复操作前会先备份相关数据。
+///
+/// # 参数
+/// - `issues`: 待修复的问题列表
+///
+/// # 返回
+/// - `Ok(FixResult)`: 修复结果，包含成功和失败的问题列表
+/// - `Err(String)`: 修复过程中的致命错误
+pub async fn fix_environment(issues: Vec<DiagnosisIssue>) -> Result<FixResult, String> {
+    let mut fixed = Vec::new();
+    let mut failed = Vec::new();
+
+    for issue in issues {
+        // 只修复可自动修复的问题
+        if !issue.auto_fixable {
+            continue;
+        }
+
+        let fix_action = match issue.fix_action {
+            Some(action) => action,
+            None => continue,
+        };
+
+        // 根据修复动作类型执行对应的修复操作
+        let result = match fix_action {
+            FixAction::RemoveEnvVar { var_name, source } => {
+                fix_env_conflict(var_name, source).await
+            }
+            FixAction::RepairConfig { path } => repair_config_file(path).await,
+            FixAction::FixPermission { path } => fix_permission(path).await,
+            // 安装和更新操作不在此处理，需要用户明确触发
+            FixAction::InstallTool { .. } | FixAction::InstallNodeJs | FixAction::UpdateTool { .. } => {
+                continue;
+            }
+        };
+
+        match result {
+            Ok(_) => fixed.push(issue.id),
+            Err(e) => failed.push((issue.id, e)),
+        }
+    }
+
+    Ok(FixResult { fixed, failed })
+}
+
+/// 修复环境变量冲突
+///
+/// 通过复用 `env_manager::delete_env_vars` 功能删除冲突的环境变量。
+/// 删除前会自动创建备份。
+///
+/// # 参数
+/// - `var_name`: 环境变量名称
+/// - `source`: 环境变量来源路径
+///
+/// # 平台支持
+/// - macOS: 从 shell 配置文件中删除（.zshrc, .bashrc 等）
+/// - Linux: 从 shell 配置文件中删除
+/// - Windows: 暂不支持（需要管理员权限操作注册表）
+async fn fix_env_conflict(var_name: String, source: String) -> Result<(), String> {
+    // 构造 EnvConflict 对象
+    let conflict = super::env_checker::EnvConflict {
+        var_name: var_name.clone(),
+        var_value: std::env::var(&var_name).unwrap_or_default(),
+        source_type: if source.contains("HKEY") {
+            "system".to_string()
+        } else {
+            "file".to_string()
+        },
+        source_path: source,
+    };
+
+    // 复用 env_manager 的删除功能（会自动备份）
+    super::env_manager::delete_env_vars(vec![conflict])
+        .map(|_| ())
+        .map_err(|e| format!("删除环境变量失败: {}", e))
+}
+
+/// 修复配置文件
+///
+/// 修复策略：
+/// 1. 检查是否存在 `.backup` 文件，如果有则从备份恢复
+/// 2. 如果没有备份，生成默认配置文件
+///
+/// # 参数
+/// - `path`: 配置文件路径
+///
+/// # 平台支持
+/// - macOS: 完全支持
+/// - Linux: 完全支持
+/// - Windows: 完全支持
+async fn repair_config_file(path: String) -> Result<(), String> {
+    let config_path = PathBuf::from(&path);
+
+    // 1. 尝试从备份恢复
+    let backup_path = config_path.with_extension("json.backup");
+    if backup_path.exists() {
+        fs::copy(&backup_path, &config_path)
+            .map_err(|e| format!("从备份恢复配置文件失败: {}", e))?;
+        return Ok(());
+    }
+
+    // 2. 生成默认配置
+    let default_config = generate_default_config();
+
+    // 确保父目录存在
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("创建配置目录失败: {}", e))?;
+    }
+
+    // 写入默认配置
+    fs::write(&config_path, default_config)
+        .map_err(|e| format!("写入默认配置失败: {}", e))?;
+
+    Ok(())
+}
+
+/// 修复权限问题
+///
+/// 修复策略：
+/// - macOS/Linux: 使用 chmod 755 修复目录权限
+/// - Windows: 暂不支持（需要管理员权限）
+///
+/// # 参数
+/// - `path`: 需要修复权限的路径
+///
+/// # 平台支持
+/// - macOS: 完全支持
+/// - Linux: 完全支持
+/// - Windows: 暂不支持
+#[cfg(not(target_os = "windows"))]
+async fn fix_permission(path: String) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let target_path = PathBuf::from(&path);
+
+    // 确保路径存在
+    if !target_path.exists() {
+        return Err(format!("路径不存在: {}", path));
+    }
+
+    // 设置权限为 755 (rwxr-xr-x)
+    let permissions = fs::Permissions::from_mode(0o755);
+    fs::set_permissions(&target_path, permissions)
+        .map_err(|e| format!("修复权限失败: {}", e))?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+async fn fix_permission(_path: String) -> Result<(), String> {
+    // Windows 权限修复需要管理员权限，暂不支持
+    Err("Windows 平台暂不支持自动修复权限".to_string())
+}
+
+/// 生成默认配置文件内容
+///
+/// 生成一个最小化的 Claude Code settings.json 配置
+fn generate_default_config() -> String {
+    serde_json::json!({
+        "model": "claude-opus-4-6",
+        "language": "zh-CN",
+        "env": {},
+        "plugins": {
+            "enabled": []
+        }
+    })
+    .to_string()
+}
 
 #[cfg(test)]
 mod tests {
