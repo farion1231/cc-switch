@@ -659,6 +659,26 @@
     },
     "saveFailedGeneric": "Save failed, please try again"
   },
+  "doctor": {
+    "environmentStatus": "Environment Status",
+    "oneClickInstall": "One-Click Install",
+    "oneClickFix": "One-Click Fix",
+    "installing": "Installing...",
+    "fixing": "Fixing...",
+    "allGood": "✓ All good, everything is working properly",
+    "installSuccess": "{{tool}} installed successfully",
+    "installFailed": "Installation failed: {{error}}",
+    "fixSuccess": "Successfully fixed {{count}} issue(s)",
+    "fixFailed": "Fix failed: {{error}}",
+    "issues": {
+      "notInstalled": "{{tool}} is not installed",
+      "envConflict": "Environment variable conflict: {{var}}",
+      "configCorrupted": "Config file corrupted: {{path}}",
+      "permissionDenied": "Permission denied: {{path}}",
+      "versionOutdated": "{{tool}} is outdated (current: {{current}}, latest: {{latest}})",
+      "nodejsMissing": "Node.js is not installed or version is too low"
+    }
+  },
   "apps": {
     "claude": "Claude",
     "codex": "Codex",

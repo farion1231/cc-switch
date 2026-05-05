@@ -659,6 +659,26 @@
     },
     "saveFailedGeneric": "保存失败，请重试"
   },
+  "doctor": {
+    "environmentStatus": "环境状态",
+    "oneClickInstall": "一键安装",
+    "oneClickFix": "一键修复",
+    "installing": "安装中...",
+    "fixing": "修复中...",
+    "allGood": "✓ 环境正常，所有工具运行良好",
+    "installSuccess": "{{tool}} 安装成功",
+    "installFailed": "安装失败：{{error}}",
+    "fixSuccess": "成功修复 {{count}} 个问题",
+    "fixFailed": "修复失败：{{error}}",
+    "issues": {
+      "notInstalled": "{{tool}} 未安装",
+      "envConflict": "环境变量冲突：{{var}}",
+      "configCorrupted": "配置文件损坏：{{path}}",
+      "permissionDenied": "权限不足：{{path}}",
+      "versionOutdated": "{{tool}} 版本过期（当前：{{current}}，最新：{{latest}}）",
+      "nodejsMissing": "Node.js 未安装或版本过低"
+    }
+  },
   "apps": {
     "claude": "Claude",
     "codex": "Codex",
