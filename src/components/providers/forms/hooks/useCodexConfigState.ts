@@ -24,6 +24,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const [codexBaseUrl, setCodexBaseUrl] = useState("");
   const [codexModelName, setCodexModelName] = useState("");
   const [codexAuthError, setCodexAuthError] = useState("");
+  const [codexChatCompat, setCodexChatCompat] = useState(false);
+  const [codexModelMapJson, setCodexModelMapJson] = useState("{}");
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
   const isUpdatingCodexModelNameRef = useRef(false);
@@ -64,6 +66,17 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
         }
       } catch {
         // ignore
+      }
+
+      // 提取 chat_compat
+      if (typeof (config as any).chat_compat === "boolean") {
+        setCodexChatCompat((config as any).chat_compat);
+      }
+
+      // 提取 model_map
+      const mm = (config as any).model_map;
+      if (mm && typeof mm === "object") {
+        setCodexModelMapJson(JSON.stringify(mm, null, 2));
       }
     }
   }, [initialData]);
@@ -238,6 +251,10 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       } catch {
         setCodexApiKey("");
       }
+
+      // Reset chat_compat
+      setCodexChatCompat(false);
+      setCodexModelMapJson("{}");
     },
     [setCodexAuth, setCodexConfig],
   );
@@ -249,6 +266,10 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexBaseUrl,
     codexModelName,
     codexAuthError,
+    codexChatCompat,
+    setCodexChatCompat,
+    codexModelMapJson,
+    setCodexModelMapJson,
     setCodexAuth,
     setCodexConfig,
     handleCodexApiKeyChange,

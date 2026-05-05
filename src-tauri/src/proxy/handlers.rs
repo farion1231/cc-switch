@@ -14,7 +14,8 @@ use super::{
     },
     handler_context::RequestContext,
     providers::{
-        get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
+        chat_to_responses, get_adapter, get_claude_api_format,
+        streaming::create_anthropic_sse_stream,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
         transform_gemini, transform_responses,
@@ -442,12 +443,19 @@ pub async fn handle_responses(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // For chat_compat, force non-streaming to DeepSeek so we get a single JSON response
+    let chat_compat = get_adapter(&AppType::Codex).needs_transform(&ctx.provider);
+    let mut forward_body = body.clone();
+    if chat_compat {
+        forward_body["stream"] = serde_json::json!(false);
+    }
+
     let forwarder = ctx.create_forwarder(&state);
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
             &endpoint,
-            body,
+            forward_body,
             headers,
             extensions,
             ctx.get_providers(),
@@ -466,6 +474,93 @@ pub async fn handle_responses(
 
     ctx.provider = result.provider;
     let response = result.response;
+
+    // Chat Compat: buffer upstream Chat, convert to Responses, emit as SSE events
+    let adapter = get_adapter(&AppType::Codex);
+    if adapter.needs_transform(&ctx.provider) {
+        let (_rh, _st, body_bytes) =
+            read_decoded_body(response, ctx.tag, std::time::Duration::from_secs(600)).await?;
+        let upstream: Value = serde_json::from_slice(&body_bytes)
+            .map_err(|e| ProxyError::TransformError(format!("Parse upstream: {e}")))?;
+        let r = chat_to_responses::chat_to_responses(&upstream, Some(&body))?;
+
+        let rid = r.get("id").and_then(|v| v.as_str()).unwrap_or("resp");
+        let model = r.get("model").and_then(|v| v.as_str()).unwrap_or("?");
+        let output = r.get("output");
+        let usage = r.get("usage");
+
+        let mut sse = String::new();
+
+        // 1. response.created
+        sse.push_str(&format!("event: response.created\ndata: {{\"type\":\"response.created\",\"response\":{{\"id\":\"{}\",\"object\":\"response\",\"model\":\"{}\",\"status\":\"in_progress\",\"output\":[]}}}}\n\n", rid, model));
+        // 1b. response.in_progress (Codex SDK 状态机要求)
+        sse.push_str(&format!("event: response.in_progress\ndata: {{\"type\":\"response.in_progress\",\"response\":{{\"id\":\"{}\",\"object\":\"response\",\"model\":\"{}\",\"status\":\"in_progress\",\"output\":[]}}}}\n\n", rid, model));
+
+        // 2. Emit output items
+        if let Some(items) = output.and_then(|v| v.as_array()) {
+            for (oi, item) in items.iter().enumerate() {
+                let item_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                // output_item.added — 根据 item 类型构造正确的初始化结构
+                let added_item = match item_type {
+                    "message" => json!({"id":item_id,"type":"message","status":"in_progress","role":item.get("role"),"content":[]}),
+                    "reasoning" => json!({"id":item_id,"type":"reasoning","status":"in_progress","summary":[]}),
+                    "function_call" => json!({"id":item_id,"type":"function_call","status":"in_progress","name":item.get("name"),"call_id":item.get("call_id"),"arguments":""}),
+                    _ => json!({"id":item_id,"type":item_type,"status":"in_progress"}),
+                };
+                let added = json!({"type":"response.output_item.added","output_index":oi,"item":added_item});
+                sse.push_str(&format!("event: response.output_item.added\ndata: {}\n\n", added));
+
+                if item_type == "message" {
+                    if let Some(parts) = item.get("content").and_then(|v| v.as_array()) {
+                        for (ci, part) in parts.iter().enumerate() {
+                            let pt = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                            if pt == "reasoning_text" { continue; }
+                            sse.push_str(&format!("event: response.content_part.added\ndata: {}\n\n", json!({"type":"response.content_part.added","item_id":item_id,"output_index":oi,"content_index":ci,"part":part})));
+                            if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
+                                sse.push_str(&format!("event: response.output_text.delta\ndata: {}\n\n", json!({"type":"response.output_text.delta","item_id":item_id,"output_index":oi,"content_index":ci,"delta":t})));
+                            }
+                            sse.push_str(&format!("event: response.content_part.done\ndata: {}\n\n", json!({"type":"response.content_part.done","item_id":item_id,"output_index":oi,"content_index":ci})));
+                        }
+                    }
+                } else if item_type == "reasoning" {
+                    if let Some(summary) = item.get("summary").and_then(|v| v.as_array()) {
+                        for (si, s) in summary.iter().enumerate() {
+                            sse.push_str(&format!("event: response.reasoning_summary_part.added\ndata: {}\n\n", json!({"type":"response.reasoning_summary_part.added","item_id":item_id,"output_index":oi,"summary_index":si,"part":s})));
+                            if let Some(t) = s.get("text").and_then(|v| v.as_str()) {
+                                sse.push_str(&format!("event: response.reasoning_summary_text.delta\ndata: {}\n\n", json!({"type":"response.reasoning_summary_text.delta","item_id":item_id,"output_index":oi,"summary_index":si,"delta":t})));
+                            }
+                            sse.push_str(&format!("event: response.reasoning_summary_text.done\ndata: {}\n\n", json!({"type":"response.reasoning_summary_text.done","item_id":item_id,"output_index":oi,"summary_index":si})));
+                            sse.push_str(&format!("event: response.reasoning_summary_part.done\ndata: {}\n\n", json!({"type":"response.reasoning_summary_part.done","item_id":item_id,"output_index":oi,"summary_index":si})));
+                        }
+                    }
+                }
+                // output_item.done (include full item with content/role)
+                let done_item_data = match item_type {
+                    "message" => json!({"id":item_id,"type":"message","status":"completed","role":item.get("role"),"content":item.get("content")}),
+                    "reasoning" => {
+                        let s = item.get("summary").cloned().unwrap_or(json!([]));
+                        json!({"id":item_id,"type":"reasoning","status":"completed","summary":s})
+                    },
+                    "function_call" => json!({"id":item_id,"type":"function_call","status":"completed","call_id":item.get("call_id"),"name":item.get("name"),"arguments":item.get("arguments")}),
+                    _ => json!({"id":item_id,"type":item_type,"status":"completed"}),
+                };
+                sse.push_str(&format!("event: response.output_item.done\ndata: {}\n\n", json!({"type":"response.output_item.done","output_index":oi,"item":done_item_data})));
+            }
+        }
+
+        // 3. response.completed — 包含完整的 output 数组
+        let u = usage.map(|v| v.to_string()).unwrap_or_else(|| "{}".into());
+        let output_json = output.map(|v| v.to_string()).unwrap_or_else(|| "[]".into());
+        sse.push_str(&format!("event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"{}\",\"object\":\"response\",\"model\":\"{}\",\"status\":\"completed\",\"output\":{},\"usage\":{}}}}}\n\n", rid, model, output_json, u));
+
+        return Ok(axum::response::Response::builder()
+            .header("Content-Type", "text/event-stream")
+            .header("Cache-Control", "no-cache")
+            .body(axum::body::Body::from(sse))
+            .unwrap());
+    }
 
     process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
 }
