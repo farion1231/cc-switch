@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CC Switch",
+  "productName": "CC Doctor",
   "version": "3.14.1",
-  "identifier": "com.ccswitch.desktop",
+  "identifier": "com.cc-doctor.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "",
+        "title": "CC Doctor",
         "titleBarStyle": "Overlay",
         "width": 1000,
         "height": 650,

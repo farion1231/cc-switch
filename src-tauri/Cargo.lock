@@ -734,7 +734,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc-switch"
+name = "cc-doctor"
 version = "3.14.1"
 dependencies = [
  "anyhow",

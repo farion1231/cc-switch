@@ -1191,8 +1191,11 @@ function App() {
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
                     )}
                   >
-                    CC Switch
+                    CC Doctor
                   </a>
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    一键核救你的 Claude Code
+                  </span>
                 </div>
                 <Button
                   variant="ghost"

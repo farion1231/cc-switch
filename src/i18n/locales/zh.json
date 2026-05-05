@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "CC Switch",
-    "description": "Claude Code 全方位辅助工具"
+    "title": "CC Doctor",
+    "description": "一键核救你的 Claude Code"
   },
   "common": {
     "add": "添加",
@@ -42,10 +42,10 @@
     "enabled": "已开启",
     "notSet": "未设置"
   },
-  "firstRunNotice": {
-    "title": "欢迎使用 CC Switch",
-    "bodyDefault": "CC Switch 可以帮你在 Claude Code 的多个供应商之间一键切换。如果你之前已经配置过 Claude Code，CC Switch 会自动把现有设置保存为名为 \"default\" 的供应商，保证你的配置不会丢失。",
-    "bodyOfficial": "列表里还预置了 “官方（Official）” 供应商，随时点一下即可切回官方默认配置。切换前 CC Switch 会自动把当前配置备份回 default，可以放心来回切。CC Switch 就是这样工作的 😊",
+  “firstRunNotice”: {
+    “title”: “欢迎使用 CC Doctor”,
+    “bodyDefault”: “CC Doctor 可以帮你在 Claude Code 的多个供应商之间一键切换。如果你之前已经配置过 Claude Code，CC Doctor 会自动把现有设置保存为名为 \”default\” 的供应商，保证你的配置不会丢失。”,
+    “bodyOfficial”: “列表里还预置了 “官方（Official）” 供应商，随时点一下即可切回官方默认配置。切换前 CC Doctor 会自动把当前配置备份回 default，可以放心来回切。CC Doctor 就是这样工作的 😊”,
     "confirm": "我知道了"
   },
   "apiKeyInput": {

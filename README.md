@@ -1,6 +1,6 @@
 <div align="center">
 
-# CC Switch
+# CC Doctor
 
 ### The All-in-One Manager for Claude Code, Codex, Gemini CLI, OpenCode & OpenClaw
 
@@ -134,11 +134,11 @@ Exclusive benefit for CC Switch users: Register via <a href="https://ddshub.shor
 
 </details>
 
-## Why CC Switch?
+## Why CC Doctor?
 
 Modern AI-powered coding relies on CLI tools like Claude Code, Codex, Gemini CLI, OpenCode, and OpenClaw — but each has its own configuration format. Switching API providers means manually editing JSON, TOML, or `.env` files, and there is no unified way to manage MCP and Skills across multiple tools.
 
-**CC Switch** gives you a single desktop app to manage all five CLI tools. Instead of editing config files by hand, you get a visual interface to import providers with one click, switch between them instantly, with 50+ built-in provider presets, unified MCP and Skills management, and system tray quick switching — all backed by a reliable SQLite database with atomic writes that protect your configs from corruption.
+**CC Doctor** gives you a single desktop app to manage all five CLI tools. Instead of editing config files by hand, you get a visual interface to import providers with one click, switch between them instantly, with 50+ built-in provider presets, unified MCP and Skills management, and system tray quick switching — all backed by a reliable SQLite database with atomic writes that protect your configs from corruption.
 
 - **One App, Five CLI Tools** — Manage Claude Code, Codex, Gemini CLI, OpenCode, and OpenClaw from a single interface
 - **No More Manual Editing** — 50+ provider presets including AWS Bedrock, NVIDIA NIM, and community relays; just pick and switch
@@ -193,9 +193,9 @@ Modern AI-powered coding relies on CLI tools like Claude Code, Codex, Gemini CLI
 ## FAQ
 
 <details>
-<summary><strong>Which AI CLI tools does CC Switch support?</strong></summary>
+<summary><strong>Which AI CLI tools does CC Doctor support?</strong></summary>
 
-CC Switch supports five tools: **Claude Code**, **Codex**, **Gemini CLI**, **OpenCode**, and **OpenClaw**. Each tool has dedicated provider presets and configuration management.
+CC Doctor supports five tools: **Claude Code**, **Codex**, **Gemini CLI**, **OpenCode**, and **OpenClaw**. Each tool has dedicated provider presets and configuration management.
 
 </details>
 
@@ -209,21 +209,21 @@ For most tools, yes — restart your terminal or the CLI tool for changes to tak
 <details>
 <summary><strong>My plugin configuration disappeared after switching providers — what happened?</strong></summary>
 
-CC Switch provides a "Shared Config Snippet" feature to pass common data (beyond API keys and endpoints) between providers. Go to "Edit Provider" → "Shared Config Panel" → click "Extract from Current Provider" to save all common data. When creating a new provider, check "Write Shared Config" (enabled by default) to include plugin data in the new provider. All your configuration items are preserved in the default provider imported when you first launched the app.
+CC Doctor provides a "Shared Config Snippet" feature to pass common data (beyond API keys and endpoints) between providers. Go to "Edit Provider" → "Shared Config Panel" → click "Extract from Current Provider" to save all common data. When creating a new provider, check "Write Shared Config" (enabled by default) to include plugin data in the new provider. All your configuration items are preserved in the default provider imported when you first launched the app.
 
 </details>
 
 <details>
 <summary><strong>macOS installation</strong></summary>
 
-CC Switch for macOS is code-signed and notarized by Apple. You can download and install it directly — no extra steps needed. We recommend using the `.dmg` installer.
+CC Doctor for macOS is code-signed and notarized by Apple. You can download and install it directly — no extra steps needed. We recommend using the `.dmg` installer.
 
 </details>
 
 <details>
 <summary><strong>Why can't I delete the currently active provider?</strong></summary>
 
-CC Switch follows a "minimal intrusion" design principle — even if you uninstall the app, your CLI tools will continue to work normally. The system always keeps one active configuration, because deleting all configurations would make the corresponding CLI tool unusable. If you rarely use a specific CLI tool, you can hide it in Settings. To switch back to official login, see the next question.
+CC Doctor follows a "minimal intrusion" design principle — even if you uninstall the app, your CLI tools will continue to work normally. The system always keeps one active configuration, because deleting all configurations would make the corresponding CLI tool unusable. If you rarely use a specific CLI tool, you can hide it in Settings. To switch back to official login, see the next question.
 
 </details>
 
@@ -237,11 +237,11 @@ Add an official provider from the preset list. After switching to it, run the Lo
 <details>
 <summary><strong>Where is my data stored?</strong></summary>
 
-- **Database**: `~/.cc-switch/cc-switch.db` (SQLite — providers, MCP, prompts, skills)
-- **Local settings**: `~/.cc-switch/settings.json` (device-level UI preferences)
-- **Backups**: `~/.cc-switch/backups/` (auto-rotated, keeps 10 most recent)
-- **Skills**: `~/.cc-switch/skills/` (symlinked to corresponding apps by default)
-- **Skill Backups**: `~/.cc-switch/skill-backups/` (created automatically before uninstall, keeps 20 most recent)
+- **Database**: `~/.cc-doctor/cc-doctor.db` (SQLite — providers, MCP, prompts, skills)
+- **Local settings**: `~/.cc-doctor/settings.json` (device-level UI preferences)
+- **Backups**: `~/.cc-doctor/backups/` (auto-rotated, keeps 10 most recent)
+- **Skills**: `~/.cc-doctor/skills/` (symlinked to corresponding apps by default)
+- **Skill Backups**: `~/.cc-doctor/skill-backups/` (created automatically before uninstall, keeps 20 most recent)
 
 </details>
 
@@ -279,7 +279,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 
 ### Windows Users
 
-Download the latest `CC-Switch-v{version}-Windows.msi` installer or `CC-Switch-v{version}-Windows-Portable.zip` portable version from the [Releases](../../releases) page.
+Download the latest `CC-Doctor-v{version}-Windows.msi` installer or `CC-Doctor-v{version}-Windows-Portable.zip` portable version from the [Releases](../../releases) page.
 
 ### macOS Users
 
@@ -287,36 +287,36 @@ Download the latest `CC-Switch-v{version}-Windows.msi` installer or `CC-Switch-v
 
 ```bash
 brew tap farion1231/ccswitch
-brew install --cask cc-switch
+brew install --cask cc-doctor
 ```
 
 Update:
 
 ```bash
-brew upgrade --cask cc-switch
+brew upgrade --cask cc-doctor
 ```
 
 **Method 2: Manual Download**
 
-Download `CC-Switch-v{version}-macOS.dmg` (recommended) or `.zip` from the [Releases](../../releases) page.
+Download `CC-Doctor-v{version}-macOS.dmg` (recommended) or `.zip` from the [Releases](../../releases) page.
 
-> **Note**: CC Switch for macOS is code-signed and notarized by Apple. You can install and open it directly.
+> **Note**: CC Doctor for macOS is code-signed and notarized by Apple. You can install and open it directly.
 
 ### Arch Linux Users
 
 **Install via paru (Recommended)**
 
 ```bash
-paru -S cc-switch-bin
+paru -S cc-doctor-bin
 ```
 
 ### Linux Users
 
 Download the latest Linux build from the [Releases](../../releases) page:
 
-- `CC-Switch-v{version}-Linux.deb` (Debian/Ubuntu)
-- `CC-Switch-v{version}-Linux.rpm` (Fedora/RHEL/openSUSE)
-- `CC-Switch-v{version}-Linux.AppImage` (Universal)
+- `CC-Doctor-v{version}-Linux.deb` (Debian/Ubuntu)
+- `CC-Doctor-v{version}-Linux.rpm` (Fedora/RHEL/openSUSE)
+- `CC-Doctor-v{version}-Linux.AppImage` (Universal)
 
 > **Flatpak**: Not included in official releases. You can build it yourself from the `.deb` — see [`flatpak/README.md`](flatpak/README.md) for instructions.
 
