@@ -1,4 +1,4 @@
-use crate::services::env_doctor::DiagnosisResult;
+use crate::services::env_doctor::{DiagnosisIssue, DiagnosisResult, FixResult};
 use crate::services::installer::{self, InstallResult};
 
 /// 执行环境诊断
@@ -24,6 +24,80 @@ pub async fn diagnose_environment() -> Result<DiagnosisResult, String> {
     crate::services::env_doctor::diagnose_environment()
         .await
         .map_err(|e| format!("环境诊断失败: {}", e))
+}
+
+/// 批量修复环境问题
+///
+/// 只修复 `auto_fixable = true` 的问题。
+/// 每个修复操作前会先备份相关数据。
+///
+/// 支持的修复类型：
+/// - 环境变量冲突：从 shell 配置文件中删除冲突的环境变量（自动备份）
+/// - 配置文件损坏：从备份恢复或生成默认配置
+/// - 权限不足：修复文件/目录权限（macOS/Linux）
+///
+/// 不支持的修复类型（需要用户明确触发）：
+/// - 安装工具：使用 `install_tool` 命令
+/// - 安装 Node.js：使用 `install_tool` 命令
+/// - 更新工具：使用 `install_tool` 命令
+///
+/// # 参数
+///
+/// - `issues`: 待修复的问题列表（从 `diagnose_environment` 获取）
+///
+/// # 返回值
+///
+/// 返回 `FixResult`，包含：
+/// - `fixed`: 成功修复的问题 ID 列表
+/// - `failed`: 修复失败的问题列表（问题 ID, 错误信息）
+///
+/// # 错误
+///
+/// 如果修复过程中发生致命错误，返回错误信息字符串
+///
+/// # 示例
+///
+/// ```rust
+/// // 1. 先诊断环境
+/// let diagnosis = diagnose_environment().await?;
+///
+/// // 2. 过滤出可自动修复的问题
+/// let fixable_issues: Vec<DiagnosisIssue> = diagnosis.issues
+///     .into_iter()
+///     .filter(|issue| issue.auto_fixable)
+///     .collect();
+///
+/// // 3. 执行修复
+/// let result = fix_environment(fixable_issues).await?;
+///
+/// // 4. 检查修复结果
+/// println!("成功修复: {:?}", result.fixed);
+/// println!("修复失败: {:?}", result.failed);
+/// ```
+#[tauri::command]
+pub async fn fix_environment(issues: Vec<DiagnosisIssue>) -> Result<FixResult, String> {
+    log::info!("开始修复环境问题，共 {} 个问题", issues.len());
+
+    let result = crate::services::env_doctor::fix_environment(issues)
+        .await
+        .map_err(|e| {
+            log::error!("环境修复失败: {}", e);
+            format!("环境修复失败: {}", e)
+        })?;
+
+    log::info!(
+        "环境修复完成，成功: {}, 失败: {}",
+        result.fixed.len(),
+        result.failed.len()
+    );
+
+    if !result.failed.is_empty() {
+        for (issue_id, error) in &result.failed {
+            log::warn!("修复失败 [{}]: {}", issue_id, error);
+        }
+    }
+
+    Ok(result)
 }
 
 /// 安装指定工具

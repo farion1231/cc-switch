@@ -1151,6 +1151,7 @@ pub fn run() {
             // Environment diagnosis
             commands::diagnose_environment,
             commands::install_tool,
+            commands::fix_environment,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::get_skill_backups,
