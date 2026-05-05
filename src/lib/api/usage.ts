@@ -16,6 +16,10 @@ import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
 import type { TemplateType } from "@/config/constants";
 
+export type BackfillMissingUsageCostsResult = {
+  backfilledCostRows: number;
+};
+
 export const usageApi = {
   // Provider usage script methods
   query: async (providerId: string, appId: AppId): Promise<UsageResult> => {
@@ -120,6 +124,11 @@ export const usageApi = {
   deleteModelPricing: async (modelId: string): Promise<void> => {
     return invoke("delete_model_pricing", { modelId });
   },
+
+  backfillMissingUsageCosts:
+    async (): Promise<BackfillMissingUsageCostsResult> => {
+      return invoke("backfill_missing_usage_costs");
+    },
 
   checkProviderLimits: async (
     providerId: string,

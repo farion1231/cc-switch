@@ -1215,6 +1215,10 @@
     "editPricing": "Edit Pricing",
     "pricingAdded": "Pricing added",
     "pricingUpdated": "Pricing updated",
+    "backfillMissingCosts": "Backfill Costs",
+    "backfillMissingCostsDone": "Backfilled {{count}} historical cost records",
+    "backfillMissingCostsNone": "No historical costs need backfilling",
+    "backfillMissingCostsFailed": "Failed to backfill historical costs: {{error}}",
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
     "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)"
   },
