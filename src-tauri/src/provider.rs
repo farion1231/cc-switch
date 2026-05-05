@@ -266,6 +266,14 @@ pub struct ProviderMeta {
     /// 请求地址管理：测速后自动选择最佳端点
     #[serde(rename = "endpointAutoSelect", skip_serializing_if = "Option::is_none")]
     pub endpoint_auto_select: Option<bool>,
+    /// 打开 provider 终端后执行的命令模板。
+    ///
+    /// 为空时使用默认命令。模板仅保存在 CC Switch 元数据中，不写入各 CLI 的 live 配置。
+    #[serde(
+        rename = "terminalCommandTemplate",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub terminal_command_template: Option<String>,
     /// 合作伙伴标记（前端使用 isPartner，保持字段名一致）
     #[serde(rename = "isPartner", skip_serializing_if = "Option::is_none")]
     pub is_partner: Option<bool>,

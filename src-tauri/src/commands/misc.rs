@@ -755,10 +755,21 @@ pub async fn open_provider_terminal(
     // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
+    let terminal_command_template = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.terminal_command_template.as_deref())
+        .filter(|template| !template.trim().is_empty());
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
-        .map_err(|e| format!("启动终端失败: {e}"))?;
+    launch_terminal_with_env(
+        env_vars,
+        &providerId,
+        &app_type,
+        launch_cwd.as_deref(),
+        terminal_command_template,
+    )
+    .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
 }
@@ -855,7 +866,9 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
+    app_type: &AppType,
     cwd: Option<&Path>,
+    command_template: Option<&str>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let config_file = temp_dir.join(format!(
@@ -869,19 +882,41 @@ fn launch_terminal_with_env(
 
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd)?;
+        launch_macos_terminal(
+            &config_file,
+            cwd,
+            &env_vars,
+            provider_id,
+            app_type,
+            command_template,
+        )?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd)?;
+        launch_linux_terminal(
+            &config_file,
+            cwd,
+            &env_vars,
+            provider_id,
+            app_type,
+            command_template,
+        )?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
+        launch_windows_terminal(
+            &temp_dir,
+            &config_file,
+            cwd,
+            &env_vars,
+            provider_id,
+            app_type,
+            command_template,
+        )?;
         return Ok(());
     }
 
@@ -911,7 +946,14 @@ fn write_claude_config(
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: &std::path::Path,
+    cwd: Option<&Path>,
+    env_vars: &[(String, String)],
+    provider_id: &str,
+    app_type: &AppType,
+    command_template: Option<&str>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -919,22 +961,30 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let env_exports = build_shell_export_commands(env_vars);
+    let command =
+        render_shell_command_template(command_template, config_file, provider_id, app_type, cwd);
 
     // Write the shell script to a temp file
     let script_content = format!(
         r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
+cleanup() {{
+  rm -f -- {config_file} {script_file}
+}}
+trap cleanup EXIT
+{cd_command}{env_exports}
+export CCSWITCH_PROVIDER_ID={provider_id}
+echo "CC Switch provider environment loaded: {provider_id}"
+{command}
 exec bash --norc --noprofile
 "#,
-        config_path = config_path,
-        script_file = script_file.display(),
+        config_file = shell_single_quote(&config_file.to_string_lossy()),
+        script_file = shell_single_quote(&script_file.to_string_lossy()),
         cd_command = cd_command,
+        env_exports = env_exports,
+        provider_id = shell_single_quote(provider_id),
+        command = command,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1148,7 +1198,14 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: &std::path::Path,
+    cwd: Option<&Path>,
+    env_vars: &[(String, String)],
+    provider_id: &str,
+    app_type: &AppType,
+    command_template: Option<&str>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -1169,21 +1226,29 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     // Create temp script file
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let env_exports = build_shell_export_commands(env_vars);
+    let command =
+        render_shell_command_template(command_template, config_file, provider_id, app_type, cwd);
 
     let script_content = format!(
         r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
+cleanup() {{
+  rm -f -- {config_file} {script_file}
+}}
+trap cleanup EXIT
+{cd_command}{env_exports}
+export CCSWITCH_PROVIDER_ID={provider_id}
+echo "CC Switch provider environment loaded: {provider_id}"
+{command}
 exec bash --norc --noprofile
 "#,
-        config_path = config_path,
-        script_file = script_file.display(),
+        config_file = shell_single_quote(&config_file.to_string_lossy()),
+        script_file = shell_single_quote(&script_file.to_string_lossy()),
         cd_command = cd_command,
+        env_exports = env_exports,
+        provider_id = shell_single_quote(provider_id),
+        command = command,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1263,6 +1328,10 @@ fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
     cwd: Option<&Path>,
+    env_vars: &[(String, String)],
+    provider_id: &str,
+    app_type: &AppType,
+    command_template: Option<&str>,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
@@ -1270,20 +1339,25 @@ fn launch_windows_terminal(
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
+    let env_commands = build_windows_set_commands(env_vars);
+    let escaped_provider_id = escape_windows_batch_value(provider_id);
+    let command =
+        render_windows_command_template(command_template, config_file, provider_id, app_type, cwd);
 
     let content = format!(
         "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
+{cwd_command}{env_commands}
+set \"CCSWITCH_PROVIDER_ID={escaped_provider_id}\"
+echo CC Switch provider environment loaded: {escaped_provider_id}
+{command}
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
 ",
         config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
         cwd_command = cwd_command,
+        env_commands = env_commands,
+        escaped_provider_id = escaped_provider_id,
+        command = command,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -1326,6 +1400,139 @@ fn build_shell_cd_command(cwd: Option<&Path>) -> String {
 
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+fn build_shell_export_commands(env_vars: &[(String, String)]) -> String {
+    env_vars
+        .iter()
+        .filter(|(key, _)| is_valid_env_var_name(key))
+        .map(|(key, value)| format!("export {key}={}\n", shell_single_quote(value)))
+        .collect()
+}
+
+fn render_shell_command_template(
+    template: Option<&str>,
+    settings_file: &Path,
+    provider_id: &str,
+    app_type: &AppType,
+    cwd: Option<&Path>,
+) -> String {
+    render_command_template(
+        template.unwrap_or_else(|| default_provider_terminal_command(app_type)),
+        &[
+            (
+                "settingsFile",
+                shell_single_quote(&settings_file.to_string_lossy()),
+            ),
+            ("providerId", shell_single_quote(provider_id)),
+            (
+                "sessionName",
+                shell_single_quote(&build_provider_terminal_session_name(provider_id)),
+            ),
+            ("app", shell_single_quote(app_type.as_str())),
+            (
+                "cwd",
+                shell_single_quote(&cwd.unwrap_or_else(|| Path::new(".")).to_string_lossy()),
+            ),
+        ],
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn render_windows_command_template(
+    template: Option<&str>,
+    settings_file: &Path,
+    provider_id: &str,
+    app_type: &AppType,
+    cwd: Option<&Path>,
+) -> String {
+    render_command_template(
+        template.unwrap_or_else(|| default_provider_terminal_command(app_type)),
+        &[
+            (
+                "settingsFile",
+                format!(
+                    "\"{}\"",
+                    escape_windows_batch_value(&settings_file.to_string_lossy())
+                ),
+            ),
+            ("providerId", escape_windows_batch_value(provider_id)),
+            (
+                "sessionName",
+                escape_windows_batch_value(&build_provider_terminal_session_name(provider_id)),
+            ),
+            ("app", escape_windows_batch_value(app_type.as_str())),
+            (
+                "cwd",
+                format!(
+                    "\"{}\"",
+                    escape_windows_batch_value(
+                        &cwd.unwrap_or_else(|| Path::new(".")).to_string_lossy()
+                    )
+                ),
+            ),
+        ],
+    )
+}
+
+fn default_provider_terminal_command(app_type: &AppType) -> &'static str {
+    match app_type {
+        AppType::Claude => "claude --settings {settingsFile}",
+        AppType::Codex => "codex",
+        AppType::Gemini => "gemini",
+        AppType::OpenCode => "opencode",
+        AppType::OpenClaw => "openclaw",
+        AppType::Hermes => "hermes",
+    }
+}
+
+fn render_command_template(template: &str, replacements: &[(&str, String)]) -> String {
+    replacements
+        .iter()
+        .fold(template.to_string(), |acc, (key, value)| {
+            acc.replace(&format!("{{{key}}}"), value)
+        })
+}
+
+fn build_provider_terminal_session_name(provider_id: &str) -> String {
+    let sanitized: String = provider_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let sanitized = sanitized.trim_matches('-');
+
+    if sanitized.is_empty() {
+        "ccswitch-provider".to_string()
+    } else {
+        format!("ccswitch-{sanitized}")
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn build_windows_set_commands(env_vars: &[(String, String)]) -> String {
+    env_vars
+        .iter()
+        .filter(|(key, _)| is_valid_env_var_name(key))
+        .map(|(key, value)| format!("set \"{key}={}\"\r\n", escape_windows_batch_value(value)))
+        .collect()
+}
+
+fn is_valid_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -1787,6 +1994,97 @@ mod tests {
         assert!(running_branch.contains("if (count of windows) = 0 then"));
         assert!(running_branch.contains("create window with default profile"));
         assert!(running_branch.contains("create tab with default profile"));
+    }
+
+    #[test]
+    fn build_shell_export_commands_quotes_values() {
+        let env_vars = vec![
+            ("ANTHROPIC_MODEL".to_string(), "claude sonnet".to_string()),
+            ("ANTHROPIC_AUTH_TOKEN".to_string(), "tok'en".to_string()),
+        ];
+
+        let command = build_shell_export_commands(&env_vars);
+
+        assert_eq!(
+            command,
+            "export ANTHROPIC_MODEL='claude sonnet'\nexport ANTHROPIC_AUTH_TOKEN='tok'\"'\"'en'\n"
+        );
+    }
+
+    #[test]
+    fn build_shell_export_commands_skips_invalid_env_names() {
+        let env_vars = vec![
+            ("SAFE_NAME".to_string(), "ok".to_string()),
+            ("FOO; echo unsafe".to_string(), "bad".to_string()),
+            ("1BAD".to_string(), "bad".to_string()),
+        ];
+
+        let command = build_shell_export_commands(&env_vars);
+
+        assert_eq!(command, "export SAFE_NAME='ok'\n");
+    }
+
+    #[test]
+    fn build_provider_terminal_session_name_sanitizes_provider_id() {
+        assert_eq!(
+            build_provider_terminal_session_name("My Provider/API"),
+            "ccswitch-my-provider-api"
+        );
+        assert_eq!(
+            build_provider_terminal_session_name("!!!"),
+            "ccswitch-provider"
+        );
+    }
+
+    #[test]
+    fn render_shell_command_template_replaces_tokens() {
+        let command = render_shell_command_template(
+            Some("zellij attach --create {sessionName}"),
+            Path::new("/tmp/settings file.json"),
+            "My Provider/API",
+            &AppType::Claude,
+            Some(Path::new("/tmp/work dir")),
+        );
+
+        assert_eq!(command, "zellij attach --create 'ccswitch-my-provider-api'");
+    }
+
+    #[test]
+    fn default_provider_terminal_command_is_app_specific() {
+        assert_eq!(
+            default_provider_terminal_command(&AppType::Claude),
+            "claude --settings {settingsFile}"
+        );
+        assert_eq!(default_provider_terminal_command(&AppType::Codex), "codex");
+        assert_eq!(
+            default_provider_terminal_command(&AppType::Gemini),
+            "gemini"
+        );
+        assert_eq!(
+            default_provider_terminal_command(&AppType::OpenCode),
+            "opencode"
+        );
+    }
+
+    #[test]
+    fn build_windows_set_commands_escapes_batch_values() {
+        let env_vars = vec![("ANTHROPIC_AUTH_TOKEN".to_string(), "a%&b".to_string())];
+
+        let command = build_windows_set_commands(&env_vars);
+
+        assert_eq!(command, "set \"ANTHROPIC_AUTH_TOKEN=a%%^&b\"\r\n");
+    }
+
+    #[test]
+    fn build_windows_set_commands_skips_invalid_env_names() {
+        let env_vars = vec![
+            ("SAFE_NAME".to_string(), "ok".to_string()),
+            ("FOO&echo unsafe".to_string(), "bad".to_string()),
+        ];
+
+        let command = build_windows_set_commands(&env_vars);
+
+        assert_eq!(command, "set \"SAFE_NAME=ok\"\r\n");
     }
 
     #[test]
