@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "CC Switch",
-    "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
+    "description": "All-in-One Assistant for Claude Code"
   },
   "common": {
     "add": "Add",
@@ -44,7 +44,7 @@
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
-    "bodyDefault": "CC Switch lets you switch between multiple Claude Code / Codex / Gemini CLI providers with a single click. If you already had these tools configured, CC Switch has saved your existing setup as a provider named “default” so none of your previous configuration is lost.",
+    "bodyDefault": "CC Switch lets you switch between multiple Claude Code providers with a single click. If you already had Claude Code configured, CC Switch has saved your existing setup as a provider named \"default\" so none of your previous configuration is lost.",
     "bodyOfficial": "An “Official” preset is also included in the list — click it any time you want to switch back to the official default. CC Switch automatically backs up your current config to “default” before switching, so you can move back and forth freely. That's how CC Switch works 😊",
     "confirm": "Got it"
   },
@@ -114,9 +114,6 @@
     "deleteProvider": "Delete Provider",
     "addNewProvider": "Add New Provider",
     "addClaudeProvider": "Add Claude Code Provider",
-    "addCodexProvider": "Add Codex Provider",
-    "addGeminiProvider": "Add Gemini Provider",
-    "addOpenCodeProvider": "Add OpenCode Provider",
     "addToConfig": "Add",
     "removeFromConfig": "Remove",
     "setAsDefault": "Set Default",
@@ -124,7 +121,6 @@
     "inConfig": "Added",
     "addProviderHint": "Fill in the information to quickly switch providers in the list.",
     "editClaudeProvider": "Edit Claude Code Provider",
-    "editCodexProvider": "Edit Codex Provider",
     "configError": "Configuration Error",
     "notConfigured": "Not configured for official website",
     "applyToClaudePlugin": "Apply to Claude plugin",
@@ -952,29 +948,6 @@
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "e.g. company.ghe.com"
   },
-  "codexOauth": {
-    "authStatus": "Auth status",
-    "notAuthenticated": "Not authenticated",
-    "loginWithChatGPT": "Sign in with ChatGPT",
-    "loginRequired": "Please sign in to ChatGPT first",
-    "waitingForAuth": "Waiting for authorization...",
-    "enterCode": "Enter the code in your browser:",
-    "accountCount": "{{count}} account(s)",
-    "selectAccount": "Select account",
-    "selectAccountPlaceholder": "Choose a ChatGPT account",
-    "useDefaultAccount": "Use default account",
-    "loggedInAccounts": "Logged in accounts",
-    "defaultAccount": "Default",
-    "selected": "Selected",
-    "removeAccount": "Remove account",
-    "setAsDefault": "Set as default",
-    "addAnotherAccount": "Add another account",
-    "logoutAll": "Logout all accounts",
-    "retry": "Retry",
-    "copyCode": "Copy code",
-    "fastMode": "FAST mode",
-    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
-  },
   "endpointTest": {
     "title": "API Endpoint Management",
     "endpoints": "endpoints",
@@ -1022,49 +995,6 @@
     "pricingModelSourceRequest": "Request model",
     "pricingModelSourceResponse": "Response model",
     "pricingModelSourceHint": "Choose whether to match pricing by request model or response model"
-  },
-  "codexConfig": {
-    "authJson": "auth.json (JSON) *",
-    "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
-    "authJsonHint": "Codex auth.json configuration content",
-    "configToml": "config.toml (TOML)",
-    "configTomlHint": "Codex config.toml configuration content",
-    "writeCommonConfig": "Write Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Codex Common Config Snippet",
-    "commonConfigHint": "This snippet will be appended to the end of config.toml when 'Write Common Config' is checked",
-    "apiUrlLabel": "API Request URL",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
-    "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}",
-    "modelNameHint": "Specify the model to use, will be auto-updated in config.toml",
-    "modelName": "Model Name",
-    "modelNamePlaceholder": "e.g., gpt-5-codex",
-    "contextWindow1M": "1M Context Window",
-    "autoCompactLimit": "Auto Compact Limit",
-    "autoCompactLimitHint": "Auto-compacts history when context reaches this token limit"
-  },
-  "geminiConfig": {
-    "envFile": "Environment Variables (.env)",
-    "envFileHint": "Configure Gemini environment variables in .env format",
-    "configJson": "Configuration File (config.json)",
-    "configJsonHint": "Configure Gemini extended parameters in JSON format (optional)",
-    "writeCommonConfig": "Write Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Gemini Common Config Snippet",
-    "commonConfigHint": "This snippet writes to Gemini .env (GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY are not allowed)",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
-    "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}",
-    "extractedConfigInvalid": "Extracted config format is invalid",
-    "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",
-    "commonConfigInvalidKeys": "Common config snippet must not include GOOGLE_GEMINI_BASE_URL or GEMINI_API_KEY (found: {{keys}})",
-    "commonConfigInvalidValues": "Common config snippet values must be strings",
-    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
-    "configMergeFailed": "Config merge failed: {{error}}",
-    "configReplaceFailed": "Config replace failed: {{error}}"
   },
   "opencode": {
     "npmPackage": "API Format",

@@ -120,7 +120,7 @@ pub struct ToolStatus {
 /// 执行环境诊断
 ///
 /// 检测项包括：
-/// - 工具安装状态（Claude Code、Codex、Gemini CLI、OpenCode）
+/// - 工具安装状态（Claude Code）
 /// - Node.js 版本（需要 >= 18.0.0）
 /// - 环境变量冲突
 /// - 配置文件完整性（~/.claude/settings.json）
@@ -155,50 +155,49 @@ async fn diagnose_tools(
     issues: &mut Vec<DiagnosisIssue>,
     tools_status: &mut HashMap<String, ToolStatus>,
 ) {
-    let tools = vec!["claude", "codex", "gemini", "opencode"];
+    // 只检测 Claude Code
+    let tool = "claude";
 
-    for tool in tools {
-        // 使用内部实现检测版本
-        let (version, error) = check_tool_version(tool);
+    // 使用内部实现检测版本
+    let (version, error) = check_tool_version(tool);
 
-        let installed = version.is_some();
-        let latest_version = None; // 暂不获取最新版本，避免网络请求延迟
+    let installed = version.is_some();
+    let latest_version = None; // 暂不获取最新版本，避免网络请求延迟
 
-        let mut tool_issues = Vec::new();
+    let mut tool_issues = Vec::new();
 
-        if !installed {
-            // 工具未安装
-            let issue_id = format!("{}_not_installed", tool);
-            issues.push(DiagnosisIssue {
-                id: issue_id.clone(),
-                severity: IssueSeverity::Critical,
-                category: IssueCategory::NotInstalled,
-                title: format!("{} 未安装", tool_display_name(tool)),
-                description: format!(
-                    "{} 未安装或未在 PATH 中找到。",
-                    tool_display_name(tool)
-                ),
-                auto_fixable: true,
-                fix_action: Some(FixAction::InstallTool {
-                    tool: tool.to_string(),
-                }),
-            });
-            tool_issues.push(issue_id);
-        } else if let Some(err) = error {
-            // 工具已安装但有错误
-            tool_issues.push(format!("检测错误: {}", err));
-        }
-
-        tools_status.insert(
-            tool.to_string(),
-            ToolStatus {
-                installed,
-                version,
-                latest_version,
-                issues: tool_issues,
-            },
-        );
+    if !installed {
+        // 工具未安装
+        let issue_id = format!("{}_not_installed", tool);
+        issues.push(DiagnosisIssue {
+            id: issue_id.clone(),
+            severity: IssueSeverity::Critical,
+            category: IssueCategory::NotInstalled,
+            title: format!("{} 未安装", tool_display_name(tool)),
+            description: format!(
+                "{} 未安装或未在 PATH 中找到。",
+                tool_display_name(tool)
+            ),
+            auto_fixable: true,
+            fix_action: Some(FixAction::InstallTool {
+                tool: tool.to_string(),
+            }),
+        });
+        tool_issues.push(issue_id);
+    } else if let Some(err) = error {
+        // 工具已安装但有错误
+        tool_issues.push(format!("检测错误: {}", err));
     }
+
+    tools_status.insert(
+        tool.to_string(),
+        ToolStatus {
+            installed,
+            version,
+            latest_version,
+            issues: tool_issues,
+        },
+    );
 }
 
 /// 诊断 Node.js 环境
@@ -411,9 +410,6 @@ fn get_claude_config_path() -> PathBuf {
 fn tool_display_name(tool: &str) -> &str {
     match tool {
         "claude" => "Claude Code",
-        "codex" => "Codex",
-        "gemini" => "Gemini CLI",
-        "opencode" => "OpenCode",
         _ => tool,
     }
 }
