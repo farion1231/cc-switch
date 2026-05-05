@@ -151,7 +151,7 @@ export const providerPresets: ProviderPreset[] = [
     apiKeyUrl: "https://platform.sensenova.cn",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://token.sensenova.cn",
+        ANTHROPIC_BASE_URL: "https://token.sensenova.cn/v1",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "deepseek-v4-flash",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "sensenova-6.7-flash-lite",
@@ -160,6 +160,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    apiFormat: "openai_chat",
     icon: "sensenova",
     iconColor: "#1177E4",
   },
