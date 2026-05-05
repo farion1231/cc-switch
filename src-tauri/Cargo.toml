@@ -7,6 +7,7 @@ license = "MIT"
 repository = "https://github.com/farion1231/cc-switch"
 edition = "2021"
 rust-version = "1.85.0"
+default-run = "cc-switch"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,6 +15,10 @@ rust-version = "1.85.0"
 name = "cc_switch_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 doctest = false
+
+[[bin]]
+name = "cc-switch-cli"
+path = "src/cli.rs"
 
 [features]
 default = []

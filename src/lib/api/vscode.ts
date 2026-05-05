@@ -1,6 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/api/transport";
 import type { CustomEndpoint } from "@/types";
 import type { AppId } from "./types";
+import { runtimeApi } from "./runtime";
 
 export interface EndpointLatencyResult {
   url: string;
@@ -83,12 +84,20 @@ export const vscodeApi = {
   },
 
   async saveFileDialog(defaultName: string): Promise<string | null> {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.saveFileDialog) {
+      return null;
+    }
     return await invoke("save_file_dialog", {
       defaultName,
     });
   },
 
   async openFileDialog(): Promise<string | null> {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.openFileDialog) {
+      return null;
+    }
     return await invoke("open_file_dialog");
   },
 };

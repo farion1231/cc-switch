@@ -19,6 +19,20 @@ pub async fn get_subscription_quota(
     state: State<'_, AppState>,
     tool: String,
 ) -> Result<SubscriptionQuota, String> {
+    let (inner, payload) = get_subscription_quota_for_backend(&state, tool).await;
+    if let Some(payload) = payload {
+        if let Err(e) = app.emit("usage-cache-updated", payload) {
+            log::error!("emit usage-cache-updated (subscription) 失败: {e}");
+        }
+        crate::tray::schedule_tray_refresh(&app);
+    }
+    inner
+}
+
+pub async fn get_subscription_quota_for_backend(
+    state: &AppState,
+    tool: String,
+) -> (Result<SubscriptionQuota, String>, Option<serde_json::Value>) {
     let inner = crate::services::subscription::get_subscription_quota(&tool).await;
     let snapshot = match &inner {
         Ok(q) => q.clone(),
@@ -31,11 +45,8 @@ pub async fn get_subscription_quota(
             "appType": app_type.as_str(),
             "data": &snapshot,
         });
-        if let Err(e) = app.emit("usage-cache-updated", payload) {
-            log::error!("emit usage-cache-updated (subscription) 失败: {e}");
-        }
         state.usage_cache.put_subscription(app_type, snapshot);
-        crate::tray::schedule_tray_refresh(&app);
+        return (inner, Some(payload));
     }
-    inner
+    (inner, None)
 }

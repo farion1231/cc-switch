@@ -16,16 +16,28 @@ vi.mock("sonner", () => ({
 
 const openFileDialogMock = vi.fn();
 const importConfigMock = vi.fn();
+const importConfigFromContentMock = vi.fn();
 const saveFileDialogMock = vi.fn();
 const exportConfigMock = vi.fn();
+const exportConfigAsContentMock = vi.fn();
+const canUseNativeOpenFileDialogMock = vi.fn();
+const canUseNativeSaveFileDialogMock = vi.fn();
 const syncCurrentProvidersLiveMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   settingsApi: {
+    canUseNativeOpenFileDialog: (...args: unknown[]) =>
+      canUseNativeOpenFileDialogMock(...args),
+    canUseNativeSaveFileDialog: (...args: unknown[]) =>
+      canUseNativeSaveFileDialogMock(...args),
     openFileDialog: (...args: unknown[]) => openFileDialogMock(...args),
     importConfigFromFile: (...args: unknown[]) => importConfigMock(...args),
+    importConfigFromContent: (...args: unknown[]) =>
+      importConfigFromContentMock(...args),
     saveFileDialog: (...args: unknown[]) => saveFileDialogMock(...args),
     exportConfigToFile: (...args: unknown[]) => exportConfigMock(...args),
+    exportConfigAsContent: (...args: unknown[]) =>
+      exportConfigAsContentMock(...args),
     syncCurrentProvidersLive: (...args: unknown[]) =>
       syncCurrentProvidersLiveMock(...args),
   },
@@ -35,8 +47,14 @@ describe("useImportExport Hook (edge cases)", () => {
   beforeEach(() => {
     openFileDialogMock.mockReset();
     importConfigMock.mockReset();
+    importConfigFromContentMock.mockReset();
     saveFileDialogMock.mockReset();
     exportConfigMock.mockReset();
+    exportConfigAsContentMock.mockReset();
+    canUseNativeOpenFileDialogMock.mockReset();
+    canUseNativeSaveFileDialogMock.mockReset();
+    canUseNativeOpenFileDialogMock.mockResolvedValue(true);
+    canUseNativeSaveFileDialogMock.mockResolvedValue(true);
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     toastWarningMock.mockReset();

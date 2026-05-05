@@ -30,6 +30,26 @@ export const isLinux = (): boolean => {
   }
 };
 
+export type ClientOs = "windows" | "macos" | "linux" | "unknown";
+
+export const getClientOs = (): ClientOs => {
+  if (isWindows()) return "windows";
+  if (isMac()) return "macos";
+  if (isLinux()) return "linux";
+  return "unknown";
+};
+
+export const isCliWebUi = (): boolean => {
+  try {
+    return Boolean(
+      (window as unknown as { __CC_SWITCH_WEBUI__?: boolean })
+        .__CC_SWITCH_WEBUI__,
+    );
+  } catch {
+    return false;
+  }
+};
+
 // Linux 上禁用所有 drag region，规避 Wayland 下 gtk_window_begin_move_drag
 // 相关的窗口事件异常（Tauri #13440）。macOS 上保留原有拖动行为；Windows
 // 项目原本就不依赖这个。

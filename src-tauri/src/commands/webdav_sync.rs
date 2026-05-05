@@ -86,7 +86,14 @@ pub async fn webdav_test_connection(
     settings: WebDavSyncSettings,
     #[allow(non_snake_case)] preserveEmptyPassword: Option<bool>,
 ) -> Result<Value, String> {
-    let preserve_empty = preserveEmptyPassword.unwrap_or(true);
+    webdav_test_connection_for_backend(settings, preserveEmptyPassword).await
+}
+
+pub async fn webdav_test_connection_for_backend(
+    settings: WebDavSyncSettings,
+    preserve_empty_password: Option<bool>,
+) -> Result<Value, String> {
+    let preserve_empty = preserve_empty_password.unwrap_or(true);
     let resolved = resolve_password_for_request(
         settings,
         settings::get_webdav_sync_settings(),
@@ -103,6 +110,10 @@ pub async fn webdav_test_connection(
 
 #[tauri::command]
 pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, String> {
+    webdav_sync_upload_for_backend(&state).await
+}
+
+pub async fn webdav_sync_upload_for_backend(state: &AppState) -> Result<Value, String> {
     let db = state.db.clone();
     let mut settings = require_enabled_webdav_settings()?;
 
@@ -114,6 +125,10 @@ pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, Str
 
 #[tauri::command]
 pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, String> {
+    webdav_sync_download_for_backend(&state).await
+}
+
+pub async fn webdav_sync_download_for_backend(state: &AppState) -> Result<Value, String> {
     let db = state.db.clone();
     let db_for_sync = db.clone();
     let mut settings = require_enabled_webdav_settings()?;
@@ -143,7 +158,14 @@ pub async fn webdav_sync_save_settings(
     settings: WebDavSyncSettings,
     #[allow(non_snake_case)] passwordTouched: Option<bool>,
 ) -> Result<Value, String> {
-    let password_touched = passwordTouched.unwrap_or(false);
+    webdav_sync_save_settings_for_backend(settings, passwordTouched).await
+}
+
+pub async fn webdav_sync_save_settings_for_backend(
+    settings: WebDavSyncSettings,
+    password_touched: Option<bool>,
+) -> Result<Value, String> {
+    let password_touched = password_touched.unwrap_or(false);
     let existing = settings::get_webdav_sync_settings();
     let mut sync_settings =
         resolve_password_for_request(settings, existing.clone(), !password_touched);
@@ -161,6 +183,10 @@ pub async fn webdav_sync_save_settings(
 
 #[tauri::command]
 pub async fn webdav_sync_fetch_remote_info() -> Result<Value, String> {
+    webdav_sync_fetch_remote_info_for_backend().await
+}
+
+pub async fn webdav_sync_fetch_remote_info_for_backend() -> Result<Value, String> {
     let settings = require_enabled_webdav_settings()?;
     let info = webdav_sync_service::fetch_remote_info(&settings)
         .await

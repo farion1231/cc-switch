@@ -27,7 +27,7 @@ import { relaunchApp } from "@/lib/updater";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
-import { isWindows } from "@/lib/platform";
+import { useRuntimeQuery } from "@/lib/query";
 
 interface AboutSectionProps {
   isPortable: boolean;
@@ -97,6 +97,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [toolVersions, setToolVersions] = useState<ToolVersion[]>([]);
   const [isLoadingTools, setIsLoadingTools] = useState(true);
+  const { data: runtimeInfo } = useRuntimeQuery();
+  const canCheckTools =
+    runtimeInfo?.backend.capabilities.toolVersionCheck === true;
 
   const {
     hasUpdate,
@@ -195,16 +198,21 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   };
 
   useEffect(() => {
+    if (!runtimeInfo) return;
+
     let active = true;
     const load = async () => {
       try {
         const [appVersion] = await Promise.all([
           getVersion(),
-          ...(isWindows() ? [] : [loadAllToolVersions()]),
+          ...(canCheckTools ? [loadAllToolVersions()] : []),
         ]);
 
         if (active) {
           setVersion(appVersion);
+          if (!canCheckTools) {
+            setIsLoadingTools(false);
+          }
         }
       } catch (error) {
         console.error("[AboutSection] Failed to load info", error);
@@ -222,11 +230,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     return () => {
       active = false;
     };
-    // Mount-only: loadAllToolVersions is intentionally excluded to avoid
-    // re-fetching all tools whenever wslShellByTool changes. Single-tool
-    // refreshes are handled by refreshToolVersions in the shell/flag handlers.
+    // Runtime-only: loadAllToolVersions is intentionally excluded to avoid
+    // re-fetching all tools whenever wslShellByTool changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [runtimeInfo, canCheckTools]);
 
   // ... (handlers like handleOpenReleaseNotes, handleCheckUpdate) ...
 
@@ -424,7 +431,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         )}
       </motion.div>
 
-      {!isWindows() && (
+      {canCheckTools && (
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
             <h3 className="text-sm font-medium">
@@ -560,7 +567,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         </div>
       )}
 
-      {!isWindows() && (
+      {canCheckTools && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}

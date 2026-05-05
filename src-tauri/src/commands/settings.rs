@@ -6,6 +6,13 @@ fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
 ) -> crate::settings::AppSettings {
+    if incoming.webui_auth.token.is_none() {
+        incoming.webui_auth.token = existing.webui_auth.token.clone();
+    }
+    if incoming.client_backend.token.is_none() {
+        incoming.client_backend.token = existing.client_backend.token.clone();
+    }
+
     match (&mut incoming.webdav_sync, &existing.webdav_sync) {
         // incoming 没有 webdav → 保留现有
         (None, _) => {

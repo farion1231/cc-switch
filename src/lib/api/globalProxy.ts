@@ -4,7 +4,7 @@
  * 提供获取、设置和测试全局代理的功能。
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/api/transport";
 
 /**
  * 代理测试结果

@@ -6,12 +6,17 @@ use crate::proxy::providers::copilot_auth::{
     CopilotAuthManager, CopilotAuthStatus, CopilotModel, CopilotUsageResponse, GitHubAccount,
     GitHubDeviceCodeResponse,
 };
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::RwLock;
 
 /// Copilot 认证状态
 pub struct CopilotAuthState(pub Arc<RwLock<CopilotAuthManager>>);
+
+pub fn create_copilot_auth_state(data_dir: PathBuf) -> CopilotAuthState {
+    CopilotAuthState(Arc::new(RwLock::new(CopilotAuthManager::new(data_dir))))
+}
 
 // ==================== 设备码流程 ====================
 

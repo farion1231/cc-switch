@@ -13,6 +13,7 @@ const syncCurrentProvidersLiveMock = vi.fn();
 const updateTrayMenuMock = vi.fn();
 const getCurrentMock = vi.fn();
 const getAllMock = vi.fn();
+const runtimeApiGetCachedMock = vi.fn();
 const getQueryDataMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastSuccessMock = vi.fn();
@@ -78,6 +79,9 @@ vi.mock("@/lib/api", () => ({
     updateTrayMenu: (...args: unknown[]) => updateTrayMenuMock(...args),
     getCurrent: (...args: unknown[]) => getCurrentMock(...args),
     getAll: (...args: unknown[]) => getAllMock(...args),
+  },
+  runtimeApi: {
+    getCached: (...args: unknown[]) => runtimeApiGetCachedMock(...args),
   },
 }));
 
@@ -146,6 +150,7 @@ describe("useSettings hook", () => {
     syncCurrentProvidersLiveMock.mockReset();
     getCurrentMock.mockReset();
     getAllMock.mockReset();
+    runtimeApiGetCachedMock.mockReset();
     getQueryDataMock.mockReset();
     toastErrorMock.mockReset();
     toastSuccessMock.mockReset();
@@ -186,6 +191,13 @@ describe("useSettings hook", () => {
     syncCurrentProvidersLiveMock.mockResolvedValue({ ok: true });
     getCurrentMock.mockResolvedValue(null);
     getAllMock.mockResolvedValue({});
+    runtimeApiGetCachedMock.mockResolvedValue({
+      backend: {
+        capabilities: {
+          appConfigDirOverride: true,
+        },
+      },
+    });
     // 默认将 queryClient 缓存对齐到 serverSettings，既有断言的 "prev === data" 语义保持不变
     getQueryDataMock.mockImplementation(() => serverSettings);
   });

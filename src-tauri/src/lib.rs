@@ -17,14 +17,15 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
-mod openclaw_config;
-mod opencode_config;
+pub mod openclaw_config;
+pub mod opencode_config;
 mod panic_hook;
 mod prompt;
 mod prompt_files;
 mod provider;
 mod provider_defaults;
 mod proxy;
+pub mod runtime;
 mod services;
 mod session_manager;
 mod settings;
@@ -37,7 +38,10 @@ pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
 pub use commands::open_provider_terminal;
 pub use commands::*;
-pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
+pub use config::{
+    get_app_config_dir as get_app_config_dir_path, get_claude_mcp_path, get_claude_settings_path,
+    read_json_file,
+};
 pub use database::Database;
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
@@ -47,13 +51,28 @@ pub use mcp::{
     sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
     sync_single_server_to_codex, sync_single_server_to_gemini,
 };
-pub use provider::{Provider, ProviderMeta};
+pub use provider::{Provider, ProviderMeta, UniversalProvider, UsageResult};
+pub use runtime::{backend_runtime_info, BackendMode, RuntimeInfo, RuntimeOs};
+pub use services::subscription::{
+    get_subscription_quota as get_subscription_quota_service, CredentialStatus, SubscriptionQuota,
+};
+pub use services::webdav_auto_sync::start_worker_with_status_emitter;
+pub use services::webdav_sync::{
+    check_connection as webdav_check_connection, download as webdav_download,
+    fetch_remote_info as webdav_fetch_remote_info, run_with_sync_lock as run_with_webdav_sync_lock,
+    upload as webdav_upload,
+};
 pub use services::{
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
-    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
-    SkillService, SpeedtestService,
+    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProviderSortUpdate,
+    ProxyService, SkillService, SpeedtestService,
 };
-pub use settings::{update_settings, AppSettings};
+pub use settings::{
+    get_settings as get_app_settings, get_webdav_sync_settings, reload_settings,
+    set_webdav_sync_settings, update_settings, update_webdav_sync_status, AppSettings,
+    BackendConnectionMode, ClientBackendConnectionSettings, WebDavSyncSettings, WebUiAuthMode,
+    WebUiAuthSettings,
+};
 pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -1031,6 +1050,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_providers,
+            commands::get_runtime_info,
+            commands::get_client_backend_connection,
+            commands::save_client_backend_connection,
             commands::get_current_provider,
             commands::add_provider,
             commands::update_provider,
@@ -1044,11 +1066,14 @@ pub fn run() {
             commands::get_config_dir,
             commands::open_config_folder,
             commands::pick_directory,
+            commands::list_server_directory,
+            commands::validate_server_directory,
             commands::open_external,
             commands::get_init_error,
             commands::get_migration_result,
             commands::get_skills_migration_result,
             commands::get_app_config_path,
+            commands::get_app_config_dir,
             commands::open_app_config_folder,
             commands::get_claude_common_config_snippet,
             commands::set_claude_common_config_snippet,
@@ -1124,6 +1149,8 @@ pub fn run() {
             // theirs: config import/export and dialogs
             commands::export_config_to_file,
             commands::import_config_from_file,
+            commands::export_config_as_content,
+            commands::import_config_from_content,
             commands::webdav_test_connection,
             commands::webdav_sync_upload,
             commands::webdav_sync_download,

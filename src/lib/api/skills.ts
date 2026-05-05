@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/api/transport";
+import { runtimeApi } from "./runtime";
 
 import type { AppId } from "@/lib/api/types";
 
@@ -268,6 +269,10 @@ export const skillsApi = {
 
   /** 打开 ZIP 文件选择对话框 */
   async openZipFileDialog(): Promise<string | null> {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.openFileDialog) {
+      return null;
+    }
     return await invoke("open_zip_file_dialog");
   },
 

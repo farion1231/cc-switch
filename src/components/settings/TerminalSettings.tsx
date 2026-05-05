@@ -6,7 +6,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { isMac, isWindows, isLinux } from "@/lib/platform";
+import type { RuntimeOs } from "@/lib/api";
 
 // Terminal options per platform
 const MACOS_TERMINALS = [
@@ -45,14 +45,14 @@ const LINUX_TERMINALS = [
 ] as const;
 
 // Get terminals for the current platform
-function getTerminalOptions() {
-  if (isMac()) {
+function getTerminalOptions(serverOs: RuntimeOs) {
+  if (serverOs === "macos") {
     return MACOS_TERMINALS;
   }
-  if (isWindows()) {
+  if (serverOs === "windows") {
     return WINDOWS_TERMINALS;
   }
-  if (isLinux()) {
+  if (serverOs === "linux") {
     return LINUX_TERMINALS;
   }
   // Fallback to macOS options
@@ -60,14 +60,14 @@ function getTerminalOptions() {
 }
 
 // Get default terminal for the current platform
-function getDefaultTerminal(): string {
-  if (isMac()) {
+function getDefaultTerminal(serverOs: RuntimeOs): string {
+  if (serverOs === "macos") {
     return "terminal";
   }
-  if (isWindows()) {
+  if (serverOs === "windows") {
     return "cmd";
   }
-  if (isLinux()) {
+  if (serverOs === "linux") {
     return "gnome-terminal";
   }
   return "terminal";
@@ -76,12 +76,17 @@ function getDefaultTerminal(): string {
 export interface TerminalSettingsProps {
   value?: string;
   onChange: (value: string) => void;
+  serverOs: RuntimeOs;
 }
 
-export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
+export function TerminalSettings({
+  value,
+  onChange,
+  serverOs,
+}: TerminalSettingsProps) {
   const { t } = useTranslation();
-  const terminals = getTerminalOptions();
-  const defaultTerminal = getDefaultTerminal();
+  const terminals = getTerminalOptions(serverOs);
+  const defaultTerminal = getDefaultTerminal(serverOs);
 
   // Use value or default
   const currentValue = value || defaultTerminal;

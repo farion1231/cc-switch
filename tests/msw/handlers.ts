@@ -40,6 +40,34 @@ const withJson = async <T>(request: Request): Promise<T> => {
 const success = <T>(payload: T) => HttpResponse.json(payload as any);
 
 export const handlers = [
+  http.post(`${TAURI_ENDPOINT}/get_runtime_info`, () =>
+    success({
+      client: { shell: "desktop", os: "linux" },
+      backend: {
+        os: "linux",
+        headless: false,
+        remote: false,
+        capabilities: {
+          readConfig: true,
+          writeConfig: true,
+          openLocalFolder: true,
+          pickDirectory: true,
+          serverDirectoryBrowse: true,
+          appConfigDirOverride: true,
+          saveFileDialog: true,
+          openFileDialog: true,
+          launchInteractiveTerminal: true,
+          launchBackgroundProcess: false,
+          autoLaunch: true,
+          toolVersionCheck: true,
+          windowControls: true,
+          dragRegion: false,
+          tray: true,
+        },
+      },
+      relation: { coLocated: true },
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
@@ -214,6 +242,16 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
 
+  http.post(`${TAURI_ENDPOINT}/get_app_config_dir`, () =>
+    success("/home/mock/.cc-switch"),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_client_backend_connection`, () =>
+    success({ mode: "local", url: null, token: null }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_installed_skills`, () => success([])),
+
   http.post(`${TAURI_ENDPOINT}/save_settings`, async ({ request }) => {
     const { settings } = await withJson<{ settings: Settings }>(request);
     setSettings(settings);
@@ -232,6 +270,19 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_app_config_dir_override`, () =>
     success(getAppConfigDirOverride()),
   ),
+
+  http.post(`${TAURI_ENDPOINT}/list_server_directory`, async ({ request }) => {
+    const { path } = await withJson<{ path?: string }>(request);
+    const current = path || "/home/mock";
+    const child = `${current.replace(/\/+$/, "")}/picked`;
+    return success({
+      path: current,
+      parent: null,
+      entries: current.endsWith("/picked")
+        ? []
+        : [{ name: "picked", path: child }],
+    });
+  }),
 
   http.post(
     `${TAURI_ENDPOINT}/apply_claude_plugin_config`,

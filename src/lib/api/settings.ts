@@ -1,12 +1,18 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, invokeLocal } from "@/lib/api/transport";
 import type { Settings, WebDavSyncSettings, RemoteSnapshotInfo } from "@/types";
 import type { AppId } from "./types";
+import { isCliWebUi } from "@/lib/platform";
+import { runtimeApi } from "./runtime";
 
 export interface ConfigTransferResult {
   success: boolean;
   message: string;
   filePath?: string;
   backupId?: string;
+}
+
+export interface ConfigContentExportResult extends ConfigTransferResult {
+  content?: string;
 }
 
 export interface WebDavTestResult {
@@ -16,6 +22,17 @@ export interface WebDavTestResult {
 
 export interface WebDavSyncResult {
   status: string;
+}
+
+export interface ServerDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface ServerDirectoryListing {
+  path: string;
+  parent?: string | null;
+  entries: ServerDirectoryEntry[];
 }
 
 export const settingsApi = {
@@ -44,15 +61,37 @@ export const settingsApi = {
   },
 
   async openConfigFolder(appId: AppId): Promise<void> {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.openLocalFolder) {
+      throw new Error(
+        "Opening server folders is not available for this backend",
+      );
+    }
     await invoke("open_config_folder", { app: appId });
   },
 
   async pickDirectory(defaultPath?: string): Promise<string | null> {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.pickDirectory) {
+      return null;
+    }
     return await invoke("pick_directory", { defaultPath });
   },
 
   async selectConfigDirectory(defaultPath?: string): Promise<string | null> {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.pickDirectory) {
+      return null;
+    }
     return await invoke("pick_directory", { defaultPath });
+  },
+
+  async listServerDirectory(path?: string): Promise<ServerDirectoryListing> {
+    return await invoke("list_server_directory", { path });
+  },
+
+  async validateServerDirectory(path: string): Promise<boolean> {
+    return await invoke("validate_server_directory", { path });
   },
 
   async getClaudeCodeConfigPath(): Promise<string> {
@@ -63,7 +102,17 @@ export const settingsApi = {
     return await invoke("get_app_config_path");
   },
 
+  async getAppConfigDir(): Promise<string> {
+    return await invoke("get_app_config_dir");
+  },
+
   async openAppConfigFolder(): Promise<void> {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.openLocalFolder) {
+      throw new Error(
+        "Opening server folders is not available for this backend",
+      );
+    }
     await invoke("open_app_config_folder");
   },
 
@@ -91,11 +140,27 @@ export const settingsApi = {
   },
 
   async saveFileDialog(defaultName: string): Promise<string | null> {
+    if (!(await settingsApi.canUseNativeSaveFileDialog())) {
+      return null;
+    }
     return await invoke("save_file_dialog", { defaultName });
   },
 
   async openFileDialog(): Promise<string | null> {
+    if (!(await settingsApi.canUseNativeOpenFileDialog())) {
+      return null;
+    }
     return await invoke("open_file_dialog");
+  },
+
+  async canUseNativeSaveFileDialog(): Promise<boolean> {
+    const runtime = await runtimeApi.getCached();
+    return runtime.backend.capabilities.saveFileDialog;
+  },
+
+  async canUseNativeOpenFileDialog(): Promise<boolean> {
+    const runtime = await runtimeApi.getCached();
+    return runtime.backend.capabilities.openFileDialog;
   },
 
   async exportConfigToFile(filePath: string): Promise<ConfigTransferResult> {
@@ -104,6 +169,16 @@ export const settingsApi = {
 
   async importConfigFromFile(filePath: string): Promise<ConfigTransferResult> {
     return await invoke("import_config_from_file", { filePath });
+  },
+
+  async exportConfigAsContent(): Promise<ConfigContentExportResult> {
+    return await invoke("export_config_as_content");
+  },
+
+  async importConfigFromContent(
+    content: string,
+  ): Promise<ConfigTransferResult> {
+    return await invoke("import_config_from_content", { content });
   },
 
   // ─── WebDAV sync ──────────────────────────────────────────
@@ -162,14 +237,26 @@ export const settingsApi = {
     } catch {
       throw new Error("Invalid URL");
     }
-    await invoke("open_external", { url });
+    if (isCliWebUi()) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    await invokeLocal("open_external", { url });
   },
 
   async setAutoLaunch(enabled: boolean): Promise<boolean> {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.autoLaunch) {
+      return false;
+    }
     return await invoke("set_auto_launch", { enabled });
   },
 
   async getAutoLaunchStatus(): Promise<boolean> {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.autoLaunch) {
+      return false;
+    }
     return await invoke("get_auto_launch_status");
   },
 
@@ -189,6 +276,10 @@ export const settingsApi = {
       wsl_distro: string | null;
     }>
   > {
+    const runtime = await runtimeApi.getCached();
+    if (!runtime.backend.capabilities.toolVersionCheck) {
+      return [];
+    }
     return await invoke("get_tool_versions", { tools, wslShellByTool });
   },
 

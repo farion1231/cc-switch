@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
+use tauri::Emitter;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -14,6 +14,8 @@ use crate::settings::{self, WebDavSyncSettings};
 
 const AUTO_SYNC_DEBOUNCE_MS: u64 = 1000;
 pub(crate) const MAX_AUTO_SYNC_WAIT_MS: u64 = 10_000;
+
+pub type AutoSyncStatusEmitter = Arc<dyn Fn(&str, Option<&str>) + Send + Sync + 'static>;
 
 static DB_CHANGE_TX: OnceLock<Sender<String>> = OnceLock::new();
 static AUTO_SYNC_SUPPRESS_DEPTH: AtomicUsize = AtomicUsize::new(0);
@@ -85,27 +87,17 @@ fn persist_auto_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) 
     let _ = settings::update_webdav_sync_status(settings.status.clone());
 }
 
-fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&str>) {
-    let payload = match error {
-        Some(message) => json!({
-            "source": "auto",
-            "status": status,
-            "error": message,
-        }),
-        None => json!({
-            "source": "auto",
-            "status": status,
-        }),
-    };
-
-    if let Err(err) = app.emit("webdav-sync-status-updated", payload) {
-        log::debug!("[WebDAV] failed to emit sync status update event: {err}");
-    }
+fn emit_auto_sync_status_updated(
+    emitter: &AutoSyncStatusEmitter,
+    status: &str,
+    error: Option<&str>,
+) {
+    emitter(status, error);
 }
 
 async fn run_auto_sync_upload(
     db: &crate::database::Database,
-    app: &AppHandle,
+    emitter: &AutoSyncStatusEmitter,
 ) -> Result<(), AppError> {
     let mut settings = settings::get_webdav_sync_settings();
     if !should_run_auto_sync(settings.as_ref()) {
@@ -124,12 +116,12 @@ async fn run_auto_sync_upload(
     .await;
     match result {
         Ok(_) => {
-            emit_auto_sync_status_updated(app, "success", None);
+            emit_auto_sync_status_updated(emitter, "success", None);
             Ok(())
         }
         Err(err) => {
             persist_auto_sync_error(&mut sync_settings, &err);
-            emit_auto_sync_status_updated(app, "error", Some(&err.to_string()));
+            emit_auto_sync_status_updated(emitter, "error", Some(&err.to_string()));
             Err(err)
         }
     }
@@ -149,6 +141,30 @@ pub fn notify_db_changed(table: &str) {
 }
 
 pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
+    let emitter: AutoSyncStatusEmitter = Arc::new(move |status, error| {
+        let payload = match error {
+            Some(message) => json!({
+                "source": "auto",
+                "status": status,
+                "error": message,
+            }),
+            None => json!({
+                "source": "auto",
+                "status": status,
+            }),
+        };
+
+        if let Err(err) = app.emit("webdav-sync-status-updated", payload) {
+            log::debug!("[WebDAV] failed to emit sync status update event: {err}");
+        }
+    });
+    start_worker_with_status_emitter(db, emitter);
+}
+
+pub fn start_worker_with_status_emitter(
+    db: Arc<crate::database::Database>,
+    emitter: AutoSyncStatusEmitter,
+) {
     if DB_CHANGE_TX.get().is_some() {
         return;
     }
@@ -159,15 +175,15 @@ pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
         return;
     }
 
-    tauri::async_runtime::spawn(async move {
-        run_worker_loop(db, rx, app).await;
+    tokio::spawn(async move {
+        run_worker_loop(db, rx, emitter).await;
     });
 }
 
 async fn run_worker_loop(
     db: Arc<crate::database::Database>,
     mut rx: Receiver<String>,
-    app: tauri::AppHandle,
+    emitter: AutoSyncStatusEmitter,
 ) {
     while let Some(first_table) = rx.recv().await {
         let started_at = Instant::now();
@@ -187,7 +203,7 @@ async fn run_worker_loop(
             "[WebDAV][AutoSync] Triggered by table={first_table}, merged_changes={merged_count}"
         );
 
-        if let Err(err) = run_auto_sync_upload(&db, &app).await {
+        if let Err(err) = run_auto_sync_upload(&db, &emitter).await {
             log::warn!("[WebDAV][AutoSync] Upload failed: {err}");
         }
     }
