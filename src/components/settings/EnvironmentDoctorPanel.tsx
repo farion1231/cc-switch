@@ -142,21 +142,29 @@ export function EnvironmentDoctorPanel({
         </div>
 
         {/* 操作按钮 */}
-        {diagnosis.overall_status === "NeedsInstall" && (
-          <Button onClick={() => onInstall("claude")} disabled={isInstalling}>
-            {isInstalling ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {t("doctor.installing")}
-              </>
-            ) : (
-              <>
-                <Download className="h-4 w-4" />
-                {t("doctor.oneClickInstall")}
-              </>
-            )}
-          </Button>
-        )}
+        {diagnosis.overall_status === "NeedsInstall" && (() => {
+          // 从 issues 中提取需要安装的工具
+          const installIssue = diagnosis.issues.find(
+            (issue) => issue.category === "NotInstalled" && issue.fix_action?.type === "InstallTool"
+          );
+          const toolToInstall = installIssue?.fix_action?.tool || "claude";
+
+          return (
+            <Button onClick={() => onInstall(toolToInstall)} disabled={isInstalling}>
+              {isInstalling ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t("doctor.installing")}
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4" />
+                  {t("doctor.oneClickInstall")}
+                </>
+              )}
+            </Button>
+          );
+        })()}
 
         {diagnosis.overall_status === "NeedsRepair" && (
           <Button onClick={onFix} disabled={isFixing} variant="destructive">
