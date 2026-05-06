@@ -494,6 +494,18 @@ pub fn run() {
             for app_type in
                 crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
             {
+                if app_state
+                    .db
+                    .has_any_provider_for_app(app_type.as_str())
+                    .unwrap_or(false)
+                {
+                    log::debug!(
+                        "○ {} already has providers; live import skipped",
+                        app_type.as_str()
+                    );
+                    continue;
+                }
+
                 match crate::services::provider::import_default_config(
                     &app_state,
                     app_type.clone(),

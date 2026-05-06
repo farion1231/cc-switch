@@ -1129,6 +1129,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     state
         .db
         .set_current_provider(app_type.as_str(), &provider.id)?;
+    crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
 
     Ok(true) // 真正导入了
 }
