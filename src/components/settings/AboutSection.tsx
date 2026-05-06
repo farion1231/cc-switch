@@ -27,7 +27,6 @@ import { relaunchApp } from "@/lib/updater";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
-import { isWindows } from "@/lib/platform";
 import { EnvironmentDoctorPanel } from "./EnvironmentDoctorPanel";
 import { doctorApi, type DiagnosisResult } from "@/lib/api/doctor";
 
@@ -199,19 +198,16 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     let active = true;
     const load = async () => {
       try {
-        const [appVersion] = await Promise.all([
-          getVersion(),
-          ...(isWindows() ? [] : [loadAllToolVersions()]),
-        ]);
+        const appVersion = await getVersion();
 
         if (active) {
           setVersion(appVersion);
         }
 
-        // 执行环境诊断（非 Windows 平台）
-        if (!isWindows()) {
-          await runDiagnosis();
-        }
+        await Promise.all([
+          loadAllToolVersions(),
+          runDiagnosis(),
+        ]);
       } catch (error) {
         console.error("[AboutSection] Failed to load info", error);
         if (active) {
@@ -487,7 +483,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       </motion.div>
 
       {/* 环境诊断面板 */}
-      {!isWindows() && diagnosis && (
+      {diagnosis && (
         <EnvironmentDoctorPanel
           diagnosis={diagnosis}
           onInstall={handleInstall}
@@ -497,8 +493,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         />
       )}
 
-      {!isWindows() && (
-        <div className="space-y-3">
+      <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
             <h3 className="text-sm font-medium">
               {t("settings.localEnvCheck")}
@@ -628,9 +623,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             })}
           </div>
         </div>
-      )}
 
-      {!isWindows() && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -660,7 +653,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             </pre>
           </div>
         </motion.div>
-      )}
     </motion.section>
   );
 }
