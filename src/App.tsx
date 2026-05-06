@@ -1194,7 +1194,7 @@ function App() {
                     CC Doctor
                   </a>
                   <span className="ml-2 text-xs text-muted-foreground">
-                    一键核救你的 Claude Code
+                    一键拯救你的 Claude Code
                   </span>
                 </div>
                 <Button
