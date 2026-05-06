@@ -72,24 +72,12 @@ fn hermes_write_lock() -> &'static Mutex<()> {
 // Type Definitions
 // ============================================================================
 
-/// Hermes 健康检查警告
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct HermesHealthWarning {
-    pub code: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-}
-
 /// Hermes 写入结果
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct HermesWriteOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backup_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<HermesHealthWarning>,
 }
 
 /// Hermes model section config
@@ -343,8 +331,6 @@ fn write_yaml_section_to_config_locked(
 
     atomic_write(&config_path, new_raw.as_bytes())?;
 
-    let warnings = scan_hermes_health_internal(&new_raw);
-
     log::debug!(
         "Hermes config section '{}' written to {:?}",
         section_key,
@@ -352,7 +338,6 @@ fn write_yaml_section_to_config_locked(
     );
     Ok(HermesWriteOutcome {
         backup_path: backup_path.map(|p| p.display().to_string()),
-        warnings,
     })
 }
 
@@ -483,28 +468,6 @@ fn denormalize_provider_models_for_read(config: &mut serde_json::Value) {
         if let serde_json::Value::Object(map) = taken {
             *models_val = models_dict_to_array(map);
         }
-    }
-}
-
-/// Borrow a YAML scalar as a non-empty trimmed `&str`, or `None` when the
-/// value is absent, non-string, or blank after trimming.
-fn yaml_as_non_empty_str(v: &serde_yaml::Value) -> Option<&str> {
-    v.as_str().map(str::trim).filter(|s| !s.is_empty())
-}
-
-/// Extract string keys from a YAML mapping as owned strings, dropping non-string keys.
-fn collect_mapping_string_keys(m: &serde_yaml::Mapping) -> Vec<String> {
-    m.iter()
-        .filter_map(|(k, _)| k.as_str().map(str::to_string))
-        .collect()
-}
-
-/// Boilerplate-free constructor for [`HermesHealthWarning`].
-fn hermes_warning(code: &str, message: String, path: &str) -> HermesHealthWarning {
-    HermesHealthWarning {
-        code: code.to_string(),
-        message,
-        path: Some(path.to_string()),
     }
 }
 
@@ -854,160 +817,6 @@ pub fn apply_switch_defaults(
         ..current
     };
     set_model_config(&merged)
-}
-
-// ============================================================================
-// Health Check
-// ============================================================================
-
-/// Scan Hermes config for known configuration hazards.
-///
-/// Parse failures are reported as warnings (not errors) so the UI can
-/// display them without blocking.
-pub fn scan_hermes_config_health() -> Result<Vec<HermesHealthWarning>, AppError> {
-    let path = get_hermes_config_path();
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let content = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
-    Ok(scan_hermes_health_internal(&content))
-}
-
-fn scan_hermes_health_internal(content: &str) -> Vec<HermesHealthWarning> {
-    let mut warnings = Vec::new();
-
-    if content.trim().is_empty() {
-        return warnings;
-    }
-
-    let config = match serde_yaml::from_str::<serde_yaml::Value>(content) {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            warnings.push(hermes_warning(
-                "config_parse_failed",
-                format!("Hermes config could not be parsed as YAML: {err}"),
-                &get_hermes_config_path().display().to_string(),
-            ));
-            return warnings;
-        }
-    };
-
-    if let Some(model) = config.get("model") {
-        if model.get("default").is_none() && model.get("provider").is_none() {
-            warnings.push(hermes_warning(
-                "model_no_default",
-                "No default model or provider configured in 'model' section".to_string(),
-                "model",
-            ));
-        }
-    }
-
-    let cp_is_mapping = config
-        .get("custom_providers")
-        .map(|v| v.is_mapping())
-        .unwrap_or(false);
-    if cp_is_mapping {
-        warnings.push(hermes_warning(
-            "custom_providers_not_list",
-            "custom_providers should be a YAML list (sequence), not a mapping".to_string(),
-            "custom_providers",
-        ));
-    }
-
-    let mut provider_models: HashMap<String, Vec<String>> = HashMap::new();
-    let mut name_counts: HashMap<String, usize> = HashMap::new();
-    let mut base_url_counts: HashMap<String, usize> = HashMap::new();
-
-    if let Some(seq) = config.get("custom_providers").and_then(|v| v.as_sequence()) {
-        for item in seq {
-            if let Some(name) = item.get("name").and_then(yaml_as_non_empty_str) {
-                *name_counts.entry(name.to_string()).or_insert(0) += 1;
-                if let Some(models) = item.get("models").and_then(|m| m.as_mapping()) {
-                    provider_models
-                        .entry(name.to_string())
-                        .or_insert_with(|| collect_mapping_string_keys(models));
-                }
-            }
-            if let Some(url) = item
-                .get("base_url")
-                .and_then(|n| n.as_str())
-                .map(|s| s.trim().trim_end_matches('/').to_lowercase())
-                .filter(|s| !s.is_empty())
-            {
-                *base_url_counts.entry(url).or_insert(0) += 1;
-            }
-        }
-    }
-
-    // name_counts keys are unique by construction, so iterating it already
-    // reports each duplicate name exactly once — no extra dedupe set needed.
-    for (name, count) in &name_counts {
-        if *count > 1 {
-            warnings.push(hermes_warning(
-                "duplicate_provider_name",
-                format!(
-                    "Duplicate provider name '{name}' in custom_providers — only one entry will be used"
-                ),
-                "custom_providers",
-            ));
-        }
-    }
-    for (url, count) in &base_url_counts {
-        if *count > 1 {
-            warnings.push(hermes_warning(
-                "duplicate_provider_base_url",
-                format!(
-                    "Duplicate base_url '{url}' in custom_providers — possible accidental copy"
-                ),
-                "custom_providers",
-            ));
-        }
-    }
-
-    if let Some(model) = config.get("model") {
-        if let Some(provider_ref) = model.get("provider").and_then(yaml_as_non_empty_str) {
-            if !name_counts.contains_key(provider_ref) {
-                warnings.push(hermes_warning(
-                    "model_provider_unknown",
-                    format!(
-                        "model.provider '{provider_ref}' does not match any configured provider"
-                    ),
-                    "model.provider",
-                ));
-            } else if let Some(default) = model.get("default").and_then(yaml_as_non_empty_str) {
-                if let Some(ids) = provider_models.get(provider_ref) {
-                    if !ids.is_empty() && !ids.iter().any(|id| id == default) {
-                        warnings.push(hermes_warning(
-                            "model_default_not_in_provider",
-                            format!(
-                                "model.default '{default}' is not in provider '{provider_ref}' models list"
-                            ),
-                            "model.default",
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    let version = config
-        .get("_config_version")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let providers_dict_populated = config
-        .get("providers")
-        .and_then(|v| v.as_mapping())
-        .map(|m| !m.is_empty())
-        .unwrap_or(false);
-    if version >= 12 && providers_dict_populated {
-        warnings.push(hermes_warning(
-            "schema_migrated_v12",
-            "Hermes' newer schema moved some entries into the 'providers:' dict. They are shown read-only in CC Switch — edit or remove those entries via Hermes Web UI.".to_string(),
-            "providers",
-        ));
-    }
-
-    warnings
 }
 
 // ============================================================================
@@ -1727,45 +1536,6 @@ custom_providers:
         });
     }
 
-    // ---- Health check tests ----
-
-    #[test]
-    fn health_check_on_invalid_yaml() {
-        let warnings = scan_hermes_health_internal("not: valid: yaml: [");
-        assert!(!warnings.is_empty());
-        assert_eq!(warnings[0].code, "config_parse_failed");
-    }
-
-    #[test]
-    fn health_check_model_no_default() {
-        let yaml = "model:\n  context_length: 200000\n";
-        let warnings = scan_hermes_health_internal(yaml);
-        assert!(warnings.iter().any(|w| w.code == "model_no_default"));
-    }
-
-    #[test]
-    fn health_check_custom_providers_not_list() {
-        let yaml = "custom_providers:\n  foo:\n    base_url: http://localhost\n";
-        let warnings = scan_hermes_health_internal(yaml);
-        assert!(warnings
-            .iter()
-            .any(|w| w.code == "custom_providers_not_list"));
-    }
-
-    #[test]
-    fn health_check_valid_config() {
-        let yaml = "\
-model:
-  default: gpt-4
-  provider: openrouter
-custom_providers:
-  - name: openrouter
-    base_url: https://openrouter.ai/api/v1
-";
-        let warnings = scan_hermes_health_internal(yaml);
-        assert!(warnings.is_empty());
-    }
-
     // ---- yaml_to_json / json_to_yaml ----
 
     #[test]
@@ -2173,116 +1943,5 @@ user_profile_enabled: false
         assert_eq!(memory, MemoryKind::Memory);
         assert_eq!(user, MemoryKind::User);
         assert!(serde_json::from_str::<MemoryKind>("\"bogus\"").is_err());
-    }
-
-    // ---- Extended health scan rules ----
-
-    #[test]
-    fn health_check_model_provider_unknown() {
-        let yaml = "\
-model:
-  default: gpt-4
-  provider: ghost
-custom_providers:
-  - name: real
-    base_url: https://real.example.com
-";
-        let warnings = scan_hermes_health_internal(yaml);
-        assert!(warnings.iter().any(|w| w.code == "model_provider_unknown"));
-    }
-
-    #[test]
-    fn health_check_model_default_not_in_provider() {
-        let yaml = "\
-model:
-  default: missing-model
-  provider: real
-custom_providers:
-  - name: real
-    base_url: https://real.example.com
-    models:
-      present-model: {}
-";
-        let warnings = scan_hermes_health_internal(yaml);
-        assert!(warnings
-            .iter()
-            .any(|w| w.code == "model_default_not_in_provider"));
-    }
-
-    #[test]
-    fn health_check_duplicate_provider_name() {
-        let yaml = "\
-custom_providers:
-  - name: twin
-    base_url: https://a.example.com
-  - name: twin
-    base_url: https://b.example.com
-";
-        let warnings = scan_hermes_health_internal(yaml);
-        let dup_count = warnings
-            .iter()
-            .filter(|w| w.code == "duplicate_provider_name")
-            .count();
-        assert_eq!(dup_count, 1, "each duplicate name should be reported once");
-    }
-
-    #[test]
-    fn health_check_duplicate_provider_base_url() {
-        let yaml = "\
-custom_providers:
-  - name: a
-    base_url: https://same.example.com/
-  - name: b
-    base_url: https://SAME.example.com
-";
-        let warnings = scan_hermes_health_internal(yaml);
-        assert!(warnings
-            .iter()
-            .any(|w| w.code == "duplicate_provider_base_url"));
-    }
-
-    #[test]
-    fn health_check_schema_migrated_v12_warning() {
-        let yaml = "\
-_config_version: 19
-providers:
-  ds-1:
-    base_url: https://api.deepseek.com
-";
-        let warnings = scan_hermes_health_internal(yaml);
-        assert!(warnings.iter().any(|w| w.code == "schema_migrated_v12"));
-    }
-
-    #[test]
-    fn health_check_schema_migrated_not_reported_when_dict_empty() {
-        // v19 with empty providers: {} should NOT surface the migration warning —
-        // otherwise fresh installs would see it spuriously.
-        let yaml = "\
-_config_version: 19
-providers: {}
-";
-        let warnings = scan_hermes_health_internal(yaml);
-        assert!(!warnings.iter().any(|w| w.code == "schema_migrated_v12"));
-    }
-
-    #[test]
-    fn health_check_valid_config_with_matching_model_and_provider() {
-        // Regression guard: none of the new rules should fire on a well-formed config.
-        let yaml = "\
-model:
-  default: gpt-4
-  provider: openrouter
-custom_providers:
-  - name: openrouter
-    base_url: https://openrouter.ai/api/v1
-    models:
-      gpt-4: {}
-";
-        let warnings = scan_hermes_health_internal(yaml);
-        assert!(
-            warnings.is_empty(),
-            "expected no warnings, got: {:?}",
-            warnings
-        );
     }
 }

@@ -3,7 +3,6 @@
 //! 使用流式 API 进行快速健康检查，只需接收首个 chunk 即判定成功。
 
 use futures::StreamExt;
-use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -17,7 +16,9 @@ use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
-use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
+use crate::proxy::providers::{
+    get_adapter, AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter,
+};
 
 /// 健康状态枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -356,15 +357,17 @@ impl StreamCheckService {
         });
         // Codex OAuth (ChatGPT Plus/Pro 反代) 需要 store:false + include 标记，
         // 否则 Stream Check 会和生产路径一样被服务端 400 拒绝。
-        let is_codex_oauth = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("codex_oauth");
+        let is_codex_oauth = provider.is_codex_oauth();
+        let codex_fast_mode = provider.codex_fast_mode_enabled();
 
         let body = if is_openai_responses {
-            anthropic_to_responses(anthropic_body, Some(&provider.id), is_codex_oauth)
-                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+            anthropic_to_responses(
+                anthropic_body,
+                Some(&provider.id),
+                is_codex_oauth,
+                codex_fast_mode,
+            )
+            .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_gemini_native {
             anthropic_to_gemini(anthropic_body)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
@@ -432,12 +435,13 @@ impl StreamCheckService {
             let os_name = Self::get_os_name();
             let arch_name = Self::get_arch_name();
 
-            request_builder =
-                request_builder.header("authorization", format!("Bearer {}", auth.api_key));
-
-            // Only Anthropic official strategy adds x-api-key
-            if auth.strategy == AuthStrategy::Anthropic {
-                request_builder = request_builder.header("x-api-key", &auth.api_key);
+            // 鉴权头复用 ClaudeAdapter::get_auth_headers，与代理路径（forwarder）保持单一真理来源。
+            // - AuthStrategy::Anthropic  → x-api-key
+            // - AuthStrategy::ClaudeAuth → Authorization: Bearer
+            // - AuthStrategy::Bearer     → Authorization: Bearer
+            // 避免之前"无条件 Bearer + 条件 x-api-key 双发"导致的假阴性 / auth conflict。
+            for (name, value) in ClaudeAdapter::new().get_auth_headers(auth) {
+                request_builder = request_builder.header(name, value);
             }
 
             request_builder = request_builder
@@ -788,6 +792,15 @@ impl StreamCheckService {
             return None;
         }
         let lower = body.to_lowercase();
+        let qianfan_quota_indicators = [
+            "coding_plan_hour_quota_exceeded",
+            "coding_plan_week_quota_exceeded",
+            "coding_plan_month_quota_exceeded",
+        ];
+        if qianfan_quota_indicators.iter().any(|s| lower.contains(s)) {
+            return Some("quotaExceeded");
+        }
+
         // 必须提到 "model"，避免通用 404 / 400 被误判
         if !lower.contains("model") {
             return None;
@@ -1412,10 +1425,11 @@ impl StreamCheckService {
             return None;
         }
 
-        let re = Regex::new(r#"^model\s*=\s*["']([^"']+)["']"#).ok()?;
-        re.captures(config_text)
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().trim().to_string())
+        let table = toml::from_str::<toml::Table>(config_text).ok()?;
+        table
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
             .filter(|value| !value.is_empty())
     }
 
@@ -1732,6 +1746,22 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_qianfan_coding_plan_quota_errors() {
+        let cases = [
+            r#"{"error":{"code":"coding_plan_hour_quota_exceeded","message":"hour quota exceeded"}}"#,
+            r#"{"error":{"code":"coding_plan_week_quota_exceeded","message":"week quota exceeded"}}"#,
+            r#"{"error":{"code":"coding_plan_month_quota_exceeded","message":"month quota exceeded"}}"#,
+        ];
+
+        for body in cases {
+            assert_eq!(
+                StreamCheckService::detect_error_category(429, body),
+                Some("quotaExceeded")
+            );
+        }
+    }
+
+    #[test]
     fn test_get_os_name() {
         let os_name = StreamCheckService::get_os_name();
         // 确保返回非空字符串
@@ -1899,6 +1929,22 @@ mod tests {
         );
 
         assert_eq!(url, "https://relay.example/custom/generate-content?alt=sse");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native_cloudflare_vertex_full_url() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent",
+            AuthStrategy::Google,
+            "gemini_native",
+            true,
+            "gemini-2.5-flash",
+        );
+
+        assert_eq!(
+            url,
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse"
+        );
     }
 
     /// Regression: Gemini SDK outputs commonly surface model ids as the
