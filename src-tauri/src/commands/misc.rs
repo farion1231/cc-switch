@@ -1385,7 +1385,7 @@ fn launch_windows_terminal(
 {cwd_command}
 echo Using provider-specific claude config:
 echo {}
-{claude_path} --settings \"{}\"
+\"{claude_path}\" --settings \"{}\"
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
 ",
