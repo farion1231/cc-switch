@@ -28,6 +28,20 @@ struct ModelEntry {
     owned_by: Option<String>,
 }
 
+/// Google 原生 Gemini API（Generative Language API）的 /v1beta/models 响应格式
+#[derive(Debug, Deserialize)]
+struct GeminiModelsResponse {
+    models: Option<Vec<GeminiModelEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiModelEntry {
+    /// 形如 "models/gemini-3.1-pro-preview"
+    name: String,
+    #[serde(default, rename = "supportedGenerationMethods")]
+    supported_generation_methods: Vec<String>,
+}
+
 const FETCH_TIMEOUT_SECS: u64 = 15;
 
 /// 404/405 响应体截断长度：避免把几十 KB HTML 404 页整页保留到错误串里。
@@ -50,6 +64,11 @@ const KNOWN_COMPAT_SUFFIXES: &[&str] = &[
 /// 获取供应商的可用模型列表
 ///
 /// 使用 OpenAI 兼容的 GET /v1/models 端点，按候选列表顺序尝试。
+///
+/// 特例：当 baseURL 指向 Google 原生 Gemini API（`generativelanguage.googleapis.com`）
+/// 或显式 `models_url_override` 命中同源时，改走 `/v1beta/models` + `x-goog-api-key`
+/// 头，返回 Gemini 响应格式（`name` 字段去掉 `models/` 前缀）。Google 不接 OpenAI
+/// 风格的 `Authorization: Bearer`，必须走原生协议。
 pub async fn fetch_models(
     base_url: &str,
     api_key: &str,
@@ -58,6 +77,10 @@ pub async fn fetch_models(
 ) -> Result<Vec<FetchedModel>, String> {
     if api_key.is_empty() {
         return Err("API Key is required to fetch models".to_string());
+    }
+
+    if is_google_native_gemini(base_url, models_url_override) {
+        return fetch_models_gemini_native(base_url, api_key, models_url_override).await;
     }
 
     let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
@@ -115,6 +138,109 @@ pub async fn fetch_models(
         "All candidates failed: {}",
         last_err.unwrap_or_else(|| "no candidates".to_string())
     ))
+}
+
+/// 判断是否需要走 Google 原生 Gemini API 路径。
+///
+/// 命中条件：baseURL 或显式 `modelsUrl` 包含 `generativelanguage.googleapis.com`。
+fn is_google_native_gemini(base_url: &str, models_url_override: Option<&str>) -> bool {
+    const GOOGLE_GEMINI_HOST: &str = "generativelanguage.googleapis.com";
+
+    if base_url.contains(GOOGLE_GEMINI_HOST) {
+        return true;
+    }
+    if let Some(url) = models_url_override {
+        if url.contains(GOOGLE_GEMINI_HOST) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 走 Google 原生 Gemini `/v1beta/models` 端点。
+///
+/// 鉴权用 `x-goog-api-key` header（API Key），不是 Bearer。响应 `models[].name`
+/// 形如 `models/gemini-3.1-pro-preview`，过滤后返回去掉 `models/` 前缀的 ID。
+/// 仅保留支持 `generateContent` 的文本/多模态模型，TTS / Lyria 等其他生成方式
+/// 的不会出现在 Gemini CLI 的可选清单里。
+async fn fetch_models_gemini_native(
+    base_url: &str,
+    api_key: &str,
+    models_url_override: Option<&str>,
+) -> Result<Vec<FetchedModel>, String> {
+    let url = if let Some(raw) = models_url_override {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            build_gemini_native_models_url(base_url)?
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        build_gemini_native_models_url(base_url)?
+    };
+
+    log::debug!("[ModelFetch] Gemini native endpoint: {url}");
+    let client = crate::proxy::http_client::get();
+    let response = client
+        .get(&url)
+        .header("x-goog-api-key", api_key)
+        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = truncate_body(response.text().await.unwrap_or_default());
+        return Err(format!("HTTP {status}: {body}"));
+    }
+
+    let resp: GeminiModelsResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+    let mut models: Vec<FetchedModel> = resp
+        .models
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| {
+            m.supported_generation_methods
+                .iter()
+                .any(|s| s == "generateContent")
+        })
+        .map(|m| FetchedModel {
+            id: m
+                .name
+                .strip_prefix("models/")
+                .map(|s| s.to_string())
+                .unwrap_or(m.name),
+            owned_by: Some("google".to_string()),
+        })
+        .collect();
+
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(models)
+}
+
+/// 由 baseURL 推导 Google 原生 `/v1beta/models` URL。
+///
+/// - `https://generativelanguage.googleapis.com` → `.../v1beta/models`
+/// - `https://generativelanguage.googleapis.com/` → `.../v1beta/models`
+/// - 已含 `/v1beta` 后缀 → 直接拼 `/models`
+/// - 已含 `/v1beta/models` → 原样保留
+fn build_gemini_native_models_url(base_url: &str) -> Result<String, String> {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("Base URL is empty".to_string());
+    }
+    if trimmed.ends_with("/v1beta/models") {
+        return Ok(trimmed.to_string());
+    }
+    if trimmed.ends_with("/v1beta") {
+        return Ok(format!("{trimmed}/models"));
+    }
+    Ok(format!("{trimmed}/v1beta/models"))
 }
 
 /// 构造「模型列表端点」的候选 URL 列表
@@ -410,5 +536,93 @@ mod tests {
         let json = r#"{"object":"list","data":[]}"#;
         let resp: ModelsResponse = serde_json::from_str(json).unwrap();
         assert!(resp.data.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_is_google_native_gemini_by_base_url() {
+        assert!(is_google_native_gemini(
+            "https://generativelanguage.googleapis.com",
+            None
+        ));
+        assert!(is_google_native_gemini(
+            "https://generativelanguage.googleapis.com/v1beta",
+            None
+        ));
+        assert!(!is_google_native_gemini("https://api.openai.com/v1", None));
+    }
+
+    #[test]
+    fn test_is_google_native_gemini_by_models_url() {
+        assert!(is_google_native_gemini(
+            "https://proxy.example.com",
+            Some("https://generativelanguage.googleapis.com/v1beta/models"),
+        ));
+    }
+
+    #[test]
+    fn test_build_gemini_native_models_url() {
+        assert_eq!(
+            build_gemini_native_models_url("https://generativelanguage.googleapis.com").unwrap(),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+        assert_eq!(
+            build_gemini_native_models_url("https://generativelanguage.googleapis.com/").unwrap(),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+        assert_eq!(
+            build_gemini_native_models_url("https://generativelanguage.googleapis.com/v1beta")
+                .unwrap(),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+        assert_eq!(
+            build_gemini_native_models_url(
+                "https://generativelanguage.googleapis.com/v1beta/models"
+            )
+            .unwrap(),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+    }
+
+    #[test]
+    fn test_parse_gemini_native_response_filters_and_strips_prefix() {
+        let json = r#"{
+            "models": [
+                {
+                    "name": "models/gemini-3.1-pro-preview",
+                    "supportedGenerationMethods": ["generateContent", "countTokens"]
+                },
+                {
+                    "name": "models/gemini-2.5-flash-preview-tts",
+                    "supportedGenerationMethods": ["generateContent"]
+                },
+                {
+                    "name": "models/embedding-001",
+                    "supportedGenerationMethods": ["embedContent"]
+                }
+            ]
+        }"#;
+        let resp: GeminiModelsResponse = serde_json::from_str(json).unwrap();
+        let entries = resp.models.unwrap();
+        // 过滤前 3 条
+        assert_eq!(entries.len(), 3);
+        // generateContent 命中两条
+        let kept: Vec<_> = entries
+            .iter()
+            .filter(|m| {
+                m.supported_generation_methods
+                    .iter()
+                    .any(|s| s == "generateContent")
+            })
+            .collect();
+        assert_eq!(kept.len(), 2);
+        // 前缀剥离逻辑校验
+        let stripped: Vec<&str> = kept
+            .iter()
+            .map(|m| m.name.strip_prefix("models/").unwrap_or(&m.name))
+            .collect();
+        assert_eq!(
+            stripped,
+            vec!["gemini-3.1-pro-preview", "gemini-2.5-flash-preview-tts"]
+        );
     }
 }
