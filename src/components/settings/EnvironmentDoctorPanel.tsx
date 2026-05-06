@@ -154,10 +154,10 @@ export function EnvironmentDoctorPanel({
 
       {/* 操作按钮区域 */}
       {diagnosis.overall_status === "NeedsInstall" && (() => {
-        // 从 issues 中提取需要安装的工具
-        const installIssue = diagnosis.issues.find(
-          (issue) => issue.category === "NotInstalled" && issue.fix_action?.type === "InstallTool"
-        );
+        const installIssue = diagnosis.issues.find((issue) => {
+          const actionType = issue.fix_action?.type;
+          return actionType === "InstallTool" || actionType === "InstallNodeJs";
+        });
         const toolToInstall = installIssue?.fix_action?.tool || "claude";
 
         return (

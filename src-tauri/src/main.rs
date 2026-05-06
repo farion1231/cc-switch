@@ -18,5 +18,5 @@ fn main() {
         }
     }
 
-    cc_switch_lib::run();
+    cc_doctor_lib::run();
 }

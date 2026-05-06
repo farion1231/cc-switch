@@ -330,8 +330,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     setIsInstalling(true);
     try {
       const result = await doctorApi.installTool(tool);
+      const toolLabel = tool === "claude" ? "Claude Code" : tool;
       if (result.success) {
-        toast.success(t("doctor.installSuccess", { tool }));
+        toast.success(t("doctor.installSuccess", { tool: toolLabel }));
         await runDiagnosis(); // 重新诊断
       } else {
         toast.error(t("doctor.installFailed", { error: result.message }));

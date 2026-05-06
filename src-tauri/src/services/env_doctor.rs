@@ -212,7 +212,7 @@ async fn diagnose_nodejs(issues: &mut Vec<DiagnosisIssue>) {
             category: IssueCategory::NodeJsMissing,
             title: "Node.js 环境问题".to_string(),
             description: err,
-            auto_fixable: true,
+            auto_fixable: false,
             fix_action: Some(FixAction::InstallNodeJs),
         });
     } else if let Some(ver) = version {
@@ -227,7 +227,7 @@ async fn diagnose_nodejs(issues: &mut Vec<DiagnosisIssue>) {
                     "当前 Node.js 版本为 {}，需要 >= 18.0.0",
                     ver
                 ),
-                auto_fixable: true,
+                auto_fixable: false,
                 fix_action: Some(FixAction::InstallNodeJs),
             });
         }
@@ -326,13 +326,15 @@ fn determine_overall_status(
         return HealthStatus::Healthy;
     }
 
-    // 检查是否有 Critical 级别的未安装问题
-    let has_critical_not_installed = issues.iter().any(|issue| {
+    let has_install_issues = issues.iter().any(|issue| {
         issue.severity == IssueSeverity::Critical
-            && issue.category == IssueCategory::NotInstalled
+            && matches!(
+                issue.category,
+                IssueCategory::NotInstalled | IssueCategory::NodeJsMissing
+            )
     });
 
-    if has_critical_not_installed {
+    if has_install_issues {
         return HealthStatus::NeedsInstall;
     }
 
@@ -697,20 +699,37 @@ mod tests {
     }
 
     #[test]
-    fn test_determine_overall_status_needs_repair() {
+    fn test_determine_overall_status_nodejs_issue_needs_install() {
         let issues = vec![DiagnosisIssue {
-            id: "test".to_string(),
-            severity: IssueSeverity::High,
-            category: IssueCategory::EnvConflict,
-            title: "Test".to_string(),
-            description: "Test".to_string(),
-            auto_fixable: true,
-            fix_action: None,
+            id: "nodejs_missing".to_string(),
+            severity: IssueSeverity::Critical,
+            category: IssueCategory::NodeJsMissing,
+            title: "Node.js 环境问题".to_string(),
+            description: "Node.js 未安装".to_string(),
+            auto_fixable: false,
+            fix_action: Some(FixAction::InstallNodeJs),
         }];
         let tools_status = HashMap::new();
         assert_eq!(
             determine_overall_status(&issues, &tools_status),
-            HealthStatus::NeedsRepair
+            HealthStatus::NeedsInstall
         );
     }
+
+    #[test]
+    fn test_install_nodejs_issue_is_not_auto_fixable() {
+        let issue = DiagnosisIssue {
+            id: "nodejs_missing".to_string(),
+            severity: IssueSeverity::Critical,
+            category: IssueCategory::NodeJsMissing,
+            title: "Node.js 环境问题".to_string(),
+            description: "Node.js 未安装".to_string(),
+            auto_fixable: false,
+            fix_action: Some(FixAction::InstallNodeJs),
+        };
+
+        assert!(!issue.auto_fixable);
+        assert!(matches!(issue.fix_action, Some(FixAction::InstallNodeJs)));
+    }
 }
+

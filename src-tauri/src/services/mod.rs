@@ -25,8 +25,6 @@ pub mod webdav_auto_sync;
 pub mod webdav_sync;
 
 pub use config::ConfigService;
-pub use env_doctor::FixResult;
-pub use installer::InstallResult;
 pub use mcp::McpService;
 pub use omo::OmoService;
 pub use prompt::PromptService;
