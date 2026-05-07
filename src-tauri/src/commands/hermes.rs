@@ -40,12 +40,6 @@ pub fn get_hermes_live_provider(
     hermes_config::get_provider(&providerId).map_err(|e| e.to_string())
 }
 
-/// Scan config.yaml for known configuration hazards.
-#[tauri::command]
-pub fn scan_hermes_config_health() -> Result<Vec<hermes_config::HermesHealthWarning>, String> {
-    hermes_config::scan_hermes_config_health().map_err(|e| e.to_string())
-}
-
 // ============================================================================
 // Model Configuration Commands
 // ============================================================================

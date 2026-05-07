@@ -41,14 +41,11 @@ import {
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
-import {
-  hermesKeys,
-  useHermesHealth,
-  useOpenHermesWebUI,
-} from "@/hooks/useHermes";
+import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
+import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
@@ -90,7 +87,6 @@ import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
-import HermesHealthBanner from "@/components/hermes/HermesHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 
 type View =
@@ -236,6 +232,8 @@ function App() {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const isToolbarCompact = useAutoCompact(toolbarRef);
 
+  useUsageCacheBridge();
+
   const promptPanelRef = useRef<any>(null);
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
@@ -271,8 +269,6 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const isHermesView = activeApp === "hermes" && currentView === "providers";
-  const { data: hermesHealthWarnings = [] } = useHermesHealth(isHermesView);
   const hasSkillsSupport = true;
   const hasSessionSupport =
     activeApp === "claude" ||
@@ -681,9 +677,6 @@ function App() {
       } else if (activeApp === "hermes") {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.health,
         });
       }
       toast.success(
@@ -1551,9 +1544,6 @@ function App() {
       <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
         {isOpenClawView && openclawHealthWarnings.length > 0 && (
           <OpenClawHealthBanner warnings={openclawHealthWarnings} />
-        )}
-        {isHermesView && hermesHealthWarnings.length > 0 && (
-          <HermesHealthBanner warnings={hermesHealthWarnings} />
         )}
         {renderContent()}
       </main>

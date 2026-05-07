@@ -66,6 +66,10 @@ export interface ProviderPreset {
 
   // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
   hidden?: boolean;
+
+  // 获取模型列表使用的完整 URL（覆写自动候选逻辑）
+  // 缺省时后端基于 baseURL 自动尝试 /v1/models、/models 以及剥离已知兼容子路径后的变体。
+  modelsUrl?: string;
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -129,13 +133,15 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "DeepSeek-V3.2",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "DeepSeek-V3.2",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "DeepSeek-V3.2",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "DeepSeek-V3.2",
+        ANTHROPIC_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro",
       },
     },
     category: "cn_official",
+    // Anthropic 兼容层挂在 /anthropic 子路径；/models 是根上独立端点
+    modelsUrl: "https://api.deepseek.com/models",
     icon: "deepseek",
     iconColor: "#1E88E5",
   },
@@ -174,6 +180,26 @@ export const providerPresets: ProviderPreset[] = [
     category: "cn_official",
     icon: "zhipu",
     iconColor: "#0F62FE",
+  },
+  {
+    name: "Baidu Qianfan Coding Plan",
+    websiteUrl: "https://cloud.baidu.com/product/qianfan_modelbuilder",
+    apiKeyUrl:
+      "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://qianfan.baidubce.com/anthropic/coding",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "qianfan-code-latest",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qianfan-code-latest",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qianfan-code-latest",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qianfan-code-latest",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: ["https://qianfan.baidubce.com/anthropic/coding"],
+    icon: "baidu",
+    iconColor: "#2932E1",
   },
   {
     name: "Bailian",
@@ -221,7 +247,7 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
-    websiteUrl: "https://www.kimi.com/coding/docs/",
+    websiteUrl: "https://www.kimi.com/code/docs/",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
@@ -664,6 +690,25 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "Compshare Coding Plan",
+    nameKey: "providerForm.presets.ucloudCoding",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://cp.compshare.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://cp.compshare.cn"],
+    category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "ucloud", // 促销信息 i18n key（复用）
+    icon: "ucloud",
+    iconColor: "#000000",
+  },
+  {
     name: "Micu",
     websiteUrl: "https://www.openclaudecode.cn",
     apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
@@ -809,10 +854,10 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.githubcopilot.com",
-        ANTHROPIC_MODEL: "claude-opus-4.7",
+        ANTHROPIC_MODEL: "claude-sonnet-4.6",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4.5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4.6",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4.7",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-4.6",
       },
     },
     category: "third_party",

@@ -2,12 +2,18 @@
 //!
 //! 负责系统托盘图标和菜单的创建、更新和事件处理。
 
-use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, SubmenuBuilder};
+use once_cell::sync::Lazy;
+use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, Submenu, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::store::AppState;
+
+/// 每个 app 分区的子菜单句柄，用于 usage 更新时就地改 label 而非整菜单重建。
+/// `create_tray_menu` 每次重建都会整表覆盖写入，保证句柄始终指向当前活跃菜单。
+static TRAY_SECTION_SUBMENUS: Lazy<std::sync::Mutex<std::collections::HashMap<AppType, Submenu<tauri::Wry>>>> =
+    Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 /// 托盘菜单文本（国际化）
 #[derive(Clone, Copy)]
@@ -83,6 +89,129 @@ pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
         log_name: "Gemini",
     },
 ];
+
+/// 配色阈值（与前端 `utilizationColor` 语义一致）。
+const UTIL_WARN_PCT: f64 = 70.0;
+const UTIL_DANGER_PCT: f64 = 90.0;
+
+fn emoji_for_utilization(pct: f64) -> &'static str {
+    if pct >= UTIL_DANGER_PCT {
+        "\u{1F534}"
+    } else if pct >= UTIL_WARN_PCT {
+        "\u{1F7E0}"
+    } else {
+        "\u{1F7E2}"
+    }
+}
+
+fn format_subscription_summary(
+    quota: &crate::services::subscription::SubscriptionQuota,
+) -> Option<String> {
+    use crate::services::subscription::{
+        TIER_FIVE_HOUR, TIER_GEMINI_FLASH, TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_SEVEN_DAY,
+    };
+    if !quota.success {
+        return None;
+    }
+
+    let parts: Vec<(&'static str, f64)> = match quota.tool.as_str() {
+        "gemini" => {
+            let mut v = Vec::new();
+            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_GEMINI_PRO) {
+                v.push(("p", t.utilization));
+            }
+            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_GEMINI_FLASH) {
+                v.push(("f", t.utilization));
+            }
+            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_GEMINI_FLASH_LITE) {
+                v.push(("l", t.utilization));
+            }
+            v
+        }
+        _ => {
+            let mut v = Vec::new();
+            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_FIVE_HOUR) {
+                v.push(("h", t.utilization));
+            }
+            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_SEVEN_DAY) {
+                v.push(("w", t.utilization));
+            }
+            v
+        }
+    };
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    let worst = parts.iter().map(|(_, u)| *u).fold(f64::NEG_INFINITY, f64::max);
+    if !worst.is_finite() {
+        return None;
+    }
+
+    let emoji = emoji_for_utilization(worst);
+    let body = parts.iter().map(|(label, u)| format!("{label}{}%", u.round() as i64)).collect::<Vec<_>>().join(" ");
+    Some(format!("{emoji} {body}"))
+}
+
+fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
+    match (data.used, data.total) {
+        (Some(used), Some(total)) if total > 0.0 => Some(used / total * 100.0),
+        _ => None,
+    }
+}
+
+fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String> {
+    use crate::services::subscription::{TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT};
+
+    if !result.success { return None; }
+    let data = result.data.as_ref()?;
+    if data.is_empty() { return None; }
+
+    const TOKEN_PLAN_LABELS: &[(&str, &str)] = &[(TIER_FIVE_HOUR, "h"), (TIER_WEEKLY_LIMIT, "w")];
+
+    let mut parts: Vec<(&'static str, f64)> = Vec::new();
+    for &(tier_name, label) in TOKEN_PLAN_LABELS {
+        let Some(d) = data.iter().find(|d| d.plan_name.as_deref() == Some(tier_name)) else { continue; };
+        if let Some(u) = tier_pct(d) { parts.push((label, u)); }
+    }
+    if !parts.is_empty() {
+        let worst = parts.iter().map(|(_, u)| *u).fold(f64::NEG_INFINITY, f64::max);
+        let emoji = emoji_for_utilization(worst);
+        let body = parts.iter().map(|(label, u)| format!("{label}{}%", u.round() as i64)).collect::<Vec<_>>().join(" ");
+        return Some(format!("{emoji} {body}"));
+    }
+
+    let first = data.first()?;
+    let pct = tier_pct(first)?;
+    let emoji = emoji_for_utilization(pct);
+    let plan = first.plan_name.as_deref().unwrap_or("");
+    let rounded = pct.round() as i64;
+    if plan.is_empty() { Some(format!("{} {}%", emoji, rounded)) }
+    else { Some(format!("{} {} {}%", emoji, plan, rounded)) }
+}
+
+fn format_usage_suffix(
+    app_state: &AppState,
+    app_type: &AppType,
+    provider: &crate::provider::Provider,
+    provider_id: &str,
+) -> Option<String> {
+    if provider.has_usage_script_enabled() {
+        if let Some(Some(s)) = app_state.usage_cache.with_script(app_type, provider_id, format_script_summary) {
+            return Some(format!(" · {s}"));
+        }
+    } else {
+        app_state.usage_cache.invalidate_script(app_type, provider_id);
+    }
+
+    if provider.category.as_deref() == Some("official") {
+        if let Some(Some(s)) = app_state.usage_cache.with_subscription(app_type, format_subscription_summary) {
+            return Some(format!(" · {s}"));
+        }
+    }
+    None
+}
 
 /// 对供应商列表排序：sort_index → created_at → name
 fn sort_providers(
@@ -324,7 +453,7 @@ pub fn create_tray_menu(
             menu_builder = menu_builder.item(&empty_item);
         } else {
             // 有供应商：构建子菜单
-            let current_name = providers.get(&current_id).map(|p| p.name.as_str());
+            let current_provider = providers.get(&current_id);
 
             // 智能路由启用时，显示 Main/Others 双 Provider
             let smart_routing_label = if is_proxy_running {
@@ -352,9 +481,14 @@ pub fn create_tray_menu(
                 None
             };
 
-            let submenu_label = match (current_name, smart_routing_label) {
+            let submenu_label = match (current_provider, smart_routing_label) {
                 (_, Some(sr_label)) => format!("{} · {}", section.header_label, sr_label),
-                (Some(name), None) => format!("{} · {}", section.header_label, name),
+                (Some(p), None) => {
+                    let suffix =
+                        format_usage_suffix(app_state, &section.app_type, p, &current_id)
+                            .unwrap_or_default();
+                    format!("{} · {}{}", section.header_label, p.name, suffix)
+                }
                 (None, None) => section.header_label.to_string(),
             };
             let submenu_id = format!("submenu_{}", app_type_str);

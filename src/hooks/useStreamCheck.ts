@@ -62,6 +62,20 @@ export function useStreamCheck(appId: AppId) {
               closeButton: true,
             },
           );
+        } else if (result.errorCategory === "quotaExceeded") {
+          toast.warning(
+            t("streamCheck.quotaExceeded", {
+              providerName: providerName,
+              defaultValue: `${providerName} Coding Plan quota has been exceeded`,
+            }),
+            {
+              description: t("streamCheck.quotaExceededHint", {
+                defaultValue: "",
+              }),
+              duration: 10000,
+              closeButton: true,
+            },
+          );
         } else {
           const httpStatus = result.httpStatus;
           const hintKey = httpStatus

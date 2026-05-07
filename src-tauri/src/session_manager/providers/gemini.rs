@@ -35,10 +35,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         };
 
         let project_root_file = entry.path().join(".project_root");
-        let project_dir = match std::fs::read_to_string(project_root_file) {
-            Ok(name) => Some(name),
-            Err(_) => None,
-        };
+        let project_dir = std::fs::read_to_string(project_root_file).ok();
 
         for file_entry in chat_files.flatten() {
             let path = file_entry.path();

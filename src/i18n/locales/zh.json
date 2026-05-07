@@ -549,7 +549,8 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
-          "kaku": "Kaku"
+          "kaku": "Kaku",
+          "warp": "Warp"
         },
         "windows": {
           "cmd": "命令提示符",
@@ -802,6 +803,7 @@
     },
     "presets": {
       "ucloud": "优云智算",
+      "ucloudCoding": "优云智算Coding Plan",
       "shengsuanyun": "胜算云",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
@@ -823,6 +825,11 @@
     "fillTemplateValue": "请填写 {{label}}",
     "endpointRequired": "非官方供应商请填写 API 端点",
     "apiKeyRequired": "非官方供应商请填写 API Key",
+    "softValidation": {
+      "title": "配置存在以下问题",
+      "hint": "仍要保存吗？保存后切换此供应商时可能失败，可以之后再补全。",
+      "saveAnyway": "仍要保存"
+    },
     "configJsonError": "配置JSON格式错误，请检查语法",
     "authJsonRequired": "auth.json 必须是 JSON 对象",
     "authJsonError": "auth.json 格式错误，请检查JSON语法",
@@ -874,6 +881,7 @@
     "fetchModelsNeedConfig": "请先填写 API 端点和 API Key",
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
+    "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
     "fetchModelsTimeout": "请求超时，请检查网络连接"
   },
   "copilot": {
@@ -929,7 +937,9 @@
     "addAnotherAccount": "添加其他账号",
     "logoutAll": "注销所有账号",
     "retry": "重试",
-    "copyCode": "复制代码"
+    "copyCode": "复制代码",
+    "fastMode": "FAST 模式",
+    "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。"
   },
   "endpointTest": {
     "title": "请求地址管理",
@@ -1680,25 +1690,11 @@
       "open": "打开 Hermes Web UI",
       "offline": "Hermes Web UI 未启动，请先运行 `hermes dashboard` 启动服务。",
       "openFailed": "打开 Hermes Web UI 失败",
-      "fixInWebUI": "在 Hermes Web UI 修复",
       "launchConfirmTitle": "Hermes Dashboard 未启动",
       "launchConfirmMessage": "是否打开终端并运行 `hermes dashboard` 启动服务？\n\n启动完成后会自动打开浏览器。\n\n若终端提示找不到 hermes 或缺少 web 依赖，请先运行：\npip install hermes-agent[web]",
       "launchConfirmAction": "打开终端并启动",
       "launching": "已在终端启动 hermes dashboard",
       "launchFailed": "打开终端失败"
-    },
-    "health": {
-      "title": "检测到 Hermes 配置警告",
-      "parseFailed": "config.yaml 无法解析为有效 YAML。请先修复文件再在此编辑。",
-      "configNotFound": "未找到 Hermes config.yaml。请在 ~/.hermes/config.yaml 创建或在设置中配置路径。",
-      "envParseFailed": ".env 文件无法解析。",
-      "modelNoDefault": "model 段未设置默认模型或供应商。",
-      "customProvidersNotList": "custom_providers 应为 YAML 列表（以 `-` 开头），而不是映射。",
-      "modelProviderUnknown": "model.provider 指向的供应商未在配置中找到。",
-      "modelDefaultNotInProvider": "model.default 指向的模型不在所选供应商的模型列表中。",
-      "duplicateProviderName": "custom_providers 中存在重复的供应商名，只会有一条生效。",
-      "duplicateProviderBaseUrl": "custom_providers 中存在重复的 base_url，可能是意外复制。",
-      "schemaMigratedV12": "Hermes 新版 schema 把部分供应商移到了 'providers:' dict。CC Switch 中以只读方式显示，编辑或删除请通过 Hermes Web UI 操作。"
     },
     "memory": {
       "title": "记忆管理",
@@ -2266,6 +2262,8 @@
     "error": "{{providerName}} 检查出错: {{error}}",
     "modelNotFound": "{{providerName}} 测试模型 {{model}} 不存在或已下架",
     "modelNotFoundHint": "该模型可能已被供应商弃用。请在\"模型测试配置\"中更新默认测试模型。",
+    "quotaExceeded": "{{providerName}} Coding Plan 额度已用尽",
+    "quotaExceededHint": "百度千帆返回了 Coding Plan 超额错误。请等待 5 小时/每周/每月额度刷新，或在千帆控制台切换套餐。",
     "httpHint": {
       "400": "供应商拒绝了请求格式。健康检查的探测格式可能与实际使用不同。",
       "401": "API Key 可能无效，或供应商使用 OAuth 等认证方式。检查失败不代表实际不可用。",
@@ -2320,6 +2318,9 @@
     }
   },
   "universalProvider": {
+    "duplicate": "复制",
+    "duplicatedAndSynced": "统一供应商已复制并同步",
+    "duplicateError": "复制统一供应商失败",
     "title": "统一供应商",
     "description": "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
     "add": "添加统一供应商",
