@@ -493,6 +493,13 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     let mut content = Vec::new();
     let mut has_tool_use = false;
 
+    // DeepSeek provider 会把思考内容放在 message.reasoning_content。
+    if let Some(reasoning_content) = message.get("reasoning_content").and_then(|r| r.as_str()) {
+        if !reasoning_content.is_empty() {
+            content.push(json!({"type": "thinking", "thinking": reasoning_content}));
+        }
+    }
+
     // 文本/拒绝内容
     if let Some(msg_content) = message.get("content") {
         if let Some(text) = msg_content.as_str() {
