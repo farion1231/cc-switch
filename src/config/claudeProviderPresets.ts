@@ -830,6 +830,24 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.therouter.ai"],
   },
   {
+    name: "WaveSpeed",
+    websiteUrl: "https://wavespeed.ai",
+    apiKeyUrl: "https://wavespeed.ai/accesskey",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://llm.wavespeed.ai/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "google/gemini-2.5-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "google/gemini-2.5-flash-lite",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "google/gemini-2.5-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "google/gemini-2.5-flash",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    endpointCandidates: ["https://llm.wavespeed.ai/v1"],
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",
