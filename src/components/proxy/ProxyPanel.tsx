@@ -254,9 +254,7 @@ export function ProxyPanel({
                 <div className="grid gap-2 sm:grid-cols-3">
                   {(["claude", "codex", "gemini"] as const).map((appType) => {
                     const isEnabled =
-                      takeoverStatus?.[
-                        appType as keyof typeof takeoverStatus
-                      ] ?? false;
+                      takeoverStatus?.[appType] ?? false;
                     return (
                       <div
                         key={appType}
@@ -275,6 +273,7 @@ export function ProxyPanel({
                       </div>
                     );
                   })}
+
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {t("proxy.takeover.hint", {

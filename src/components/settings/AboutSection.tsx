@@ -42,7 +42,7 @@ interface ToolVersion {
   wsl_distro: string | null;
 }
 
-const TOOL_NAMES = ["claude", "codex", "gemini", "opencode"] as const;
+const TOOL_NAMES = ["claude", "codex", "gemini", "opencode", "openclaw", "hermes"] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
 
 type WslShellPreference = {
