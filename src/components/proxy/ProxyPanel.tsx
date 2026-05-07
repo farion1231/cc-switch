@@ -252,32 +252,27 @@ export function ProxyPanel({
                   })}
                 </p>
                 <div className="grid gap-2 sm:grid-cols-3">
-                  {Object.entries(takeoverStatus ?? {})
-                    .filter(
-                      ([appType]) =>
-                        !(
-                          ["opencode", "openclaw", "hermes"] as string[]
-                        ).includes(appType),
-                    )
-                    .map(([appType, isEnabled]) => {
-                      return (
-                        <div
-                          key={appType}
-                          className="flex items-center justify-between rounded-md border border-primary/20 bg-background/60 px-3 py-2"
-                        >
-                          <span className="text-sm font-medium capitalize">
-                            {appType}
-                          </span>
-                          <Switch
-                            checked={isEnabled}
-                            onCheckedChange={(checked) =>
-                              handleTakeoverChange(appType, checked)
-                            }
-                            disabled={setTakeoverForApp.isPending}
-                          />
-                        </div>
-                      );
-                    })}
+                  {(["claude", "codex", "gemini"] as const).map((appType) => {
+                    const isEnabled =
+                      takeoverStatus?.[appType] ?? false;
+                    return (
+                      <div
+                        key={appType}
+                        className="flex items-center justify-between rounded-md border border-primary/20 bg-background/60 px-3 py-2"
+                      >
+                        <span className="text-sm font-medium capitalize">
+                          {appType}
+                        </span>
+                        <Switch
+                          checked={isEnabled}
+                          onCheckedChange={(checked) =>
+                            handleTakeoverChange(appType, checked)
+                          }
+                          disabled={setTakeoverForApp.isPending}
+                        />
+                      </div>
+                    );
+                  })}
 
                 </div>
                 <p className="text-xs text-muted-foreground">

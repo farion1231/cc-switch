@@ -120,7 +120,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 8. Proxy Config 表（三行结构，app_type 主键）
+        // 8. Proxy Config 表（每应用一行，app_type 主键，支持 claude/codex/gemini/opencode/openclaw/hermes）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','opencode','openclaw','hermes')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
@@ -140,7 +140,7 @@ impl Database {
         //
         // 兼容旧数据库：
         // - 老版本 proxy_config 是单例表（没有 app_type 列），此时不能执行三行 seed insert；
-        // - 旧表会在 apply_schema_migrations() 中迁移为三行结构后再插入。
+        // - 旧表会在 apply_schema_migrations() 中迁移为每应用一行结构后再插入。
         if Self::has_column(conn, "proxy_config", "app_type")? {
             conn.execute(
                 "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
@@ -352,7 +352,7 @@ impl Database {
             [],
         );
 
-        // 兼容：若旧版 proxy_config 仍为单例结构（无 app_type），则在启动时直接转换为三行结构
+        // 兼容：若旧版 proxy_config 仍为单例结构（无 app_type），则在启动时直接转换为每应用一行结构
         // 说明：user_version=2 时不会再触发 v1->v2 迁移，但新代码查询依赖 app_type 列。
         if Self::table_exists(conn, "proxy_config")?
             && !Self::has_column(conn, "proxy_config", "app_type")?
@@ -1263,28 +1263,34 @@ impl Database {
                 circuit_min_requests INTEGER NOT NULL DEFAULT 10,
                 default_cost_multiplier TEXT NOT NULL DEFAULT '1',
                 pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )",
             [],
         )?;
 
-        // 复制已有数据
+        // 复制已有数据（使用显式列名，避免源/目标列数不匹配）
         conn.execute(
-            "INSERT INTO proxy_config_new SELECT * FROM proxy_config",
+            "INSERT INTO proxy_config_new (
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries, streaming_first_byte_timeout,
+                streaming_idle_timeout, non_streaming_timeout, circuit_failure_threshold,
+                circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold,
+                circuit_min_requests, default_cost_multiplier, pricing_model_source,
+                live_takeover_active, created_at, updated_at
+            ) SELECT * FROM proxy_config",
             [],
         )?;
 
-        // 插入新 app 类型的默认配置
+        // 插入新 app 类型的默认配置（参数化查询）
         for app in &["opencode", "openclaw", "hermes"] {
             conn.execute(
-                &format!(
-                    "INSERT OR IGNORE INTO proxy_config_new (app_type, max_retries,
-                    streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
-                    circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                    circuit_error_rate_threshold, circuit_min_requests)
-                    VALUES ('{app}', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)"
-                ),
-                [],
+                "INSERT OR IGNORE INTO proxy_config_new (app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests)
+                VALUES (?1, 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                [app],
             )?;
         }
 
