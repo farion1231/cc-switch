@@ -610,6 +610,7 @@
     "oneClickInstall": "ワンクリックインストール",
     "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / OpenCode をインストール",
     "localEnvCheck": "ローカル環境チェック",
+    "cursorClaudeCheck": "Cursor 内の Claude Code",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",

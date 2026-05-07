@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { AboutSection } from "./AboutSection";
 
 const toolVersionsMock = vi.fn();
@@ -44,6 +44,13 @@ vi.mock("sonner", () => ({
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: () => getVersionMock(),
 }));
+
+const clipboardWriteTextMock = vi.fn();
+Object.assign(navigator, {
+  clipboard: {
+    writeText: clipboardWriteTextMock,
+  },
+});
 
 vi.mock("@/lib/platform", () => ({
   isWindows: () => false,
@@ -104,6 +111,8 @@ vi.mock("@/assets/icons/app-icon.png", () => ({
 describe("AboutSection environment doctor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clipboardWriteTextMock.mockResolvedValue(undefined);
+    installToolMock.mockResolvedValue({ success: true, message: "ok" });
     getVersionMock.mockResolvedValue("3.14.1");
     toolVersionsMock.mockResolvedValue([
       {
@@ -178,5 +187,66 @@ describe("AboutSection environment doctor", () => {
     expect(
       screen.getByRole("button", { name: "doctor.oneClickFix" }),
     ).toBeInTheDocument();
+  });
+
+  it("renders cursor claude check card in local environment section", async () => {
+    diagnoseEnvironmentMock.mockResolvedValue({
+      overall_status: "Healthy",
+      issues: [],
+      tools_status: {},
+    });
+
+    toolVersionsMock.mockResolvedValue([
+      {
+        name: "claude",
+        version: "2.1.131",
+        latest_version: "2.1.131",
+        error: null,
+        env_type: "macos",
+        wsl_distro: null,
+      },
+      {
+        name: "cursor-claude",
+        version: "installed",
+        latest_version: null,
+        error: null,
+        env_type: "macos",
+        wsl_distro: null,
+        display_name: "Cursor 里的 Claude Code",
+        status_label: "installed",
+        installed: true,
+      },
+    ]);
+
+    render(<AboutSection isPortable={false} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Cursor 里的 Claude Code")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("installed")).toBeInTheDocument();
+  });
+
+  it("runs real install flow from the one-click install section", async () => {
+    diagnoseEnvironmentMock.mockResolvedValue({
+      overall_status: "Healthy",
+      issues: [],
+      tools_status: {},
+    });
+
+    render(<AboutSection isPortable={false} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "settings.oneClickInstall" }).length).toBeGreaterThan(0);
+    });
+
+    const buttons = screen.getAllByRole("button", { name: "settings.oneClickInstall" });
+    fireEvent.click(buttons[buttons.length - 1]);
+
+    await waitFor(() => {
+      expect(installToolMock).toHaveBeenCalledWith("claude");
+    });
+
+    expect(clipboardWriteTextMock).not.toHaveBeenCalled();
   });
 });
