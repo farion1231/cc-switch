@@ -13,7 +13,7 @@ impl Database {
 
     /// 获取全局代理配置（统一字段）
     ///
-    /// 从 claude 行读取（三行镜像一致）
+    /// 从 claude 行读取（per-app 镜像一致）
     pub async fn get_global_proxy_config(&self) -> Result<GlobalProxyConfig, AppError> {
         // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
         let result = {
@@ -50,7 +50,7 @@ impl Database {
         }
     }
 
-    /// 更新全局代理配置（镜像写三行）
+    /// 更新全局代理配置（镜像写所有 per-app 行）
     pub async fn update_global_proxy_config(
         &self,
         config: GlobalProxyConfig,
@@ -331,7 +331,7 @@ impl Database {
         Ok(())
     }
 
-    /// 初始化 proxy_config 表的三行数据
+    /// 初始化 proxy_config 表的 per-app 数据（六行）
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
     async fn init_proxy_config_rows(&self) -> Result<(), AppError> {
@@ -418,11 +418,11 @@ impl Database {
         }
     }
 
-    /// 更新代理配置（兼容旧接口，更新所有三行的公共字段）
+    /// 更新代理配置（兼容旧接口，更新所有 per-app 行的公共字段）
     pub async fn update_proxy_config(&self, config: ProxyConfig) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
-        // 更新所有三行的公共字段
+        // 更新所有 per-app 行的公共字段
         conn.execute(
             "UPDATE proxy_config SET
                 listen_address = ?1,
@@ -687,7 +687,7 @@ impl Database {
         }
     }
 
-    /// 更新熔断器配置（兼容旧接口，更新所有三行）
+    /// 更新熔断器配置（兼容旧接口，更新所有 per-app 行）
     ///
     /// 熔断器配置已合并到 proxy_config 表
     /// 此方法保留用于兼容旧代码，建议使用 update_proxy_config_for_app
@@ -697,7 +697,7 @@ impl Database {
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
-        // 更新所有三行的熔断器配置
+        // 更新所有 per-app 行的熔断器配置
         conn.execute(
             "UPDATE proxy_config SET
                 circuit_failure_threshold = ?1,

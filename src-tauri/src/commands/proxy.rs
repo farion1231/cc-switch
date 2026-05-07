@@ -80,7 +80,7 @@ pub async fn get_global_proxy_config(
 
 /// 更新全局代理配置
 ///
-/// 更新统一的全局配置字段，会同时更新三行（claude/codex/gemini）
+/// 更新统一的全局配置字段，会同时更新所有 per-app 行
 #[tauri::command]
 pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,

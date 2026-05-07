@@ -114,7 +114,7 @@ export interface FailoverQueueItem {
   sortIndex?: number;
 }
 
-// 全局代理配置（统一字段，三行镜像）
+// 全局代理配置（统一字段，per-app 镜像）
 export interface GlobalProxyConfig {
   proxyEnabled: boolean;
   listenAddress: string;

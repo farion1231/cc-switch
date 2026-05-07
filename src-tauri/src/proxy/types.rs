@@ -151,7 +151,7 @@ pub struct LiveBackup {
     pub backed_up_at: String,
 }
 
-/// 全局代理配置（统一字段，三行镜像）
+/// 全局代理配置（统一字段，per-app 镜像）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GlobalProxyConfig {
