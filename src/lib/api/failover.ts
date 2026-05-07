@@ -4,6 +4,7 @@ import type {
   CircuitBreakerConfig,
   CircuitBreakerStats,
   FailoverQueueItem,
+  SmartRoutingQueueType,
 } from "@/types/proxy";
 
 export interface Provider {
@@ -95,5 +96,61 @@ export const failoverApi = {
     enabled: boolean,
   ): Promise<void> {
     return invoke("set_auto_failover_enabled", { appType, enabled });
+  },
+
+  // ========== 智能路由 API ==========
+
+  // 获取智能路由开关状态
+  async getSmartRoutingEnabled(appType: string): Promise<boolean> {
+    return invoke("get_smart_routing_enabled", { appType });
+  },
+
+  // 设置智能路由开关状态
+  async setSmartRoutingEnabled(
+    appType: string,
+    enabled: boolean,
+  ): Promise<void> {
+    return invoke("set_smart_routing_enabled", { appType, enabled });
+  },
+
+  // 获取智能路由队列
+  async getSmartRoutingQueue(
+    appType: string,
+    queueType: SmartRoutingQueueType,
+  ): Promise<FailoverQueueItem[]> {
+    return invoke("get_smart_routing_queue", { appType, queueType });
+  },
+
+  // 添加供应商到智能路由队列
+  async addToSmartRoutingQueue(
+    appType: string,
+    providerId: string,
+    queueType: SmartRoutingQueueType,
+  ): Promise<void> {
+    return invoke("add_to_smart_routing_queue", {
+      appType,
+      providerId,
+      queueType,
+    });
+  },
+
+  // 从智能路由队列移除供应商
+  async removeFromSmartRoutingQueue(
+    appType: string,
+    providerId: string,
+    queueType: SmartRoutingQueueType,
+  ): Promise<void> {
+    return invoke("remove_from_smart_routing_queue", {
+      appType,
+      providerId,
+      queueType,
+    });
+  },
+
+  // 获取可添加到智能路由队列的供应商
+  async getAvailableProvidersForSmartRouting(
+    appType: string,
+  ): Promise<Provider[]> {
+    return invoke("get_available_providers_for_smart_routing", { appType });
   },
 };

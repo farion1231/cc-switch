@@ -133,6 +133,9 @@ impl Database {
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
             default_cost_multiplier TEXT NOT NULL DEFAULT '1',
             pricing_model_source TEXT NOT NULL DEFAULT 'response',
+            smart_routing_enabled INTEGER NOT NULL DEFAULT 0,
+            main_request_queue TEXT NOT NULL DEFAULT '[]',
+            others_request_queue TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -429,6 +432,11 @@ impl Database {
                         log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
+                    }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（添加智能路由配置字段）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1195,6 +1203,58 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11 迁移：添加智能路由配置字段
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        // 如果 proxy_config 表不存在（极老的 schema），先创建它
+        if !Self::table_exists(conn, "proxy_config")? {
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS proxy_config (
+                    app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+                    proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                    listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+                    enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                    max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                    streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                    circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                    circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                    circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                    default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                    pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                    smart_routing_enabled INTEGER NOT NULL DEFAULT 0,
+                    main_request_queue TEXT NOT NULL DEFAULT '[]',
+                    others_request_queue TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("创建 proxy_config 表失败: {e}")))?;
+            log::info!("v10 -> v11: 创建 proxy_config 表（旧 schema 中缺失）");
+            return Ok(());
+        }
+
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "smart_routing_enabled",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "main_request_queue",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "others_request_queue",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+
+        log::info!("v10 -> v11 迁移完成：已添加智能路由配置字段");
         Ok(())
     }
 

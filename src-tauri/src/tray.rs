@@ -325,9 +325,37 @@ pub fn create_tray_menu(
         } else {
             // 有供应商：构建子菜单
             let current_name = providers.get(&current_id).map(|p| p.name.as_str());
-            let submenu_label = match current_name {
-                Some(name) => format!("{} · {}", section.header_label, name),
-                None => section.header_label.to_string(),
+
+            // 智能路由启用时，显示 Main/Others 双 Provider
+            let smart_routing_label = if is_proxy_running {
+                match futures::executor::block_on(
+                    app_state.db.get_proxy_config_for_app(app_type_str),
+                ) {
+                    Ok(cfg) if cfg.smart_routing_enabled => {
+                        let main_name = cfg
+                            .main_request_queue
+                            .first()
+                            .and_then(|id| providers.get(id))
+                            .map(|p| p.name.as_str())
+                            .unwrap_or("—");
+                        let others_name = cfg
+                            .others_request_queue
+                            .first()
+                            .and_then(|id| providers.get(id))
+                            .map(|p| p.name.as_str())
+                            .unwrap_or("—");
+                        Some(format!("M:{} | A:{}", main_name, others_name))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+            let submenu_label = match (current_name, smart_routing_label) {
+                (_, Some(sr_label)) => format!("{} · {}", section.header_label, sr_label),
+                (Some(name), None) => format!("{} · {}", section.header_label, name),
+                (None, None) => section.header_label.to_string(),
             };
             let submenu_id = format!("submenu_{}", app_type_str);
 

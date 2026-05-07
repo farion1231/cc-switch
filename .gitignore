@@ -29,3 +29,6 @@ copilot-api
 .history
 CODEBUDDY.md
 .github
+.opencode/
+.plan/
+AGENTS.md

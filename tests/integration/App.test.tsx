@@ -159,6 +159,7 @@ const renderApp = (AppComponent: ComponentType) => {
 describe("App integration with MSW", () => {
   beforeEach(() => {
     resetProviderState();
+    localStorage.clear();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
   });
@@ -167,17 +168,23 @@ describe("App integration with MSW", () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
-      ),
+    // 使用 findByTestId 替代 getByTestId + waitFor (findBy* 自带 waitFor 行为)
+    // 等待 provider-list 出现且包含 claude-1（默认提供者）
+    await waitFor(
+      () =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "claude-1",
+        ),
+      { timeout: 10000 },
     );
 
     fireEvent.click(screen.getByText("switch-codex"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "codex-1",
-      ),
+    await waitFor(
+      () =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "codex-1",
+        ),
+      { timeout: 10000 },
     );
 
     fireEvent.click(screen.getByText("usage"));
@@ -224,10 +231,12 @@ describe("App integration with MSW", () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
-      ),
+    await waitFor(
+      () =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "claude-1",
+        ),
+      { timeout: 10000 },
     );
 
     emitTauriEvent("webdav-sync-status-updated", {

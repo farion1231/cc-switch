@@ -327,6 +327,7 @@ export function ProxyPanel({
                 </p>
               </div>
 
+              {/* Provider info: show dual providers when smart routing active */}
               <div className="pt-3 border-t border-border space-y-2">
                 <p className="text-xs text-muted-foreground">
                   {t("provider.inUse")}
@@ -335,11 +336,20 @@ export function ProxyPanel({
                   <div className="grid gap-2 sm:grid-cols-2">
                     {status.active_targets.map((target) => (
                       <div
-                        key={target.app_type}
+                        key={`${target.app_type}-${target.provider_id}-${target.request_type ?? "default"}`}
                         className="flex items-center justify-between rounded-md border border-border bg-background/60 px-2 py-1.5 text-xs"
                       >
                         <span className="text-muted-foreground">
                           {target.app_type}
+                          {target.request_type && status.smart_routing_active
+                            ? target.request_type === "main"
+                              ? t("proxy.smartRouting.mainProvider", {
+                                  defaultValue: " 主对话",
+                                })
+                              : t("proxy.smartRouting.othersProvider", {
+                                  defaultValue: " 子Agent",
+                                })
+                            : ""}
                         </span>
                         <span
                           className="ml-2 font-medium truncate text-foreground"
@@ -632,7 +642,8 @@ function ProviderQueueGroup({
   status,
 }: ProviderQueueGroupProps) {
   // 查找该应用类型的当前活跃目标
-  const activeTarget = status.active_targets?.find(
+  // 智能路由启用时可能有两个 entry (main + others)，都查找出来
+  const activeTargets = status.active_targets?.filter(
     (t) => t.app_type === appType,
   );
 
@@ -648,15 +659,19 @@ function ProviderQueueGroup({
 
       {/* 供应商列表 */}
       <div className="space-y-1.5">
-        {targets.map((target, index) => (
-          <ProviderQueueItem
-            key={target.id}
-            provider={target}
-            priority={index + 1}
-            appType={appType}
-            isCurrent={activeTarget?.provider_id === target.id}
-          />
-        ))}
+        {targets.map((target, index) => {
+          // 检查该 Provider 是否在 active_targets 中（可能对应 Main 或 Others）
+          const matchingActive = activeTargets?.find((t) => t.provider_id === target.id);
+          return (
+            <ProviderQueueItem
+              key={target.id}
+              provider={target}
+              priority={index + 1}
+              appType={appType}
+              isCurrent={!!matchingActive}
+            />
+          );
+        })}
       </div>
     </div>
   );

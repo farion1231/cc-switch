@@ -32,8 +32,8 @@ pub struct ProxyState {
     pub config: Arc<RwLock<ProxyConfig>>,
     pub status: Arc<RwLock<ProxyStatus>>,
     pub start_time: Arc<RwLock<Option<std::time::Instant>>>,
-    /// 每个应用类型当前使用的 provider (app_type -> (provider_id, provider_name))
-    pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+    /// 每个应用类型当前使用的 provider（支持智能路由 Main/Others 两个方向）
+    pub current_providers: Arc<RwLock<std::collections::HashMap<String, SmartRoutingTarget>>>,
     /// 共享的 ProviderRouter（持有熔断器状态，跨请求保持）
     pub provider_router: Arc<ProviderRouter>,
     /// Gemini Native shadow state，用于 thoughtSignature / tool call 回放
@@ -252,15 +252,56 @@ impl ProxyServer {
         }
 
         // 从 current_providers HashMap 获取每个应用类型当前正在使用的 provider
+        // 智能路由启用时，每个 appType 可能有 Main 和 Others 两个方向
         let current_providers = self.state.current_providers.read().await;
-        status.active_targets = current_providers
-            .iter()
-            .map(|(app_type, (provider_id, provider_name))| ActiveTarget {
-                app_type: app_type.clone(),
-                provider_id: provider_id.clone(),
-                provider_name: provider_name.clone(),
-            })
-            .collect();
+        let mut active_targets: Vec<ActiveTarget> = Vec::new();
+
+        // 先读取所有 app 的智能路由数据库配置（用于校验内存数据一致性）
+        let sr_configs: std::collections::HashMap<String, bool> = {
+            let mut map = std::collections::HashMap::new();
+            for app_type_str in &["claude", "codex", "gemini"] {
+                if let Ok(config) = self.state.db.get_proxy_config_for_app(app_type_str).await {
+                    map.insert(app_type_str.to_string(), config.smart_routing_enabled);
+                }
+            }
+            map
+        };
+
+        for (app_type, target) in current_providers.iter() {
+            let sr_enabled = sr_configs.get(app_type).copied().unwrap_or(false);
+
+            if let Some((main_id, main_name)) = &target.main_provider {
+                // 只有当 others_provider 存在 且 DB 中智能路由确实开启时，才标记 request_type=Main
+                let has_others = sr_enabled && target.others_provider.is_some();
+                active_targets.push(ActiveTarget {
+                    app_type: app_type.clone(),
+                    provider_id: main_id.clone(),
+                    provider_name: main_name.clone(),
+                    request_type: if has_others {
+                        Some(RequestType::Main)
+                    } else {
+                        None
+                    },
+                });
+            }
+            // 只有当 DB 中智能路由确实开启时，才输出 others_provider
+            if sr_enabled {
+                if let Some((others_id, others_name)) = &target.others_provider {
+                    active_targets.push(ActiveTarget {
+                        app_type: app_type.clone(),
+                        provider_id: others_id.clone(),
+                        provider_name: others_name.clone(),
+                        request_type: Some(RequestType::Others),
+                    });
+                }
+            }
+        }
+
+        // 检查是否任一 appType 启用了智能路由
+        let any_smart_routing = sr_configs.values().any(|&v| v);
+
+        status.active_targets = active_targets;
+        status.smart_routing_active = any_smart_routing;
 
         status
     }
@@ -269,12 +310,35 @@ impl ProxyServer {
     ///
     /// 注意：这不代表该供应商一定已经处理过请求，而是用于“热切换/启用故障转移立即切 P1”
     /// 等场景下，让 UI 能立刻反映最新目标。
-    pub async fn set_active_target(&self, app_type: &str, provider_id: &str, provider_name: &str) {
+    pub async fn set_active_target(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        provider_name: &str,
+        request_type: Option<RequestType>,
+    ) {
         let mut current_providers = self.state.current_providers.write().await;
-        current_providers.insert(
-            app_type.to_string(),
-            (provider_id.to_string(), provider_name.to_string()),
-        );
+        let entry = current_providers.entry(app_type.to_string()).or_default();
+        match request_type {
+            Some(RequestType::Main) | None => {
+                entry.main_provider = Some((provider_id.to_string(), provider_name.to_string()));
+            }
+            Some(RequestType::Others) => {
+                entry.others_provider =
+                    Some((provider_id.to_string(), provider_name.to_string()));
+            }
+        }
+    }
+
+    /// 清除智能路由状态（关闭智能路由时调用）
+    ///
+    /// 将指定 app 的 others_provider 清空，防止 UI 显示 stale 的智能路由双 Provider 状态。
+    pub async fn clear_smart_routing_state(&self, app_type: &str) {
+        let mut current_providers = self.state.current_providers.write().await;
+        if let Some(entry) = current_providers.get_mut(app_type) {
+            entry.others_provider = None;
+            log::debug!("[{app_type}] Cleared smart routing in-memory state");
+        }
     }
 
     fn build_router(&self) -> Router {

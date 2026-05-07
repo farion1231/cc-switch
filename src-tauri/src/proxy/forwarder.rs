@@ -17,7 +17,7 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig, RequestType, SmartRoutingTarget},
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState};
@@ -45,7 +45,7 @@ pub struct RequestForwarder {
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
     status: Arc<RwLock<ProxyStatus>>,
-    current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+    current_providers: Arc<RwLock<std::collections::HashMap<String, SmartRoutingTarget>>>,
     gemini_shadow: Arc<GeminiShadowStore>,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
@@ -63,6 +63,8 @@ pub struct RequestForwarder {
     copilot_optimizer_config: CopilotOptimizerConfig,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
+    /// 请求类型（用于智能路由状态展示）
+    request_type: Option<RequestType>,
 }
 
 impl RequestForwarder {
@@ -71,7 +73,7 @@ impl RequestForwarder {
         router: Arc<ProviderRouter>,
         non_streaming_timeout: u64,
         status: Arc<RwLock<ProxyStatus>>,
-        current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+        current_providers: Arc<RwLock<std::collections::HashMap<String, SmartRoutingTarget>>>,
         gemini_shadow: Arc<GeminiShadowStore>,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
@@ -82,6 +84,7 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        request_type: Option<RequestType>,
     ) -> Self {
         Self {
             router,
@@ -96,6 +99,7 @@ impl RequestForwarder {
             optimizer_config,
             copilot_optimizer_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
+            request_type,
         }
     }
 
@@ -211,10 +215,15 @@ impl RequestForwarder {
                     // 更新当前应用类型使用的 provider
                     {
                         let mut current_providers = self.current_providers.write().await;
-                        current_providers.insert(
-                            app_type_str.to_string(),
-                            (provider.id.clone(), provider.name.clone()),
-                        );
+                        let entry = current_providers.entry(app_type_str.to_string()).or_default();
+                        match self.request_type {
+                            Some(RequestType::Others) => {
+                                entry.others_provider = Some((provider.id.clone(), provider.name.clone()));
+                            }
+                            _ => {
+                                entry.main_provider = Some((provider.id.clone(), provider.name.clone()));
+                            }
+                        }
                     }
 
                     // 更新成功统计
@@ -343,10 +352,15 @@ impl RequestForwarder {
                                         {
                                             let mut current_providers =
                                                 self.current_providers.write().await;
-                                            current_providers.insert(
-                                                app_type_str.to_string(),
-                                                (provider.id.clone(), provider.name.clone()),
-                                            );
+                                            let entry = current_providers.entry(app_type_str.to_string()).or_default();
+                                            match self.request_type {
+                                                Some(RequestType::Others) => {
+                                                    entry.others_provider = Some((provider.id.clone(), provider.name.clone()));
+                                                }
+                                                _ => {
+                                                    entry.main_provider = Some((provider.id.clone(), provider.name.clone()));
+                                                }
+                                            }
                                         }
 
                                         // 更新成功统计
@@ -540,10 +554,15 @@ impl RequestForwarder {
                                     {
                                         let mut current_providers =
                                             self.current_providers.write().await;
-                                        current_providers.insert(
-                                            app_type_str.to_string(),
-                                            (provider.id.clone(), provider.name.clone()),
-                                        );
+                                        let entry = current_providers.entry(app_type_str.to_string()).or_default();
+                                        match self.request_type {
+                                            Some(RequestType::Others) => {
+                                                entry.others_provider = Some((provider.id.clone(), provider.name.clone()));
+                                            }
+                                            _ => {
+                                                entry.main_provider = Some((provider.id.clone(), provider.name.clone()));
+                                            }
+                                        }
                                     }
 
                                     {

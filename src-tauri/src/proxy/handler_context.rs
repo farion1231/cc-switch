@@ -7,8 +7,9 @@ use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
+    request_classifier::classify_request_type,
     server::ProxyState,
-    types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
+    types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig, RequestType},
     ProxyError,
 };
 use axum::http::HeaderMap;
@@ -63,6 +64,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 请求类型（智能路由时使用）
+    pub request_type: Option<RequestType>,
 }
 
 impl RequestContext {
@@ -124,17 +127,49 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
-            .provider_router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
-                    ProxyError::AllProvidersCircuitOpen
-                }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
-                _ => ProxyError::DatabaseError(e.to_string()),
-            })?;
+        //
+        // 智能路由：如果启用，根据请求类型选择不同的供应商队列
+        let request_type = if app_config.smart_routing_enabled {
+            let rt = classify_request_type(body, headers, &copilot_optimizer_config);
+            log::debug!(
+                "[{}] Smart routing enabled, request type: {:?}",
+                tag,
+                rt
+            );
+            Some(rt)
+        } else {
+            None
+        };
+
+        let providers = if let Some(ref rt) = request_type {
+            state
+                .provider_router
+                .select_providers_for_request(app_type_str, rt.clone())
+                .await
+                .map_err(|e| match e {
+                    crate::error::AppError::AllProvidersCircuitOpen => {
+                        ProxyError::AllProvidersCircuitOpen
+                    }
+                    crate::error::AppError::NoProvidersConfigured => {
+                        ProxyError::NoProvidersConfigured
+                    }
+                    _ => ProxyError::DatabaseError(e.to_string()),
+                })?
+        } else {
+            state
+                .provider_router
+                .select_providers(app_type_str)
+                .await
+                .map_err(|e| match e {
+                    crate::error::AppError::AllProvidersCircuitOpen => {
+                        ProxyError::AllProvidersCircuitOpen
+                    }
+                    crate::error::AppError::NoProvidersConfigured => {
+                        ProxyError::NoProvidersConfigured
+                    }
+                    _ => ProxyError::DatabaseError(e.to_string()),
+                })?
+        };
 
         let provider = providers
             .first()
@@ -164,6 +199,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            request_type,
         })
     }
 
@@ -228,6 +264,7 @@ impl RequestContext {
             self.rectifier_config.clone(),
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
+            self.request_type.clone(),
         )
     }
 

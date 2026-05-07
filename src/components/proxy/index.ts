@@ -3,3 +3,4 @@
  */
 
 export { ProxyPanel } from "./ProxyPanel";
+export { SmartRoutingPanel } from "./SmartRoutingPanel";

@@ -192,7 +192,6 @@ impl Database {
         &self,
         app_type: &str,
     ) -> Result<AppProxyConfig, AppError> {
-        // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
         let app_type_owned = app_type.to_string();
         let result = {
             let conn = lock_conn!(self.conn);
@@ -200,10 +199,17 @@ impl Database {
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
+                        circuit_error_rate_threshold, circuit_min_requests,
+                        COALESCE(smart_routing_enabled, 0),
+                        COALESCE(main_request_queue, '[]'),
+                        COALESCE(others_request_queue, '[]')
                  FROM proxy_config WHERE app_type = ?1",
                 [app_type],
                 |row| {
+                    let main_queue_str: String = row.get::<_, String>(13)?;
+                    let others_queue_str: String = row.get::<_, String>(14)?;
+                    let main_request_queue: Vec<String> = serde_json::from_str(&main_queue_str).unwrap_or_default();
+                    let others_request_queue: Vec<String> = serde_json::from_str(&others_queue_str).unwrap_or_default();
                     Ok(AppProxyConfig {
                         app_type: row.get(0)?,
                         enabled: row.get::<_, i32>(1)? != 0,
@@ -217,11 +223,13 @@ impl Database {
                         circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
                         circuit_error_rate_threshold: row.get(10)?,
                         circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                        smart_routing_enabled: row.get::<_, i32>(12)? != 0,
+                        main_request_queue,
+                        others_request_queue,
                     })
                 },
             )
         };
-        // conn 已在 block 结束时释放
 
         match result {
             Ok(config) => Ok(config),
@@ -241,6 +249,9 @@ impl Database {
                     circuit_timeout_seconds: 60,
                     circuit_error_rate_threshold: 0.6,
                     circuit_min_requests: 10,
+                    smart_routing_enabled: false,
+                    main_request_queue: vec![],
+                    others_request_queue: vec![],
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -252,6 +263,11 @@ impl Database {
         &self,
         config: AppProxyConfig,
     ) -> Result<(), AppError> {
+        let main_queue_json = serde_json::to_string(&config.main_request_queue)
+            .map_err(|e| AppError::Database(format!("序列化 main_request_queue 失败: {e}")))?;
+        let others_queue_json = serde_json::to_string(&config.others_request_queue)
+            .map_err(|e| AppError::Database(format!("序列化 others_request_queue 失败: {e}")))?;
+
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -267,6 +283,9 @@ impl Database {
                 circuit_timeout_seconds = ?10,
                 circuit_error_rate_threshold = ?11,
                 circuit_min_requests = ?12,
+                smart_routing_enabled = ?13,
+                main_request_queue = ?14,
+                others_request_queue = ?15,
                 updated_at = datetime('now')
              WHERE app_type = ?1",
             rusqlite::params![
@@ -282,6 +301,9 @@ impl Database {
                 config.circuit_timeout_seconds as i32,
                 config.circuit_error_rate_threshold,
                 config.circuit_min_requests as i32,
+                if config.smart_routing_enabled { 1 } else { 0 },
+                main_queue_json,
+                others_queue_json,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

@@ -27,12 +27,14 @@ export interface ProxyStatus {
   last_error: string | null;
   failover_count: number;
   active_targets?: ActiveTarget[];
+  smart_routing_active?: boolean;
 }
 
 export interface ActiveTarget {
   app_type: string;
   provider_name: string;
   provider_id: string;
+  request_type?: SmartRoutingQueueType | null;
 }
 
 export interface ProxyServerInfo {
@@ -114,6 +116,9 @@ export interface FailoverQueueItem {
   sortIndex?: number;
 }
 
+// 智能路由队列类型
+export type SmartRoutingQueueType = "main" | "others";
+
 // 全局代理配置（统一字段，三行镜像）
 export interface GlobalProxyConfig {
   proxyEnabled: boolean;
@@ -136,4 +141,7 @@ export interface AppProxyConfig {
   circuitTimeoutSeconds: number;
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
+  smartRoutingEnabled: boolean;
+  mainRequestQueue: string[];
+  othersRequestQueue: string[];
 }

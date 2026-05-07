@@ -7,6 +7,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::types::RequestType;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -199,6 +200,112 @@ impl ProviderRouter {
         for breaker in breakers.values() {
             breaker.update_config(config.clone()).await;
         }
+    }
+
+    /// 根据请求类型选择供应商（智能路由）
+    ///
+    /// 当智能路由启用时，根据请求类型选择对应的供应商队列：
+    /// - Main: 使用 main_request_queue
+    /// - Others: 使用 others_request_queue
+    ///
+    /// 如果对应队列为空，回退到默认的 select_providers 行为。
+    pub async fn select_providers_for_request(
+        &self,
+        app_type: &str,
+        request_type: RequestType,
+    ) -> Result<Vec<Provider>, AppError> {
+        let config = self.db.get_proxy_config_for_app(app_type).await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if !config.smart_routing_enabled {
+            return self.select_providers(app_type).await;
+        }
+
+        let queue = match request_type {
+            RequestType::Main => &config.main_request_queue,
+            RequestType::Others => &config.others_request_queue,
+        };
+
+        if queue.is_empty() {
+            log::debug!(
+                "[{app_type}] Smart routing queue for {:?} is empty, falling back to default",
+                request_type
+            );
+            return self.select_providers(app_type).await;
+        }
+
+        log::info!(
+            "[{app_type}] Smart routing: {:?} request using queue with {} providers",
+            request_type,
+            queue.len()
+        );
+
+        self.select_from_queue(app_type, queue).await
+    }
+
+    /// 从指定的供应商 ID 队列中选择可用供应商
+    async fn select_from_queue(
+        &self,
+        app_type: &str,
+        queue: &[String],
+    ) -> Result<Vec<Provider>, AppError> {
+        let mut result = Vec::new();
+        let mut skipped_not_found = 0usize;
+        let mut skipped_circuit_open = 0usize;
+        let all_providers = self.db.get_all_providers(app_type)?;
+
+        for provider_id in queue {
+            let Some(provider) = all_providers.get(provider_id).cloned() else {
+                log::warn!("[{app_type}] Smart routing: Provider {provider_id} not found, skipping");
+                skipped_not_found += 1;
+                continue;
+            };
+
+            let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
+                Ok(cfg) => cfg.auto_failover_enabled,
+                Err(_) => false,
+            };
+
+            if auto_failover_enabled {
+                let circuit_key = format!("{app_type}:{}", provider.id);
+                let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+                if !breaker.is_available().await {
+                    log::debug!(
+                        "[{app_type}] Smart routing: Provider {} is circuit-open, skipping",
+                        provider.name
+                    );
+                    skipped_circuit_open += 1;
+                    continue;
+                }
+            }
+
+            result.push(provider);
+        }
+
+        if result.is_empty() {
+            if skipped_not_found > 0 || skipped_circuit_open > 0 {
+                log::warn!(
+                    "[{app_type}] Smart routing: queue has {} providers, {} not found, {} circuit-open — falling back to default",
+                    queue.len(),
+                    skipped_not_found,
+                    skipped_circuit_open
+                );
+            } else {
+                log::warn!(
+                    "[{app_type}] Smart routing: queue is empty (0 providers) — falling back to default"
+                );
+            }
+            return self.select_providers(app_type).await;
+        }
+
+        log::debug!(
+            "[{app_type}] Smart routing: selected {} available providers from queue ({} not-found, {} circuit-open)",
+            result.len(),
+            skipped_not_found,
+            skipped_circuit_open
+        );
+
+        Ok(result)
     }
 
     /// 获取熔断器状态
@@ -508,5 +615,174 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    // ==================== 智能路由测试 ====================
+
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_disabled_falls_back_to_default() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Main)
+            .await
+            .unwrap();
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "a");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_main_queue_selection() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+
+        // 配置智能路由：Main 队列 = [b], Others 队列 = [a]
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.main_request_queue = vec!["b".to_string()];
+        config.others_request_queue = vec!["a".to_string()];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // Main 请求 → 使用 main_request_queue → 返回 b
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Main)
+            .await
+            .unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "b");
+
+        // Others 请求 → 使用 others_request_queue → 返回 a
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Others)
+            .await
+            .unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "a");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_empty_queue_falls_back() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        // 启用智能路由但队列为空
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.main_request_queue = vec![];
+        config.others_request_queue = vec![];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Main)
+            .await
+            .unwrap();
+
+        // 空队列 → 回退到默认 select_providers → 返回 current provider
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "a");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_provider_not_found_skipped() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_b).unwrap();
+
+        // 智能路由队列包含不存在的 provider "x"
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.main_request_queue = vec!["x".to_string(), "b".to_string()];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Main)
+            .await
+            .unwrap();
+
+        // 跳过不存在的 x，返回 b
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_all_circuit_broken_falls_back() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 配置熔断器：1 次失败即熔断，超时很长（不会自动恢复）
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 999999,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        // 智能路由：Others 队列 = [b]，但 b 将熔断
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.auto_failover_enabled = true;
+        config.others_request_queue = vec!["b".to_string()];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        // 把 a 加入故障转移队列作为回退
+        db.add_to_failover_queue("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 让 b 熔断
+        router
+            .record_result("b", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // Others 请求：b 已熔断 → 智能路由队列全部不可用 → 回退到默认故障转移队列 [a]
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Others)
+            .await
+            .unwrap();
+        assert!(!providers.is_empty());
+        // 回退到了故障转移队列的第一个可用 provider
+        assert_eq!(providers[0].id, "a");
     }
 }

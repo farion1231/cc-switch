@@ -115,16 +115,47 @@ pub fn classify_request(
 
 /// 检测是否为 warmup/探针请求（适合降级到小模型）。
 ///
-/// 与参考实现对齐，三个条件同时满足：
-/// 1. 请求头有 `anthropic-beta`（Claude Code warmup 探针的标志）
-/// 2. 无 tools 定义
-/// 3. 非 compact 请求
+/// 兼容三种 API 格式：
+/// - Claude Code (Anthropic): 请求头有 `anthropic-beta`，无 tools，非 compact
+/// - Codex (OpenAI): 无 tools 定义且 max_tokens ≤ 50（短探针请求）
+/// - Gemini (Google): generationConfig.maxOutputTokens ≤ 50（短探针请求）
+///
+/// 非 compact 请求是必要条件
 fn is_warmup_request(body: &Value, has_anthropic_beta: bool, is_compact: bool) -> bool {
-    if !has_anthropic_beta || is_compact {
+    if is_compact {
         return false;
     }
-    // 无工具定义
-    !matches!(body.get("tools"), Some(tools) if tools.is_array() && !tools.as_array().unwrap().is_empty())
+
+    // Anthropic/Claude Code: warmup 以 anthropic-beta header + 无 tools 为特征
+    if has_anthropic_beta {
+        return !matches!(
+            body.get("tools"),
+            Some(tools) if tools.is_array() && !tools.as_array().unwrap().is_empty()
+        );
+    }
+
+    // Codex/OpenAI: warmup 以极小 max_tokens 为特征
+    if let Some(max_tokens) = body.get("max_tokens").and_then(|v| v.as_u64()) {
+        if max_tokens <= 50 {
+            let has_tools = matches!(
+                body.get("tools"),
+                Some(tools) if tools.is_array() && !tools.as_array().unwrap().is_empty()
+            );
+            return !has_tools;
+        }
+    }
+
+    // Gemini: generationConfig.maxOutputTokens ≤ 50 为探针
+    if let Some(gen_config) = body.get("generationConfig") {
+        if let Some(max_tokens) = gen_config
+            .get("maxOutputTokens")
+            .and_then(|v| v.as_u64())
+        {
+            return max_tokens <= 50;
+        }
+    }
+
+    false
 }
 
 /// 检测是否为 Claude Code 上下文压缩/compact 请求。
@@ -1539,5 +1570,94 @@ mod tests {
         assert_eq!(content[0]["text"], "A");
         assert_eq!(content[1]["type"], "tool_use");
         assert_eq!(content[2]["text"], "B");
+    }
+
+    // === warmup 检测兼容性测试（Codex/Gemini） ===
+
+    #[test]
+    fn test_warmup_codex_openai_small_max_tokens() {
+        // Codex/OpenAI 格式：max_tokens ≤ 50 且无 tools → warmup
+        let body = json!({
+            "model": "gpt-5",
+            "messages": [
+                {"role": "user", "content": "ping"}
+            ],
+            "max_tokens": 10
+        });
+        // has_anthropic_beta=false, 但 max_tokens=10 → warmup
+        let result = classify_request(&body, false, true, false);
+        assert!(result.is_warmup);
+    }
+
+    #[test]
+    fn test_warmup_codex_openai_large_max_tokens_not_warmup() {
+        // Codex/OpenAI 格式：max_tokens 很大 → 不是 warmup
+        let body = json!({
+            "model": "gpt-5",
+            "messages": [
+                {"role": "user", "content": "Write a detailed report"}
+            ],
+            "max_tokens": 4096
+        });
+        let result = classify_request(&body, false, true, false);
+        assert!(!result.is_warmup);
+    }
+
+    #[test]
+    fn test_warmup_codex_openai_with_tools_not_warmup() {
+        // Codex/OpenAI 格式：有 tools → 不是 warmup（即使 max_tokens 很小）
+        let body = json!({
+            "model": "gpt-5",
+            "tools": [{"type": "function", "function": {"name": "search"}}],
+            "messages": [
+                {"role": "user", "content": "ping"}
+            ],
+            "max_tokens": 10
+        });
+        let result = classify_request(&body, false, true, false);
+        assert!(!result.is_warmup);
+    }
+
+    #[test]
+    fn test_warmup_gemini_small_max_output_tokens() {
+        // Gemini 格式：generationConfig.maxOutputTokens ≤ 50 → warmup
+        let body = json!({
+            "contents": [
+                {"role": "user", "parts": [{"text": "ping"}]}
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 10,
+                "temperature": 0.0
+            }
+        });
+        let result = classify_request(&body, false, true, false);
+        assert!(result.is_warmup);
+    }
+
+    #[test]
+    fn test_warmup_gemini_large_max_output_tokens_not_warmup() {
+        // Gemini 格式：maxOutputTokens 很大 → 不是 warmup
+        let body = json!({
+            "contents": [
+                {"role": "user", "parts": [{"text": "Write code"}]}
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 8192
+            }
+        });
+        let result = classify_request(&body, false, true, false);
+        assert!(!result.is_warmup);
+    }
+
+    #[test]
+    fn test_warmup_gemini_no_generation_config_not_warmup() {
+        // Gemini 格式：没有 generationConfig → 不是 warmup
+        let body = json!({
+            "contents": [
+                {"role": "user", "parts": [{"text": "Hello"}]}
+            ]
+        });
+        let result = classify_request(&body, false, true, false);
+        assert!(!result.is_warmup);
     }
 }
