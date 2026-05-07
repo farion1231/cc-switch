@@ -35,10 +35,12 @@ pub fn anthropic_to_responses(
     // system → instructions (Responses API 使用 instructions 字段)
     if let Some(system) = body.get("system") {
         let instructions = if let Some(text) = system.as_str() {
-            text.to_string()
+            super::transform::strip_leading_anthropic_billing_header(text).to_string()
         } else if let Some(arr) = system.as_array() {
             arr.iter()
                 .filter_map(|msg| msg.get("text").and_then(|t| t.as_str()))
+                .map(super::transform::strip_leading_anthropic_billing_header)
+                .filter(|text| !text.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n\n")
         } else {
@@ -612,6 +614,48 @@ mod tests {
     }
 
     #[test]
+    fn test_anthropic_to_responses_strips_leading_billing_header_from_system_string() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "system": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n\nYou are a helpful assistant.",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["instructions"], "You are a helpful assistant.");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_strips_billing_header_with_crlf() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "system": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\r\n\r\nYou are a helpful assistant.",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["instructions"], "You are a helpful assistant.");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_keeps_non_leading_billing_header_text() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "system": "Keep this literal:\nx-anthropic-billing-header: example",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(
+            result["instructions"],
+            "Keep this literal:\nx-anthropic-billing-header: example"
+        );
+    }
+
+    #[test]
     fn test_anthropic_to_responses_with_system_array() {
         let input = json!({
             "model": "gpt-4o",
@@ -625,6 +669,41 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["instructions"], "Part 1\n\nPart 2");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_strips_billing_header_from_system_array_parts() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n"},
+                {"type": "text", "text": "Stable prompt"}
+            ],
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["instructions"], "Stable prompt");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_preserves_prompt_after_billing_header_in_same_part() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n\nStable prompt part 1"},
+                {"type": "text", "text": "Stable prompt part 2"}
+            ],
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(
+            result["instructions"],
+            "Stable prompt part 1\n\nStable prompt part 2"
+        );
     }
 
     #[test]

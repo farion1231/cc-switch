@@ -35,7 +35,6 @@ const APP_FILTER_OPTIONS: AppTypeFilter[] = [
   "claude",
   "codex",
   "gemini",
-  "hermes",
 ];
 
 export function UsageDashboard() {

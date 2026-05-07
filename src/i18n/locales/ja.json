@@ -1121,8 +1121,7 @@
       "all": "すべて",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini",
-      "hermes": "Hermes"
+      "gemini": "Gemini"
     },
     "dataSources": "データソース",
     "dataSource": {
@@ -1130,8 +1129,7 @@
       "session_log": "セッションログ",
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
-      "gemini_session": "Gemini セッション",
-      "hermes_session": "Hermes セッション"
+      "gemini_session": "Gemini セッション"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",
@@ -2296,6 +2294,9 @@
     }
   },
   "universalProvider": {
+    "duplicate": "複製",
+    "duplicatedAndSynced": "統合プロバイダーを複製して同期しました",
+    "duplicateError": "統合プロバイダーの複製に失敗しました",
     "title": "統合プロバイダー",
     "description": "統合プロバイダーは Claude、Codex、Gemini の設定を同時に管理します。変更は有効なすべてのアプリに自動的に同期されます。",
     "add": "統合プロバイダーを追加",

@@ -957,10 +957,6 @@ pub fn run() {
                         "Gemini usage initial sync",
                         crate::services::session_usage_gemini::sync_gemini_usage(db),
                     );
-                    run_step(
-                        "Hermes usage initial sync",
-                        crate::services::session_usage_hermes::sync_hermes_usage(db),
-                    );
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -980,10 +976,6 @@ pub fn run() {
                         run_step(
                             "Gemini usage periodic sync",
                             crate::services::session_usage_gemini::sync_gemini_usage(db),
-                        );
-                        run_step(
-                            "Hermes usage periodic sync",
-                            crate::services::session_usage_hermes::sync_hermes_usage(db),
                         );
                     }
                 });

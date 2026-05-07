@@ -136,10 +136,10 @@ impl Database {
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 初始化三行数据（每应用不同默认值）
+        // 初始化每应用默认配置（6 行：claude/codex/gemini/opencode/openclaw/hermes）
         //
         // 兼容旧数据库：
-        // - 老版本 proxy_config 是单例表（没有 app_type 列），此时不能执行三行 seed insert；
+        // - 老版本 proxy_config 是单例表（没有 app_type 列），此时不能执行 seed insert；
         // - 旧表会在 apply_schema_migrations() 中迁移为每应用一行结构后再插入。
         if Self::has_column(conn, "proxy_config", "app_type")? {
             conn.execute(
@@ -679,13 +679,13 @@ impl Database {
         // 重构 skills 表（添加 app_type 字段）
         Self::migrate_skills_table(conn)?;
 
-        // 重构 proxy_config 为三行结构（每应用独立配置）
+        // 重构 proxy_config 为每应用独立配置
         Self::migrate_proxy_config_to_per_app(conn)?;
 
         Ok(())
     }
 
-    /// 将 proxy_config 迁移为三行结构（每应用独立配置）
+    /// 将 proxy_config 迁移为每应用独立配置
     fn migrate_proxy_config_to_per_app(conn: &Connection) -> Result<(), AppError> {
         // 检查是否已经是新表结构（幂等性）
         if !Self::table_exists(conn, "proxy_config")? {
@@ -694,8 +694,8 @@ impl Database {
         }
 
         if Self::has_column(conn, "proxy_config", "app_type")? {
-            // 已经是三行结构，跳过迁移
-            log::info!("proxy_config 已经是三行结构，跳过迁移");
+            // 已经是每应用结构，跳过迁移
+            log::info!("proxy_config 已经是每应用结构，跳过迁移");
             return Ok(());
         }
 
@@ -807,7 +807,7 @@ impl Database {
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", [])?;
 
-        // 插入三行配置
+        // 插入每应用配置
         for (app, takeover, failover, retries, fb, idle, cb_f, cb_s, cb_t, cb_r, cb_m) in apps {
             conn.execute(
                 "INSERT INTO proxy_config_new (app_type, proxy_enabled, listen_address, listen_port, enable_logging,
@@ -832,7 +832,7 @@ impl Database {
             [],
         )?;
 
-        log::info!("proxy_config 已迁移为三行结构");
+        log::info!("proxy_config 已迁移为每应用结构");
         Ok(())
     }
 
