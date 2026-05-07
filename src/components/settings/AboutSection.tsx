@@ -41,10 +41,9 @@ interface ToolVersion {
   error: string | null;
   env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
   wsl_distro: string | null;
-  display_name?: string | null;
-  status_label?: string | null;
-  installed?: boolean | null;
 }
+
+type InstallActionState = "install" | "upgrade" | "installed";
 
 const TOOL_NAMES = ["claude"] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
@@ -87,8 +86,6 @@ const ENV_BADGE_CONFIG: Record<
 const ONE_CLICK_INSTALL_COMMANDS = `# Claude Code (Native install - recommended)
 curl -fsSL https://claude.ai/install.sh | bash`;
 
-const CURSOR_CLAUDE_TOOL_NAME = "cursor-claude";
-
 export function AboutSection({ isPortable }: AboutSectionProps) {
   // ... (use hooks as before) ...
   const { t } = useTranslation();
@@ -101,6 +98,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   // 环境诊断状态
   const [diagnosis, setDiagnosis] = useState<DiagnosisResult | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
+  const [isVerifyingInstall, setIsVerifyingInstall] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
 
   const {
@@ -328,23 +326,58 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   }, []);
 
   const handleInstall = useCallback(async (tool: string) => {
+    const toolLabel = tool === "claude" ? "Claude Code" : tool;
     setIsInstalling(true);
     try {
       const result = await doctorApi.installTool(tool);
-      const toolLabel = tool === "claude" ? "Claude Code" : tool;
-      if (result.success) {
-        toast.success(t("doctor.installSuccess", { tool: toolLabel }));
-        await runDiagnosis(); // 重新诊断
-      } else {
-        toast.error(t("doctor.installFailed", { error: result.message }));
+
+      if (result.already_installed || result.action === "none") {
+        toast.success(t("doctor.alreadyInstalled", { tool: toolLabel }));
+        await Promise.all([runDiagnosis(), loadAllToolVersions()]);
+        return;
       }
+
+      if (!result.success) {
+        toast.error(
+          result.message || t("doctor.installFailedGeneric"),
+          { closeButton: true },
+        );
+        await Promise.all([runDiagnosis(), loadAllToolVersions()]);
+        return;
+      }
+
+      setIsVerifyingInstall(true);
+      await Promise.all([runDiagnosis(), loadAllToolVersions()]);
+
+      if (result.verified === false) {
+        toast.error(t("doctor.installVerificationFailed"), {
+          closeButton: true,
+        });
+        return;
+      }
+
+      if (result.action === "upgrade" && result.installed_version) {
+        toast.success(
+          t("doctor.upgradeSuccess", {
+            tool: toolLabel,
+            version: result.installed_version,
+          }),
+          { closeButton: true },
+        );
+        return;
+      }
+
+      toast.success(t("doctor.installSuccess", { tool: toolLabel }), {
+        closeButton: true,
+      });
     } catch (error) {
       console.error("[AboutSection] Failed to install tool", error);
-      toast.error(t("doctor.installFailed", { error: String(error) }));
+      toast.error(t("doctor.installFailedGeneric"), { closeButton: true });
     } finally {
       setIsInstalling(false);
+      setIsVerifyingInstall(false);
     }
-  }, [t, runDiagnosis]);
+  }, [loadAllToolVersions, runDiagnosis, t]);
 
   const handleFix = useCallback(async () => {
     if (!diagnosis) return;
@@ -373,6 +406,36 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   }, [t, diagnosis, runDiagnosis]);
 
   const displayVersion = version ?? t("common.unknown");
+  const claudeTool = toolVersions.find((item) => item.name === "claude");
+  const claudeInstalled = Boolean(claudeTool?.version);
+  const claudeUpgradable = Boolean(
+    claudeTool?.version &&
+      claudeTool.latest_version &&
+      claudeTool.version !== claudeTool.latest_version,
+  );
+  const installActionState: InstallActionState = claudeInstalled
+    ? claudeUpgradable
+      ? "upgrade"
+      : "installed"
+    : "install";
+  const installButtonLabel = isInstalling
+    ? t("doctor.installing")
+    : isVerifyingInstall
+      ? t("doctor.verifying")
+      : installActionState === "upgrade"
+        ? t("settings.upgradeNow")
+        : installActionState === "installed"
+          ? t("settings.installed")
+          : t("settings.installNow");
+  const installHint = isInstalling
+    ? t("doctor.installing")
+    : isVerifyingInstall
+      ? t("settings.verifyingInstall")
+      : installActionState === "upgrade"
+        ? t("settings.upgradeReady")
+        : installActionState === "installed"
+          ? t("settings.installedStatusHint")
+          : t("settings.installReady");
 
   return (
     <motion.section
@@ -521,26 +584,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 px-1">
             {(() => {
-              const claudeTool = toolVersions.find((item) => item.name === "claude");
-              const cursorClaudeTool = toolVersions.find(
-                (item) => item.name === CURSOR_CLAUDE_TOOL_NAME,
-              );
-              const cards = [claudeTool, cursorClaudeTool].filter(
-                (tool): tool is ToolVersion => Boolean(tool),
-              );
+              const cards = claudeTool ? [claudeTool] : [];
 
               return cards.map((tool, index) => {
                 const toolName = tool.name as ToolName;
-                const displayName =
-                  tool.display_name ??
-                  (tool.name === CURSOR_CLAUDE_TOOL_NAME
-                    ? t("settings.cursorClaudeCheck")
-                    : "Claude Code");
-                const title =
-                  tool.status_label || tool.version || tool.error || t("common.unknown");
-                const versionText =
-                  tool.status_label ||
-                  (tool.version ? tool.version : tool.error || t("common.notInstalled"));
+                const displayName = "Claude Code";
+                const title = tool.version || tool.error || t("common.unknown");
+                const versionText = tool.version ? tool.version : tool.error || t("common.notInstalled");
 
                 return (
                   <motion.div
@@ -603,8 +653,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                       </div>
                       {isLoadingTools || (tool.name === "claude" && loadingTools[toolName]) ? (
                         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      ) : tool.installed ?? Boolean(tool.version) ? (
-                        tool.latest_version && tool.version && tool.version !== tool.latest_version ? (
+                      ) : tool.version ? (
+                        tool.latest_version && tool.version !== tool.latest_version ? (
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20">
                             {tool.latest_version}
                           </span>
@@ -640,24 +690,38 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           <div className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-4 space-y-3 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs text-muted-foreground">
-                {t("settings.oneClickInstallHint")}
+                {installHint}
               </p>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
                   onClick={() => handleInstall("claude")}
-                  disabled={isInstalling}
+                  disabled={
+                    isInstalling ||
+                    isVerifyingInstall ||
+                    installActionState === "installed"
+                  }
                   className="h-7 gap-1.5 text-xs"
                 >
-                  {isInstalling ? (
+                  {isInstalling || isVerifyingInstall ? (
                     <>
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      {t("doctor.installing")}
+                      {installButtonLabel}
+                    </>
+                  ) : installActionState === "upgrade" ? (
+                    <>
+                      <Download className="h-3.5 w-3.5" />
+                      {installButtonLabel}
+                    </>
+                  ) : installActionState === "installed" ? (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      {installButtonLabel}
                     </>
                   ) : (
                     <>
                       <Download className="h-3.5 w-3.5" />
-                      {t("settings.oneClickInstall")}
+                      {installButtonLabel}
                     </>
                   )}
                 </Button>

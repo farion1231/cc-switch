@@ -98,21 +98,17 @@ pub async fn get_skills_migration_result() -> Result<Option<SkillsMigrationPaylo
 
 #[derive(serde::Serialize)]
 pub struct ToolVersion {
-    name: String,
-    version: Option<String>,
-    latest_version: Option<String>, // 新增字段：最新版本
-    error: Option<String>,
+    pub name: String,
+    pub version: Option<String>,
+    pub latest_version: Option<String>, // 新增字段：最新版本
+    pub error: Option<String>,
     /// 工具运行环境: "windows", "wsl", "macos", "linux", "unknown"
-    env_type: String,
+    pub env_type: String,
     /// 当 env_type 为 "wsl" 时，返回该工具绑定的 WSL distro（用于按 distro 探测 shells）
-    wsl_distro: Option<String>,
-    display_name: Option<String>,
-    status_label: Option<String>,
-    installed: Option<bool>,
+    pub wsl_distro: Option<String>,
 }
 
 const VALID_TOOLS: [&str; 4] = ["claude", "codex", "gemini", "opencode"];
-const CURSOR_CLAUDE_TOOL: &str = "cursor-claude";
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,19 +161,13 @@ pub async fn get_tool_versions(
     {
         let requested: Vec<&str> = if let Some(tools) = tools.as_ref() {
             let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
-            let mut requested: Vec<&str> = VALID_TOOLS
+            VALID_TOOLS
                 .iter()
                 .copied()
                 .filter(|t| set.contains(t))
-                .collect();
-            if set.contains(CURSOR_CLAUDE_TOOL) {
-                requested.push(CURSOR_CLAUDE_TOOL);
-            }
-            requested
+                .collect()
         } else {
-            let mut requested = VALID_TOOLS.to_vec();
-            requested.push(CURSOR_CLAUDE_TOOL);
-            requested
+            VALID_TOOLS.to_vec()
         };
         let mut results = Vec::new();
 
@@ -201,10 +191,6 @@ async fn get_single_tool_version_impl(
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
 ) -> ToolVersion {
-    if tool == CURSOR_CLAUDE_TOOL {
-        return get_cursor_claude_status();
-    }
-
     debug_assert!(
         VALID_TOOLS.contains(&tool),
         "unexpected tool name in get_single_tool_version_impl: {tool}"
@@ -244,53 +230,7 @@ async fn get_single_tool_version_impl(
         error: local_error,
         env_type,
         wsl_distro,
-        display_name: None,
-        status_label: None,
-        installed: None,
     }
-}
-
-fn get_cursor_claude_status() -> ToolVersion {
-    let installed = is_cursor_claude_installed();
-    ToolVersion {
-        name: CURSOR_CLAUDE_TOOL.to_string(),
-        version: if installed {
-            Some("installed".to_string())
-        } else {
-            None
-        },
-        latest_version: None,
-        error: if installed {
-            None
-        } else {
-            Some("not installed".to_string())
-        },
-        env_type: tool_env_type_and_wsl_distro("claude").0,
-        wsl_distro: None,
-        display_name: None,
-        status_label: Some(if installed {
-            "installed".to_string()
-        } else {
-            "not installed".to_string()
-        }),
-        installed: Some(installed),
-    }
-}
-
-fn is_cursor_claude_installed() -> bool {
-    dirs::home_dir()
-        .map(|home| has_cursor_claude_extension_in(&home.join(".cursor").join("extensions")))
-        .unwrap_or(false)
-}
-
-fn has_cursor_claude_extension_in(extensions_dir: &Path) -> bool {
-    std::fs::read_dir(extensions_dir)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.filter_map(Result::ok))
-        .map(|entry| entry.file_name())
-        .map(|name| name.to_string_lossy().into_owned())
-        .any(|name| name == "anthropic.claude-code" || name.starts_with("anthropic.claude-code-"))
 }
 
 /// Helper function to fetch latest version from npm registry
@@ -1708,32 +1648,6 @@ mod tests {
             assert!(!is_valid_wsl_distro_name("distro with spaces"));
             assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
         }
-    }
-
-    #[test]
-    fn detects_versioned_cursor_claude_extension_directory() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock should be after epoch")
-            .as_nanos();
-        let extensions_dir = std::env::temp_dir().join(format!("cc-switch-cursor-ext-{unique}"));
-        std::fs::create_dir_all(extensions_dir.join("anthropic.claude-code-1.2.3"))
-            .expect("should create fake cursor extension");
-
-        assert!(has_cursor_claude_extension_in(&extensions_dir));
-
-        std::fs::remove_dir_all(&extensions_dir).expect("should clean fake cursor extension");
-    }
-
-    #[test]
-    fn missing_cursor_extension_directory_returns_false() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock should be after epoch")
-            .as_nanos();
-        let extensions_dir = std::env::temp_dir().join(format!("cc-switch-cursor-missing-{unique}"));
-
-        assert!(!has_cursor_claude_extension_in(&extensions_dir));
     }
 
     #[test]

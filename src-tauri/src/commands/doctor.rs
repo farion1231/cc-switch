@@ -133,7 +133,42 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
             success: false,
             message: format!("不支持的工具: {}。当前仅支持: claude", tool),
             installed_version: None,
+            action: None,
+            already_installed: None,
+            verified: Some(false),
+            error_code: Some("unsupported_tool".to_string()),
         });
+    }
+
+    let current_version = crate::commands::misc::get_tool_versions(
+        Some(vec!["claude".to_string()]),
+        None,
+    )
+    .await
+    .map_err(|e| format!("检查 Claude Code 当前状态失败: {}", e))?
+    .into_iter()
+    .find(|tool| tool.name == "claude");
+
+    if let Some(tool_version) = current_version.as_ref() {
+        if let Some(version) = tool_version.version.clone() {
+            let needs_upgrade = tool_version
+                .latest_version
+                .as_ref()
+                .map(|latest| latest != &version)
+                .unwrap_or(false);
+
+            if !needs_upgrade {
+                return Ok(InstallResult {
+                    success: true,
+                    message: "Claude Code 已安装，无需重复安装".to_string(),
+                    installed_version: Some(version),
+                    action: Some("none".to_string()),
+                    already_installed: Some(true),
+                    verified: Some(true),
+                    error_code: None,
+                });
+            }
+        }
     }
 
     let nodejs_installed =
@@ -147,11 +182,12 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
         if !nodejs_result.success {
             return Ok(InstallResult {
                 success: false,
-                message: format!(
-                    "安装 {} 需要先安装 Node.js，但 Node.js 安装失败: {}",
-                    tool, nodejs_result.message
-                ),
+                message: "安装未完成，请检查网络或 Node.js 环境后重试。".to_string(),
                 installed_version: None,
+                action: Some("install".to_string()),
+                already_installed: Some(false),
+                verified: Some(false),
+                error_code: nodejs_result.error_code,
             });
         }
         log::info!("Node.js 安装成功: {:?}", nodejs_result.installed_version);
@@ -167,11 +203,12 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
             if !nodejs_result.success {
                 return Ok(InstallResult {
                     success: false,
-                    message: format!(
-                        "安装 {} 需要 Node.js >= 18.0.0，但升级失败: {}",
-                        tool, nodejs_result.message
-                    ),
+                    message: "安装未完成，请检查网络或 Node.js 环境后重试。".to_string(),
                     installed_version: None,
+                    action: Some("upgrade".to_string()),
+                    already_installed: Some(false),
+                    verified: Some(false),
+                    error_code: nodejs_result.error_code,
                 });
             }
             log::info!("Node.js 升级成功: {:?}", nodejs_result.installed_version);
@@ -179,5 +216,38 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
     }
 
     log::info!("开始安装 Claude Code...");
-    installer::install_claude_code().map_err(|e| format!("安装 Claude Code 失败: {}", e))
+    let mut result =
+        installer::install_claude_code().map_err(|e| format!("安装 Claude Code 失败: {}", e))?;
+
+    if result.success {
+        let verified = crate::commands::misc::get_tool_versions(
+            Some(vec!["claude".to_string()]),
+            None,
+        )
+        .await
+        .map_err(|e| format!("验证 Claude Code 安装结果失败: {}", e))?
+        .into_iter()
+        .find(|tool| tool.name == "claude")
+        .and_then(|tool| tool.version);
+
+        result.verified = Some(verified.is_some());
+        if let Some(version) = verified {
+            result.installed_version = Some(version);
+        }
+        if result.action.is_none() {
+            result.action = Some(
+                if current_version.and_then(|tool| tool.version).is_some() {
+                    "upgrade".to_string()
+                } else {
+                    "install".to_string()
+                },
+            );
+        }
+    }
+
+    if !result.success {
+        result.message = "安装未完成，请检查网络或 Node.js 环境后重试。".to_string();
+    }
+
+    Ok(result)
 }

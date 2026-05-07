@@ -51,6 +51,10 @@ export interface InstallResult {
   success: boolean;
   message: string;
   installed_version?: string;
+  action?: "install" | "upgrade" | "none";
+  already_installed?: boolean;
+  verified?: boolean;
+  error_code?: string;
 }
 
 export interface FixResult {

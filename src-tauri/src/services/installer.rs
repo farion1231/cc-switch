@@ -16,6 +16,14 @@ pub struct InstallResult {
     pub message: String,
     /// 安装后的版本号（如果成功）
     pub installed_version: Option<String>,
+    /// 本次动作：install / upgrade / none
+    pub action: Option<String>,
+    /// 是否已经安装，无需重复执行
+    pub already_installed: Option<bool>,
+    /// 是否通过安装后验证
+    pub verified: Option<bool>,
+    /// 机器可读的错误码
+    pub error_code: Option<String>,
 }
 
 /// 检查 Node.js 是否已安装
@@ -128,6 +136,10 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
             success: false,
             message: "Homebrew 未安装，请先安装 Homebrew: https://brew.sh".to_string(),
             installed_version: None,
+            action: None,
+            already_installed: None,
+            verified: Some(false),
+            error_code: Some("missing_homebrew".to_string()),
         });
     }
 
@@ -144,6 +156,10 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
             success: false,
             message: format!("安装 Node.js 失败: {}", stderr),
             installed_version: None,
+            action: None,
+            already_installed: None,
+            verified: Some(false),
+            error_code: Some("node_install_failed".to_string()),
         });
     }
 
@@ -164,6 +180,10 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
         success: true,
         message: "Node.js 安装成功".to_string(),
         installed_version: version,
+        action: Some("install".to_string()),
+        already_installed: Some(false),
+        verified: Some(true),
+        error_code: None,
     })
 }
 
@@ -178,6 +198,10 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
                   - Arch: sudo pacman -S nodejs npm"
             .to_string(),
         installed_version: None,
+        action: None,
+        already_installed: None,
+        verified: Some(false),
+        error_code: Some("manual_node_install_required".to_string()),
     })
 }
 
@@ -188,6 +212,10 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
         success: false,
         message: "Windows 平台请从官网下载安装 Node.js: https://nodejs.org".to_string(),
         installed_version: None,
+        action: None,
+        already_installed: None,
+        verified: Some(false),
+        error_code: Some("manual_node_install_required".to_string()),
     })
 }
 
@@ -212,6 +240,10 @@ pub fn install_claude_code() -> Result<InstallResult, String> {
             success: false,
             message: format!("安装 Claude Code 失败: {}", stderr),
             installed_version: None,
+            action: Some("install".to_string()),
+            already_installed: Some(false),
+            verified: Some(false),
+            error_code: Some("claude_install_failed".to_string()),
         });
     }
 
@@ -233,6 +265,10 @@ pub fn install_claude_code() -> Result<InstallResult, String> {
         success: true,
         message: "Claude Code 安装成功".to_string(),
         installed_version: version,
+        action: Some("install".to_string()),
+        already_installed: Some(false),
+        verified: Some(true),
+        error_code: None,
     })
 }
 
@@ -244,6 +280,10 @@ pub fn install_claude_code() -> Result<InstallResult, String> {
         message: "Windows 平台请从官网下载安装 Claude Code: https://claude.ai/download"
             .to_string(),
         installed_version: None,
+        action: None,
+        already_installed: None,
+        verified: Some(false),
+        error_code: Some("manual_claude_install_required".to_string()),
     })
 }
 

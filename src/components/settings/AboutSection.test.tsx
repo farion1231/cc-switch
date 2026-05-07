@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { toast } from "sonner";
 import { AboutSection } from "./AboutSection";
 
 const toolVersionsMock = vi.fn();
@@ -16,6 +17,12 @@ vi.mock("react-i18next", () => ({
       }
       if (key === "doctor.installSuccess" && vars?.tool) {
         return `installSuccess:${vars.tool}`;
+      }
+      if (key === "doctor.alreadyInstalled" && vars?.tool) {
+        return `alreadyInstalled:${vars.tool}`;
+      }
+      if (key === "doctor.upgradeSuccess" && vars?.tool && vars?.version) {
+        return `upgradeSuccess:${vars.tool}:${vars.version}`;
       }
       if (key === "doctor.fixSuccess" && vars?.count) {
         return `fixSuccess:${vars.count}`;
@@ -112,7 +119,17 @@ describe("AboutSection environment doctor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clipboardWriteTextMock.mockResolvedValue(undefined);
-    installToolMock.mockResolvedValue({ success: true, message: "ok" });
+    installToolMock.mockResolvedValue({
+      success: true,
+      message: "ok",
+      action: "install",
+      verified: true,
+    });
+    diagnoseEnvironmentMock.mockResolvedValue({
+      overall_status: "Healthy",
+      issues: [],
+      tools_status: {},
+    });
     getVersionMock.mockResolvedValue("3.14.1");
     toolVersionsMock.mockResolvedValue([
       {
@@ -189,64 +206,144 @@ describe("AboutSection environment doctor", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders cursor claude check card in local environment section", async () => {
-    diagnoseEnvironmentMock.mockResolvedValue({
-      overall_status: "Healthy",
-      issues: [],
-      tools_status: {},
-    });
-
-    toolVersionsMock.mockResolvedValue([
-      {
-        name: "claude",
-        version: "2.1.131",
-        latest_version: "2.1.131",
-        error: null,
-        env_type: "macos",
-        wsl_distro: null,
-      },
-      {
-        name: "cursor-claude",
-        version: "installed",
-        latest_version: null,
-        error: null,
-        env_type: "macos",
-        wsl_distro: null,
-        display_name: "Cursor 里的 Claude Code",
-        status_label: "installed",
-        installed: true,
-      },
-    ]);
-
+  it("shows installed state without cursor card", async () => {
     render(<AboutSection isPortable={false} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Cursor 里的 Claude Code")).toBeInTheDocument();
+      expect(screen.getByText("Claude Code")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("installed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "settings.installed" })).toBeDisabled();
+    expect(screen.queryByText("Cursor 里的 Claude Code")).not.toBeInTheDocument();
   });
 
-  it("runs real install flow from the one-click install section", async () => {
-    diagnoseEnvironmentMock.mockResolvedValue({
-      overall_status: "Healthy",
-      issues: [],
-      tools_status: {},
-    });
+  it("runs install flow from the one-click install section when not installed", async () => {
+    toolVersionsMock
+      .mockResolvedValueOnce([
+        {
+          name: "claude",
+          version: null,
+          latest_version: "2.1.131",
+          error: "not installed",
+          env_type: "macos",
+          wsl_distro: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          name: "claude",
+          version: "2.1.131",
+          latest_version: "2.1.131",
+          error: null,
+          env_type: "macos",
+          wsl_distro: null,
+        },
+      ]);
 
     render(<AboutSection isPortable={false} />);
 
-    await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: "settings.oneClickInstall" }).length).toBeGreaterThan(0);
+    const installButton = await screen.findByRole("button", {
+      name: "settings.installNow",
     });
-
-    const buttons = screen.getAllByRole("button", { name: "settings.oneClickInstall" });
-    fireEvent.click(buttons[buttons.length - 1]);
+    fireEvent.click(installButton);
 
     await waitFor(() => {
       expect(installToolMock).toHaveBeenCalledWith("claude");
     });
 
     expect(clipboardWriteTextMock).not.toHaveBeenCalled();
+    expect(toast.success).toHaveBeenCalledWith("installSuccess:Claude Code", {
+      closeButton: true,
+    });
   });
+
+  it("does not reinstall when Claude Code is already installed", async () => {
+    render(<AboutSection isPortable={false} />);
+
+    const installedButton = await screen.findByRole("button", {
+      name: "settings.installed",
+    });
+
+    expect(installedButton).toBeDisabled();
+    expect(installToolMock).not.toHaveBeenCalled();
+  });
+
+  it("shows upgrade state and success toast for newer version", async () => {
+    toolVersionsMock
+      .mockResolvedValueOnce([
+        {
+          name: "claude",
+          version: "2.1.100",
+          latest_version: "2.1.131",
+          error: null,
+          env_type: "macos",
+          wsl_distro: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          name: "claude",
+          version: "2.1.131",
+          latest_version: "2.1.131",
+          error: null,
+          env_type: "macos",
+          wsl_distro: null,
+        },
+      ]);
+    installToolMock.mockResolvedValue({
+      success: true,
+      message: "upgraded",
+      action: "upgrade",
+      installed_version: "2.1.131",
+      verified: true,
+    });
+
+    render(<AboutSection isPortable={false} />);
+
+    const upgradeButton = await screen.findByRole("button", {
+      name: "settings.upgradeNow",
+    });
+    fireEvent.click(upgradeButton);
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith(
+        "upgradeSuccess:Claude Code:2.1.131",
+        { closeButton: true },
+      );
+    });
+  });
+
+  it("shows friendly failure message when install cannot proceed", async () => {
+    toolVersionsMock.mockResolvedValue([
+      {
+        name: "claude",
+        version: null,
+        latest_version: "2.1.131",
+        error: "not installed",
+        env_type: "macos",
+        wsl_distro: null,
+      },
+    ]);
+    installToolMock.mockResolvedValue({
+      success: false,
+      message: "doctor.installFailedGeneric",
+      action: "install",
+      verified: false,
+      error_code: "missing_homebrew",
+    });
+
+    render(<AboutSection isPortable={false} />);
+
+    const installButton = await screen.findByRole("button", {
+      name: "settings.installNow",
+    });
+    fireEvent.click(installButton);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("doctor.installFailedGeneric", {
+        closeButton: true,
+      });
+    });
+  });
+
 });
