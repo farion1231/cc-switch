@@ -372,11 +372,21 @@ impl Database {
         let mut version = Self::get_user_version(conn)?;
 
         if version > SCHEMA_VERSION {
-            conn.execute("ROLLBACK TO schema_migration;", []).ok();
-            conn.execute("RELEASE schema_migration;", []).ok();
-            return Err(AppError::Database(format!(
-                "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
-            )));
+            // 允许小版本回退：如果高版本仅添加了有默认值的列（如 v10→v11 的智能路由字段），
+            // 则将版本号降级为当前版本继续运行，避免用户切换版本时数据库被拒绝。
+            if version == 11 && SCHEMA_VERSION == 10 {
+                log::warn!(
+                    "数据库版本为 {version}，当前仅支持 {SCHEMA_VERSION}。智能路由字段为纯增量列，降级兼容。"
+                );
+                Self::set_user_version(conn, SCHEMA_VERSION)?;
+                version = SCHEMA_VERSION;
+            } else {
+                conn.execute("ROLLBACK TO schema_migration;", []).ok();
+                conn.execute("RELEASE schema_migration;", []).ok();
+                return Err(AppError::Database(format!(
+                    "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
+                )));
+            }
         }
 
         let result = (|| {
@@ -434,11 +444,6 @@ impl Database {
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
                     }
-                    10 => {
-                        log::info!("迁移数据库从 v10 到 v11（添加智能路由配置字段）");
-                        Self::migrate_v10_to_v11(conn)?;
-                        Self::set_user_version(conn, 11)?;
-                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -447,6 +452,10 @@ impl Database {
                 }
                 version = Self::get_user_version(conn)?;
             }
+            // Schema 完整性检查：确保不依赖版本号的增量列存在（如智能路由字段）
+            // 这些列是纯增量的，有安全默认值，不需要升 SCHEMA_VERSION
+            Self::ensure_smart_routing_columns(conn)?;
+
             Ok(())
         })();
 
@@ -1209,7 +1218,7 @@ impl Database {
     }
 
     /// v10 -> v11 迁移：添加智能路由配置字段
-    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+    fn ensure_smart_routing_columns(conn: &Connection) -> Result<(), AppError> {
         // 如果 proxy_config 表不存在（极老的 schema），先创建它
         if !Self::table_exists(conn, "proxy_config")? {
             conn.execute(
