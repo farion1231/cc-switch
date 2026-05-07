@@ -5,6 +5,7 @@ import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
+import { qwenProviderPresets } from "@/config/qwenProviderPresets";
 
 interface UseProviderCategoryProps {
   appId: AppId;
@@ -44,7 +45,7 @@ export function useProviderCategory({
 
     // 从预设 ID 提取索引
     const match = selectedPresetId.match(
-      /^(claude|codex|gemini|opencode)-(\d+)$/,
+      /^(claude|codex|gemini|opencode|qwen)-(\d+)$/,
     );
     if (!match) return;
 
@@ -72,6 +73,11 @@ export function useProviderCategory({
       }
     } else if (type === "opencode" && appId === "opencode") {
       const preset = opencodeProviderPresets[index];
+      if (preset) {
+        setCategory(preset.category || undefined);
+      }
+    } else if (type === "qwen" && appId === "qwen") {
+      const preset = qwenProviderPresets[index];
       if (preset) {
         setCategory(preset.category || undefined);
       }

@@ -40,6 +40,9 @@ impl McpService {
         if prev_apps.opencode && !server.apps.opencode {
             Self::remove_server_from_app(state, &server.id, &AppType::OpenCode)?;
         }
+        if prev_apps.qwen && !server.apps.qwen {
+            Self::remove_server_from_app(state, &server.id, &AppType::Qwen)?;
+        }
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
@@ -126,6 +129,9 @@ impl McpService {
                     &server.server,
                 )?;
             }
+            AppType::Qwen => {
+                mcp::sync_single_server_to_qwen(&Default::default(), &server.id, &server.server)?;
+            }
             AppType::OpenClaw => {
                 // OpenClaw MCP support is still in development (Issue #4834)
                 // Skip for now
@@ -158,6 +164,9 @@ impl McpService {
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
             AppType::OpenCode => {
                 mcp::remove_server_from_opencode(id)?;
+            }
+            AppType::Qwen => {
+                mcp::remove_server_from_qwen(id)?;
             }
             AppType::OpenClaw => {
                 // OpenClaw MCP support is still in development
@@ -384,6 +393,36 @@ impl McpService {
 
                     // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
                     // 显式编辑、启用/禁用或手动同步时再执行写回。
+                }
+            }
+        }
+
+        Ok(new_count)
+    }
+
+    /// 从 Qwen 导入 MCP（支持 settings.json 的 mcpServers）
+    pub fn import_from_qwen(state: &AppState) -> Result<usize, AppError> {
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let count = crate::mcp::import_from_qwen(&mut temp_config)?;
+
+        let mut new_count = 0;
+
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.qwen = true;
+                        merged
+                    } else {
+                        new_count += 1;
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+                    Self::sync_server_to_apps(state, &to_save)?;
                 }
             }
         }

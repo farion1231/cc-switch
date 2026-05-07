@@ -2,6 +2,7 @@ use cc_switch_lib::{
     get_default_cost_multiplier_test_hook, get_pricing_model_source_test_hook,
     set_default_cost_multiplier_test_hook, set_pricing_model_source_test_hook, AppError,
 };
+use serde_json::json;
 
 #[path = "support.rs"]
 mod support;
@@ -75,4 +76,50 @@ async fn pricing_model_source_commands_round_trip() {
         }
         other => panic!("expected localized error, got {other:?}"),
     }
+}
+
+#[test]
+fn read_qwen_live_accepts_settings_json_without_env_file() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let qwen_dir = home.join(".qwen");
+    std::fs::create_dir_all(&qwen_dir).expect("create qwen dir");
+    std::fs::write(
+        qwen_dir.join("settings.json"),
+        serde_json::to_string_pretty(&json!({
+            "env": {
+                "OPENAI_API_KEY": "settings-only-key",
+                "OPENAI_BASE_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            },
+            "security": {
+                "auth": {
+                    "selectedType": "openai"
+                }
+            },
+            "model": {
+                "name": "qwen3-coder-plus"
+            }
+        }))
+        .expect("serialize qwen settings"),
+    )
+    .expect("seed qwen settings");
+
+    let state = create_test_state().expect("create test state");
+    let live = state
+        .proxy_service
+        .read_qwen_live_test_hook()
+        .expect("settings.json-only qwen config should be readable");
+
+    assert_eq!(
+        live["env"]["OPENAI_API_KEY"],
+        json!("settings-only-key"),
+        "Qwen live read should fall back to settings.json when .env is absent"
+    );
+    assert_eq!(
+        live["config"]["model"]["name"],
+        json!("qwen3-coder-plus"),
+        "Qwen live read should preserve provider config fields from settings.json"
+    );
 }

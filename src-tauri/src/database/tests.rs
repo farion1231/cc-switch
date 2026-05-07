@@ -380,7 +380,7 @@ fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let count: i32 = conn
         .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
         .expect("count rows");
-    assert_eq!(count, 3, "per-app proxy_config should have 3 rows");
+    assert_eq!(count, 4, "per-app proxy_config should have 4 rows");
 
     // 新结构下应能按 app_type 查询
     let _: i32 = conn
@@ -390,6 +390,73 @@ fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
             |r| r.get(0),
         )
         .expect("query by app_type");
+}
+
+#[test]
+fn schema_create_tables_repairs_existing_v8_qwen_columns() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::set_user_version(&conn, 8).expect("set user_version");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            server_config TEXT NOT NULL,
+            description TEXT,
+            homepage TEXT,
+            docs TEXT,
+            tags TEXT NOT NULL DEFAULT '[]',
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0
+        );
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            directory TEXT NOT NULL,
+            repo_owner TEXT,
+            repo_name TEXT,
+            repo_branch TEXT DEFAULT 'main',
+            readme_url TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0
+        );
+        "#,
+    )
+    .expect("seed existing v8 schema");
+
+    Database::create_tables_on_conn(&conn)
+        .expect("create tables should repair missing qwen columns");
+
+    for (table, column) in [
+        ("mcp_servers", "enabled_qwen"),
+        ("skills", "enabled_qwen"),
+        ("skills", "content_hash"),
+        ("skills", "updated_at"),
+    ] {
+        assert!(
+            Database::has_column(&conn, table, column).expect("check column"),
+            "{table}.{column} should exist after startup repair"
+        );
+    }
+
+    let enabled_qwen = get_column_info(&conn, "mcp_servers", "enabled_qwen");
+    assert_eq!(enabled_qwen.r#type, "BOOLEAN");
+    assert_eq!(enabled_qwen.notnull, 1);
+    assert_eq!(
+        normalize_default(&enabled_qwen.default).as_deref(),
+        Some("0")
+    );
+
+    let updated_at = get_column_info(&conn, "skills", "updated_at");
+    assert_eq!(updated_at.r#type, "INTEGER");
+    assert_eq!(updated_at.notnull, 1);
+    assert_eq!(normalize_default(&updated_at.default).as_deref(), Some("0"));
 }
 
 #[test]
@@ -516,11 +583,11 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         "skills migration snapshot should preserve legacy app mapping"
     );
 
-    // v3.9+ 新增：proxy_config 三行 seed 必须存在（否则 UI 会查不到默认值）
+    // v3.9+ 新增：proxy_config 每个开关式应用都要有默认行（含 qwen）
     let proxy_rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
         .expect("count proxy_config rows");
-    assert_eq!(proxy_rows, 3);
+    assert_eq!(proxy_rows, 4);
 
     // model_pricing 应具备默认数据（迁移时会 seed）
     let pricing_rows: i64 = conn

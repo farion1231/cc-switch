@@ -15,6 +15,7 @@ const ALL_APPS: AppId[] = [
   "codex",
   "gemini",
   "opencode",
+  "qwen",
   "openclaw",
   "hermes",
 ];
@@ -37,6 +38,7 @@ export function AppSwitcher({
     codex: "openai",
     gemini: "gemini",
     opencode: "opencode",
+    qwen: "qwen",
     openclaw: "openclaw",
     hermes: "hermes",
   };
@@ -45,6 +47,7 @@ export function AppSwitcher({
     codex: "Codex",
     gemini: "Gemini",
     opencode: "OpenCode",
+    qwen: "Qwen",
     openclaw: "OpenClaw",
     hermes: "Hermes",
   };

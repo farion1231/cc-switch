@@ -274,7 +274,24 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+            AppType::Qwen => {
+                // Qwen uses OpenAI-compatible API, use Codex check method
+                Self::check_codex_stream(
+                    &client,
+                    &base_url,
+                    &auth,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                    provider,
+                )
+                .await
+            }
+            AppType::OpenCode | AppType::OpenClaw => {
+                // Already handled via early dispatch above
+                unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
+            }
+            AppType::Hermes => {
                 // Already handled via early dispatch above
                 unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
             }
@@ -1373,9 +1390,18 @@ impl StreamCheckService {
                 // Try to extract first model from the models object
                 Self::extract_opencode_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
-            AppType::OpenClaw | AppType::Hermes => {
-                // OpenClaw/Hermes use models array in settings_config
+            AppType::Qwen => {
+                // Qwen uses OpenAI-compatible env format
+                Self::extract_env_model(provider, "OPENAI_MODEL")
+                    .unwrap_or_else(|| "qwen3-coder-plus".to_string())
+            }
+            AppType::OpenClaw => {
+                // OpenClaw uses models array in settings_config
                 // Try to extract first model from the models array
+                Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
+            AppType::Hermes => {
+                // Hermes uses models array in settings_config
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
         }

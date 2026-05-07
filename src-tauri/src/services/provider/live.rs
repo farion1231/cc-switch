@@ -315,7 +315,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
     }
 
     match app_type {
-        AppType::Claude => match serde_json::from_str::<Value>(trimmed) {
+        AppType::Claude | AppType::Qwen => match serde_json::from_str::<Value>(trimmed) {
             Ok(source) if source.is_object() => json_is_subset(settings, &source),
             _ => false,
         },
@@ -381,9 +381,10 @@ pub(crate) fn remove_common_config_from_settings(
     }
 
     match app_type {
-        AppType::Claude => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+        AppType::Claude | AppType::Qwen => {
+            let source = serde_json::from_str::<Value>(trimmed).map_err(|e| {
+                AppError::Message(format!("Invalid {} common config: {e}", app_type.as_str()))
+            })?;
             let mut result = settings.clone();
             json_deep_remove(&mut result, &source);
             Ok(result)
@@ -434,9 +435,10 @@ fn apply_common_config_to_settings(
     }
 
     match app_type {
-        AppType::Claude => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+        AppType::Claude | AppType::Qwen => {
+            let source = serde_json::from_str::<Value>(trimmed).map_err(|e| {
+                AppError::Message(format!("Invalid {} common config: {e}", app_type.as_str()))
+            })?;
             let mut result = settings.clone();
             json_deep_merge(&mut result, &source);
             Ok(result)
@@ -817,6 +819,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 }
             }
         }
+        AppType::Qwen => {
+            // Qwen uses settings.json as the main live config, with .env compatibility fallback.
+            crate::qwen_config::write_qwen_live_settings(&provider.settings_config)?;
+            log::info!("Qwen provider '{}' written to live config", provider.id);
+        }
         AppType::Hermes => {
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
@@ -1001,6 +1008,19 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_opencode_config()?;
             Ok(config)
         }
+        AppType::Qwen => {
+            use crate::qwen_config::{has_qwen_live_config, read_qwen_live_config};
+
+            if !has_qwen_live_config() {
+                return Err(AppError::localized(
+                    "qwen.live.missing",
+                    "Qwen 配置文件不存在",
+                    "Qwen configuration file not found",
+                ));
+            }
+
+            read_qwen_live_config()
+        }
         AppType::OpenClaw => {
             use crate::openclaw_config::{get_openclaw_config_path, read_openclaw_config};
 
@@ -1114,6 +1134,19 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
+        }
+        AppType::Qwen => {
+            use crate::qwen_config::{has_qwen_live_config, read_qwen_live_config};
+
+            if !has_qwen_live_config() {
+                return Err(AppError::localized(
+                    "qwen.live.missing",
+                    "Qwen 配置文件不存在",
+                    "Qwen configuration file is missing",
+                ));
+            }
+
+            read_qwen_live_config()?
         }
     };
 
@@ -1445,6 +1478,11 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
 
     Ok(())
+}
+
+/// Write Qwen live configuration with settings.json-aware merge behavior
+pub(crate) fn write_qwen_live(provider: &Provider) -> Result<(), AppError> {
+    crate::qwen_config::write_qwen_live_settings(&provider.settings_config)
 }
 
 #[cfg(test)]

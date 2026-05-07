@@ -101,23 +101,11 @@ pub fn import_mcp_from_deeplink(
             // Server exists - merge apps only, keep other fields unchanged
             log::info!("MCP server '{id}' already exists, merging apps only");
 
-            let mut merged_apps = existing.apps.clone();
-            // Merge new apps into existing apps
-            if target_apps.claude {
-                merged_apps.claude = true;
-            }
-            if target_apps.codex {
-                merged_apps.codex = true;
-            }
-            if target_apps.gemini {
-                merged_apps.gemini = true;
-            }
-
             McpServer {
                 id: existing.id.clone(),
                 name: existing.name.clone(),
                 server: existing.server.clone(), // Keep existing server config
-                apps: merged_apps,               // Merged apps
+                apps: merge_mcp_apps(&existing.apps, &target_apps),
                 description: existing.description.clone(),
                 homepage: existing.homepage.clone(),
                 docs: existing.docs.clone(),
@@ -160,6 +148,17 @@ pub fn import_mcp_from_deeplink(
     })
 }
 
+fn merge_mcp_apps(existing: &McpApps, incoming: &McpApps) -> McpApps {
+    McpApps {
+        claude: existing.claude || incoming.claude,
+        codex: existing.codex || incoming.codex,
+        gemini: existing.gemini || incoming.gemini,
+        opencode: existing.opencode || incoming.opencode,
+        qwen: existing.qwen || incoming.qwen,
+        hermes: existing.hermes || incoming.hermes,
+    }
+}
+
 /// Parse apps string into McpApps struct
 pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
     let mut apps = McpApps {
@@ -167,6 +166,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         codex: false,
         gemini: false,
         opencode: false,
+        qwen: false,
         hermes: false,
     };
 
@@ -176,6 +176,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "codex" => apps.codex = true,
             "gemini" => apps.gemini = true,
             "opencode" => apps.opencode = true,
+            "qwen" => apps.qwen = true,
             "openclaw" => {
                 // OpenClaw doesn't support MCP, ignore silently
                 log::debug!("OpenClaw doesn't support MCP, ignoring in apps parameter");

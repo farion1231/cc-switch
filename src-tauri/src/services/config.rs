@@ -88,6 +88,7 @@ impl ConfigService {
         Self::sync_current_provider_for_app(config, &AppType::Claude)?;
         Self::sync_current_provider_for_app(config, &AppType::Codex)?;
         Self::sync_current_provider_for_app(config, &AppType::Gemini)?;
+        Self::sync_current_provider_for_app(config, &AppType::Qwen)?;
         Ok(())
     }
 
@@ -122,6 +123,7 @@ impl ConfigService {
             AppType::Codex => Self::sync_codex_live(config, &current_id, &provider)?,
             AppType::Claude => Self::sync_claude_live(config, &current_id, &provider)?,
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
+            AppType::Qwen => Self::sync_qwen_live(config, &current_id, &provider)?,
             AppType::OpenCode => {
                 // OpenCode uses additive mode, no live sync needed
                 // OpenCode providers are managed directly in the config file
@@ -224,6 +226,27 @@ impl ConfigService {
         }
 
         if let Some(manager) = config.get_manager_mut(&AppType::Gemini) {
+            if let Some(target) = manager.providers.get_mut(provider_id) {
+                target.settings_config = live_after;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn sync_qwen_live(
+        config: &mut MultiAppConfig,
+        provider_id: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        use crate::qwen_config::read_qwen_live_config;
+
+        ProviderService::write_qwen_live(provider)?;
+
+        // 读回实际写入的内容并更新到配置中（包含 settings.json）
+        let live_after = read_qwen_live_config()?;
+
+        if let Some(manager) = config.get_manager_mut(&AppType::Qwen) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
                 target.settings_config = live_after;
             }

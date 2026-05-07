@@ -7,7 +7,7 @@ export type AppType =
   | "codex"
   | "gemini"
   | "opencode"
-  | "openclaw"
+  | "qwen"
   | "hermes";
 
 /** Skill 应用启用状态 */
@@ -16,7 +16,7 @@ export interface SkillApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
-  openclaw: boolean;
+  qwen: boolean;
   hermes: boolean;
 }
 

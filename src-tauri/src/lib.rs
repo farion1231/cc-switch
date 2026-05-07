@@ -25,6 +25,8 @@ mod prompt_files;
 mod provider;
 mod provider_defaults;
 mod proxy;
+mod qwen_config;
+mod qwen_mcp;
 mod services;
 mod session_manager;
 mod settings;
@@ -477,7 +479,7 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
-            // 1.5. 自动导入 live 配置 + seed 官方预设供应商（Claude / Codex / Gemini）
+            // 1.5. 自动导入 live 配置 + seed 官方预设供应商（非 additive 模式应用）
             //
             // 先 import 后 seed 是有意为之：先把用户手动配置的 settings.json / auth.json / .env
             // 落成 "default" provider 设为 current，再追加官方预设（is_current=false）。
@@ -488,20 +490,60 @@ pub fn run() {
             let first_run_already_confirmed = crate::settings::get_settings()
                 .first_run_notice_confirmed
                 .unwrap_or(false);
-            let fresh_install_at_startup =
-                app_state.db.is_providers_empty().unwrap_or(false);
+            let fresh_install_at_startup = app_state.db.is_providers_empty().unwrap_or(false);
 
-            for app_type in
-                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
-            {
-                match crate::services::provider::import_default_config(
-                    &app_state,
-                    app_type.clone(),
-                ) {
-                    Ok(true) => log::info!(
-                        "✓ Imported live config for {} as default provider",
-                        app_type.as_str()
-                    ),
+            for app_type in crate::app_config::AppType::all().filter(|t| !t.is_additive_mode()) {
+                match crate::services::provider::import_default_config(&app_state, app_type.clone())
+                {
+                    Ok(true) => {
+                        log::info!(
+                            "✓ Imported live config for {} as default provider",
+                            app_type.as_str()
+                        );
+
+                        // 首次导入 live 配置后，如果应用尚未提取过通用配置片段，则自动补一份。
+                        if app_state
+                            .db
+                            .get_config_snippet(app_type.as_str())
+                            .ok()
+                            .flatten()
+                            .is_none()
+                        {
+                            match crate::services::provider::ProviderService::extract_common_config_snippet(
+                                &app_state,
+                                app_type.clone(),
+                            ) {
+                                Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                                    if let Err(e) = app_state
+                                        .db
+                                        .set_config_snippet(app_type.as_str(), Some(snippet))
+                                    {
+                                        log::warn!(
+                                            "✗ Failed to save common config snippet for {}: {e}",
+                                            app_type.as_str()
+                                        );
+                                    } else {
+                                        log::info!(
+                                            "✓ Extracted common config snippet for {}",
+                                            app_type.as_str()
+                                        );
+                                    }
+                                }
+                                Ok(_) => {
+                                    log::debug!(
+                                        "○ No common config to extract for {}",
+                                        app_type.as_str()
+                                    );
+                                }
+                                Err(e) => {
+                                    log::debug!(
+                                        "○ Failed to extract common config for {}: {e}",
+                                        app_type.as_str()
+                                    );
+                                }
+                            }
+                        }
+                    }
                     Ok(false) => log::debug!(
                         "○ {} already has providers; live import skipped",
                         app_type.as_str()
@@ -645,6 +687,14 @@ pub fn run() {
                     Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
                 }
 
+                match crate::services::mcp::McpService::import_from_qwen(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Qwen");
+                    }
+                    Ok(_) => log::debug!("○ No Qwen MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Qwen MCP: {e}"),
+                }
+
                 match crate::services::mcp::McpService::import_from_hermes(&app_state) {
                     Ok(count) if count > 0 => {
                         log::info!("✓ Imported {count} MCP server(s) from Hermes");
@@ -662,6 +712,7 @@ pub fn run() {
                     crate::app_config::AppType::Claude,
                     crate::app_config::AppType::Codex,
                     crate::app_config::AppType::Gemini,
+                    crate::app_config::AppType::Qwen,
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,

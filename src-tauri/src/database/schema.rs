@@ -66,11 +66,18 @@ impl Database {
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qwen BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_qwen",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
 
         // 4. Prompts 表
         conn.execute("CREATE TABLE IF NOT EXISTS prompts (
@@ -94,6 +101,7 @@ impl Database {
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qwen BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -102,6 +110,9 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::add_column_if_missing(conn, "skills", "enabled_qwen", "BOOLEAN NOT NULL DEFAULT 0")?;
+        Self::add_column_if_missing(conn, "skills", "content_hash", "TEXT")?;
+        Self::add_column_if_missing(conn, "skills", "updated_at", "INTEGER NOT NULL DEFAULT 0")?;
 
         // 6. Skill Repos 表
         conn.execute(
@@ -122,7 +133,7 @@ impl Database {
 
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','qwen')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -136,11 +147,11 @@ impl Database {
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 初始化三行数据（每应用不同默认值）
+        // 初始化默认数据（每个开关式应用一行）
         //
         // 兼容旧数据库：
-        // - 老版本 proxy_config 是单例表（没有 app_type 列），此时不能执行三行 seed insert；
-        // - 旧表会在 apply_schema_migrations() 中迁移为三行结构后再插入。
+        // - 老版本 proxy_config 是单例表（没有 app_type 列），此时不能执行默认行 seed insert；
+        // - 旧表会在 apply_schema_migrations() 中迁移为按 app_type 分行的结构后再插入。
         if Self::has_column(conn, "proxy_config", "app_type")? {
             conn.execute(
                 "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
@@ -166,6 +177,15 @@ impl Database {
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
                 VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+            conn.execute(
+                "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests)
+                VALUES ('qwen', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -412,12 +432,16 @@ impl Database {
                         Self::set_user_version(conn, 6)?;
                     }
                     6 => {
-                        log::info!("迁移数据库从 v6 到 v7（Skills 更新检测支持）");
+                        log::info!(
+                            "迁移数据库从 v6 到 v7（兼容历史分支 / Qwen / Skills 更新检测）"
+                        );
                         Self::migrate_v6_to_v7(conn)?;
                         Self::set_user_version(conn, 7)?;
                     }
                     7 => {
-                        log::info!("迁移数据库从 v7 到 v8（会话日志使用追踪 + 修正模型定价）");
+                        log::info!(
+                            "迁移数据库从 v7 到 v8（兼容历史 Qwen 分支 + 会话日志使用追踪 + 修正模型定价）"
+                        );
                         Self::migrate_v7_to_v8(conn)?;
                         Self::set_user_version(conn, 8)?;
                     }
@@ -743,12 +767,25 @@ impl Database {
                 old_cb.3,
                 old_cb.4,
             ),
+            (
+                "qwen",
+                get_bool("proxy_takeover_qwen"),
+                get_bool("auto_failover_enabled_qwen"),
+                3,
+                old_config.4,
+                old_config.5,
+                old_cb.0,
+                old_cb.1,
+                old_cb.2,
+                old_cb.3,
+                old_cb.4,
+            ),
         ];
 
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','qwen')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -762,7 +799,7 @@ impl Database {
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", [])?;
 
-        // 插入三行配置
+        // 插入各应用配置
         for (app, takeover, failover, retries, fb, idle, cb_f, cb_s, cb_t, cb_r, cb_m) in apps {
             conn.execute(
                 "INSERT INTO proxy_config_new (app_type, proxy_enabled, listen_address, listen_port, enable_logging,
@@ -1083,9 +1120,27 @@ impl Database {
         Ok(())
     }
 
-    /// v6 -> v7: Skills 更新检测支持（content_hash + updated_at）
+    /// v6 -> v7: 兼容历史分支，补齐 Qwen 与 Skills 更新检测字段
     fn migrate_v6_to_v7(conn: &Connection) -> Result<(), AppError> {
+        // 历史上存在分支复用了 schema version 6，这里重用 v5->v6 的幂等迁移，
+        // 以兼容不同血缘的数据库状态。
+        Self::migrate_v5_to_v6(conn)?;
+
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_qwen",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
         if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_qwen",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
             Self::add_column_if_missing(conn, "skills", "content_hash", "TEXT")?;
             Self::add_column_if_missing(
                 conn,
@@ -1094,12 +1149,38 @@ impl Database {
                 "INTEGER NOT NULL DEFAULT 0",
             )?;
         }
-        log::info!("v6 -> v7 迁移完成：已添加 content_hash 和 updated_at 列");
+        log::info!("v6 -> v7 迁移完成：已补齐 Qwen、content_hash、updated_at 字段");
         Ok(())
     }
 
-    /// v7 -> v8: 会话日志使用追踪（无代理模式统计支持）
+    /// v7 -> v8: 兼容历史 v7 分支并补齐会话日志使用追踪
     fn migrate_v7_to_v8(conn: &Connection) -> Result<(), AppError> {
+        // v7 可能来自主线（已有 content_hash/updated_at）或历史 Qwen 分支（仅有 enabled_qwen）。
+        // 这里统一补齐差异字段，确保所有 v7 都能安全升级到 v8。
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_qwen",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_qwen",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(conn, "skills", "content_hash", "TEXT")?;
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "updated_at",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+
         // 1. 为 proxy_request_logs 添加 data_source 列，区分数据来源
         if Self::table_exists(conn, "proxy_request_logs")? {
             Self::add_column_if_missing(
@@ -1154,7 +1235,9 @@ impl Database {
             }
         }
 
-        log::info!("v7 -> v8 迁移完成：data_source 列、session_log_sync 表、修正 13 个模型定价");
+        log::info!(
+            "v7 -> v8 迁移完成：已兼容历史 v7，补齐 skills 字段、data_source 列、session_log_sync 表，并修正 13 个模型定价"
+        );
         Ok(())
     }
 

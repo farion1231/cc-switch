@@ -199,6 +199,11 @@ export const getApiKeyFromConfig = (
       return typeof codexKey === "string" ? codexKey : "";
     }
 
+    if (appType === "qwen") {
+      const qwenKey = env.OPENAI_API_KEY;
+      return typeof qwenKey === "string" ? qwenKey : "";
+    }
+
     // Claude API Key (优先 ANTHROPIC_AUTH_TOKEN，其次 ANTHROPIC_API_KEY)
     const token = env.ANTHROPIC_AUTH_TOKEN;
     const apiKey = env.ANTHROPIC_API_KEY;
@@ -282,6 +287,10 @@ export const hasApiKeyField = (
       return Object.prototype.hasOwnProperty.call(env, "CODEX_API_KEY");
     }
 
+    if (appType === "qwen") {
+      return Object.prototype.hasOwnProperty.call(env, "OPENAI_API_KEY");
+    }
+
     return (
       Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_AUTH_TOKEN") ||
       Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_API_KEY")
@@ -341,6 +350,17 @@ export const setApiKeyInConfig = (
       return JSON.stringify(config, null, 2);
     }
 
+    if (appType === "qwen") {
+      if ("OPENAI_API_KEY" in env) {
+        env.OPENAI_API_KEY = apiKey;
+      } else if (createIfMissing) {
+        env.OPENAI_API_KEY = apiKey;
+      } else {
+        return jsonString;
+      }
+      return JSON.stringify(config, null, 2);
+    }
+
     // Claude API Key (优先写入已存在的字段；若两者均不存在且允许创建，则使用 apiKeyField 或默认 AUTH_TOKEN 字段)
     if ("ANTHROPIC_AUTH_TOKEN" in env) {
       env.ANTHROPIC_AUTH_TOKEN = apiKey;
@@ -356,6 +376,68 @@ export const setApiKeyInConfig = (
     return jsonString;
   }
 };
+
+const parseJsonConfig = (
+  jsonString: string,
+): Record<string, any> | undefined => {
+  try {
+    const parsed = JSON.parse(jsonString || "{}");
+    return isPlainObject(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const getJsonEnvString = (
+  jsonString: string,
+  key: string,
+): string | undefined => {
+  const config = parseJsonConfig(jsonString);
+  const value = config?.env?.[key];
+  return typeof value === "string" ? value : undefined;
+};
+
+const setJsonEnvString = (
+  jsonString: string,
+  key: string,
+  value: string,
+): string => {
+  const config = parseJsonConfig(jsonString) ?? {};
+  if (!isPlainObject(config.env)) {
+    config.env = {};
+  }
+
+  const trimmed = value.trim();
+  if (trimmed) {
+    config.env[key] = trimmed;
+  } else {
+    delete config.env[key];
+  }
+
+  return JSON.stringify(config, null, 2);
+};
+
+export const extractQwenBaseUrl = (
+  jsonString: string | undefined | null,
+): string | undefined =>
+  typeof jsonString === "string"
+    ? getJsonEnvString(jsonString, "OPENAI_BASE_URL")
+    : undefined;
+
+export const setQwenBaseUrl = (jsonString: string, baseUrl: string): string =>
+  setJsonEnvString(jsonString, "OPENAI_BASE_URL", baseUrl);
+
+export const extractQwenModelName = (
+  jsonString: string | undefined | null,
+): string | undefined =>
+  typeof jsonString === "string"
+    ? getJsonEnvString(jsonString, "OPENAI_MODEL")
+    : undefined;
+
+export const setQwenModelName = (
+  jsonString: string,
+  modelName: string,
+): string => setJsonEnvString(jsonString, "OPENAI_MODEL", modelName);
 
 // ========== TOML Config Utilities ==========
 
