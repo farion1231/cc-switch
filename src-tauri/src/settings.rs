@@ -22,6 +22,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_claude_desktop_gateway_auth_scheme() -> String {
+    "x-api-key".to_string()
+}
+
 /// 主页面显示的应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -220,6 +224,18 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
+    // ===== Claude Desktop 官方 3P 配置 =====
+    #[serde(default = "default_claude_desktop_gateway_auth_scheme")]
+    pub claude_desktop_gateway_auth_scheme: String,
+    #[serde(default)]
+    pub claude_desktop_gateway_headers: Vec<String>,
+    #[serde(default = "default_true")]
+    pub claude_desktop_code_tab_enabled: bool,
+    #[serde(default)]
+    pub claude_desktop_local_mcp_enabled: bool,
+    #[serde(default = "default_true")]
+    pub claude_desktop_include_managed_mcp: bool,
+
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
@@ -318,6 +334,11 @@ impl Default for AppSettings {
             first_run_notice_confirmed: None,
             common_config_confirmed: None,
             language: None,
+            claude_desktop_gateway_auth_scheme: default_claude_desktop_gateway_auth_scheme(),
+            claude_desktop_gateway_headers: Vec::new(),
+            claude_desktop_code_tab_enabled: true,
+            claude_desktop_local_mcp_enabled: false,
+            claude_desktop_include_managed_mcp: true,
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,
@@ -401,6 +422,25 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "ja"))
             .map(|s| s.to_string());
+
+        self.claude_desktop_gateway_auth_scheme = match self
+            .claude_desktop_gateway_auth_scheme
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "auto" => "auto".to_string(),
+            "bearer" => "bearer".to_string(),
+            _ => "x-api-key".to_string(),
+        };
+
+        self.claude_desktop_gateway_headers = self
+            .claude_desktop_gateway_headers
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
 
         if let Some(sync) = &mut self.webdav_sync {
             sync.normalize();

@@ -1,6 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Settings, WebDavSyncSettings, RemoteSnapshotInfo } from "@/types";
+import type {
+  Settings,
+  WebDavSyncSettings,
+  RemoteSnapshotInfo,
+  ClaudeDesktopPreview,
+  ClaudeDesktopModeStatus,
+} from "@/types";
 import type { AppId } from "./types";
+
+export type ClaudeDesktopExportFormat = "json" | "mobileconfig" | "reg";
 
 export interface ConfigTransferResult {
   success: boolean;
@@ -23,8 +31,46 @@ export const settingsApi = {
     return await invoke("get_settings");
   },
 
+  getClaudeDesktopDefaultFilename(format: ClaudeDesktopExportFormat): string {
+    if (format === "mobileconfig") return "claude-desktop-3p.mobileconfig";
+    if (format === "reg") return "claude-desktop-3p.reg";
+    return "claude-desktop-3p.json";
+  },
+
   async save(settings: Settings): Promise<boolean> {
     return await invoke("save_settings", { settings });
+  },
+
+  async getClaudeDesktopPreview(): Promise<ClaudeDesktopPreview> {
+    return await invoke("get_claude_desktop_preview");
+  },
+
+  async getClaudeDesktopModeStatus(): Promise<ClaudeDesktopModeStatus> {
+    return await invoke("get_claude_desktop_mode_status");
+  },
+
+  async exportClaudeDesktopConfig(
+    format: ClaudeDesktopExportFormat,
+    filePath: string,
+  ): Promise<boolean> {
+    return await invoke("export_claude_desktop_config", {
+      format,
+      filePath,
+    });
+  },
+
+  async saveClaudeDesktopExportDialog(
+    format: ClaudeDesktopExportFormat,
+  ): Promise<string | null> {
+    return await invoke("save_claude_desktop_export_dialog", { format });
+  },
+
+  async installClaudeDesktopMobileconfig(filePath: string): Promise<boolean> {
+    return await invoke("install_claude_desktop_mobileconfig", { filePath });
+  },
+
+  async openClaudeDesktopInstallSettings(): Promise<boolean> {
+    return await invoke("open_claude_desktop_install_settings");
   },
 
   async restart(): Promise<boolean> {
