@@ -249,21 +249,38 @@ impl ProviderRouter {
         app_type: &str,
         queue: &[String],
     ) -> Result<Vec<Provider>, AppError> {
+        if queue.is_empty() {
+            log::warn!("[{app_type}] Smart routing: queue is empty (0 providers) — falling back to default");
+            return self.select_providers(app_type).await;
+        }
+
         let mut result = Vec::new();
         let mut skipped_not_found = 0usize;
         let mut skipped_circuit_open = 0usize;
-        let all_providers = self.db.get_all_providers(app_type)?;
+
+        // 一次性读取配置，避免循环中重复查询数据库
+        let auto_failover_enabled = self
+            .db
+            .get_proxy_config_for_app(app_type)
+            .await
+            .map(|cfg| cfg.auto_failover_enabled)
+            .unwrap_or(false);
+
+        // 使用 spawn_blocking 避免同步 DB 调用阻塞 tokio worker 线程
+        let app_type_owned = app_type.to_string();
+        let db = self.db.clone();
+        let all_providers = tokio::task::spawn_blocking(move || {
+            db.get_all_providers(&app_type_owned)
+        })
+        .await
+        .map_err(|e| AppError::Database(format!("spawn_blocking failed: {e}")))?
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
         for provider_id in queue {
             let Some(provider) = all_providers.get(provider_id).cloned() else {
                 log::warn!("[{app_type}] Smart routing: Provider {provider_id} not found, skipping");
                 skipped_not_found += 1;
                 continue;
-            };
-
-            let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
-                Ok(cfg) => cfg.auto_failover_enabled,
-                Err(_) => false,
             };
 
             if auto_failover_enabled {
