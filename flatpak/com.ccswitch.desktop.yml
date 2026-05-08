@@ -1,0 +1,98 @@
+id: com.ccswitch.desktop
+
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+
+command: cc-switch
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Tray icon permissions (required by Tauri tray-icon)
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --filesystem=xdg-run/tray-icon:create
+  # GitHub Releases scenario: Users download and install manually.
+  # For "download and run" convenience (needs read/write access to ~/.cc-switch, ~/.claude, ~/.claude.json, ~/.codex, ~/.gemini,
+  # and supports custom directory overrides), we grant full Home access by default.
+  # If you plan to publish on Flathub or prefer minimal permissions, replace this with more precise directory grants (see flatpak/README.md).
+  - --filesystem=home
+
+modules:
+  # Required for libdbusmenu build (intltool was removed from GNOME SDK since 2019)
+  - name: intltool
+    cleanup:
+      - "*"
+    sources:
+      - type: archive
+        url: https://launchpad.net/intltool/trunk/0.51.0/+download/intltool-0.51.0.tar.gz
+        sha256: 67c74d94196b153b774ab9f89b2fa6c6ba79352407037c8c14d5aeb334e959cd
+
+  # Required for tray icon support
+  - name: libayatana-ido
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DENABLE_TESTS=NO
+    sources:
+      - type: git
+        url: https://github.com/AyatanaIndicators/ayatana-ido.git
+        tag: 0.10.4
+
+  - name: libdbusmenu-gtk3
+    buildsystem: autotools
+    build-options:
+      cflags: -Wno-error
+    config-opts:
+      - --with-gtk=3
+      - --disable-dumper
+      - --disable-static
+      - --disable-nls
+    sources:
+      - type: archive
+        url: https://launchpad.net/libdbusmenu/16.04/16.04.0/+download/libdbusmenu-16.04.0.tar.gz
+        sha256: b9cc4a2acd74509435892823607d966d424bd9ad5d0b00938f27240a1bfa878a
+
+  - name: libayatana-indicator
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DENABLE_TESTS=NO
+      - -DENABLE_IDO=YES
+    sources:
+      - type: git
+        url: https://github.com/AyatanaIndicators/libayatana-indicator.git
+        tag: 0.9.4
+
+  - name: libayatana-appindicator
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DENABLE_BINDINGS_MONO=NO
+      - -DENABLE_BINDINGS_VALA=NO
+    sources:
+      - type: git
+        url: https://github.com/AyatanaIndicators/libayatana-appindicator.git
+        tag: 0.5.93
+
+  - name: cc-switch
+    buildsystem: simple
+    sources:
+      # Placed in flatpak/ directory by CI or local build script
+      - type: file
+        path: cc-switch.deb
+      - type: file
+        path: com.ccswitch.desktop.desktop
+      - type: file
+        path: com.ccswitch.desktop.metainfo.xml
+      - type: file
+        path: ../src-tauri/icons/128x128.png
+    build-commands:
+      - ar -x *.deb
+      - tar -xf data.tar.*
+      - cp -a usr/* /app/
+      # Use our own desktop/metainfo/icon to align with Flatpak app id
+      - rm -f /app/share/applications/*.desktop
+      - install -Dm644 com.ccswitch.desktop.desktop /app/share/applications/com.ccswitch.desktop.desktop
+      - install -Dm644 com.ccswitch.desktop.metainfo.xml /app/share/metainfo/com.ccswitch.desktop.metainfo.xml
+      - install -Dm644 128x128.png /app/share/icons/hicolor/128x128/apps/com.ccswitch.desktop.png

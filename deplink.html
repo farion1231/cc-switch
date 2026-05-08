@@ -1,0 +1,2178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CC Switch 深链接测试</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section h2 {
+            color: #2c3e50;
+            font-size: 24px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #ecf0f1;
+        }
+
+        .version-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        .link-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            border: 2px solid #e9ecef;
+            transition: all 0.3s ease;
+        }
+
+        .link-card:hover {
+            border-color: #3498db;
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.15);
+            transform: translateY(-2px);
+        }
+
+        .link-card h3 {
+            color: #2c3e50;
+            font-size: 20px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .link-card .description {
+            color: #7f8c8d;
+            font-size: 14px;
+            margin-bottom: 16px;
+            line-height: 1.6;
+        }
+
+        .deep-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            color: white;
+            padding: 12px 24px;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+        }
+
+        .deep-link:hover {
+            background: linear-gradient(135deg, #2980b9 0%, #1f6391 100%);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .deep-link:active {
+            transform: translateY(0);
+        }
+
+        .info-box {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .info-box h4 {
+            color: #856404;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .info-box ul {
+            list-style: disc;
+            margin-left: 20px;
+            color: #856404;
+            font-size: 14px;
+            line-height: 1.8;
+            padding-left: 20px;
+        }
+
+        .generator-section {
+            background: #e8f4f8;
+            border-radius: 12px;
+            padding: 30px;
+            margin-top: 40px;
+        }
+
+        .generator-section h2 {
+            color: #2c3e50;
+            margin-bottom: 24px;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #2c3e50;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+            color: white;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(39, 174, 96, 0.3);
+        }
+
+        .btn:hover {
+            background: linear-gradient(135deg, #229954 0%, #1e8449 100%);
+            box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .result-box {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            border: 2px solid #3498db;
+        }
+
+        .result-box strong {
+            color: #2c3e50;
+            font-size: 16px;
+        }
+
+        .result-text {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 12px 0;
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 13px;
+            color: #2c3e50;
+            border: 1px solid #dee2e6;
+        }
+
+        .btn-copy {
+            background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+            margin-right: 10px;
+        }
+
+        .btn-copy:hover {
+            background: linear-gradient(135deg, #8e44ad 0%, #7d3c98 100%);
+        }
+
+        .app-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-claude {
+            background: #e8f4f8;
+            color: #3498db;
+        }
+
+        .badge-codex {
+            background: #fef5e7;
+            color: #f39c12;
+        }
+
+        .badge-gemini {
+            background: #fdeef4;
+            color: #e91e63;
+        }
+
+        .param-list {
+            background: #f8f9fa;
+            border-left: 3px solid #3498db;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 12px 0;
+            font-size: 13px;
+            line-height: 1.8;
+            color: #495057;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+        }
+
+        .param-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-right: 6px;
+            background: #3498db;
+            color: white;
+        }
+
+        .param-tag.optional {
+            background: #95a5a6;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .content {
+                padding: 20px;
+            }
+
+            .generator-section {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔗 CC Switch 深链接测试</h1>
+            <p>点击下方链接测试深链接导入功能</p>
+        </div>
+
+        <div class="content">
+
+            <!-- 配置文件导入示例 (v3.8+) -->
+            <div class="section">
+                <h2>📦 配置文件导入示例 <span class="version-badge">v3.8+</span></h2>
+
+                <!-- Claude 配置文件导入 -->
+                <div class="link-card">
+                    <h3>
+                        <span class="app-badge badge-claude">Claude</span>
+                        完整 JSON 配置导入
+                    </h3>
+                    <p class="description">
+                        通过 Base64 编码的 JSON 配置文件导入完整配置，包含所有四种模型和端点信息。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=provider, app=claude, name<br>
+                        <span class="param-tag optional">可选</span> <strong>config</strong> (Base64 JSON),
+                        <strong>configFormat=json</strong>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=provider&app=claude&name=Claude%20Complete&configFormat=json&config=eyJlbnYiOnsiQU5USFJPUElDX0FVVEhfVE9LRU4iOiJzay1hbnQtdGVzdC1rZXkxMjMiLCJBTlRIUk9QSUNfQkFTRV9VUkwiOiJodHRwczovL2FwaS5hbnRocm9waWMuY29tL3YxIiwiQU5USFJPUElDX01PREVMIjoiY2xhdWRlLXNvbm5ldC00LjUiLCJBTlRIUk9QSUNfREVGQVVMVF9IQUlLVV9NT0RFTCI6ImNsYXVkZS1oYWlrdS00LjEiLCJBTlRIUk9QSUNfREVGQVVMVF9TT05ORVRfTU9ERUwiOiJjbGF1ZGUtc29ubmV0LTQuNSIsIkFOVEhST1BJQ19ERUZBVUxUX09QVVNfTU9ERUwiOiJjbGF1ZGUtb3B1cy00In19"
+                            class="deep-link">
+                            📥 导入完整配置
+                        </a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=provider&app=claude&name=Claude%20Complete&configFormat=json&config=eyJlbnYiOnsiQU5USFJPUElDX0FVVEhfVE9LRU4iOiJzay1hbnQtdGVzdC1rZXkxMjMiLCJBTlRIUk9QSUNfQkFTRV9VUkwiOiJodHRwczovL2FwaS5hbnRocm9waWMuY29tL3YxIiwiQU5USFJPUElDX01PREVMIjoiY2xhdWRlLXNvbm5ldC00LjUiLCJBTlRIUk9QSUNfREVGQVVMVF9IQUlLVV9NT0RFTCI6ImNsYXVkZS1oYWlrdS00LjEiLCJBTlRIUk9QSUNfREVGQVVMVF9TT05ORVRfTU9ERUwiOiJjbGF1ZGUtc29ubmV0LTQuNSIsIkFOVEhST1BJQ19ERUZBVUxUX09QVVNfTU9ERUwiOiJjbGF1ZGUtb3B1cy00In19', this)">
+                            📋 复制链接
+                        </button>
+                    </div>
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">// 解码后的配置内容:</div>
+                        {<br>
+                        &nbsp;&nbsp;"env": {<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_AUTH_TOKEN": "sk-ant-test-key123",<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_BASE_URL": "https://api.anthropic.com/v1",<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_MODEL": "claude-sonnet-4.5",<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4.1",<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4.5",<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4"<br>
+                        &nbsp;&nbsp;}<br>
+                        }
+                    </div>
+                </div>
+
+                <!-- URL 参数覆盖配置文件 -->
+                <div class="link-card">
+                    <h3>
+                        <span class="app-badge badge-claude">Claude</span>
+                        配置 + URL 参数覆盖
+                    </h3>
+                    <p class="description">
+                        配置文件提供基础设置,URL 参数覆盖 API Key。URL 参数优先级最高。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> name, config<br>
+                        <span class="param-tag optional">覆盖</span> <strong>apiKey</strong> (覆盖配置文件中的值)
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=provider&app=claude&name=My%20Custom&apiKey=sk-ant-my-new-key&configFormat=json&config=eyJlbnYiOnsiQU5USFJPUElDX0JBU0VfVVJMIjoiaHR0cHM6Ly9hcGkuYW50aHJvcGljLmNvbS92MSIsIkFOVEhST1BJQ19NT0RFTCI6ImNsYXVkZS1zb25uZXQtNC41In19"
+                            class="deep-link">
+                            📥 导入混合配置
+                        </a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=provider&app=claude&name=My%20Custom&apiKey=sk-ant-my-new-key&configFormat=json&config=eyJlbnYiOnsiQU5USFJPUElDX0JBU0VfVVJMIjoiaHR0cHM6Ly9hcGkuYW50aHJvcGljLmNvbS92MSIsIkFOVEhST1BJQ19NT0RFTCI6ImNsYXVkZS1zb25uZXQtNC41In19', this)">
+                            📋 复制链接
+                        </button>
+                    </div>
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">// 解码后的配置内容:</div>
+                        {<br>
+                        &nbsp;&nbsp;"env": {<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_BASE_URL": "https://api.anthropic.com/v1",<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_MODEL": "claude-sonnet-4.5"<br>
+                        &nbsp;&nbsp;}<br>
+                        }<br>
+                        <div style="color: #f39c12; margin-top: 8px;">// URL 参数覆盖: apiKey=sk-ant-my-new-key</div>
+                    </div>
+                    <div
+                        style="margin-top: 12px; padding: 10px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px; font-size: 13px;">
+                        <strong>优先级规则:</strong> URL 参数 (apiKey) > 配置文件 (endpoint, model)
+                    </div>
+                </div>
+
+                <!-- Codex TOML 配置导入 -->
+                <div class="link-card">
+                    <h3>
+                        <span class="app-badge badge-codex">Codex</span>
+                        TOML 格式配置导入
+                    </h3>
+                    <p class="description">
+                        Codex 使用 TOML 格式的配置文件,包含 auth 和 config 两部分。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> name, config<br>
+                        <span class="param-tag optional">可选</span> <strong>configFormat=json</strong> (Codex 配置为 JSON
+                        包装的 TOML)
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=provider&app=codex&name=OpenAI%20Complete&configFormat=json&config=eyJhdXRoIjp7Ik9QRU5BSV9BUElfS0VZIjoic2stcHJvai10ZXN0LWtleTEyMyJ9LCJjb25maWciOiJbbW9kZWxfcHJvdmlkZXJzLm9wZW5haV1cbmJhc2VfdXJsID0gXCJodHRwczovL2FwaS5vcGVuYWkuY29tL3YxXCJcblxuW2dlbmVyYWxdXG5tb2RlbCA9IFwiZ3B0LTUuMVwiIn0="
+                            class="deep-link">
+                            📥 导入 Codex 配置
+                        </a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=provider&app=codex&name=OpenAI%20Complete&configFormat=json&config=eyJhdXRoIjp7Ik9QRU5BSV9BUElfS0VZIjoic2stcHJvai10ZXN0LWtleTEyMyJ9LCJjb25maWciOiJbbW9kZWxfcHJvdmlkZXJzLm9wZW5haV1cbmJhc2VfdXJsID0gXCJodHRwczovL2FwaS5vcGVuYWkuY29tL3YxXCJcblxuW2dlbmVyYWxdXG5tb2RlbCA9IFwiZ3B0LTUuMVwiIn0=', this)">
+                            📋 复制链接
+                        </button>
+                    </div>
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">// 解码后的配置内容:</div>
+                        {<br>
+                        &nbsp;&nbsp;"auth": {<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;"OPENAI_API_KEY": "sk-proj-test-key123"<br>
+                        &nbsp;&nbsp;},<br>
+                        &nbsp;&nbsp;"config": "[model_providers.openai]\nbase_url =
+                        \"https://api.openai.com/v1\"\n\n[general]\nmodel = \"gpt-5.1\""<br>
+                        }
+                        <div style="color: #95a5a6; margin-top: 12px; margin-bottom: 4px;">// config 字段解析 (TOML):</div>
+                        <div style="color: #a8d08d;">[model_providers.openai]</div>
+                        <div style="color: #a8d08d;">base_url = "https://api.openai.com/v1"</div>
+                        <div style="color: #a8d08d; margin-top: 8px;">[general]</div>
+                        <div style="color: #a8d08d;">model = "gpt-5.1"</div>
+                    </div>
+                </div>
+
+                <!-- Gemini 配置导入 -->
+                <div class="link-card">
+                    <h3>
+                        <span class="app-badge badge-gemini">Gemini</span>
+                        Gemini 配置导入
+                    </h3>
+                    <p class="description">
+                        Gemini 使用扁平的环境变量格式,简洁明了。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> name, config<br>
+                        <span class="param-tag optional">可选</span> <strong>configFormat=json</strong>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=provider&app=gemini&name=Google%20Gemini&configFormat=json&config=eyJHRU1JTklfQVBJX0tFWSI6IkFJemFTeUR0ZXN0a2V5MTIzIiwiR0VNSU5JX0JBU0VfVVJMIjoiaHR0cHM6Ly9nZW5lcmF0aXZlbGFuZ3VhZ2UuZ29vZ2xlYXBpcy5jb20vdjFiZXRhIiwiR0VNSU5JX01PREVMIjoiZ2VtaW5pLTMtcHJvLXByZXZpZXcifQ=="
+                            class="deep-link">
+                            📥 导入 Gemini 配置
+                        </a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=provider&app=gemini&name=Google%20Gemini&configFormat=json&config=eyJHRU1JTklfQVBJX0tFWSI6IkFJemFTeUR0ZXN0a2V5MTIzIiwiR0VNSU5JX0JBU0VfVVJMIjoiaHR0cHM6Ly9nZW5lcmF0aXZlbGFuZ3VhZ2UuZ29vZ2xlYXBpcy5jb20vdjFiZXRhIiwiR0VNSU5JX01PREVMIjoiZ2VtaW5pLTMtcHJvLXByZXZpZXcifQ==', this)">
+                            📋 复制链接
+                        </button>
+                    </div>
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">// 解码后的配置内容:</div>
+                        {<br>
+                        &nbsp;&nbsp;"GEMINI_API_KEY": "AIzaSyDtestkey123",<br>
+                        &nbsp;&nbsp;"GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",<br>
+                        &nbsp;&nbsp;"GEMINI_MODEL": "gemini-3-pro-preview"<br>
+                        }
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- MCP、Prompt、Skill 示例 -->
+            <div class="section">
+                <h2>🔌 MCP Servers 导入 <span class="version-badge">v3.8+</span></h2>
+
+                <div class="link-card">
+                    <h3>📦📦 JSON 配置示例 - 批量导入多个 MCP Servers</h3>
+                    <p class="description">
+                        一次性导入多个 MCP 服务器 (Context7 + Sequential-thinking)。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=mcp, apps, config (Base64)<br>
+                        <span class="param-tag optional">可选</span> enabled
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=mcp&apps=claude,codex&config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJidW54IiwiYXJncyI6WyIteSIsIkB1cHN0YXNoL2NvbnRleHQ3LW1jcCIsIi0tYXBpLWtleSIsImN0eDdzay00ZGRkNGY2Ni1lNzUyLTQwMjItYjFmNi1jOGNmNjI3OWI4MGQiXSwiZW52Ijp7fX0sInNlcXVlbnRpYWwtdGhpbmtpbmciOnsiY29tbWFuZCI6Im5weCIsImFyZ3MiOlsiLXkiLCJAbW9kZWxjb250ZXh0cHJvdG9jb2wvc2VydmVyLXNlcXVlbnRpYWwtdGhpbmtpbmciXSwiZW52Ijp7fX19fQ==&enabled=true"
+                            class="deep-link">📥 批量导入 2 个 MCP Servers</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=mcp&apps=claude,codex&config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJidW54IiwiYXJncyI6WyIteSIsIkB1cHN0YXNoL2NvbnRleHQ3LW1jcCIsIi0tYXBpLWtleSIsImN0eDdzay00ZGRkNGY2Ni1lNzUyLTQwMjItYjFmNi1jOGNmNjI3OWI4MGQiXSwiZW52Ijp7fX0sInNlcXVlbnRpYWwtdGhpbmtpbmciOnsiY29tbWFuZCI6Im5weCIsImFyZ3MiOlsiLXkiLCJAbW9kZWxjb250ZXh0cHJvdG9jb2wvc2VydmVyLXNlcXVlbnRpYWwtdGhpbmtpbmciXSwiZW52Ijp7fX19fQ==&enabled=true', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- JSON 配置展示 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">📦 批量 MCP 配置 JSON:</div>
+                        <pre style="margin: 0; color: #a8d08d; line-height: 1.6;">{
+  "mcpServers": {
+    "context7": {
+      "command": "bunx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp",
+        "--api-key",
+        "ctx7sk-4ddd4f66-e752-4022-b1f6-c8cf6279b80d"
+      ],
+      "env": {}
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "env": {}
+    }
+  }
+}</pre>
+                        <div style="color: #95a5a6; margin-top: 8px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            💡 <strong>批量导入说明</strong>: 一次性导入 2 个 MCP 服务器<br>
+                            📦 <strong>服务器 1</strong>: context7 - Upstash Context7 MCP 服务器<br>
+                            📦 <strong>服务器 2</strong>: sequential-thinking - 结构化思维推理服务器<br>
+                            🎯 <strong>目标应用</strong>: Claude 和 Codex<br>
+                            🔄 <strong>智能合并</strong>: 如果服务器已存在，只更新应用启用状态，不覆盖配置
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Prompt 导入示例 -->
+            <div class="section">
+                <h2>💬 Prompt 导入 <span class="version-badge">v3.8+</span></h2>
+
+                <div class="link-card">
+                    <h3><span class="app-badge badge-claude">Claude</span> 代码审查专家</h3>
+                    <p class="description">为 Claude 导入代码审查提示词。</p>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=prompt&app=claude&name=代码审查专家&content=IyDku6PnoIHlrqHmn6XkuJPlrrYKCuS9oOaYr+S4gOS9jeaciee7j+mqjOeahOS7o+eggeWuoeafpeWRmO+8jOivt+WcqOS7o+eggeWuoeafpeWbnuWkjeeahOaXtuWAmeWBmuWQr+S4i+OAgg==&description=专注代码质量&enabled=true"
+                            class="deep-link">📥 导入</a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=prompt&app=claude&name=代码审查专家&content=IyDku6PnoIHlrqHmn6XkuJPlrrYKCuS9oOaYr+S4gOS9jeaciee7j+mqjOeahOS7o+eggeWuoeafpeWRmO+8jOivt+WcqOS7o+eggeWuoeafpeWbnuWkjeeahOaXtuWAmeWBmuWQr+S4i+OAgg==&description=专注代码质量&enabled=true', this)">📋
+                            复制</button>
+                    </div>
+
+                    <!-- 内容解释 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">📝 Prompt 内容:</div>
+                        <div style="color: #a8d08d; white-space: pre-wrap; line-height: 1.6;"># 代码审查专家
+
+                            你是一位有经验的代码审查员，请在代码审查回复的时候做启下。</div>
+                        <div style="color: #95a5a6; margin-top: 12px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            • <strong>应用</strong>: Claude<br>
+                            • <strong>描述</strong>: 专注代码质量<br>
+                            • <strong>状态</strong>: 导入后立即启用
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Skill 导入示例 -->
+            <div class="section">
+                <h2>🛠️ Skill 仓库导入 <span class="version-badge">v3.8+</span></h2>
+
+                <div class="link-card">
+                    <h3>添加 Claude Skill 仓库</h3>
+                    <p class="description">
+                        从 GitHub 仓库导入 Claude Skills，支持指定分支和子目录路径。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=skill, repo (owner/name)<br>
+                        <span class="param-tag optional">可选</span> branch, skills_path, directory
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=skill&repo=example/claude-skills&branch=main&skills_path=skills&directory=my-skills"
+                            class="deep-link">
+                            📥 导入 Skill 仓库示例
+                        </a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=skill&repo=example/claude-skills&branch=main&skills_path=skills&directory=my-skills', this)">
+                            📋 复制链接
+                        </button>
+                    </div>
+
+                    <!-- 内容解释 -->
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">🗂️ 将添加以下 Skill 仓库:</div>
+                        <div style="color: #52c41a; margin-bottom: 4px;">• <strong>GitHub 仓库</strong>:
+                            example/claude-skills</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>分支</strong>: main (默认分支)</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>Skills 路径</strong>: skills
+                            (仓库中技能文件所在的子目录)</div>
+                        <div style="color: #a8d08d; margin-bottom: 4px;">• <strong>本地目录</strong>: my-skills (克隆到本地的目录名)
+                        </div>
+                        <div style="color: #95a5a6; margin-top: 12px; padding-top: 8px; border-top: 1px solid #34495e;">
+                            💡 <strong>说明</strong>: 此操作会把仓库添加到 Skill 列表中。添加后，您可以在 Skills 管理界面选择安装具体的技能文件。<br>
+                            🔧 <strong>应用</strong>: Claude (Skills 功能仅支持 Claude)
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!--  深链接生成器 -->
+            <div class="section">
+                <h2>🚀 深链接生成器</h2>
+                <p style="color: #7f8c8d; margin-bottom: 24px;">
+                    填写参数信息，自动生成深链接并导入到 CC Switch
+                </p>
+                <!-- MCP Servers 生成器 -->
+                <div class="generator-section">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">🔌 MCP Servers 导入生成器</h3>
+
+                    <div class="form-group">
+                        <label>目标应用 *</label>
+                        <input type="text" id="mcpApps" placeholder="例如: claude,codex,gemini 或 claude" />
+                        <small style="color: #7f8c8d;">多个应用用逗号分隔</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>MCP 配置 (JSON) *</label>
+                        <textarea id="mcpConfig" rows="8" placeholder='{
+  "mcpServers": {
+    "server-name": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-xxx"],
+      "type": "stdio"
+    }
+  }
+}'></textarea>
+                        <small style="color: #7f8c8d;">完整的 MCP 配置 JSON</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>是否启用</label>
+                        <select id="mcpEnabled">
+                            <option value="true">是 (enabled=true)</option>
+                            <option value="false">否 (enabled=false)</option>
+                        </select>
+                    </div>
+
+                    <button class="btn" onclick="generateMcpLink()">🎯 生成 MCP 深链接</button>
+
+                    <div id="mcpResult" class="result-section" style="display: none;">
+                        <label>生成的深链接：</label>
+                        <div class="result-url" id="mcpUrl" onclick="selectText(this)"></div>
+                        <div style="display: flex; gap: 10px; margin-top: 12px;">
+                            <button class="btn" onclick="copyGeneratedLink('mcpUrl')">📋 复制链接</button>
+                            <a id="mcpImportBtn" class="btn"
+                                style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%); text-decoration: none;">
+                                📥 立即导入
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Prompt 生成器 -->
+                <div class="generator-section">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">💬 Prompt 导入生成器</h3>
+
+                    <div class="form-group">
+                        <label>目标应用 *</label>
+                        <select id="promptApp">
+                            <option value="claude">Claude</option>
+                            <option value="codex">Codex</option>
+                            <option value="gemini">Gemini</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>提示词名称 *</label>
+                        <input type="text" id="promptName" placeholder="例如: 代码审查专家" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>提示词内容 *</label>
+                        <textarea id="promptContent" rows="6" placeholder="# 角色定义
+
+你是一位专业的..."></textarea>
+                        <small style="color: #7f8c8d;">支持 Markdown 格式，自动 Base64 编码</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>描述</label>
+                        <input type="text" id="promptDescription" placeholder="例如: 专注代码质量" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>导入后是否启用</label>
+                        <select id="promptEnabled">
+                            <option value="true">是 (将禁用其他提示词)</option>
+                            <option value="false">否 (保持禁用状态)</option>
+                        </select>
+                    </div>
+
+                    <button class="btn" onclick="generatePromptLink()">🎯 生成 Prompt 深链接</button>
+
+                    <div id="promptResult" class="result-section" style="display: none;">
+                        <label>生成的深链接：</label>
+                        <div class="result-url" id="promptUrl" onclick="selectText(this)"></div>
+                        <div style="display: flex; gap: 10px; margin-top: 12px;">
+                            <button class="btn" onclick="copyGeneratedLink('promptUrl')">📋 复制链接</button>
+                            <a id="promptImportBtn" class="btn"
+                                style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%); text-decoration: none;">
+                                📥 立即导入
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Skill 生成器 -->
+                <div class="generator-section">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">🛠️ Skill 仓库导入生成器</h3>
+
+                    <div class="form-group">
+                        <label>GitHub 仓库 *</label>
+                        <input type="text" id="skillRepo" placeholder="例如: owner/repo-name" />
+                        <small style="color: #7f8c8d;">格式: 所有者/仓库名</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>分支</label>
+                        <input type="text" id="skillBranch" placeholder="main" value="main" />
+                    </div>
+
+                    <div class="form-group">
+                        <label>Skills 路径</label>
+                        <input type="text" id="skillPath" placeholder="skills" value="skills" />
+                        <small style="color: #7f8c8d;">仓库中技能文件所在的子目录</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>本地目录名</label>
+                        <input type="text" id="skillDirectory" placeholder="my-skills" />
+                        <small style="color: #7f8c8d;">克隆到本地的目录名（可选）</small>
+                    </div>
+
+                    <button class="btn" onclick="generateSkillLink()">🎯 生成 Skill 深链接</button>
+
+                    <div id="skillResult" class="result-section" style="display: none;">
+                        <label>生成的深链接：</label>
+                        <div class="result-url" id="skillUrl" onclick="selectText(this)"></div>
+                        <div style="display: flex; gap: 10px; margin-top: 12px;">
+                            <button class="btn" onclick="copyGeneratedLink('skillUrl')">📋 复制链接</button>
+                            <a id="skillImportBtn" class="btn"
+                                style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%); text-decoration: none;">
+                                📥 立即导入
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Base64 编解码器 -->
+            <div class="section">
+                <h2>🔐 Base64 编解码器</h2>
+
+                <div class="generator-section" style="background: #f5f5f5; border: 2px solid #95a5a6;">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">编码器 (UTF-8 → Base64)</h3>
+                    <div class="form-group">
+                        <label>原始内容（UTF-8 文本）</label>
+                        <textarea id="encodeInput" rows="6" placeholder="输入要编码的文本...&#10;支持中文、JSON、TOML 等所有 UTF-8 字符"
+                            style="font-family: monospace; font-size: 13px;"></textarea>
+                    </div>
+                    <button class="btn" style="background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);"
+                        onclick="encodeToBase64()">
+                        🔒 编码为 Base64
+                    </button>
+                    <div id="encodeResult" style="display: none;" class="result-box">
+                        <strong>✅ 编码结果：</strong>
+                        <div class="result-text" id="encodeOutput"></div>
+                        <button class="btn btn-copy" onclick="copyEncoded()">📋 复制结果</button>
+                        <small style="color: #7f8c8d; display: block; margin-top: 8px;">
+                            💡 可直接用于深链接的 config 或 content 参数
+                        </small>
+                    </div>
+                </div>
+
+                <div class="generator-section"
+                    style="background: #f0f9ff; border: 2px solid #3498db; margin-top: 24px;">
+                    <h3 style="color: #2c3e50; margin-bottom: 16px;">解码器 (Base64 → UTF-8)</h3>
+                    <div class="form-group">
+                        <label>Base64 编码内容</label>
+                        <textarea id="decodeInput" rows="6"
+                            placeholder="粘贴 Base64 编码的文本...&#10;例如: eyJlbnYiOnsiaGVsbG8iOiJ3b3JsZCJ9fQ=="
+                            style="font-family: monospace; font-size: 13px;"></textarea>
+                    </div>
+                    <button class="btn" style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%);"
+                        onclick="decodeFromBase64()">
+                        🔓 解码为文本
+                    </button>
+                    <div id="decodeResult" style="display: none;" class="result-box">
+                        <strong>✅ 解码结果：</strong>
+                        <div class="result-text" id="decodeOutput" style="white-space: pre-wrap;"></div>
+                        <button class="btn btn-copy" onclick="copyDecoded()">📋 复制结果</button>
+                        <div id="jsonFormat" style="display: none; margin-top: 12px;">
+                            <button class="btn" style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);"
+                                onclick="formatJson()">
+                                ✨ 格式化 JSON
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="info-box" style="margin-top: 24px; background: #e8f4f8; border-left: 4px solid #3498db;">
+                    <h4 style="color: #2c3e50;">💡 使用建议</h4>
+                    <ul style="color: #2c3e50;">
+                        <li><strong>编码配置文件</strong>：将 JSON 或 TOML 内容编码后用于 config 参数</li>
+                        <li><strong>编码 Prompt</strong>：将 Markdown 提示词内容编码后用于 content 参数</li>
+                        <li><strong>验证深链接</strong>：解码验证深链接中的配置内容是否正确</li>
+                        <li><strong>UTF-8 支持</strong>：完整支持中文及其他 Unicode 字符</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- 注意事项 -->
+            <div class="info-box">
+                <h4>⚠️ 使用注意事项</h4>
+                <ul>
+                    <li><strong>首次点击</strong>：浏览器会询问是否允许打开 CC Switch，请点击"允许"或"打开"</li>
+                    <li><strong>macOS 用户</strong>：可能需要在"系统设置" → "隐私与安全性"中允许应用</li>
+                    <li><strong>测试 API Key</strong>：示例中的 API Key 仅用于测试格式，无法实际使用</li>
+                    <li><strong>导入确认</strong>：点击链接后会弹出确认对话框，API Key 会被掩码显示（前4位+****）</li>
+                    <li><strong>编辑配置</strong>：导入后可以在 CC Switch 中随时编辑或删除配置</li>
+                </ul>
+            </div>
+
+            <!-- 深链接解析器 -->
+            <div class="generator-section" style="background: #f0f9ff; border: 2px solid #3498db;">
+                <h2>🔍 深链接解析器</h2>
+                <p style="color: #7f8c8d; margin-bottom: 24px;">粘贴深链接 URL，查看解析结果</p>
+
+                <div class="form-group">
+                    <label>深链接 URL</label>
+                    <textarea id="parseUrl" rows="3" placeholder="粘贴完整的 ccswitch:// 深链接..."
+                        style="font-family: monospace; font-size: 13px;"></textarea>
+                </div>
+
+                <button class="btn" style="background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);"
+                    onclick="parseDeepLink()">
+                    🔍 解析深链接
+                </button>
+
+                <!-- 解析结果 -->
+                <div id="parseResult" style="display: none;">
+                    <div class="result-box" style="margin-top: 20px;">
+                        <strong>✅ 解析结果：</strong>
+
+                        <!-- 基本信息 -->
+                        <div id="parseBasicInfo" style="margin-top: 16px;"></div>
+
+                        <!-- URL 参数 -->
+                        <div id="parseUrlParams" style="margin-top: 16px;"></div>
+
+                        <!-- 配置文件解析 -->
+                        <div id="parseConfigContent" style="margin-top: 16px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 深链接生成器 -->
+            <div class="generator-section">
+                <h2>🛠️ 深链接生成器</h2>
+                <p style="color: #7f8c8d; margin-bottom: 24px;">填写下方表单，生成您自己的深链接</p>
+
+                <!-- 导入模式切换 -->
+                <div class="form-group">
+                    <label>导入模式</label>
+                    <select id="importMode" onchange="toggleImportMode()">
+                        <option value="url">URL 参数模式（传统）</option>
+                        <option value="config">配置文件模式（v3.8+）</option>
+                    </select>
+                    <small style="color: #7f8c8d; font-size: 12px; display: block; margin-top: 4px;">
+                        URL 参数模式：直接在 URL 中传递参数 | 配置文件模式：使用 Base64 编码的 JSON/TOML
+                    </small>
+                </div>
+
+                <div class="form-group">
+                    <label>应用类型 *</label>
+                    <select id="app" onchange="updateModelFields()">
+                        <option value="claude">Claude Code</option>
+                        <option value="codex">Codex</option>
+                        <option value="gemini">Gemini</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>供应商名称 *</label>
+                    <input type="text" id="name" placeholder="例如: Claude Official">
+                    <small style="color: #e74c3c; font-size: 12px; display: block; margin-top: 4px;">
+                        ⚠️ 唯一必填项
+                    </small>
+                </div>
+
+                <!-- URL 参数模式字段 -->
+                <div id="urlModeFields">
+                    <div class="form-group">
+                        <label>官网地址</label>
+                        <input type="url" id="homepage" placeholder="https://example.com（可选，配置文件模式可自动推断）">
+                    </div>
+
+                    <div class="form-group">
+                        <label>API 端点</label>
+                        <input type="url" id="endpoint" placeholder="https://api.example.com/v1（配置文件模式可从配置提取）">
+                        <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                            主 API 端点地址
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>备用 API 端点（可选，逗号分隔）</label>
+                        <input type="text" id="extraEndpoints" placeholder="https://api2.example.com/v1, https://api3.example.com/v1">
+                        <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                            多个备用端点用逗号分隔，导入后自动添加为自定义端点
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="text" id="apiKey" placeholder="sk-xxxxx 或 AIzaSyXXXXX（配置文件模式可从配置提取）">
+                    </div>
+                </div>
+
+                <!-- 配置文件模式字段 -->
+                <div id="configModeFields" style="display: none;">
+                    <!-- 通用/Claude/Gemini JSON 配置 -->
+                    <div id="generalConfigGroup" class="form-group">
+                        <label id="configJsonLabel">配置文件内容（JSON）</label>
+                        <textarea id="configJson" rows="12"
+                            placeholder='输入 JSON 配置，例如：&#10;{&#10;  "env": {&#10;    "ANTHROPIC_AUTH_TOKEN": "sk-ant-xxx",&#10;    "ANTHROPIC_BASE_URL": "https://api.anthropic.com/v1",&#10;    "ANTHROPIC_MODEL": "claude-sonnet-4.5"&#10;  }&#10;}'></textarea>
+                        <small style="color: #7f8c8d; font-size: 12px; display: block; margin-top: 4px;">
+                            配置文件将自动进行 Base64 编码
+                        </small>
+                    </div>
+
+                    <!-- Codex 专用配置字段 -->
+                    <div id="codexConfigGroup" style="display: none;">
+                        <div class="form-group">
+                            <label>Codex 认证信息 (JSON)</label>
+                            <textarea id="codexAuthJson" rows="5"
+                                placeholder='{&#10;  "auth": {&#10;    "OPENAI_API_KEY": "sk-..."&#10;  }&#10;}'></textarea>
+                            <small style="color: #7f8c8d; font-size: 12px; display: block; margin-top: 4px;">
+                                包含 API Key 的认证信息 JSON 对象
+                            </small>
+                        </div>
+                        <div class="form-group">
+                            <label>Codex 配置文件 (TOML)</label>
+                            <textarea id="codexConfigToml" rows="10"
+                                placeholder='[model_providers.openai]&#10;base_url = "..."&#10;&#10;[general]&#10;model = "..."'
+                                style="font-family: monospace;"></textarea>
+                            <small style="color: #7f8c8d; font-size: 12px; display: block; margin-top: 4px;">
+                                config.toml 的原始内容
+                            </small>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>URL 参数覆盖（可选）</label>
+                        <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
+                            <p style="font-size: 12px; color: #856404; margin: 0;">
+                                💡 可以在下方填写 API Key、端点等参数来覆盖配置文件中的值。留空则完全使用配置文件。
+                            </p>
+                        </div>
+                        <input type="text" id="overrideApiKey" placeholder="覆盖配置文件中的 API Key（可选）">
+                        <input type="url" id="overrideEndpoint" placeholder="覆盖配置文件中的端点（可选）" style="margin-top: 8px;">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>默认模型（可选）</label>
+                    <input type="text" id="model" placeholder="例如: claude-haiku-4.1, gpt-5.1, gemini-3-pro-preview">
+                    <small style="color: #7f8c8d; font-size: 12px; display: block; margin-top: 4px;">
+                        通用模型字段，适用于所有应用类型
+                    </small>
+                </div>
+
+                <!-- Claude 专用字段 -->
+                <div id="claudeFields" style="display: block;">
+                    <div style="background: #e8f4f8; padding: 16px; border-radius: 8px; margin: 16px 0;">
+                        <h4 style="color: #2c3e50; margin-bottom: 12px; font-size: 14px;">
+                            📋 Claude 专用模型字段（可选）
+                        </h4>
+                        <p style="color: #7f8c8d; font-size: 12px; margin-bottom: 12px;">
+                            可以根据需要设置特定的模型字段，这些字段仅在 Claude 应用中生效
+                        </p>
+
+                        <div class="form-group">
+                            <label>Haiku 模型</label>
+                            <input type="text" id="haikuModel" placeholder="claude-haiku-4.1">
+                            <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                                对应环境变量：ANTHROPIC_DEFAULT_HAIKU_MODEL
+                            </small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Sonnet 模型</label>
+                            <input type="text" id="sonnetModel" placeholder="claude-sonnet-4.5">
+                            <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                                对应环境变量：ANTHROPIC_DEFAULT_SONNET_MODEL
+                            </small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Opus 模型</label>
+                            <input type="text" id="opusModel" placeholder="claude-opus-4">
+                            <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                                对应环境变量：ANTHROPIC_DEFAULT_OPUS_MODEL
+                            </small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>图标（可选）</label>
+                    <input type="text" id="icon" placeholder="例如: openai, anthropic, google">
+                    <small style="color: #7f8c8d; font-size: 12px; display: block; margin-top: 4px;">
+                        图标名称，用于在界面中显示
+                    </small>
+                </div>
+
+                <div class="form-group">
+                    <label>导入后是否设为当前供应商</label>
+                    <select id="enabled">
+                        <option value="true">是 (立即切换到此供应商)</option>
+                        <option value="false">否 (仅添加，不切换)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>备注（可选）</label>
+                    <textarea id="notes" rows="2" placeholder="例如: 公司专用账号"></textarea>
+                </div>
+
+                <!-- 用量查询配置 (v3.9+) -->
+                <div style="background: #f0fff4; padding: 16px; border-radius: 8px; margin: 16px 0; border: 2px solid #27ae60;">
+                    <h4 style="color: #27ae60; margin-bottom: 12px; font-size: 14px;">
+                        📊 用量查询配置（v3.9+，可选）
+                    </h4>
+                    <p style="color: #7f8c8d; font-size: 12px; margin-bottom: 12px;">
+                        配置用量查询脚本，可自动查询 API 余额
+                    </p>
+
+                    <div class="form-group">
+                        <label>启用用量查询</label>
+                        <select id="usageEnabled">
+                            <option value="">不配置</option>
+                            <option value="true">启用</option>
+                            <option value="false">禁用</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>用量查询 Base URL</label>
+                        <input type="url" id="usageBaseUrl" placeholder="https://example.com（用于用量查询的基础 URL）">
+                        <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                            用量查询接口的基础地址，必须与脚本中的请求 URL 同源
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>用量查询专用 API Key（可选）</label>
+                        <input type="text" id="usageApiKey" placeholder="留空则使用供应商的 API Key">
+                    </div>
+
+                    <div class="form-group">
+                        <label>用量查询脚本</label>
+                        <textarea id="usageScript" rows="12" style="font-family: monospace; font-size: 12px;"
+                            placeholder='({
+  request: {
+    url: "{{baseUrl}}/api/v1/user/subscription-info",
+    method: "GET",
+    headers: { "Authorization": "{{apiKey}}" }
+  },
+  extractor: function(response) {
+    const data = typeof response === "string" ? JSON.parse(response) : response;
+    return {
+      isValid: true,
+      remaining: data.balance ?? 0,
+      unit: "USD"
+    };
+  }
+})'></textarea>
+                        <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                            支持模板变量：{{baseUrl}}、{{apiKey}}、{{accessToken}}、{{userId}}
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>自动查询间隔（分钟）</label>
+                        <input type="number" id="usageAutoInterval" placeholder="30" min="0">
+                        <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                            0 表示禁用自动查询
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Access Token（可选）</label>
+                        <input type="text" id="usageAccessToken" placeholder="某些 API 需要的访问令牌">
+                    </div>
+
+                    <div class="form-group">
+                        <label>User ID（可选）</label>
+                        <input type="text" id="usageUserId" placeholder="某些 API 需要的用户 ID">
+                    </div>
+                </div>
+
+                <button class="btn" onclick="generateLink()">🚀 生成深链接</button>
+
+                <div id="result" style="display: none;">
+                    <div class="result-box">
+                        <strong>✅ 生成的深链接：</strong>
+                        <div class="result-text" id="linkText"></div>
+                        <button class="btn btn-copy" onclick="copyLink()">📋 复制链接</button>
+                        <a id="testLink" class="deep-link" style="text-decoration: none;">
+                            🧪 测试链接
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // UTF-8 字符串转 Base64
+        function utf8_to_b64(str) {
+            try {
+                const bytes = new TextEncoder().encode(str);
+                const binString = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+                return btoa(binString);
+            } catch (e) {
+                console.error("Base64 encode error:", e);
+                return window.btoa(unescape(encodeURIComponent(str)));
+            }
+        }
+
+        // Base64 转 UTF-8 字符串
+        function b64_to_utf8(str) {
+            try {
+                const binString = atob(str);
+                const bytes = Uint8Array.from(binString, (m) => m.codePointAt(0));
+                return new TextDecoder().decode(bytes);
+            } catch (e) {
+                console.error("Base64 decode error:", e);
+                return decodeURIComponent(escape(window.atob(str)));
+            }
+        }
+
+        // 切换导入模式
+        function toggleImportMode() {
+            const mode = document.getElementById('importMode').value;
+            const urlFields = document.getElementById('urlModeFields');
+            const configFields = document.getElementById('configModeFields');
+
+            if (mode === 'url') {
+                urlFields.style.display = 'block';
+                configFields.style.display = 'none';
+            } else {
+                urlFields.style.display = 'none';
+                configFields.style.display = 'block';
+                // 当切换到配置文件模式时，自动填充示例配置
+                populateConfigTemplate();
+            }
+        }
+
+        // ... (rest of the functions) ...
+
+        // 根据应用类型填充配置模板
+        function populateConfigTemplate() {
+            const app = document.getElementById('app').value;
+            const configTextarea = document.getElementById('configJson');
+            const codexAuthTextarea = document.getElementById('codexAuthJson');
+            const codexConfigTextarea = document.getElementById('codexConfigToml');
+
+            let template = '';
+
+            if (app === 'claude') {
+                template = `{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "sk-ant-your-api-key-here",
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com/v1",
+    "ANTHROPIC_MODEL": "claude-sonnet-4.5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4.1",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4.5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4"
+  }
+}`;
+                configTextarea.value = template;
+            } else if (app === 'codex') {
+                // Codex 分开填充
+                codexAuthTextarea.value = `{
+  "auth": {
+    "OPENAI_API_KEY": "sk-proj-your-api-key-here"
+  }
+}`;
+                codexConfigTextarea.value = `model_provider = "custom"
+model = "gpt-5.1"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+requires_openai_auth = true`;
+            } else if (app === 'gemini') {
+                template = `{
+  "GEMINI_API_KEY": "AIzaSy-your-api-key-here",
+  "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",
+  "GEMINI_MODEL": "gemini-3-pro-preview"
+}`;
+                configTextarea.value = template;
+            }
+        }
+
+        // 更新模型字段显示
+        function updateModelFields() {
+            const app = document.getElementById('app').value;
+            const claudeFields = document.getElementById('claudeFields');
+            const generalConfigGroup = document.getElementById('generalConfigGroup');
+            const codexConfigGroup = document.getElementById('codexConfigGroup');
+            const mode = document.getElementById('importMode').value;
+
+            // Claude 字段显示控制
+            if (app === 'claude') {
+                claudeFields.style.display = 'block';
+            } else {
+                claudeFields.style.display = 'none';
+            }
+
+            // 配置文件输入框控制
+            if (mode === 'config') {
+                if (app === 'codex') {
+                    generalConfigGroup.style.display = 'none';
+                    codexConfigGroup.style.display = 'block';
+                } else {
+                    generalConfigGroup.style.display = 'block';
+                    codexConfigGroup.style.display = 'none';
+                }
+                populateConfigTemplate();
+            }
+        }
+
+        function generateLink() {
+            const mode = document.getElementById('importMode').value;
+            const app = document.getElementById('app').value;
+            const name = document.getElementById('name').value.trim();
+
+            // 验证必填字段（只有名称是必填的）
+            if (!name) {
+                alert('❌ 请填写供应商名称！');
+                return;
+            }
+
+            // 构建基础参数
+            const params = new URLSearchParams({
+                resource: 'provider',
+                app: app,
+                name: name
+            });
+
+            if (mode === 'url') {
+                // URL 参数模式
+                const homepage = document.getElementById('homepage').value.trim();
+                const endpoint = document.getElementById('endpoint').value.trim();
+                const apiKey = document.getElementById('apiKey').value.trim();
+                const model = document.getElementById('model').value.trim();
+                const icon = document.getElementById('icon').value.trim();
+                const enabled = document.getElementById('enabled').value;
+                const notes = document.getElementById('notes').value.trim();
+
+                // Claude 专用字段
+                const haikuModel = document.getElementById('haikuModel').value.trim();
+                const sonnetModel = document.getElementById('sonnetModel').value.trim();
+                const opusModel = document.getElementById('opusModel').value.trim();
+
+                // URL 模式下，至少需要 endpoint 和 apiKey
+                if (!endpoint || !apiKey) {
+                    alert('❌ URL 参数模式下，端点和 API Key 是必填的！');
+                    return;
+                }
+
+                // 验证 URL 格式
+                if (homepage) {
+                    try {
+                        new URL(homepage);
+                    } catch (e) {
+                        alert('❌ 请输入有效的官网 URL 格式（需包含 http:// 或 https://）！');
+                        return;
+                    }
+                }
+
+                try {
+                    new URL(endpoint);
+                } catch (e) {
+                    alert('❌ 请输入有效的端点 URL 格式（需包含 http:// 或 https://）！');
+                    return;
+                }
+
+                // 添加参数
+                if (homepage) params.append('homepage', homepage);
+
+                // 合并主端点和备用端点
+                const extraEndpoints = document.getElementById('extraEndpoints').value.trim();
+                let fullEndpoint = endpoint;
+                if (extraEndpoints) {
+                    const extras = extraEndpoints.split(',').map(e => e.trim()).filter(e => e);
+                    if (extras.length > 0) {
+                        fullEndpoint = endpoint + ',' + extras.join(',');
+                    }
+                }
+                params.append('endpoint', fullEndpoint);
+
+                params.append('apiKey', apiKey);
+                if (model) params.append('model', model);
+                if (icon) params.append('icon', icon);
+                if (enabled) params.append('enabled', enabled);
+                if (notes) params.append('notes', notes);
+
+                // 添加 Claude 专用模型字段
+                if (app === 'claude') {
+                    if (haikuModel) params.append('haikuModel', haikuModel);
+                    if (sonnetModel) params.append('sonnetModel', sonnetModel);
+                    if (opusModel) params.append('opusModel', opusModel);
+                }
+            } else {
+                // 配置文件模式
+                let configJson = '';
+
+                if (app === 'codex') {
+                    // Codex 特殊处理：合并 Auth JSON 和 Config TOML
+                    const authJson = document.getElementById('codexAuthJson').value.trim();
+                    const configToml = document.getElementById('codexConfigToml').value.trim();
+
+                    if (!authJson) {
+                        alert('❌ 请填写 Codex 认证信息 (JSON)！');
+                        return;
+                    }
+                    if (!configToml) {
+                        alert('❌ 请填写 Codex 配置文件 (TOML)！');
+                        return;
+                    }
+
+                    try {
+                        const authObj = JSON.parse(authJson);
+                        // 构造最终对象
+                        const finalObj = {
+                            ...authObj,
+                            config: configToml
+                        };
+                        configJson = JSON.stringify(finalObj);
+                    } catch (e) {
+                        alert('❌ Codex 认证信息不是有效的 JSON 格式：' + e.message);
+                        return;
+                    }
+                } else {
+                    // 其他应用使用通用 JSON 输入框
+                    configJson = document.getElementById('configJson').value.trim();
+                    if (!configJson) {
+                        alert('❌ 配置文件模式下，请填写配置文件内容！');
+                        return;
+                    }
+                    // 验证 JSON 格式
+                    try {
+                        JSON.parse(configJson);
+                    } catch (e) {
+                        alert('❌ 配置文件不是有效的 JSON 格式：' + e.message);
+                        return;
+                    }
+                }
+
+                const overrideApiKey = document.getElementById('overrideApiKey').value.trim();
+                const overrideEndpoint = document.getElementById('overrideEndpoint').value.trim();
+                const model = document.getElementById('model').value.trim();
+                const icon = document.getElementById('icon').value.trim();
+                const enabled = document.getElementById('enabled').value;
+                const notes = document.getElementById('notes').value.trim();
+
+                // Claude 专用字段
+                const haikuModel = document.getElementById('haikuModel').value.trim();
+                const sonnetModel = document.getElementById('sonnetModel').value.trim();
+                const opusModel = document.getElementById('opusModel').value.trim();
+
+                // Base64 编码配置文件
+                const configB64 = utf8_to_b64(configJson);
+                params.append('config', configB64);
+                params.append('configFormat', 'json');
+
+                // 添加覆盖参数
+                if (overrideApiKey) params.append('apiKey', overrideApiKey);
+                if (overrideEndpoint) {
+                    try {
+                        new URL(overrideEndpoint);
+                        params.append('endpoint', overrideEndpoint);
+                    } catch (e) {
+                        alert('❌ 覆盖端点 URL 格式无效！');
+                        return;
+                    }
+                }
+
+                if (model) params.append('model', model);
+                if (icon) params.append('icon', icon);
+                if (enabled) params.append('enabled', enabled);
+                if (notes) params.append('notes', notes);
+
+                // 添加 Claude 专用模型字段
+                if (app === 'claude') {
+                    if (haikuModel) params.append('haikuModel', haikuModel);
+                    if (sonnetModel) params.append('sonnetModel', sonnetModel);
+                    if (opusModel) params.append('opusModel', opusModel);
+                }
+            }
+
+            // 添加用量查询参数 (v3.9+)
+            const usageEnabled = document.getElementById('usageEnabled').value;
+            const usageBaseUrl = document.getElementById('usageBaseUrl').value.trim();
+            const usageApiKey = document.getElementById('usageApiKey').value.trim();
+            const usageScript = document.getElementById('usageScript').value.trim();
+            const usageAutoInterval = document.getElementById('usageAutoInterval').value.trim();
+            const usageAccessToken = document.getElementById('usageAccessToken').value.trim();
+            const usageUserId = document.getElementById('usageUserId').value.trim();
+
+            if (usageEnabled) params.append('usageEnabled', usageEnabled);
+            if (usageBaseUrl) params.append('usageBaseUrl', usageBaseUrl);
+            if (usageApiKey) params.append('usageApiKey', usageApiKey);
+            if (usageScript) {
+                // URL-safe Base64 编码
+                const scriptB64 = utf8_to_b64(usageScript)
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=+$/, '');
+                params.append('usageScript', scriptB64);
+            }
+            if (usageAutoInterval) params.append('usageAutoInterval', usageAutoInterval);
+            if (usageAccessToken) params.append('usageAccessToken', usageAccessToken);
+            if (usageUserId) params.append('usageUserId', usageUserId);
+
+            const deepLink = `ccswitch://v1/import?${params.toString()}`;
+
+            // 显示结果
+            document.getElementById('linkText').textContent = deepLink;
+            document.getElementById('testLink').href = deepLink;
+            document.getElementById('result').style.display = 'block';
+
+            // 滚动到结果区域
+            document.getElementById('result').scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest'
+            });
+        }
+
+        function copyLink() {
+            const linkText = document.getElementById('linkText').textContent;
+
+            navigator.clipboard.writeText(linkText).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ 已复制！';
+                btn.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('❌ 复制失败，请手动复制链接');
+            });
+        }
+
+        // 复制深链接
+        function copyDeepLink(url, button) {
+            navigator.clipboard.writeText(url).then(() => {
+                const originalText = button.textContent;
+                button.textContent = '✅ 已复制！';
+                button.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('❌ 复制失败，请手动复制链接');
+            });
+        }
+
+        // 深链接解析器
+        function parseDeepLink() {
+            const urlInput = document.getElementById('parseUrl').value.trim();
+
+            if (!urlInput) {
+                alert('❌ 请输入深链接 URL！');
+                return;
+            }
+
+            try {
+                // 解析 URL
+                const url = new URL(urlInput);
+
+                // 验证协议
+                if (url.protocol !== 'ccswitch:') {
+                    alert('❌ 无效的深链接协议！必须以 ccswitch:// 开头');
+                    return;
+                }
+
+                // 提取版本和路径
+                const version = url.hostname;
+                const path = url.pathname;
+
+                // 解析查询参数
+                const params = new URLSearchParams(url.search);
+                const paramsObj = {};
+                params.forEach((value, key) => {
+                    paramsObj[key] = value;
+                });
+
+                // 构建基本信息 HTML
+                let basicInfoHtml = `
+                    <div style="background: #e8f4f8; padding: 16px; border-radius: 8px; border-left: 4px solid #3498db;">
+                        <h4 style="margin-bottom: 12px; color: #2c3e50;">📋 基本信息</h4>
+                        <div style="display: grid; grid-template-columns: 120px 1fr; gap: 8px; font-size: 14px;">
+                            <div style="color: #7f8c8d;">协议版本:</div>
+                            <div style="font-weight: 600; color: #2c3e50;">${version}</div>
+                            <div style="color: #7f8c8d;">路径:</div>
+                            <div style="font-weight: 600; color: #2c3e50;">${path}</div>
+                            <div style="color: #7f8c8d;">资源类型:</div>
+                            <div style="font-weight: 600; color: #2c3e50;">${paramsObj.resource || '-'}</div>
+                            <div style="color: #7f8c8d;">应用类型:</div>
+                            <div style="font-weight: 600; color: #2c3e50; text-transform: capitalize;">${paramsObj.app || '-'}</div>
+                            <div style="color: #7f8c8d;">供应商名称:</div>
+                            <div style="font-weight: 600; color: #2c3e50;">${paramsObj.name || '-'}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 构建 URL 参数 HTML
+                let urlParamsHtml = `
+                    <div style="background: #fff3cd; padding: 16px; border-radius: 8px; border-left: 4px solid #ffc107;">
+                        <h4 style="margin-bottom: 12px; color: #856404;">🔗 URL 参数</h4>
+                        <div style="display: grid; grid-template-columns: 150px 1fr; gap: 8px; font-size: 13px;">
+                `;
+
+                // 常规参数（排除 endpoint，单独处理）
+                const regularParams = ['homepage', 'apiKey', 'model', 'notes'];
+                regularParams.forEach(key => {
+                    if (paramsObj[key]) {
+                        let displayValue = paramsObj[key];
+                        // API Key 掩码处理
+                        if (key === 'apiKey') {
+                            displayValue = displayValue.substring(0, 10) + '****';
+                        }
+                        urlParamsHtml += `
+                            <div style="color: #856404; font-weight: 500;">${key}:</div>
+                            <div style="color: #856404; word-break: break-all; font-family: monospace; font-size: 12px;">${displayValue}</div>
+                        `;
+                    }
+                });
+
+                // 单独处理 endpoint（支持多端点）
+                if (paramsObj.endpoint) {
+                    const endpoints = paramsObj.endpoint.split(',').map(e => e.trim()).filter(e => e);
+                    if (endpoints.length === 1) {
+                        // 单个端点
+                        urlParamsHtml += `
+                            <div style="color: #856404; font-weight: 500;">endpoint:</div>
+                            <div style="color: #856404; word-break: break-all; font-family: monospace; font-size: 12px;">${endpoints[0]}</div>
+                        `;
+                    } else {
+                        // 多个端点
+                        urlParamsHtml += `
+                            <div style="color: #856404; font-weight: 500;">endpoints:</div>
+                            <div style="color: #856404; word-break: break-all; font-family: monospace; font-size: 12px;">
+                        `;
+                        endpoints.forEach((ep, idx) => {
+                            const label = idx === 0 ? '🔹 主端点' : `└ 备用 ${idx}`;
+                            urlParamsHtml += `
+                                <div style="margin-bottom: 4px; ${idx === 0 ? 'font-weight: 600;' : 'color: #a08040;'}">
+                                    ${label}: ${ep}
+                                </div>
+                            `;
+                        });
+                        urlParamsHtml += `
+                                <div style="margin-top: 8px; padding: 6px 10px; background: #fff8e1; border-radius: 4px; font-size: 11px; color: #856404;">
+                                    💡 共 ${endpoints.length} 个端点，第一个为主端点，其余为备用端点
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+
+                // Claude 专用模型参数
+                const claudeModelParams = ['haikuModel', 'sonnetModel', 'opusModel'];
+                claudeModelParams.forEach(key => {
+                    if (paramsObj[key]) {
+                        urlParamsHtml += `
+                            <div style="color: #856404; font-weight: 500;">${key}:</div>
+                            <div style="color: #856404; word-break: break-all; font-family: monospace; font-size: 12px;">${paramsObj[key]}</div>
+                        `;
+                    }
+                });
+
+                urlParamsHtml += '</div></div>';
+
+                // 配置文件解析
+                let configHtml = '';
+                if (paramsObj.config) {
+                    try {
+                        // 解码 Base64
+                        const decoded = b64_to_utf8(paramsObj.config);
+                        const configObj = JSON.parse(decoded);
+
+                        configHtml = `
+                            <div style="background: #d1ecf1; padding: 16px; border-radius: 8px; border-left: 4px solid #17a2b8;">
+                                <h4 style="margin-bottom: 12px; color: #0c5460;">📄 配置文件内容 (${paramsObj.configFormat?.toUpperCase() || 'JSON'})</h4>
+                        `;
+
+                        // 根据应用类型解析配置
+                        if (paramsObj.app === 'claude') {
+                            const env = configObj.env || {};
+                            configHtml += `
+                                <div style="background: #fff; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+                                    <div style="font-size: 12px; color: #0c5460; margin-bottom: 8px; font-weight: 600;">Claude 环境变量:</div>
+                                    <div style="display: grid; grid-template-columns: 250px 1fr; gap: 6px; font-size: 12px; font-family: monospace;">
+                            `;
+                            Object.keys(env).forEach(key => {
+                                let value = env[key];
+                                if (key.includes('TOKEN') || key.includes('KEY')) {
+                                    value = value.substring(0, 10) + '****';
+                                }
+                                configHtml += `
+                                    <div style="color: #0c5460; font-weight: 500;">${key}:</div>
+                                    <div style="color: #0c5460;">${value}</div>
+                                `;
+                            });
+                            configHtml += '</div></div>';
+                        } else if (paramsObj.app === 'codex') {
+                            const auth = configObj.auth || {};
+                            const config = configObj.config || '';
+
+                            configHtml += `
+                                <div style="background: #fff; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+                                    <div style="font-size: 12px; color: #0c5460; margin-bottom: 8px; font-weight: 600;">Codex 认证信息:</div>
+                                    <div style="display: grid; grid-template-columns: 200px 1fr; gap: 6px; font-size: 12px; font-family: monospace;">
+                            `;
+                            Object.keys(auth).forEach(key => {
+                                let value = auth[key];
+                                if (key.includes('KEY')) {
+                                    value = value.substring(0, 10) + '****';
+                                }
+                                configHtml += `
+                                    <div style="color: #0c5460; font-weight: 500;">${key}:</div>
+                                    <div style="color: #0c5460;">${value}</div>
+                                `;
+                            });
+                            configHtml += '</div></div>';
+
+                            if (config) {
+                                configHtml += `
+                                    <div style="background: #fff; padding: 12px; border-radius: 6px;">
+                                        <div style="font-size: 12px; color: #0c5460; margin-bottom: 8px; font-weight: 600;">TOML 配置:</div>
+                                        <pre style="margin: 0; font-size: 11px; color: #0c5460; white-space: pre-wrap; word-break: break-all;">${config}</pre>
+                                    </div>
+                                `;
+                            }
+                        } else if (paramsObj.app === 'gemini') {
+                            configHtml += `
+                                <div style="background: #fff; padding: 12px; border-radius: 6px;">
+                                    <div style="font-size: 12px; color: #0c5460; margin-bottom: 8px; font-weight: 600;">Gemini 环境变量:</div>
+                                    <div style="display: grid; grid-template-columns: 200px 1fr; gap: 6px; font-size: 12px; font-family: monospace;">
+                            `;
+                            Object.keys(configObj).forEach(key => {
+                                let value = configObj[key];
+                                if (key.includes('KEY')) {
+                                    value = value.substring(0, 10) + '****';
+                                }
+                                configHtml += `
+                                    <div style="color: #0c5460; font-weight: 500;">${key}:</div>
+                                    <div style="color: #0c5460;">${value}</div>
+                                `;
+                            });
+                            configHtml += '</div></div>';
+                        }
+
+                        // 原始 JSON
+                        configHtml += `
+                            <details style="margin-top: 12px;">
+                                <summary style="cursor: pointer; color: #0c5460; font-size: 12px; font-weight: 600;">查看原始 JSON →</summary>
+                                <pre style="margin-top: 8px; padding: 12px; background: #f8f9fa; border-radius: 6px; font-size: 11px; overflow-x: auto; border: 1px solid #dee2e6;">${JSON.stringify(configObj, null, 2)}</pre>
+                            </details>
+                        `;
+
+                        configHtml += '</div>';
+                    } catch (e) {
+                        configHtml = `
+                            <div style="background: #f8d7da; padding: 16px; border-radius: 8px; border-left: 4px solid #dc3545;">
+                                <h4 style="margin-bottom: 8px; color: #721c24;">❌ 配置文件解析失败</h4>
+                                <div style="color: #721c24; font-size: 13px;">${e.message}</div>
+                            </div>
+                        `;
+                    }
+                }
+
+                // 用量查询配置解析 (v3.9+)
+                let usageHtml = '';
+                if (paramsObj.usageEnabled || paramsObj.usageScript || paramsObj.usageBaseUrl) {
+                    usageHtml = `
+                        <div style="background: #f0fff4; padding: 16px; border-radius: 8px; border-left: 4px solid #27ae60; margin-top: 16px;">
+                            <h4 style="margin-bottom: 12px; color: #27ae60;">📊 用量查询配置 (v3.9+)</h4>
+                            <div style="display: grid; grid-template-columns: 150px 1fr; gap: 8px; font-size: 13px;">
+                    `;
+
+                    if (paramsObj.usageEnabled) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">启用状态:</div>
+                            <div style="color: #27ae60;">${paramsObj.usageEnabled === 'true' ? '✅ 已启用' : '❌ 已禁用'}</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageBaseUrl) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">Base URL:</div>
+                            <div style="color: #27ae60; word-break: break-all; font-family: monospace; font-size: 12px;">${paramsObj.usageBaseUrl}</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageApiKey) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">API Key:</div>
+                            <div style="color: #27ae60; font-family: monospace; font-size: 12px;">${paramsObj.usageApiKey.substring(0, 10)}****</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageAutoInterval) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">自动查询间隔:</div>
+                            <div style="color: #27ae60;">${paramsObj.usageAutoInterval} 分钟</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageAccessToken) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">Access Token:</div>
+                            <div style="color: #27ae60; font-family: monospace; font-size: 12px;">${paramsObj.usageAccessToken.substring(0, 10)}****</div>
+                        `;
+                    }
+
+                    if (paramsObj.usageUserId) {
+                        usageHtml += `
+                            <div style="color: #27ae60; font-weight: 500;">User ID:</div>
+                            <div style="color: #27ae60; font-family: monospace; font-size: 12px;">${paramsObj.usageUserId}</div>
+                        `;
+                    }
+
+                    usageHtml += '</div>';
+
+                    // 解析用量脚本
+                    if (paramsObj.usageScript) {
+                        try {
+                            // URL-safe Base64 解码
+                            let scriptB64 = paramsObj.usageScript
+                                .replace(/-/g, '+')
+                                .replace(/_/g, '/');
+                            // 补齐 padding
+                            while (scriptB64.length % 4) {
+                                scriptB64 += '=';
+                            }
+                            const scriptContent = b64_to_utf8(scriptB64);
+                            usageHtml += `
+                                <div style="margin-top: 12px;">
+                                    <div style="font-size: 12px; color: #27ae60; margin-bottom: 8px; font-weight: 600;">用量查询脚本:</div>
+                                    <pre style="margin: 0; padding: 12px; background: #fff; border-radius: 6px; font-size: 11px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; border: 1px solid #27ae60;">${scriptContent}</pre>
+                                </div>
+                            `;
+                        } catch (e) {
+                            usageHtml += `
+                                <div style="margin-top: 12px; color: #dc3545; font-size: 12px;">
+                                    ⚠️ 脚本解码失败: ${e.message}
+                                </div>
+                            `;
+                        }
+                    }
+
+                    usageHtml += '</div>';
+                }
+
+                // 显示结果
+                document.getElementById('parseBasicInfo').innerHTML = basicInfoHtml;
+                document.getElementById('parseUrlParams').innerHTML = urlParamsHtml;
+                document.getElementById('parseConfigContent').innerHTML = configHtml + usageHtml;
+                document.getElementById('parseResult').style.display = 'block';
+
+                // 滚动到结果
+                document.getElementById('parseResult').scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest'
+                });
+
+            } catch (e) {
+                alert('❌ 深链接解析失败：' + e.message);
+                console.error('Parse error:', e);
+            }
+        }
+
+        // 阻止表单默认提交行为
+        document.addEventListener('DOMContentLoaded', function () {
+            const inputs = document.querySelectorAll('input, textarea, select');
+            inputs.forEach(input => {
+                input.addEventListener('keypress', function (e) {
+                    if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
+                        e.preventDefault();
+                        generateLink();
+                    }
+                });
+            });
+
+            // 初始化显示 Claude 字段
+            updateModelFields();
+        });
+
+        // Base64 编码功能
+        function encodeToBase64() {
+            const input = document.getElementById('encodeInput').value;
+
+            if (!input.trim()) {
+                alert('❌ 请输入要编码的内容！');
+                return;
+            }
+
+            try {
+                const encoded = utf8_to_b64(input);
+                document.getElementById('encodeOutput').textContent = encoded;
+                document.getElementById('encodeResult').style.display = 'block';
+
+                // 滚动到结果
+                document.getElementById('encodeResult').scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest'
+                });
+            } catch (e) {
+                alert('❌ 编码失败：' + e.message);
+                console.error('Encode error:', e);
+            }
+        }
+
+        // Base64 解码功能
+        function decodeFromBase64() {
+            const input = document.getElementById('decodeInput').value.trim();
+
+            if (!input) {
+                alert('❌ 请输入要解码的 Base64 内容！');
+                return;
+            }
+
+            try {
+                const decoded = b64_to_utf8(input);
+                document.getElementById('decodeOutput').textContent = decoded;
+                document.getElementById('decodeResult').style.display = 'block';
+
+                // 检查是否是 JSON，如果是则显示格式化按钮
+                try {
+                    JSON.parse(decoded);
+                    document.getElementById('jsonFormat').style.display = 'block';
+                } catch {
+                    document.getElementById('jsonFormat').style.display = 'none';
+                }
+
+                // 滚动到结果
+                document.getElementById('decodeResult').scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest'
+                });
+            } catch (e) {
+                alert('❌ 解码失败：' + e.message + '\n\n请确保输入的是有效的 Base64 编码');
+                console.error('Decode error:', e);
+            }
+        }
+
+        // 格式化 JSON
+        function formatJson() {
+            try {
+                const text = document.getElementById('decodeOutput').textContent;
+                const obj = JSON.parse(text);
+                const formatted = JSON.stringify(obj, null, 2);
+                document.getElementById('decodeOutput').textContent = formatted;
+            } catch (e) {
+                alert('❌ JSON 格式化失败：' + e.message);
+            }
+        }
+
+        // 复制编码结果
+        function copyEncoded() {
+            const text = document.getElementById('encodeOutput').textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ 已复制！';
+                btn.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('❌ 复制失败，请手动复制');
+            });
+        }
+
+        // 复制解码结果
+        function copyDecoded() {
+            const text = document.getElementById('decodeOutput').textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ 已复制！';
+                btn.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('❌ 复制失败，请手动复制');
+            });
+        }
+
+        // ==================== 深链接生成器函数 ====================
+
+        // 生成供应商深链接
+        function generateProviderLink() {
+            const app = document.getElementById('providerApp').value;
+            const name = document.getElementById('providerName').value.trim();
+            const apiKey = document.getElementById('providerApiKey').value.trim();
+            const endpoint = document.getElementById('providerEndpoint').value.trim();
+            const homepage = document.getElementById('providerHomepage').value.trim();
+            const model = document.getElementById('providerModel').value.trim();
+            const notes = document.getElementById('providerNotes').value.trim();
+            const enabled = document.getElementById('providerEnabled').value;
+
+            // 验证必填字段
+            if (!name) {
+                alert('❌ 请填写供应商名称');
+                return;
+            }
+
+            if (!apiKey) {
+                alert('❌ 请填写 API Key');
+                return;
+            }
+
+            if (!endpoint) {
+                alert('❌ 请填写 API Endpoint');
+                return;
+            }
+
+            if (!homepage) {
+                alert('❌ 请填写主页链接');
+                return;
+            }
+
+            // 构建深链接
+            let url = `ccswitch://v1/import?resource=provider&app=${app}&name=${encodeURIComponent(name)}&endpoint=${encodeURIComponent(endpoint)}&homepage=${encodeURIComponent(homepage)}&apiKey=${encodeURIComponent(apiKey)}`;
+
+            if (model) {
+                url += `&model=${encodeURIComponent(model)}`;
+            }
+
+            if (notes) {
+                url += `&notes=${encodeURIComponent(notes)}`;
+            }
+
+            if (enabled === 'true') {
+                url += '&enabled=true';
+            }
+
+            // 显示结果
+            document.getElementById('providerUrl').textContent = url;
+            document.getElementById('providerImportBtn').href = url;
+            document.getElementById('providerResult').style.display = 'block';
+
+            // 滚动到结果
+            document.getElementById('providerResult').scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest'
+            });
+        }
+
+        // 生成 MCP 深链接
+        function generateMcpLink() {
+            const apps = document.getElementById('mcpApps').value.trim();
+            const config = document.getElementById('mcpConfig').value.trim();
+            const enabled = document.getElementById('mcpEnabled').value;
+
+            if (!apps) {
+                alert('❌ 请填写目标应用');
+                return;
+            }
+
+            if (!config) {
+                alert('❌ 请填写 MCP 配置');
+                return;
+            }
+
+            try {
+                // 验证 JSON 格式
+                const jsonObj = JSON.parse(config);
+                if (!jsonObj.mcpServers) {
+                    alert('❌ 配置必须包含 mcpServers 字段');
+                    return;
+                }
+
+                // Base64 编码配置
+                const configB64 = utf8_to_b64(config);
+
+                // 构建深链接
+                let url = `ccswitch://v1/import?resource=mcp&apps=${encodeURIComponent(apps)}&config=${encodeURIComponent(configB64)}`;
+
+                if (enabled === 'true') {
+                    url += '&enabled=true';
+                }
+
+                // 显示结果
+                document.getElementById('mcpUrl').textContent = url;
+                document.getElementById('mcpImportBtn').href = url;
+                document.getElementById('mcpResult').style.display = 'block';
+
+                // 滚动到结果
+                document.getElementById('mcpResult').scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest'
+                });
+            } catch (e) {
+                alert('❌ JSON 格式错误：' + e.message);
+            }
+        }
+
+        // 生成 Prompt 深链接
+        function generatePromptLink() {
+            const app = document.getElementById('promptApp').value;
+            const name = document.getElementById('promptName').value.trim();
+            const content = document.getElementById('promptContent').value.trim();
+            const description = document.getElementById('promptDescription').value.trim();
+            const enabled = document.getElementById('promptEnabled').value;
+
+            if (!name) {
+                alert('❌ 请填写提示词名称');
+                return;
+            }
+
+            if (!content) {
+                alert('❌ 请填写提示词内容');
+                return;
+            }
+
+            // Base64 编码内容
+            const contentB64 = utf8_to_b64(content);
+
+            // 构建深链接
+            let url = `ccswitch://v1/import?resource=prompt&app=${app}&name=${encodeURIComponent(name)}&content=${encodeURIComponent(contentB64)}`;
+
+            if (description) {
+                url += `&description=${encodeURIComponent(description)}`;
+            }
+
+            if (enabled === 'true') {
+                url += '&enabled=true';
+            }
+
+            // 显示结果
+            document.getElementById('promptUrl').textContent = url;
+            document.getElementById('promptImportBtn').href = url;
+            document.getElementById('promptResult').style.display = 'block';
+
+            // 滚动到结果
+            document.getElementById('promptResult').scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest'
+            });
+        }
+
+        // 生成 Skill 深链接
+        function generateSkillLink() {
+            const repo = document.getElementById('skillRepo').value.trim();
+            const branch = document.getElementById('skillBranch').value.trim() || 'main';
+            const skillsPath = document.getElementById('skillPath').value.trim() || 'skills';
+            const directory = document.getElementById('skillDirectory').value.trim();
+
+            if (!repo) {
+                alert('❌ 请填写 GitHub 仓库');
+                return;
+            }
+
+            // 验证仓库格式
+            if (!repo.includes('/')) {
+                alert('❌ 仓库格式应为: owner/repo-name');
+                return;
+            }
+
+            // 构建深链接
+            let url = `ccswitch://v1/import?resource=skill&repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}&skills_path=${encodeURIComponent(skillsPath)}`;
+
+            if (directory) {
+                url += `&directory=${encodeURIComponent(directory)}`;
+            }
+
+            // 显示结果
+            document.getElementById('skillUrl').textContent = url;
+            document.getElementById('skillImportBtn').href = url;
+            document.getElementById('skillResult').style.display = 'block';
+
+            // 滚动到结果
+            document.getElementById('skillResult').scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest'
+            });
+        }
+
+        // 复制生成的链接
+        function copyGeneratedLink(elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ 已复制！';
+                btn.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                }, 2000);
+            }).catch(err => {
+                console.error('复制失败:', err);
+                alert('❌ 复制失败，请手动复制');
+            });
+        }
+
+        // 选中文本（点击 URL 时）
+        function selectText(element) {
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,173 @@
+import { useState, useCallback, useEffect, useRef } from "react";
+
+interface UseModelStateProps {
+  settingsConfig: string;
+  onConfigChange: (config: string) => void;
+}
+
+/**
+ * Parse model values from settings config JSON
+ */
+function parseModelsFromConfig(settingsConfig: string) {
+  try {
+    const cfg = settingsConfig ? JSON.parse(settingsConfig) : {};
+    const env = cfg?.env || {};
+    const model =
+      typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
+    const small =
+      typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
+        ? env.ANTHROPIC_SMALL_FAST_MODEL
+        : "";
+    const haiku =
+      typeof env.ANTHROPIC_DEFAULT_HAIKU_MODEL === "string"
+        ? env.ANTHROPIC_DEFAULT_HAIKU_MODEL
+        : small || model;
+    const sonnet =
+      typeof env.ANTHROPIC_DEFAULT_SONNET_MODEL === "string"
+        ? env.ANTHROPIC_DEFAULT_SONNET_MODEL
+        : model || small;
+    const opus =
+      typeof env.ANTHROPIC_DEFAULT_OPUS_MODEL === "string"
+        ? env.ANTHROPIC_DEFAULT_OPUS_MODEL
+        : model || small;
+
+    return { model, haiku, sonnet, opus };
+  } catch {
+    return { model: "", haiku: "", sonnet: "", opus: "" };
+  }
+}
+
+/**
+ * 管理模型选择状态
+ * 支持 ANTHROPIC_MODEL 和各类型默认模型
+ */
+export function useModelState({
+  settingsConfig,
+  onConfigChange,
+}: UseModelStateProps) {
+  // Initialize state by parsing config directly (fixes edit mode backfill)
+  const [claudeModel, setClaudeModel] = useState(
+    () => parseModelsFromConfig(settingsConfig).model,
+  );
+  const [defaultHaikuModel, setDefaultHaikuModel] = useState(
+    () => parseModelsFromConfig(settingsConfig).haiku,
+  );
+  const [defaultSonnetModel, setDefaultSonnetModel] = useState(
+    () => parseModelsFromConfig(settingsConfig).sonnet,
+  );
+  const [defaultOpusModel, setDefaultOpusModel] = useState(
+    () => parseModelsFromConfig(settingsConfig).opus,
+  );
+
+  const isUserEditingRef = useRef(false);
+  const lastConfigRef = useRef(settingsConfig);
+  const latestConfigRef = useRef(settingsConfig);
+
+  latestConfigRef.current = settingsConfig;
+
+  // 初始化读取：读新键；若缺失，按兼容优先级回退
+  // Haiku: DEFAULT_HAIKU || SMALL_FAST || MODEL
+  // Sonnet: DEFAULT_SONNET || MODEL || SMALL_FAST
+  // Opus: DEFAULT_OPUS || MODEL || SMALL_FAST
+  // 仅在 settingsConfig 变化时同步一次（表单加载/切换预设时）
+  useEffect(() => {
+    if (lastConfigRef.current === settingsConfig) {
+      return;
+    }
+
+    if (isUserEditingRef.current) {
+      isUserEditingRef.current = false;
+      lastConfigRef.current = settingsConfig;
+      return;
+    }
+
+    lastConfigRef.current = settingsConfig;
+
+    try {
+      const cfg = settingsConfig ? JSON.parse(settingsConfig) : {};
+      const env = cfg?.env || {};
+      const model =
+        typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
+      const small =
+        typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
+          ? env.ANTHROPIC_SMALL_FAST_MODEL
+          : "";
+      const haiku =
+        typeof env.ANTHROPIC_DEFAULT_HAIKU_MODEL === "string"
+          ? env.ANTHROPIC_DEFAULT_HAIKU_MODEL
+          : small || model;
+      const sonnet =
+        typeof env.ANTHROPIC_DEFAULT_SONNET_MODEL === "string"
+          ? env.ANTHROPIC_DEFAULT_SONNET_MODEL
+          : model || small;
+      const opus =
+        typeof env.ANTHROPIC_DEFAULT_OPUS_MODEL === "string"
+          ? env.ANTHROPIC_DEFAULT_OPUS_MODEL
+          : model || small;
+
+      setClaudeModel(model || "");
+      setDefaultHaikuModel(haiku || "");
+      setDefaultSonnetModel(sonnet || "");
+      setDefaultOpusModel(opus || "");
+    } catch {
+      // ignore
+    }
+  }, [settingsConfig]);
+
+  const handleModelChange = useCallback(
+    (
+      field:
+        | "ANTHROPIC_MODEL"
+        | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+        | "ANTHROPIC_DEFAULT_SONNET_MODEL"
+        | "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      value: string,
+    ) => {
+      isUserEditingRef.current = true;
+
+      if (field === "ANTHROPIC_MODEL") setClaudeModel(value);
+      if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+        setDefaultHaikuModel(value);
+      if (field === "ANTHROPIC_DEFAULT_SONNET_MODEL")
+        setDefaultSonnetModel(value);
+      if (field === "ANTHROPIC_DEFAULT_OPUS_MODEL") setDefaultOpusModel(value);
+
+      try {
+        const currentConfig = latestConfigRef.current
+          ? JSON.parse(latestConfigRef.current)
+          : { env: {} };
+        if (!currentConfig.env) currentConfig.env = {};
+        const env = currentConfig.env as Record<string, unknown>;
+
+        // 新键仅写入；旧键不再写入
+        const trimmed = value.trim();
+        if (trimmed) {
+          env[field] = trimmed;
+        } else {
+          delete env[field];
+        }
+        // 删除旧键
+        delete env["ANTHROPIC_SMALL_FAST_MODEL"];
+
+        const updatedConfig = JSON.stringify(currentConfig, null, 2);
+        latestConfigRef.current = updatedConfig;
+        onConfigChange(updatedConfig);
+      } catch (err) {
+        console.error("Failed to update model config:", err);
+      }
+    },
+    [onConfigChange],
+  );
+
+  return {
+    claudeModel,
+    setClaudeModel,
+    defaultHaikuModel,
+    setDefaultHaikuModel,
+    defaultSonnetModel,
+    setDefaultSonnetModel,
+    defaultOpusModel,
+    setDefaultOpusModel,
+    handleModelChange,
+  };
+}

@@ -1,0 +1,31 @@
+node_modules/
+dist/
+release/
+.DS_Store
+*.log
+.env
+.env.local
+*.tsbuildinfo
+.npmrc
+CLAUDE.md
+# AGENTS.md
+GEMINI.md
+/.claude
+/.codex
+/.gemini
+/.cc-switch
+/.idea
+/.vscode
+vitest-report.json
+nul
+
+# Flatpak build artifacts
+flatpak/cc-switch.deb
+flatpak-build/
+flatpak-repo/
+.worktrees/
+.spec-workflow/
+copilot-api
+.history
+CODEBUDDY.md
+.github
