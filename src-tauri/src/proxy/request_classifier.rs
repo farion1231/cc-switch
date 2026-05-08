@@ -10,12 +10,11 @@ use serde_json::Value;
 
 /// 分类请求类型
 ///
-/// 复用 copilot_optimizer 的分类逻辑：
-/// - is_subagent → Others
-/// - is_compact → Others
-/// - is_warmup → Others
-/// - initiator == "user" → Main
-/// - 其他 → Others
+/// 只有子代理 (subagent) 请求路由到 Others（子供应商队列），
+/// 其它所有请求一律走 Main（主供应商队列）。
+///
+/// 实测发现 compact/warmup/agent-initiated 等场景过于频繁，
+/// 导致主供应商几乎不被使用，因此精简分类策略。
 pub fn classify_request_type(
     body: &Value,
     headers: &HeaderMap,
@@ -32,14 +31,11 @@ pub fn classify_request_type(
         copilot_config.subagent_detection,
     );
 
-    if classification.is_subagent || classification.is_compact || classification.is_warmup {
+    if classification.is_subagent {
         return RequestType::Others;
     }
 
-    match classification.initiator {
-        "user" => RequestType::Main,
-        _ => RequestType::Others,
-    }
+    RequestType::Main
 }
 
 #[cfg(test)]
@@ -73,8 +69,8 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_classified_as_others() {
-        // Claude Code compact 请求的 system prompt 特征
+    fn test_compact_classified_as_main() {
+        // compact 请求不再分流到 Others，保持主供应商处理
         let body = json!({
             "system": "You are a helpful AI assistant tasked with summarizing conversations.",
             "messages": [{"role": "user", "content": "Summarize the conversation"}]
@@ -83,11 +79,12 @@ mod tests {
         let mut config = default_config();
         config.compact_detection = true;
         let result = classify_request_type(&body, &headers, &config);
-        assert_eq!(result, RequestType::Others);
+        assert_eq!(result, RequestType::Main);
     }
 
     #[test]
-    fn test_warmup_classified_as_others() {
+    fn test_warmup_classified_as_main() {
+        // warmup 请求不再分流到 Others，保持主供应商处理
         let body = json!({
             "model": "claude-sonnet-4-20250514",
             "messages": [{"role": "user", "content": "ping"}],
@@ -97,12 +94,12 @@ mod tests {
         let mut config = default_config();
         config.warmup_downgrade = true;
         let result = classify_request_type(&body, &headers, &config);
-        assert_eq!(result, RequestType::Others);
+        assert_eq!(result, RequestType::Main);
     }
 
     #[test]
-    fn test_agent_initiator_classified_as_others() {
-        // 工具续写请求：content 包含 tool_result → 分类为 agent → Others
+    fn test_agent_initiator_classified_as_main() {
+        // 工具续写请求不再分流到 Others，保持主供应商处理
         let body = json!({
             "messages": [
                 {"role": "assistant", "content": [
@@ -115,7 +112,7 @@ mod tests {
             ]
         });
         let result = classify_request_type(&body, &HeaderMap::new(), &default_config());
-        assert_eq!(result, RequestType::Others);
+        assert_eq!(result, RequestType::Main);
     }
 
     #[test]
@@ -127,9 +124,8 @@ mod tests {
     }
 
     #[test]
-    fn test_smart_routing_disabled_still_classifies_correctly() {
-        // 即使 compact_detection/subagent_detection 关闭，
-        // 如果 initiator 不是 user，也应该分类为 Others
+    fn test_subagent_detection_disabled_all_to_main() {
+        // subagent_detection 关闭时，所有请求都走 Main
         let body = json!({
             "messages": [{"role": "user", "content": "Hello"}]
         });
@@ -137,7 +133,6 @@ mod tests {
         config.compact_detection = false;
         config.subagent_detection = false;
         let result = classify_request_type(&body, &HeaderMap::new(), &config);
-        // no subagent/compact/warmup markers, initiator defaults to "user" → Main
         assert_eq!(result, RequestType::Main);
     }
 }
