@@ -314,24 +314,24 @@ export function ClaudeDesktopProviderForm({
     }
 
     const routeEntries = routes
-      .map((route) => ({
+      .map((route, index) => ({
         ...route,
-        route: route.route.trim(),
+        route:
+          route.route.trim() ||
+          (mode === "proxy"
+            ? `claude-${route.model.trim().replace(/[/\\]/g, "-") || `model-${index + 1}`}`
+            : ""),
         model: route.model.trim(),
         displayName: route.displayName.trim(),
       }))
       .filter((route) => route.route || route.model);
 
     if (mode === "proxy") {
-      const invalid = routeEntries.find(
-        (route) =>
-          !route.route || !route.model || !isClaudeSafeRoute(route.route),
-      );
-      if (invalid) {
+      const missing = routeEntries.find((route) => !route.model);
+      if (missing) {
         toast.error(
           t("claudeDesktop.routeInvalid", {
-            defaultValue:
-              "模型映射必须填写 claude-* / anthropic/claude-* 路由名和上游模型名",
+            defaultValue: "请填写上游模型名",
           }),
         );
         return;
@@ -339,7 +339,7 @@ export function ClaudeDesktopProviderForm({
       if (routeEntries.length === 0) {
         toast.error(
           t("claudeDesktop.routesRequired", {
-            defaultValue: "需要模型映射时至少填写一个模型路由",
+            defaultValue: "至少填写一个上游模型",
           }),
         );
         return;
@@ -479,7 +479,7 @@ export function ClaudeDesktopProviderForm({
                 {needsModelMapping
                   ? t("claudeDesktop.modelMappingOnHint", {
                       defaultValue:
-                        "Claude Desktop 只看到 claude-* 路由名，CC Switch 本地路由会映射到真实上游模型；需要保持本地路由运行。",
+                        "Claude Desktop 目前对模型 ID 进行了限制，如果您的供应商提供的模型不是 Claude 系列模型，则需要打开本开关，并在使用过程中保持本地路由开启。",
                     })
                   : t("claudeDesktop.modelMappingOffHint", {
                       defaultValue:
@@ -552,26 +552,21 @@ export function ClaudeDesktopProviderForm({
                         ...current,
                         nextRouteRow(current, defaultProxyRouteRows),
                       ]),
-                    t("claudeDesktop.addRoute", { defaultValue: "添加路由" }),
+                    t("claudeDesktop.addRoute", { defaultValue: "添加模型" }),
                   )}
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("claudeDesktop.routeMapHint", {
                     defaultValue:
-                      "左侧是 Claude Desktop 看到的 claude-* 模型名，右侧是真实发送给供应商的上游模型名。",
+                      "填写供应商实际提供的模型名，显示名为在 Claude Desktop 模型列表中展示的名称。",
                   })}
                 </p>
               </div>
 
-              <div className="hidden grid-cols-[1fr_1fr_140px_92px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
-                <span>
-                  {t("claudeDesktop.routeModelLabel", {
-                    defaultValue: "Desktop 模型",
-                  })}
-                </span>
+              <div className="hidden grid-cols-[1fr_1fr_92px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                 <span>
                   {t("claudeDesktop.upstreamModelLabel", {
-                    defaultValue: "上游模型",
+                    defaultValue: "实际请求模型",
                   })}
                 </span>
                 <span>
@@ -589,15 +584,8 @@ export function ClaudeDesktopProviderForm({
               {routes.map((route, index) => (
                 <div
                   key={`${route.route}-${index}`}
-                  className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_92px_36px]"
+                  className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_92px_36px]"
                 >
-                  <Input
-                    value={route.route}
-                    onChange={(event) =>
-                      updateRoute(index, { route: event.target.value })
-                    }
-                    placeholder="claude-sonnet-4-6"
-                  />
                   <div className="flex gap-1">
                     <Input
                       value={route.model}

@@ -13,7 +13,7 @@ import {
   type CSSProperties,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Download, Search, X } from "lucide-react";
+import { AlertTriangle, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -470,21 +470,6 @@ export function ProviderList({
 
   return (
     <div className="mt-4 space-y-4">
-      {appId === "claude-desktop" && (
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => importMutation.mutate()}
-            disabled={importMutation.isPending}
-          >
-            <Download className="mr-2 h-4 w-4" />
-            {t("provider.importFromClaude", {
-              defaultValue: "从 Claude 导入兼容供应商",
-            })}
-          </Button>
-        </div>
-      )}
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2 font-medium">
