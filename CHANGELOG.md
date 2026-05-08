@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Deep Link Extra Environment Variables (`extraEnv`)**: Provider deep links now support an `extraEnv` parameter (Base64-encoded JSON object) for merging arbitrary environment variables into the provider's `settings_config.env`. This enables one-click import of UI-toggled configurations such as `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `ENABLE_TOOL_SEARCH`, and `CLAUDE_CODE_EFFORT_LEVEL`, which are automatically recognized by the Common Config Editor's checkbox toggles. Invalid Base64 or non-JSON values are logged and skipped without breaking the import.
+
 ### Fixed
 
 - **OpenAI Responses API usage parsing robustness**: Hardened `build_anthropic_usage_from_responses()` and the Responses → Anthropic SSE translator so a missing or malformed upstream `usage` no longer produces `"usage": null` in `message_delta`. This unblocks strict Anthropic clients (notably the VSCode Claude Code extension) that crashed with "Cannot read properties of null (reading 'output_tokens')" against providers such as Codex OAuth and DashScope's `compatible-mode/v1/responses` endpoint. Added OpenAI field-name fallbacks (`prompt_tokens` / `completion_tokens`), null/empty/partial object handling, and preserved cache token fields even when input/output tokens are missing (#2422).
