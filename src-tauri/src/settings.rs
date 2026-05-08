@@ -478,7 +478,28 @@ fn settings_store() -> &'static RwLock<AppSettings> {
     SETTINGS_STORE.get_or_init(|| RwLock::new(AppSettings::load_from_file()))
 }
 
+fn expand_env_vars(s: &str) -> String {
+    let mut result = s.to_string();
+    let mut pos = 0;
+    while let Some(rel_start) = result[pos..].find("${") {
+        let start = pos + rel_start;
+        let Some(rel_end) = result[start + 2..].find('}') else {
+            break;
+        };
+        let end = start + 2 + rel_end;
+        let var_name = result[start + 2..end].to_string();
+        if let Ok(val) = std::env::var(&var_name) {
+            result.replace_range(start..=end, &val);
+            pos = start + val.len();
+        } else {
+            pos = end + 1;
+        }
+    }
+    result
+}
+
 fn resolve_override_path(raw: &str) -> PathBuf {
+    let raw = &expand_env_vars(raw);
     if raw == "~" {
         if let Some(home) = dirs::home_dir() {
             return home;
@@ -767,4 +788,82 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
             sync.status = status;
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn expand_env_vars_replaces_home() {
+        let _guard = env_lock().lock().unwrap();
+        let _home = EnvGuard::set("HOME", "/Users/test");
+        assert_eq!(expand_env_vars("${HOME}/.claude"), "/Users/test/.claude");
+        assert_eq!(expand_env_vars("${HOME}"), "/Users/test");
+    }
+
+    #[test]
+    #[serial]
+    fn expand_env_vars_multiple_vars() {
+        let _guard = env_lock().lock().unwrap();
+        let _foo = EnvGuard::set("FOO", "foo");
+        let _bar = EnvGuard::set("BAR", "bar");
+        assert_eq!(expand_env_vars("${FOO}/${BAR}"), "foo/bar");
+    }
+
+    #[test]
+    fn expand_env_vars_unknown_var_left_as_is() {
+        let s = "${DEFINITELY_NOT_SET_XYZ}";
+        assert_eq!(expand_env_vars(s), s);
+    }
+
+    #[test]
+    fn expand_env_vars_no_vars_unchanged() {
+        assert_eq!(expand_env_vars("/absolute/path"), "/absolute/path");
+        assert_eq!(expand_env_vars("~/path"), "~/path");
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_override_path_expands_home_var() {
+        let _guard = env_lock().lock().unwrap();
+        if let Some(home) = dirs::home_dir() {
+            let home_str = home.to_string_lossy().to_string();
+            let _home = EnvGuard::set("HOME", &home_str);
+            assert_eq!(
+                resolve_override_path("${HOME}/.claude"),
+                home.join(".claude")
+            );
+        }
+    }
 }

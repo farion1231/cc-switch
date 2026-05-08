@@ -493,6 +493,33 @@ impl SkillService {
         Ok(dir)
     }
 
+    /// Returns the SSOT path for a given storage location without creating it.
+    fn ssot_dir_for(loc: SkillStorageLocation) -> Option<PathBuf> {
+        match loc {
+            SkillStorageLocation::CcSwitch => Some(get_app_config_dir().join("skills")),
+            SkillStorageLocation::Unified => {
+                dirs::home_dir().map(|h| h.join(".agents").join("skills"))
+            }
+        }
+    }
+
+    /// Returns all candidate SSOT directories (current + alternate) without creating them.
+    ///
+    /// Checking both locations guards against in-flight migration races and
+    /// crash-after-move / before-settings-persist restarts where files landed
+    /// in the alternate path while settings still point to the old one.
+    fn all_ssot_dirs() -> Vec<PathBuf> {
+        let current_loc = crate::settings::get_skill_storage_location();
+        let alternate_loc = match current_loc {
+            SkillStorageLocation::CcSwitch => SkillStorageLocation::Unified,
+            SkillStorageLocation::Unified => SkillStorageLocation::CcSwitch,
+        };
+        [current_loc, alternate_loc]
+            .into_iter()
+            .filter_map(Self::ssot_dir_for)
+            .collect()
+    }
+
     /// 获取 Skill 卸载备份目录（~/.cc-switch/skill-backups/）
     fn get_backup_dir() -> Result<PathBuf> {
         let dir = get_app_config_dir().join("skill-backups");
@@ -555,10 +582,75 @@ impl SkillService {
 
     // ========== 统一管理方法 ==========
 
-    /// 获取所有已安装的 Skills
+    /// 获取所有已安装的 Skills（纯读，不修改任何状态）
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
+        Ok(db.get_all_installed_skills()?.into_values().collect())
+    }
+
+    /// 清理磁盘上已不存在的 skill 记录（幂等，可重复调用）。
+    ///
+    /// 若 skill 的 SSOT 目录在所有候选路径下均确认不存在，则删除其 DB 记录
+    /// 并清理各已启用 app 下的副本。
+    ///
+    /// 副作用：可能修改数据库（删除 skill 记录）和文件系统（删除 app 目录下的副本）。
+    pub fn reconcile_stale_entries(db: &Arc<Database>) -> Result<()> {
         let skills = db.get_all_installed_skills()?;
-        Ok(skills.into_values().collect())
+        let ssot_dirs = Self::all_ssot_dirs();
+
+        if ssot_dirs.is_empty() {
+            log::warn!("reconcile_stale_entries: no SSOT path resolvable, skipping cleanup");
+            return Ok(());
+        }
+
+        for (id, skill) in skills {
+            let missing = ssot_dirs.iter().all(|d| {
+                let path = d.join(&skill.directory);
+                match path.try_exists() {
+                    Ok(exists) => !exists,
+                    Err(e) => {
+                        log::warn!(
+                            "skill '{}': could not check path {}: {e}",
+                            skill.name,
+                            path.display()
+                        );
+                        false // conservative: treat as present
+                    }
+                }
+            });
+
+            if !missing {
+                continue;
+            }
+
+            // Delete the DB record first. If that fails (locked/read-only DB),
+            // skip filesystem cleanup so DB and app directories stay in sync.
+            match db.delete_skill(&id) {
+                Ok(true) => {
+                    for app in skill.apps.enabled_apps() {
+                        if let Err(e) = Self::remove_from_app(&skill.directory, &app) {
+                            log::warn!(
+                                "skill '{}': failed to remove app copy for {app:?}: {e}",
+                                skill.name
+                            );
+                        }
+                    }
+                    log::info!(
+                        "skill '{}' directory missing from SSOT, removed from database",
+                        skill.name
+                    );
+                }
+                Ok(false) => {
+                    // 记录已被并发的另一次 reconcile 删除，无需重复清理 app 副本
+                }
+                Err(e) => {
+                    log::warn!(
+                        "skill '{}' SSOT directory missing but DB deletion failed, keeping record: {e}",
+                        skill.name
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     /// 安装 Skill
