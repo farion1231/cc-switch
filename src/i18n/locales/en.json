@@ -200,7 +200,6 @@
     "statusUnsupported": "This platform does not support writing Claude Desktop 3P configuration yet.",
     "statusStaleRawModels": "The Claude Desktop profile contains non-claude-* model IDs. Newer Claude Desktop versions may reject it; switch to the current provider again to repair it.",
     "statusMissingRouteMappings": "The current provider has model mapping enabled but no valid routes. Edit the provider and add at least one mapping.",
-    "statusProxyStopped": "The current provider needs CC Switch local routing, but local routing is not running. Turn on the route switch in the top-right, then restart Claude Desktop.",
     "statusGatewayTokenMissing": "The local routing token has not been generated yet. Switching to this provider again will write a new local token.",
     "statusBaseUrlMismatch": "The Claude Desktop profile points to a different URL than the current provider. Current: {{actual}}; expected: {{expected}}. Switch to the current provider again to repair it.",
     "route": {

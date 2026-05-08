@@ -345,17 +345,6 @@ export function ProviderList({
     }
     if (
       claudeDesktopStatus.mode === "proxy" &&
-      !claudeDesktopStatus.proxyRunning
-    ) {
-      messages.push(
-        t("claudeDesktop.statusProxyStopped", {
-          defaultValue:
-            "当前供应商需要 CC Switch 本地路由，但本地路由未运行；开启右上角路由开关后再重启 Claude Desktop。",
-        }),
-      );
-    }
-    if (
-      claudeDesktopStatus.mode === "proxy" &&
       !claudeDesktopStatus.gatewayTokenConfigured
     ) {
       messages.push(

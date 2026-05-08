@@ -200,7 +200,6 @@
     "statusUnsupported": "当前平台暂不支持 Claude Desktop 3P 配置写入。",
     "statusStaleRawModels": "Claude Desktop profile 中存在非 claude-* 模型名，新版 Claude Desktop 可能拒绝加载；重新切换当前供应商可修复。",
     "statusMissingRouteMappings": "当前供应商启用了模型映射，但没有有效路由；请编辑供应商并补全至少一个模型映射。",
-    "statusProxyStopped": "当前供应商需要 CC Switch 本地路由，但本地路由未运行；开启右上角路由开关后再重启 Claude Desktop。",
     "statusGatewayTokenMissing": "当前本地路由 token 尚未生成；重新切换该供应商会写入新的本地 token。",
     "statusBaseUrlMismatch": "Claude Desktop profile 指向的地址与当前供应商不一致；当前为 {{actual}}，应为 {{expected}}。重新切换当前供应商可修复。",
     "route": {
