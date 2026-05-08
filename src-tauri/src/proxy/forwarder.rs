@@ -195,6 +195,7 @@ impl RequestForwarder {
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
                 .forward(
+                    app_type,
                     provider,
                     endpoint,
                     &provider_body,
@@ -325,6 +326,7 @@ impl RequestForwarder {
                                 // 使用同一供应商重试（不计入熔断器）
                                 match self
                                     .forward(
+                                        app_type,
                                         provider,
                                         endpoint,
                                         &provider_body,
@@ -524,6 +526,7 @@ impl RequestForwarder {
                             // 使用同一供应商重试（不计入熔断器）
                             match self
                                 .forward(
+                                    app_type,
                                     provider,
                                     endpoint,
                                     &provider_body,
@@ -763,6 +766,7 @@ impl RequestForwarder {
     /// 转发单个请求（使用适配器）
     async fn forward(
         &self,
+        app_type: &AppType,
         provider: &Provider,
         endpoint: &str,
         body: &Value,
@@ -780,8 +784,16 @@ impl RequestForwarder {
             .unwrap_or(false);
 
         // 应用模型映射（独立于格式转换）
-        let (mapped_body, _original_model, _mapped_model) =
-            super::model_mapper::apply_model_mapping(body.clone(), provider);
+        // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
+        // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
+            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+        } else {
+            let (mapped_body, _original_model, _mapped_model) =
+                super::model_mapper::apply_model_mapping(body.clone(), provider);
+            mapped_body
+        };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);

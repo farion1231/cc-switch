@@ -380,6 +380,16 @@ impl ClaudeAdapter {
                 log::debug!("[Claude] 使用 OPENAI_API_KEY");
                 return Some(key.to_string());
             }
+            // Gemini Native key
+            if let Some(key) = env
+                .get("GEMINI_API_KEY")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                log::debug!("[Claude] 使用 GEMINI_API_KEY");
+                return Some(key.to_string());
+            }
         }
 
         // 尝试直接获取
@@ -902,6 +912,27 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-or-test-key");
         assert_eq!(auth.strategy, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_extract_auth_gemini_api_key() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",
+                    "GEMINI_API_KEY": "gemini-test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "gemini-test-key");
+        assert_eq!(auth.strategy, AuthStrategy::Google);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 mod app_config;
 mod app_store;
 mod auto_launch;
+mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
@@ -1051,6 +1052,9 @@ pub fn run() {
             commands::remove_provider_from_live_config,
             commands::switch_provider,
             commands::import_default_config,
+            commands::get_claude_desktop_status,
+            commands::get_claude_desktop_default_routes,
+            commands::import_claude_desktop_providers_from_claude,
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,
@@ -1192,6 +1196,7 @@ pub fn run() {
             commands::get_auto_launch_status,
             // Proxy server management
             commands::start_proxy_server,
+            commands::stop_proxy_server,
             commands::stop_proxy_with_restore,
             commands::get_proxy_takeover_status,
             commands::set_proxy_takeover_for_app,

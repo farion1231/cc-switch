@@ -5,7 +5,7 @@ import { APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
 
 interface AppCountBarProps {
   totalLabel: string;
-  counts: Record<AppId, number>;
+  counts: Partial<Record<AppId, number>>;
   appIds?: AppId[];
 }
 
@@ -27,7 +27,7 @@ export const AppCountBar: React.FC<AppCountBarProps> = ({
             className={APP_ICON_MAP[app].badgeClass}
           >
             <span className="opacity-75">{APP_ICON_MAP[app].label}:</span>
-            <span className="font-bold ml-1">{counts[app]}</span>
+            <span className="font-bold ml-1">{counts[app] ?? 0}</span>
           </Badge>
         ))}
       </div>

@@ -1397,6 +1397,10 @@ impl ProviderService {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
+        if matches!(app_type, AppType::ClaudeDesktop) {
+            return Self::switch_normal(state, app_type, id, &providers);
+        }
+
         // Check if proxy takeover mode is active AND proxy server is actually running
         // Both conditions must be true to use hot-switch mode
         // Use blocking wait since this is a sync function
@@ -1730,6 +1734,7 @@ impl ProviderService {
 
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
+            AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
@@ -1745,6 +1750,7 @@ impl ProviderService {
     ) -> Result<String, AppError> {
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(settings_config),
+            AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
@@ -2056,6 +2062,9 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::ClaudeDesktop => {
+                crate::claude_desktop_config::validate_provider(provider)?;
+            }
             AppType::Codex => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {
                     AppError::localized(
@@ -2189,6 +2198,11 @@ impl ProviderService {
                     .to_string();
 
                 Ok((api_key, base_url))
+            }
+            AppType::ClaudeDesktop => {
+                let credentials =
+                    crate::claude_desktop_config::direct_gateway_credentials(provider)?;
+                Ok((credentials.api_key, credentials.base_url))
             }
             AppType::Codex => {
                 let auth = provider

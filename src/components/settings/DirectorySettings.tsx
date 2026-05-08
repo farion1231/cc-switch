@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
+type DirectoryAppId = Exclude<AppId, "claude-desktop">;
+
 interface DirectorySettingsProps {
   appConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
@@ -18,9 +20,9 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
-  onDirectoryChange: (app: AppId, value?: string) => void;
-  onBrowseDirectory: (app: AppId) => Promise<void>;
-  onResetDirectory: (app: AppId) => Promise<void>;
+  onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
+  onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
+  onResetDirectory: (app: DirectoryAppId) => Promise<void>;
 }
 
 export function DirectorySettings({
