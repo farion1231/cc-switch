@@ -42,7 +42,7 @@ MiniMax-M2.7 is a next-generation large language model designed for autonomous e
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.svg" alt="Shengsuanyun" width="150"></a></td>
+<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
 <td>Thanks to Shengsuanyun for sponsoring this project! Shengsuanyun is a super factory serving AI Native Teams — an industrial-grade AI task parallel execution platform. Its model marketplace aggregates Claude, ChatGPT, Gemini, and other domestic and international LLM and multimedia model capabilities with direct supply. Absolutely no reverse engineering or dilution — platform-wide model SLA availability reaches 99.7%, with <a href="https://watch.shengsuanyun.com/status/shengsuanyun">monitoring dashboards</a> showing green across the board. It also offers enterprise-grade custom gateways for fine-grained team cost and permission management, smart routing, security protection, and BYOK (Bring Your Own Key) hosting. The platform charges on a pay-per-use and tokens plan (coming soon) basis, with invoicing available. Register via <a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">this link</a> as a new user to receive ¥10 in credits plus a 10% bonus on your first top-up.</td>
 </tr>
 
@@ -115,13 +115,13 @@ Register now via <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">this lin
 </tr>
 
 <tr>
-<td width="180"><a href="https://chefshop.ai"><img src="assets/partners/logos/chefshop.png" alt="ChefShop" width="150"></a></td>
-<td>Thanks to ChefShop AI for sponsoring this project! ChefShop AI is a premium account service provider tailored for heavy AI subscription users. The platform offers official top-up and stable account services for mainstream large models including ChatGPT Plus/Pro, Claude Max, Grok Super/Heavy, and Gemini. Click <a href="https://chefshop.ai">here</a> to purchase!</td>
+<td width="180"><a href="https://vibecodingapi.ai"><img src="assets/partners/logos/lioncc.png" alt="LionCC" width="150"></a></td>
+<td>Thanks to LionCC for sponsoring this project! LionCC is built for Vibe Coders who pursue the ultimate development experience. We provide stable, low-latency, and competitively priced computing services for Claude Code, Codex, and OpenClaw, saving up to 50% in costs. After registering, add customer service on WeChat (HSQBJ088888888) with the code "cc-switch" to receive $10 in free credits (10 million tokens). For other collaborations, follow the blog @LionCC.ai. Click <a href="https://vibecodingapi.ai">here</a> to register!</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://vibecodingapi.ai"><img src="assets/partners/logos/lioncc.png" alt="LionCC" width="150"></a></td>
-<td>Thanks to LionCC for sponsoring this project! LionCC is built for Vibe Coders who pursue the ultimate development experience. We provide stable, low-latency, and competitively priced computing services for Claude Code, Codex, and OpenClaw, saving up to 50% in costs. After registering, add customer service on WeChat (HSQBJ088888888) with the code "cc-switch" to receive $10 in free credits (10 million tokens). For other collaborations, follow the blog @LionCC.ai. Click <a href="https://vibecodingapi.ai">here</a> to register!</td>
+<td width="180"><a href="https://console.claudeapi.com/register?aff=pCLD"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
+<td>This project is sponsored by <a href="https://console.claudeapi.com/register?aff=pCLD">Claude API</a>. Direct Claude API access — connect Claude Code and Agent apps in 3 minutes. New users can claim a free trial credit.Powered by official Anthropic API keys + AWS Bedrock official channels. No reverse engineering, no model degradation. Full support for Opus / Sonnet / Haiku model lineup, with official capabilities preserved including Tool Use, 1M context window, and more. Built for Claude Code power users, Agent engineers, and enterprise engineering teams. Invoicing and dedicated team support available. Click <a href="https://console.claudeapi.com/register?aff=pCLD">here</a> to register!</td>
 </tr>
 
 <tr>
