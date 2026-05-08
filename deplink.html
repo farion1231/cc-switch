@@ -415,6 +415,49 @@
                     </div>
                 </div>
 
+                <!-- 额外环境变量 (extraEnv) 导入 -->
+                <div class="link-card">
+                    <h3>
+                        <span class="app-badge badge-claude">Claude</span>
+                        额外环境变量自动勾选
+                        <span class="version-badge">v3.10+</span>
+                    </h3>
+                    <p class="description">
+                        通过 <code>extraEnv</code> 参数一键导入 Teammates 模式、Tool Search、最大强度思考等环境变量，自动勾选对应 UI 开关。
+                    </p>
+                    <div class="param-list">
+                        <span class="param-tag">必需</span> resource=provider, app=claude, name, endpoint, apiKey<br>
+                        <span class="param-tag optional">新增</span> <strong>extraEnv</strong> (Base64 JSON 对象)
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a href="ccswitch://v1/import?resource=provider&app=claude&name=MyProvider&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-your-api-key-here&model=k2.6&haikuModel=k2.6&sonnetModel=k2.6&opusModel=k2.6&enabled=true&extraEnv=eyJDTEFVREVfQ09ERV9FWFBFUklNRU5UQUxfQUdFTlRfVEVBTVMiOiAiMSIsICJFTkFCTEVfVE9PTF9TRUFSQ0giOiAidHJ1ZSIsICJDTEFVREVfQ09ERV9FRkZPUlRfTEVWRUwiOiAibWF4IiwgIkNMQVVERV9CQVNIX01BSU5UQUlOX1BST0pFQ1RfV09SS0lOR19ESVIiOiAiMSIsICJDTEFVREVfQ09ERV9ESVNBQkxFX0ZFRURCQUNLX1NVUlZFWSI6ICIxIiwgIkNMQVVERV9DT0RFX05PX0ZMSUNLRVIiOiAiMSJ9"
+                            class="deep-link">
+                            📥 一键导入示例配置
+                        </a>
+                        <button class="deep-link"
+                            style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); cursor: pointer; border: none;"
+                            onclick="copyDeepLink('ccswitch://v1/import?resource=provider&app=claude&name=MyProvider&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-your-api-key-here&model=k2.6&haikuModel=k2.6&sonnetModel=k2.6&opusModel=k2.6&enabled=true&extraEnv=eyJDTEFVREVfQ09ERV9FWFBFUklNRU5UQUxfQUdFTlRfVEVBTVMiOiAiMSIsICJFTkFCTEVfVE9PTF9TRUFSQ0giOiAidHJ1ZSIsICJDTEFVREVfQ09ERV9FRkZPUlRfTEVWRUwiOiAibWF4IiwgIkNMQVVERV9CQVNIX01BSU5UQUlOX1BST0pFQ1RfV09SS0lOR19ESVIiOiAiMSIsICJDTEFVREVfQ09ERV9ESVNBQkxFX0ZFRURCQUNLX1NVUlZFWSI6ICIxIiwgIkNMQVVERV9DT0RFX05PX0ZMSUNLRVIiOiAiMSJ9', this)">
+                            📋 复制链接
+                        </button>
+                    </div>
+                    <div class="code-block"
+                        style="margin-top: 12px; padding: 12px; background: #2c3e50; color: #ecf0f1; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+                        <div style="color: #95a5a6; margin-bottom: 8px;">// extraEnv 解码后的内容:</div>
+                        {<br>
+                        &nbsp;&nbsp;"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",<br>
+                        &nbsp;&nbsp;"ENABLE_TOOL_SEARCH": "true",<br>
+                        &nbsp;&nbsp;"CLAUDE_CODE_EFFORT_LEVEL": "max",<br>
+                        &nbsp;&nbsp;"CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1",<br>
+                        &nbsp;&nbsp;"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",<br>
+                        &nbsp;&nbsp;"CLAUDE_CODE_NO_FLICKER": "1"<br>
+                        }
+                    </div>
+                    <div
+                        style="margin-top: 12px; padding: 10px; background: #d4edda; border-left: 4px solid #28a745; border-radius: 4px; font-size: 13px;">
+                        <strong>自动勾选的 UI 开关:</strong> Teammates 模式、启用 Tool Search、最大强度思考
+                    </div>
+                </div>
+
                 <!-- Codex TOML 配置导入 -->
                 <div class="link-card">
                     <h3>

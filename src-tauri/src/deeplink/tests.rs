@@ -138,6 +138,7 @@ fn test_build_gemini_provider_with_model() {
         config: None,
         config_format: None,
         config_url: None,
+        extra_env: None,
         apps: None,
         repo: None,
         directory: None,
@@ -191,6 +192,7 @@ fn test_build_gemini_provider_without_model() {
         config: None,
         config_format: None,
         config_url: None,
+        extra_env: None,
         apps: None,
         repo: None,
         directory: None,
@@ -239,6 +241,7 @@ fn test_parse_and_merge_config_claude() {
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
+        extra_env: None,
         apps: None,
         repo: None,
         directory: None,
@@ -289,6 +292,7 @@ fn test_parse_and_merge_config_url_override() {
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
+        extra_env: None,
         apps: None,
         repo: None,
         directory: None,
@@ -457,4 +461,100 @@ fn test_infer_homepage_from_endpoint_without_homepage() {
         infer_homepage_from_endpoint("https://cubence.com"),
         Some("https://cubence.com".to_string())
     );
+}
+
+// =============================================================================
+// Extra Env Tests (v3.10+)
+// =============================================================================
+
+fn claude_request_fixture(extra_env: Option<String>) -> DeepLinkImportRequest {
+    DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com".to_string()),
+        api_key: Some("sk-test".to_string()),
+        extra_env,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn test_parse_provider_with_extra_env() {
+    let extra_env_json = r#"{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1","ENABLE_TOOL_SEARCH":"true"}"#;
+    // Use URL-safe base64 (no + or /) to avoid URL-encoding issues in test string
+    let extra_env_b64 = BASE64_URL_SAFE_NO_PAD.encode(extra_env_json.as_bytes());
+    let url = format!(
+        "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&extraEnv={}",
+        extra_env_b64
+    );
+
+    let request = parse_deeplink_url(&url).unwrap();
+    assert_eq!(request.extra_env, Some(extra_env_b64));
+}
+
+#[test]
+fn test_build_claude_settings_with_extra_env() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1","ENABLE_TOOL_SEARCH":"true","CLAUDE_CODE_EFFORT_LEVEL":"max"}"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let mut request = claude_request_fixture(Some(extra_env_b64));
+    request.model = Some("k2.6".to_string());
+    request.haiku_model = Some("k2.6".to_string());
+    request.sonnet_model = Some("k2.6".to_string());
+    request.opus_model = Some("k2.6".to_string());
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    // Standard fields
+    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-test");
+    assert_eq!(env["ANTHROPIC_BASE_URL"], "https://api.example.com");
+    assert_eq!(env["ANTHROPIC_MODEL"], "k2.6");
+
+    // Extra env fields merged in
+    assert_eq!(
+        env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"],
+        "1",
+        "extra_env should merge CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
+    );
+    assert_eq!(
+        env["ENABLE_TOOL_SEARCH"], "true",
+        "extra_env should merge ENABLE_TOOL_SEARCH"
+    );
+    assert_eq!(
+        env["CLAUDE_CODE_EFFORT_LEVEL"], "max",
+        "extra_env should merge CLAUDE_CODE_EFFORT_LEVEL"
+    );
+}
+
+#[test]
+fn test_extra_env_does_not_break_without_value() {
+    use super::provider::build_provider_from_request;
+
+    let request = claude_request_fixture(None);
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    // Should still have standard fields
+    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-test");
+    // Should not have extra env keys
+    assert!(env.get("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS").is_none());
+}
+
+#[test]
+fn test_extra_env_ignores_invalid_base64() {
+    use super::provider::build_provider_from_request;
+
+    let request = claude_request_fixture(Some("!!!invalid-base64!!!".to_string()));
+
+    // Should not panic; invalid extra_env is silently skipped
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-test");
 }

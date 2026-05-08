@@ -280,7 +280,37 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         );
     }
 
+    // Merge extra environment variables if provided (v3.10+)
+    if let Some(extra_b64) = &request.extra_env {
+        merge_extra_env(&mut env, extra_b64);
+    }
+
     json!({ "env": env })
+}
+
+/// Decode and merge extra environment variables from a Base64-encoded JSON object.
+fn merge_extra_env(
+    env: &mut serde_json::Map<String, serde_json::Value>,
+    extra_b64: &str,
+) {
+    let decoded = match decode_base64_param("extra_env", extra_b64) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("Failed to decode extra_env Base64: {e}");
+            return;
+        }
+    };
+    let extra_map: serde_json::Map<String, serde_json::Value> = match serde_json::from_slice(&decoded)
+    {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("Failed to parse extra_env as JSON: {e}");
+            return;
+        }
+    };
+    for (k, v) in extra_map {
+        env.insert(k, v);
+    }
 }
 
 /// Build Codex settings configuration
