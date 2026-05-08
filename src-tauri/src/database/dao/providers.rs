@@ -535,6 +535,22 @@ impl Database {
         Ok(ids)
     }
 
+    /// 判断指定 app 下是否已存在任意 provider。
+    ///
+    /// 启动阶段的 live import 需要使用这个更严格的判断：
+    /// 只要该 app 已经有任何 provider（包括官方 seed），就不应再自动导入 `default`。
+    pub fn has_any_provider_for_app(&self, app_type: &str) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM providers WHERE app_type = ?1)",
+                params![app_type],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(exists)
+    }
+
     /// 判断指定 app 下是否存在非官方种子的供应商。
     ///
     /// 比 `get_all_providers` 轻量得多：只读 id 列、无 endpoint 子查询、首条命中即返回。

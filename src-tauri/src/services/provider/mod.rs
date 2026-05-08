@@ -22,7 +22,8 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings, sync_current_to_live,
+    import_opencode_providers_from_live, read_live_settings,
+    should_import_default_config_on_startup, sync_current_to_live,
 };
 
 // Internal re-exports (pub(crate))
@@ -1931,6 +1932,13 @@ impl ProviderService {
     /// Returns `Ok(true)` if imported, `Ok(false)` if skipped.
     pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
         import_default_config(state, app_type)
+    }
+
+    pub fn should_import_default_config_on_startup(
+        state: &AppState,
+        app_type: &AppType,
+    ) -> Result<bool, AppError> {
+        should_import_default_config_on_startup(state, app_type)
     }
 
     /// Read current live settings (re-export)

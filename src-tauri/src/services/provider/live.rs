@@ -1129,8 +1129,25 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     state
         .db
         .set_current_provider(app_type.as_str(), &provider.id)?;
+    crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
 
     Ok(true) // 真正导入了
+}
+
+/// Decide whether startup should auto-import the current live config as `default`.
+///
+/// This is intentionally stricter than the manual import path:
+/// if the app already has any provider row at all (including official seeds),
+/// startup must skip auto-import to avoid recreating `default` on each launch.
+pub fn should_import_default_config_on_startup(
+    state: &AppState,
+    app_type: &AppType,
+) -> Result<bool, AppError> {
+    if app_type.is_additive_mode() {
+        return Ok(false);
+    }
+
+    Ok(!state.db.has_any_provider_for_app(app_type.as_str())?)
 }
 
 /// Write Gemini live configuration with authentication handling
