@@ -7,6 +7,40 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandSpec {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandResult {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+trait CommandRunner {
+    fn run(&mut self, spec: &CommandSpec) -> Result<CommandResult, String>;
+}
+
+struct SystemCommandRunner;
+
+impl CommandRunner for SystemCommandRunner {
+    fn run(&mut self, spec: &CommandSpec) -> Result<CommandResult, String> {
+        let output = Command::new(&spec.program)
+            .args(&spec.args)
+            .output()
+            .map_err(|e| format!("执行命令失败 ({} {}): {}", spec.program, spec.args.join(" "), e))?;
+
+        Ok(CommandResult {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        })
+    }
+}
+
 /// 安装结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallResult {
@@ -205,18 +239,28 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
     })
 }
 
-/// Windows 平台安装 Node.js（提示用户手动安装）
+/// Windows 平台安装 Node.js（优先使用 winget，其次使用 Chocolatey）
 #[cfg(target_os = "windows")]
 pub fn install_nodejs() -> Result<InstallResult, String> {
-    Ok(InstallResult {
-        success: false,
-        message: "Windows 平台请从官网下载安装 Node.js: https://nodejs.org".to_string(),
-        installed_version: None,
-        action: None,
-        already_installed: None,
-        verified: Some(false),
-        error_code: Some("manual_node_install_required".to_string()),
-    })
+    let mut runner = SystemCommandRunner;
+    Ok(install_windows_package_with_runner(
+        &mut runner,
+        "Node.js",
+        &[build_windows_command_spec(&[
+            "winget",
+            "install",
+            "--id",
+            "OpenJS.NodeJS.LTS",
+            "-e",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+            "--disable-interactivity",
+        ])],
+        &[build_windows_command_spec(&["choco", "install", "nodejs-lts", "-y"])],
+        build_windows_verify_spec("node --version"),
+        "manual_node_install_required",
+        "Windows 平台自动安装 Node.js 失败。请先确认已安装 winget 或 Chocolatey，并以管理员身份重试；或前往 https://nodejs.org 手动安装。",
+    ))
 }
 
 /// 安装 Claude Code
@@ -272,19 +316,30 @@ pub fn install_claude_code() -> Result<InstallResult, String> {
     })
 }
 
-/// Windows 平台安装 Claude Code（提示用户手动安装）
+/// Windows 平台安装 Claude Code（优先使用 npm）
 #[cfg(target_os = "windows")]
 pub fn install_claude_code() -> Result<InstallResult, String> {
-    Ok(InstallResult {
-        success: false,
-        message: "Windows 平台请从官网下载安装 Claude Code: https://claude.ai/download"
-            .to_string(),
-        installed_version: None,
-        action: None,
-        already_installed: None,
-        verified: Some(false),
-        error_code: Some("manual_claude_install_required".to_string()),
-    })
+    let mut runner = SystemCommandRunner;
+    Ok(install_windows_package_with_runner(
+        &mut runner,
+        "Claude Code",
+        &[
+            build_windows_command_spec(&[
+                "cmd",
+                "/C",
+                "npm install -g @anthropic-ai/claude-code",
+            ]),
+            build_windows_command_spec(&[
+                "cmd",
+                "/C",
+                "npm install -g @anthropic-ai/claude-code@latest",
+            ]),
+        ],
+        &[],
+        build_windows_verify_spec("claude --version"),
+        "manual_claude_install_required",
+        "Windows 平台自动安装 Claude Code 失败。请先确认 Node.js/npm 可用，并以管理员身份重试；或前往 https://claude.ai/download 手动安装。",
+    ))
 }
 
 /// 从版本输出中提取纯版本号
@@ -297,9 +352,277 @@ fn extract_version(raw: &str) -> String {
         .unwrap_or_else(|| raw.trim().to_string())
 }
 
+#[cfg(target_os = "windows")]
+fn run_windows_command(args: &[&str]) -> Result<std::process::Output, String> {
+    let (program, rest) = args
+        .split_first()
+        .ok_or_else(|| "缺少可执行命令".to_string())?;
+
+    Command::new(program)
+        .args(rest)
+        .output()
+        .map_err(|e| format!("执行命令失败 ({}): {}", args.join(" "), e))
+}
+
+#[cfg(target_os = "windows")]
+fn verify_windows_command(version_check: &str) -> Option<String> {
+    let output = run_windows_command(&["cmd", "/C", version_check]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let raw = if stdout.is_empty() { stderr } else { stdout };
+
+    if raw.is_empty() {
+        None
+    } else {
+        Some(extract_version(&raw))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn try_windows_install_commands(commands: &[&[&str]]) -> Result<Option<String>, String> {
+    for command in commands {
+        let output = run_windows_command(command)?;
+        if output.status.success() {
+            return Ok(Some(command.join(" ")));
+        }
+    }
+
+    Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+fn install_windows_package(
+    display_name: &str,
+    primary_commands: &[&[&str]],
+    fallback_commands: &[&[&str]],
+    version_check: &str,
+    failure_error_code: &str,
+    manual_message: &str,
+) -> Result<InstallResult, String> {
+    let primary = try_windows_install_commands(primary_commands)?;
+    let fallback = if primary.is_none() {
+        try_windows_install_commands(fallback_commands)?
+    } else {
+        None
+    };
+
+    let Some(executed_command) = primary.or(fallback) else {
+        return Ok(InstallResult {
+            success: false,
+            message: manual_message.to_string(),
+            installed_version: None,
+            action: None,
+            already_installed: Some(false),
+            verified: Some(false),
+            error_code: Some(failure_error_code.to_string()),
+        });
+    };
+
+    let installed_version = verify_windows_command(version_check);
+    if installed_version.is_none() {
+        return Ok(InstallResult {
+            success: false,
+            message: format!(
+                "{} 安装命令已执行，但暂未检测到可用版本。请重新打开终端后重试。",
+                display_name
+            ),
+            installed_version: None,
+            action: Some("install".to_string()),
+            already_installed: Some(false),
+            verified: Some(false),
+            error_code: Some("install_verification_failed".to_string()),
+        });
+    }
+
+    Ok(InstallResult {
+        success: true,
+        message: format!("{} 安装成功 ({})", display_name, executed_command),
+        installed_version,
+        action: Some("install".to_string()),
+        already_installed: Some(false),
+        verified: Some(true),
+        error_code: None,
+    })
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn build_windows_command_spec(args: &[&str]) -> CommandSpec {
+    let (program, rest) = args
+        .split_first()
+        .expect("build_windows_command_spec requires at least a program name");
+    CommandSpec {
+        program: program.to_string(),
+        args: rest.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn build_windows_verify_spec(version_check: &str) -> CommandSpec {
+    CommandSpec {
+        program: "cmd".to_string(),
+        args: vec!["/C".to_string(), version_check.to_string()],
+    }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn install_windows_package_with_runner(
+    runner: &mut dyn CommandRunner,
+    display_name: &str,
+    primary_commands: &[CommandSpec],
+    fallback_commands: &[CommandSpec],
+    verify_spec: CommandSpec,
+    failure_error_code: &str,
+    manual_message: &str,
+) -> InstallResult {
+    let mut executed_command: Option<String> = None;
+
+    for cmd in primary_commands {
+        match runner.run(cmd) {
+            Ok(result) if result.success => {
+                executed_command =
+                    Some(format!("{} {}", cmd.program, cmd.args.join(" ")));
+                break;
+            }
+            _ => continue,
+        }
+    }
+
+    if executed_command.is_none() {
+        for cmd in fallback_commands {
+            match runner.run(cmd) {
+                Ok(result) if result.success => {
+                    executed_command =
+                        Some(format!("{} {}", cmd.program, cmd.args.join(" ")));
+                    break;
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    let Some(executed) = executed_command else {
+        return InstallResult {
+            success: false,
+            message: manual_message.to_string(),
+            installed_version: None,
+            action: None,
+            already_installed: Some(false),
+            verified: Some(false),
+            error_code: Some(failure_error_code.to_string()),
+        };
+    };
+
+    let installed_version = match runner.run(&verify_spec) {
+        Ok(result) if result.success => {
+            let raw = if result.stdout.is_empty() {
+                result.stderr
+            } else {
+                result.stdout
+            };
+            if raw.is_empty() {
+                None
+            } else {
+                Some(extract_version(&raw))
+            }
+        }
+        _ => None,
+    };
+
+    if installed_version.is_none() {
+        return InstallResult {
+            success: false,
+            message: format!(
+                "{} 安装命令已执行，但暂未检测到可用版本。请重新打开终端后重试。",
+                display_name
+            ),
+            installed_version: None,
+            action: Some("install".to_string()),
+            already_installed: Some(false),
+            verified: Some(false),
+            error_code: Some("install_verification_failed".to_string()),
+        };
+    }
+
+    InstallResult {
+        success: true,
+        message: format!("{} 安装成功 ({})", display_name, executed),
+        installed_version,
+        action: Some("install".to_string()),
+        already_installed: Some(false),
+        verified: Some(true),
+        error_code: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct CommandRunExpectation {
+        spec: CommandSpec,
+        result: CommandResult,
+    }
+
+    impl CommandRunExpectation {
+        fn success(spec: CommandSpec, stdout: &str, stderr: &str) -> Self {
+            CommandRunExpectation {
+                spec,
+                result: CommandResult {
+                    success: true,
+                    stdout: stdout.to_string(),
+                    stderr: stderr.to_string(),
+                },
+            }
+        }
+
+        fn failure(spec: CommandSpec, stdout: &str, stderr: &str) -> Self {
+            CommandRunExpectation {
+                spec,
+                result: CommandResult {
+                    success: false,
+                    stdout: stdout.to_string(),
+                    stderr: stderr.to_string(),
+                },
+            }
+        }
+    }
+
+    struct FakeCommandRunner {
+        expectations: Vec<CommandRunExpectation>,
+        pub calls: Vec<CommandSpec>,
+        next_index: usize,
+    }
+
+    impl FakeCommandRunner {
+        fn new(expectations: Vec<CommandRunExpectation>) -> Self {
+            FakeCommandRunner {
+                expectations,
+                calls: Vec::new(),
+                next_index: 0,
+            }
+        }
+    }
+
+    impl CommandRunner for FakeCommandRunner {
+        fn run(&mut self, spec: &CommandSpec) -> Result<CommandResult, String> {
+            self.calls.push(spec.clone());
+            if self.next_index >= self.expectations.len() {
+                return Err(format!(
+                    "unexpected command call: {} {}",
+                    spec.program,
+                    spec.args.join(" ")
+                ));
+            }
+            let expected = &self.expectations[self.next_index];
+            self.next_index += 1;
+            assert_eq!(spec, &expected.spec, "unexpected command spec at index {}", self.next_index - 1);
+            Ok(expected.result.clone())
+        }
+    }
 
     #[test]
     fn test_parse_and_check_node_version() {
@@ -315,5 +638,128 @@ mod tests {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
         assert_eq!(extract_version("18.20.0"), "18.20.0");
+    }
+
+    #[test]
+    fn build_windows_command_spec_preserves_program_and_args() {
+        let spec = build_windows_command_spec(&["winget", "install", "OpenJS.NodeJS.LTS"]);
+
+        assert_eq!(spec.program, "winget");
+        assert_eq!(
+            spec.args,
+            vec!["install".to_string(), "OpenJS.NodeJS.LTS".to_string()]
+        );
+    }
+
+    #[test]
+    fn build_windows_verify_spec_wraps_command_in_cmd_c() {
+        let spec = build_windows_verify_spec("claude --version");
+
+        assert_eq!(spec.program, "cmd");
+        assert_eq!(
+            spec.args,
+            vec!["/C".to_string(), "claude --version".to_string()]
+        );
+    }
+
+    #[test]
+    fn install_windows_package_returns_verification_failed_code_when_verify_fails() {
+        let mut runner = FakeCommandRunner::new(vec![
+            CommandRunExpectation::success(
+                build_windows_command_spec(&["winget", "install", "OpenJS.NodeJS.LTS"]),
+                "installed",
+                "",
+            ),
+            CommandRunExpectation::failure(
+                build_windows_verify_spec("node --version"),
+                "",
+                "node not found",
+            ),
+        ]);
+
+        let result = install_windows_package_with_runner(
+            &mut runner,
+            "Node.js",
+            &[build_windows_command_spec(&[
+                "winget",
+                "install",
+                "OpenJS.NodeJS.LTS",
+            ])],
+            &[],
+            build_windows_verify_spec("node --version"),
+            "manual_node_install_required",
+            "manual fallback",
+        );
+
+        assert!(!result.success);
+        assert_eq!(
+            result.error_code,
+            Some("install_verification_failed".to_string())
+        );
+        assert_eq!(result.verified, Some(false));
+    }
+
+    #[test]
+    fn install_windows_package_falls_back_to_second_backend_after_first_failure() {
+        let mut runner = FakeCommandRunner::new(vec![
+            CommandRunExpectation::failure(
+                build_windows_command_spec(&["winget", "install", "OpenJS.NodeJS.LTS"]),
+                "",
+                "winget failed",
+            ),
+            CommandRunExpectation::success(
+                build_windows_command_spec(&["choco", "install", "nodejs-lts", "-y"]),
+                "installed",
+                "",
+            ),
+            CommandRunExpectation::success(
+                build_windows_verify_spec("node --version"),
+                "v20.1.0",
+                "",
+            ),
+        ]);
+
+        let result = install_windows_package_with_runner(
+            &mut runner,
+            "Node.js",
+            &[build_windows_command_spec(&[
+                "winget",
+                "install",
+                "OpenJS.NodeJS.LTS",
+            ])],
+            &[build_windows_command_spec(&["choco", "install", "nodejs-lts", "-y"])],
+            build_windows_verify_spec("node --version"),
+            "manual_node_install_required",
+            "manual fallback",
+        );
+
+        assert!(result.success);
+        assert_eq!(result.installed_version, Some("20.1.0".to_string()));
+        assert_eq!(runner.calls.len(), 3);
+        assert_eq!(runner.calls[0].program, "winget");
+        assert_eq!(runner.calls[1].program, "choco");
+        assert_eq!(runner.calls[2].program, "cmd");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn install_windows_package_returns_manual_message_when_no_command_succeeds() {
+        let result = install_windows_package(
+            "Claude Code",
+            &[],
+            &[],
+            "claude --version",
+            "manual_claude_install_required",
+            "manual fallback",
+        )
+        .expect("install should return result");
+
+        assert!(!result.success);
+        assert_eq!(result.message, "manual fallback");
+        assert_eq!(
+            result.error_code,
+            Some("manual_claude_install_required".to_string())
+        );
+        assert_eq!(result.verified, Some(false));
     }
 }
