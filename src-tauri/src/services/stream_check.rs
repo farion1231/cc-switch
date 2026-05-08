@@ -404,8 +404,8 @@ impl StreamCheckService {
                 .header("x-initiator", "user")
                 .header("x-interaction-type", "conversation-agent")
                 .header("x-vscode-user-agent-library-version", "electron-fetch")
-                .header("x-request-id", &request_id)
-                .header("x-agent-task-id", &request_id);
+                .header("x-request-id", request_id.as_str())
+                .header("x-agent-task-id", request_id.as_str());
         } else if is_gemini_native {
             request_builder = match auth.strategy {
                 AuthStrategy::GoogleOAuth => {
@@ -440,7 +440,7 @@ impl StreamCheckService {
             // - AuthStrategy::ClaudeAuth → Authorization: Bearer
             // - AuthStrategy::Bearer     → Authorization: Bearer
             // 避免之前"无条件 Bearer + 条件 x-api-key 双发"导致的假阴性 / auth conflict。
-            for (name, value) in ClaudeAdapter::new().get_auth_headers(auth) {
+            for (name, value) in ClaudeAdapter::new().get_auth_headers(auth, Some(&body)) {
                 request_builder = request_builder.header(name, value);
             }
 

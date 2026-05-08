@@ -41,6 +41,20 @@ pub struct ForwardError {
     pub provider: Option<Provider>,
 }
 
+pub struct ForwardRequestInput {
+    pub endpoint: String,
+    pub body: Value,
+    pub headers: axum::http::HeaderMap,
+    pub extensions: Extensions,
+    pub client_session_id: Option<String>,
+}
+
+struct ForwardMetadata<'a> {
+    headers: &'a axum::http::HeaderMap,
+    extensions: &'a Extensions,
+    client_session_id: Option<&'a str>,
+}
+
 pub struct RequestForwarder {
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
@@ -114,12 +128,16 @@ impl RequestForwarder {
     pub async fn forward_with_retry(
         &self,
         app_type: &AppType,
-        endpoint: &str,
-        body: Value,
-        headers: axum::http::HeaderMap,
-        extensions: Extensions,
+        request: ForwardRequestInput,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
+        let ForwardRequestInput {
+            endpoint,
+            body,
+            headers,
+            extensions,
+            client_session_id,
+        } = request;
         // 获取适配器
         let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
@@ -191,10 +209,13 @@ impl RequestForwarder {
             match self
                 .forward(
                     provider,
-                    endpoint,
+                    &endpoint,
                     &provider_body,
-                    &headers,
-                    &extensions,
+                    ForwardMetadata {
+                        headers: &headers,
+                        extensions: &extensions,
+                        client_session_id: client_session_id.as_deref(),
+                    },
                     adapter.as_ref(),
                 )
                 .await
@@ -321,10 +342,13 @@ impl RequestForwarder {
                                 match self
                                     .forward(
                                         provider,
-                                        endpoint,
+                                        &endpoint,
                                         &provider_body,
-                                        &headers,
-                                        &extensions,
+                                        ForwardMetadata {
+                                            headers: &headers,
+                                            extensions: &extensions,
+                                            client_session_id: client_session_id.as_deref(),
+                                        },
                                         adapter.as_ref(),
                                     )
                                     .await
@@ -520,10 +544,13 @@ impl RequestForwarder {
                             match self
                                 .forward(
                                     provider,
-                                    endpoint,
+                                    &endpoint,
                                     &provider_body,
-                                    &headers,
-                                    &extensions,
+                                    ForwardMetadata {
+                                        headers: &headers,
+                                        extensions: &extensions,
+                                        client_session_id: client_session_id.as_deref(),
+                                    },
                                     adapter.as_ref(),
                                 )
                                 .await
@@ -761,14 +788,16 @@ impl RequestForwarder {
         provider: &Provider,
         endpoint: &str,
         body: &Value,
-        headers: &axum::http::HeaderMap,
-        extensions: &Extensions,
+        metadata: ForwardMetadata<'_>,
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
+        let headers = metadata.headers;
+        let extensions = metadata.extensions;
+        let client_session_id = metadata.client_session_id;
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
-        let is_full_url = provider
+        let has_explicit_full_url = provider
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
@@ -898,36 +927,6 @@ impl RequestForwarder {
         } else {
             None
         };
-
-        // GitHub Copilot 动态 endpoint 路由
-        // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
-        if is_copilot && !is_full_url {
-            if let Some(app_handle) = &self.app_handle {
-                let copilot_state = app_handle.state::<CopilotAuthState>();
-                let copilot_auth = copilot_state.0.read().await;
-
-                // 从 provider.meta 获取关联的 GitHub 账号 ID
-                let account_id = provider
-                    .meta
-                    .as_ref()
-                    .and_then(|m| m.managed_account_id_for("github_copilot"));
-
-                let dynamic_endpoint = match &account_id {
-                    Some(id) => copilot_auth.get_api_endpoint(id).await,
-                    None => copilot_auth.get_default_api_endpoint().await,
-                };
-
-                // 只在动态 endpoint 与当前 base_url 不同时替换
-                if dynamic_endpoint != base_url {
-                    log::debug!(
-                        "[Copilot] 使用动态 API endpoint: {} (原: {})",
-                        dynamic_endpoint,
-                        base_url
-                    );
-                    base_url = dynamic_endpoint;
-                }
-            }
-        }
         let resolved_claude_api_format = if adapter.name() == "Claude" {
             Some(
                 self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
@@ -954,6 +953,34 @@ impl RequestForwarder {
                         .map(ToString::to_string),
                 )
             };
+
+        let is_full_url = has_explicit_full_url
+            || is_legacy_full_url_for_endpoint(&base_url, &effective_endpoint);
+        // GitHub Copilot 动态 endpoint 路由
+        // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
+        if is_copilot && !is_full_url {
+            if let Some(app_handle) = &self.app_handle {
+                let copilot_state = app_handle.state::<CopilotAuthState>();
+                let copilot_auth = copilot_state.0.read().await;
+
+                // 从 provider.meta 获取关联的 GitHub 账号 ID
+                let account_id = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.managed_account_id_for("github_copilot"));
+
+                let dynamic_endpoint = match &account_id {
+                    Some(id) => copilot_auth.get_api_endpoint(id).await,
+                    None => copilot_auth.get_default_api_endpoint().await,
+                };
+
+                // 只在动态 endpoint 与当前 base_url 不同时替换
+                if dynamic_endpoint != base_url {
+                    log::debug!("[Copilot] 已启用动态 API endpoint");
+                    base_url = dynamic_endpoint;
+                }
+            }
+        }
 
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
@@ -1027,10 +1054,27 @@ impl RequestForwarder {
 
                     match token_result {
                         Ok(token) => {
-                            auth = AuthInfo::new(token, AuthStrategy::GitHubCopilot);
+                            // 获取 machine ID 和 session ID
+                            let (machine_id, session_id) = copilot_auth
+                                .get_account_ids_for_conversation(
+                                    account_id.as_deref(),
+                                    client_session_id,
+                                )
+                                .await;
+
+                            // 使用新的构造函数
+                            auth = AuthInfo::new_with_ids(
+                                token,
+                                AuthStrategy::GitHubCopilot,
+                                machine_id.clone(),
+                                session_id.clone(),
+                            );
+
                             log::debug!(
-                                "[Copilot] 成功获取 Copilot token (account={})",
-                                account_id.as_deref().unwrap_or("default")
+                                "[Copilot] 成功获取 Copilot token (account={}, has_machine_id={}, has_session_id={})",
+                                account_id.as_deref().unwrap_or("default"),
+                                machine_id.is_some(),
+                                session_id.is_some(),
                             );
                         }
                         Err(e) => {
@@ -1104,7 +1148,7 @@ impl RequestForwarder {
                 }
             }
 
-            adapter.get_auth_headers(&auth)
+            adapter.get_auth_headers(&auth, Some(&filtered_body))
         } else {
             Vec::new()
         };
@@ -1177,6 +1221,9 @@ impl RequestForwarder {
                 "x-vscode-user-agent-library-version",
                 "x-request-id",
                 "x-agent-task-id",
+                // Machine ID 和 Session ID
+                "vscode-machineid",
+                "vscode-sessionid",
             ]
         } else {
             &[]
@@ -1843,6 +1890,23 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
     }
 }
 
+fn is_legacy_full_url_for_endpoint(base_url: &str, endpoint: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(base_url) else {
+        return false;
+    };
+
+    let path = parsed.path().trim_end_matches('/');
+    let endpoint_path = split_endpoint_and_query(endpoint).0.trim_end_matches('/');
+
+    if path.is_empty() || path == "/" || endpoint_path.is_empty() || endpoint_path == "/" {
+        return false;
+    }
+
+    let normalized_endpoint_path = format!("/{}", endpoint_path.trim_start_matches('/'));
+
+    path == endpoint_path || path.ends_with(&normalized_endpoint_path)
+}
+
 fn build_codex_oauth_session_headers(
     session_id: &str,
 ) -> Vec<(http::HeaderName, http::HeaderValue)> {
@@ -2285,5 +2349,25 @@ mod tests {
             let will_replace = is_copilot && !is_full_url;
             assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    #[test]
+    fn legacy_full_url_detection_matches_endpoint_path() {
+        assert!(is_legacy_full_url_for_endpoint(
+            "https://proxy.example.com/chat/completions",
+            "/chat/completions"
+        ));
+        assert!(is_legacy_full_url_for_endpoint(
+            "https://proxy.example.com/api/v1/messages",
+            "/v1/messages"
+        ));
+        assert!(!is_legacy_full_url_for_endpoint(
+            "https://proxy.example.com/api",
+            "/chat/completions"
+        ));
+        assert!(!is_legacy_full_url_for_endpoint(
+            "https://proxy.example.com/v1",
+            "/v1/messages"
+        ));
     }
 }

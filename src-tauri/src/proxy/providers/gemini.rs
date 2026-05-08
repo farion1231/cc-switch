@@ -9,6 +9,7 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use serde_json::Value;
 
 /// Gemini 适配器
 pub struct GeminiAdapter;
@@ -228,7 +229,11 @@ impl ProviderAdapter for GeminiAdapter {
         url
     }
 
-    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+        _request_body: Option<&Value>,
+    ) -> Vec<(http::HeaderName, http::HeaderValue)> {
         use http::{HeaderName, HeaderValue};
         match auth.strategy {
             AuthStrategy::GoogleOAuth => {

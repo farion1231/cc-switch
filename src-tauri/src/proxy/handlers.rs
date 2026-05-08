@@ -31,6 +31,7 @@ use super::{
     ProxyError,
 };
 use crate::app_config::AppType;
+use crate::proxy::forwarder::ForwardRequestInput;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -100,10 +101,13 @@ pub async fn handle_messages(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Claude,
-            endpoint,
-            body.clone(),
-            headers,
-            extensions,
+            ForwardRequestInput {
+                endpoint: endpoint.to_string(),
+                body: body.clone(),
+                headers,
+                extensions,
+                client_session_id: ctx.client_session_id.clone(),
+            },
             ctx.get_providers(),
         )
         .await
@@ -392,10 +396,13 @@ pub async fn handle_chat_completions(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            &endpoint,
-            body,
-            headers,
-            extensions,
+            ForwardRequestInput {
+                endpoint,
+                body,
+                headers,
+                extensions,
+                client_session_id: ctx.client_session_id.clone(),
+            },
             ctx.get_providers(),
         )
         .await
@@ -446,10 +453,13 @@ pub async fn handle_responses(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            &endpoint,
-            body,
-            headers,
-            extensions,
+            ForwardRequestInput {
+                endpoint,
+                body,
+                headers,
+                extensions,
+                client_session_id: ctx.client_session_id.clone(),
+            },
             ctx.get_providers(),
         )
         .await
@@ -500,10 +510,13 @@ pub async fn handle_responses_compact(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
-            &endpoint,
-            body,
-            headers,
-            extensions,
+            ForwardRequestInput {
+                endpoint,
+                body,
+                headers,
+                extensions,
+                client_session_id: ctx.client_session_id.clone(),
+            },
             ctx.get_providers(),
         )
         .await
@@ -565,10 +578,13 @@ pub async fn handle_gemini(
     let result = match forwarder
         .forward_with_retry(
             &AppType::Gemini,
-            endpoint,
-            body,
-            headers,
-            extensions,
+            ForwardRequestInput {
+                endpoint: endpoint.to_string(),
+                body,
+                headers,
+                extensions,
+                client_session_id: ctx.client_session_id.clone(),
+            },
             ctx.get_providers(),
         )
         .await

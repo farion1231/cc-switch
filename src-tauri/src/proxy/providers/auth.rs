@@ -13,6 +13,10 @@ pub struct AuthInfo {
     pub strategy: AuthStrategy,
     /// OAuth access_token（用于 GoogleOAuth 策略）
     pub access_token: Option<String>,
+    /// Machine ID（用于 GitHub Copilot）
+    pub machine_id: Option<String>,
+    /// Session ID（用于 GitHub Copilot）
+    pub session_id: Option<String>,
 }
 
 impl AuthInfo {
@@ -22,6 +26,8 @@ impl AuthInfo {
             api_key,
             strategy,
             access_token: None,
+            machine_id: None,
+            session_id: None,
         }
     }
 
@@ -31,6 +37,24 @@ impl AuthInfo {
             api_key,
             strategy: AuthStrategy::GoogleOAuth,
             access_token: Some(access_token),
+            machine_id: None,
+            session_id: None,
+        }
+    }
+
+    /// 创建带有 machine_id 和 session_id 的认证信息（用于 GitHub Copilot）
+    pub fn new_with_ids(
+        api_key: String,
+        strategy: AuthStrategy,
+        machine_id: Option<String>,
+        session_id: Option<String>,
+    ) -> Self {
+        Self {
+            api_key,
+            strategy,
+            access_token: None,
+            machine_id,
+            session_id,
         }
     }
 

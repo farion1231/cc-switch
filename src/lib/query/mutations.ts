@@ -10,6 +10,15 @@ import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 
+function isProxyRequirementSwitchError(detail: string): boolean {
+  return [
+    "需要代理服务",
+    "proxy service",
+    "プロキシサービス",
+    "Start the proxy first",
+  ].some((needle) => detail.includes(needle));
+}
+
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -271,7 +280,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");
-
+      if (isProxyRequirementSwitchError(detail)) {
+        return;
+      }
       toast.error(
         t("notifications.switchFailedTitle", { defaultValue: "切换失败" }),
         {

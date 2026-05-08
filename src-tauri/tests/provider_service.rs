@@ -240,6 +240,68 @@ command = "say"
 }
 
 #[test]
+fn provider_service_switch_claude_copilot_requires_running_proxy() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.providers.insert(
+            "copilot-provider".to_string(),
+            Provider {
+                id: "copilot-provider".to_string(),
+                name: "Copilot".to_string(),
+                settings_config: json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+                    }
+                }),
+                website_url: None,
+                category: Some("custom".to_string()),
+                created_at: None,
+                sort_index: None,
+                notes: None,
+                meta: Some(ProviderMeta {
+                    provider_type: Some("github_copilot".to_string()),
+                    ..Default::default()
+                }),
+                icon: None,
+                icon_color: None,
+                in_failover_queue: false,
+            },
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    let err = ProviderService::switch(&state, AppType::Claude, "copilot-provider")
+        .expect_err("switch should be blocked when proxy is not running");
+
+    assert!(
+        err.to_string().contains("需要代理服务才能正常使用"),
+        "error should explain proxy requirement, got: {err}"
+    );
+
+    let current_id = state
+        .db
+        .get_current_provider(AppType::Claude.as_str())
+        .expect("get current provider");
+    assert!(
+        current_id.is_none(),
+        "current provider should remain unchanged when switch is blocked"
+    );
+
+    assert!(
+        !get_claude_settings_path().exists(),
+        "Claude live config should not be written when switch is blocked"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_preserves_live_model_provider_id_for_history() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
