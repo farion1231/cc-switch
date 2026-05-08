@@ -142,6 +142,9 @@ fn parse_provider_deeplink(
         .get("usageAutoInterval")
         .and_then(|v| v.parse::<u64>().ok());
 
+    // Extract extra env variables (v3.10+)
+    let extra_env = params.get("extraEnv").cloned();
+
     Ok(DeepLinkImportRequest {
         version,
         resource,
@@ -166,6 +169,7 @@ fn parse_provider_deeplink(
         config,
         config_format,
         config_url,
+        extra_env,
         usage_enabled,
         usage_script,
         usage_api_key,
@@ -236,6 +240,7 @@ fn parse_prompt_deeplink(
         config: None,
         config_format: None,
         config_url: None,
+        extra_env: None,
         usage_enabled: None,
         usage_script: None,
         usage_api_key: None,
@@ -301,6 +306,7 @@ fn parse_mcp_deeplink(
         directory: None,
         branch: None,
         config_url: None,
+        extra_env: None,
         usage_enabled: None,
         usage_script: None,
         usage_api_key: None,
@@ -356,6 +362,7 @@ fn parse_skill_deeplink(
         config: None,
         config_format: None,
         config_url: None,
+        extra_env: None,
         usage_enabled: None,
         usage_script: None,
         usage_api_key: None,
