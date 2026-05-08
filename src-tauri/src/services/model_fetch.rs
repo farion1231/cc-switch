@@ -29,9 +29,13 @@ struct ModelEntry {
 }
 
 /// Google 原生 Gemini API（Generative Language API）的 /v1beta/models 响应格式
+///
+/// `nextPageToken` 非空时表示还有更多页，需追加 `?pageToken=<token>` 继续请求。
 #[derive(Debug, Deserialize)]
 struct GeminiModelsResponse {
     models: Option<Vec<GeminiModelEntry>>,
+    #[serde(rename = "nextPageToken", default)]
+    next_page_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,33 +146,43 @@ pub async fn fetch_models(
 
 /// 判断是否需要走 Google 原生 Gemini API 路径。
 ///
-/// 命中条件：baseURL 或显式 `modelsUrl` 包含 `generativelanguage.googleapis.com`。
+/// 命中条件：baseURL 或显式 `modelsUrl` 的 **host** 是 `generativelanguage.googleapis.com`。
+/// 精确解析 host 而非 `contains()` 子串匹配，避免代理 URL 路径中带该域名时误判。
 fn is_google_native_gemini(base_url: &str, models_url_override: Option<&str>) -> bool {
     const GOOGLE_GEMINI_HOST: &str = "generativelanguage.googleapis.com";
 
-    if base_url.contains(GOOGLE_GEMINI_HOST) {
+    let host_matches = |raw: &str| -> bool {
+        url::Url::parse(raw)
+            .map(|parsed| parsed.host_str() == Some(GOOGLE_GEMINI_HOST))
+            .unwrap_or(false)
+    };
+
+    if host_matches(base_url) {
         return true;
     }
     if let Some(url) = models_url_override {
-        if url.contains(GOOGLE_GEMINI_HOST) {
+        if host_matches(url) {
             return true;
         }
     }
     false
 }
 
-/// 走 Google 原生 Gemini `/v1beta/models` 端点。
+/// 走 Google 原生 Gemini `/v1beta/models` 端点，全量拉取（含分页）。
 ///
 /// 鉴权用 `x-goog-api-key` header（API Key），不是 Bearer。响应 `models[].name`
 /// 形如 `models/gemini-3.1-pro-preview`，过滤后返回去掉 `models/` 前缀的 ID。
 /// 仅保留支持 `generateContent` 的文本/多模态模型，TTS / Lyria 等其他生成方式
 /// 的不会出现在 Gemini CLI 的可选清单里。
+///
+/// Gemini API 默认每页 50 个模型（`pageSize`），返回 `nextPageToken` 表示还有更多。
+/// 本函数循环直至 `nextPageToken` 为空，保证不遗漏模型。
 async fn fetch_models_gemini_native(
     base_url: &str,
     api_key: &str,
     models_url_override: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
-    let url = if let Some(raw) = models_url_override {
+    let base = if let Some(raw) = models_url_override {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             build_gemini_native_models_url(base_url)?
@@ -179,48 +193,62 @@ async fn fetch_models_gemini_native(
         build_gemini_native_models_url(base_url)?
     };
 
-    log::debug!("[ModelFetch] Gemini native endpoint: {url}");
+    log::debug!("[ModelFetch] Gemini native endpoint: {base}");
     let client = crate::proxy::http_client::get();
-    let response = client
-        .get(&url)
-        .header("x-goog-api-key", api_key)
-        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
+    let mut all_models: Vec<FetchedModel> = Vec::new();
+    let mut page_token: Option<String> = None;
 
-    let status = response.status();
-    if !status.is_success() {
-        let body = truncate_body(response.text().await.unwrap_or_default());
-        return Err(format!("HTTP {status}: {body}"));
+    loop {
+        let url = match &page_token {
+            Some(token) => format!("{base}?pageToken={token}"),
+            None => base.clone(),
+        };
+
+        let response = client
+            .get(&url)
+            .header("x-goog-api-key", api_key)
+            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {e}"))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = truncate_body(response.text().await.unwrap_or_default());
+            return Err(format!("HTTP {status}: {body}"));
+        }
+
+        let resp: GeminiModelsResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+        if let Some(models) = resp.models {
+            for m in models {
+                if m.supported_generation_methods
+                    .iter()
+                    .any(|s| s == "generateContent")
+                {
+                    all_models.push(FetchedModel {
+                        id: m
+                            .name
+                            .strip_prefix("models/")
+                            .map(|s| s.to_string())
+                            .unwrap_or(m.name),
+                        owned_by: Some("google".to_string()),
+                    });
+                }
+            }
+        }
+
+        match resp.next_page_token {
+            Some(token) if !token.is_empty() => page_token = Some(token),
+            _ => break,
+        }
     }
 
-    let resp: GeminiModelsResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {e}"))?;
-
-    let mut models: Vec<FetchedModel> = resp
-        .models
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|m| {
-            m.supported_generation_methods
-                .iter()
-                .any(|s| s == "generateContent")
-        })
-        .map(|m| FetchedModel {
-            id: m
-                .name
-                .strip_prefix("models/")
-                .map(|s| s.to_string())
-                .unwrap_or(m.name),
-            owned_by: Some("google".to_string()),
-        })
-        .collect();
-
-    models.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(models)
+    all_models.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(all_models)
 }
 
 /// 由 baseURL 推导 Google 原生 `/v1beta/models` URL。
@@ -560,6 +588,19 @@ mod tests {
     }
 
     #[test]
+    fn test_is_google_native_gemini_rejects_host_in_path() {
+        // host 在路径中而不是真正 host → 旧版 contains() 会误判，新版不应
+        assert!(!is_google_native_gemini(
+            "https://myproxy.com/?target=generativelanguage.googleapis.com",
+            None,
+        ));
+        assert!(!is_google_native_gemini(
+            "https://myproxy.com/generativelanguage.googleapis.com/v1beta/models",
+            None,
+        ));
+    }
+
+    #[test]
     fn test_build_gemini_native_models_url() {
         assert_eq!(
             build_gemini_native_models_url("https://generativelanguage.googleapis.com").unwrap(),
@@ -624,5 +665,39 @@ mod tests {
             stripped,
             vec!["gemini-3.1-pro-preview", "gemini-2.5-flash-preview-tts"]
         );
+    }
+
+    #[test]
+    fn test_gemini_next_page_token_deserialization() {
+        // 带 nextPageToken 的响应，模拟多页场景的最后一页前
+        let json = r#"{
+            "models": [
+                {
+                    "name": "models/gemini-3.1-pro-preview",
+                    "supportedGenerationMethods": ["generateContent"]
+                }
+            ],
+            "nextPageToken": "page2-token"
+        }"#;
+        let resp: GeminiModelsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            resp.next_page_token.as_deref(),
+            Some("page2-token"),
+            "should capture nextPageToken"
+        );
+        assert_eq!(resp.models.as_ref().map(|v| v.len()), Some(1));
+
+        // 没有 nextPageToken 的响应 → 最后一页
+        let json_last = r#"{"models":[]}"#;
+        let resp_last: GeminiModelsResponse = serde_json::from_str(json_last).unwrap();
+        assert_eq!(resp_last.next_page_token, None, "no token = last page");
+    }
+
+    #[test]
+    fn test_gemini_response_no_next_page_token_defaults_to_none() {
+        // 响应没带 nextPageToken 字段 → serde(default) 应解析为 None
+        let json = r#"{"models":[]}"#;
+        let resp: GeminiModelsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.next_page_token.is_none());
     }
 }
