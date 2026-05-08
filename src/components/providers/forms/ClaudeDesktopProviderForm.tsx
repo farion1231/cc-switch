@@ -3,7 +3,14 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Loader2,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -30,6 +37,8 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { BasicFormFields } from "./BasicFormFields";
+import { EndpointField } from "./shared/EndpointField";
+import { ModelDropdown } from "./shared/ModelDropdown";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type {
   ClaudeApiFormat,
@@ -391,6 +400,36 @@ export function ClaudeDesktopProviderForm({
     });
   };
 
+  const renderActionButtons = (onAdd: () => void, addLabel: string) => (
+    <div className="flex gap-1">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={handleFetchModels}
+        disabled={isFetchingModels}
+        className="h-7 gap-1"
+      >
+        {isFetchingModels ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Download className="h-3.5 w-3.5" />
+        )}
+        {t("providerForm.fetchModels", { defaultValue: "获取模型" })}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={onAdd}
+        className="h-7 gap-1"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        {addLabel}
+      </Button>
+    </div>
+  );
+
   return (
     <Form {...form}>
       <form
@@ -400,33 +439,33 @@ export function ClaudeDesktopProviderForm({
       >
         <BasicFormFields form={form} />
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <Label>
-              {t("claudeDesktop.gatewayBaseUrl", {
-                defaultValue: "Gateway Base URL",
-              })}
-            </Label>
-            <Input
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder="https://api.example.com"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>
-              {t("claudeDesktop.bearerToken", {
-                defaultValue: "Bearer Token",
-              })}
-            </Label>
-            <Input
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              type="password"
-              placeholder="sk-..."
-            />
-          </div>
+        <div className="space-y-1">
+          <Label>{"API Key"}</Label>
+          <Input
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            type="password"
+            placeholder="sk-..."
+          />
         </div>
+
+        <EndpointField
+          id="baseUrl"
+          label={t("providerForm.apiEndpoint")}
+          value={baseUrl}
+          onChange={(v) => setBaseUrl(v)}
+          placeholder={t("providerForm.apiEndpointPlaceholder")}
+          hint={
+            needsModelMapping && apiFormat === "openai_responses"
+              ? t("providerForm.apiHintResponses")
+              : needsModelMapping && apiFormat === "openai_chat"
+                ? t("providerForm.apiHintOAI")
+                : needsModelMapping && apiFormat === "gemini_native"
+                  ? t("providerForm.apiHintGeminiNative")
+                  : t("providerForm.apiHint")
+          }
+          showManageButton={false}
+        />
 
         <div className="space-y-3 rounded-lg border border-border-default bg-muted/20 p-4">
           <div className="flex items-center justify-between gap-4">
@@ -460,67 +499,44 @@ export function ClaudeDesktopProviderForm({
 
         {needsModelMapping && (
           <div className="space-y-4 rounded-lg border border-border-default p-4">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px_1fr]">
-              <div className="space-y-2">
-                <Label>
-                  {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
-                </Label>
-                <Select
-                  value={apiFormat}
-                  onValueChange={(value) =>
-                    setApiFormat(value as ClaudeApiFormat)
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="anthropic">
-                      {t("providerForm.apiFormatAnthropic", {
-                        defaultValue: "Anthropic Messages (原生)",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="openai_chat">
-                      {t("providerForm.apiFormatOpenAIChat", {
-                        defaultValue: "OpenAI Chat Completions (需开启路由)",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="openai_responses">
-                      {t("providerForm.apiFormatOpenAIResponses", {
-                        defaultValue: "OpenAI Responses API (需开启路由)",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="gemini_native">
-                      {t("providerForm.apiFormatGeminiNative", {
-                        defaultValue:
-                          "Gemini Native generateContent (需开启路由)",
-                      })}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-end justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleFetchModels}
-                  disabled={isFetchingModels}
-                >
-                  {isFetchingModels ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
-                  {t("providerForm.fetchModels", {
-                    defaultValue: "获取模型",
-                  })}
-                </Button>
-              </div>
+            <div className="space-y-2">
+              <Label>
+                {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+              </Label>
+              <Select
+                value={apiFormat}
+                onValueChange={(value) =>
+                  setApiFormat(value as ClaudeApiFormat)
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="anthropic">
+                    {t("providerForm.apiFormatAnthropic", {
+                      defaultValue: "Anthropic Messages (原生)",
+                    })}
+                  </SelectItem>
+                  <SelectItem value="openai_chat">
+                    {t("providerForm.apiFormatOpenAIChat", {
+                      defaultValue: "OpenAI Chat Completions (需开启路由)",
+                    })}
+                  </SelectItem>
+                  <SelectItem value="openai_responses">
+                    {t("providerForm.apiFormatOpenAIResponses", {
+                      defaultValue: "OpenAI Responses API (需开启路由)",
+                    })}
+                  </SelectItem>
+                  <SelectItem value="gemini_native">
+                    {t("providerForm.apiFormatGeminiNative", {
+                      defaultValue:
+                        "Gemini Native generateContent (需开启路由)",
+                    })}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-
-            <datalist id="claude-desktop-upstream-models">
-              {fetchedModels.map((model) => (
-                <option key={model.id} value={model.id} />
-              ))}
-            </datalist>
 
             <div className="space-y-3">
               <div className="space-y-1 border-t border-border-default pt-4">
@@ -530,6 +546,14 @@ export function ClaudeDesktopProviderForm({
                       defaultValue: "模型映射",
                     })}
                   </Label>
+                  {renderActionButtons(
+                    () =>
+                      setRoutes((current) => [
+                        ...current,
+                        nextRouteRow(current, defaultProxyRouteRows),
+                      ]),
+                    t("claudeDesktop.addRoute", { defaultValue: "添加路由" }),
+                  )}
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("claudeDesktop.routeMapHint", {
@@ -574,14 +598,22 @@ export function ClaudeDesktopProviderForm({
                     }
                     placeholder="claude-sonnet-4-6"
                   />
-                  <Input
-                    value={route.model}
-                    onChange={(event) =>
-                      updateRoute(index, { model: event.target.value })
-                    }
-                    list="claude-desktop-upstream-models"
-                    placeholder="kimi-k2 / deepseek-chat"
-                  />
+                  <div className="flex gap-1">
+                    <Input
+                      value={route.model}
+                      onChange={(event) =>
+                        updateRoute(index, { model: event.target.value })
+                      }
+                      placeholder="kimi-k2 / deepseek-chat"
+                      className="flex-1"
+                    />
+                    {fetchedModels.length > 0 && (
+                      <ModelDropdown
+                        models={fetchedModels}
+                        onSelect={(id) => updateRoute(index, { model: id })}
+                      />
+                    )}
+                  </div>
                   <Input
                     value={route.displayName}
                     onChange={(event) =>
@@ -613,20 +645,6 @@ export function ClaudeDesktopProviderForm({
                 </div>
               ))}
             </div>
-
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                setRoutes((current) => [
-                  ...current,
-                  nextRouteRow(current, defaultProxyRouteRows),
-                ])
-              }
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              {t("claudeDesktop.addRoute", { defaultValue: "添加路由" })}
-            </Button>
           </div>
         )}
 
@@ -664,32 +682,26 @@ export function ClaudeDesktopProviderForm({
             <CollapsibleContent className="space-y-4 pt-2">
               <div className="space-y-4 rounded-lg border border-border-default p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <p className="text-xs leading-relaxed text-muted-foreground">
+                  <p className="flex-1 text-xs leading-relaxed text-muted-foreground">
                     {t("claudeDesktop.directModelListHint", {
                       defaultValue:
                         "仅当供应商的 /v1/models 不可用或没有返回 Claude Desktop 可识别的 claude-* 模型名时填写；这些模型名会原样发送给供应商。",
                     })}
                   </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleFetchModels}
-                    disabled={isFetchingModels}
-                  >
-                    {isFetchingModels ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : null}
-                    {t("providerForm.fetchModels", {
-                      defaultValue: "获取模型",
-                    })}
-                  </Button>
+                  {renderActionButtons(
+                    () =>
+                      setRoutes((current) => [
+                        ...current,
+                        {
+                          route: "",
+                          model: "",
+                          displayName: "",
+                          supports1m: false,
+                        },
+                      ]),
+                    t("claudeDesktop.addModel", { defaultValue: "添加模型" }),
+                  )}
                 </div>
-
-                <datalist id="claude-desktop-direct-models">
-                  {fetchedModels.map((model) => (
-                    <option key={model.id} value={model.id} />
-                  ))}
-                </datalist>
 
                 {routes.length > 0 ? (
                   <div className="space-y-2">
@@ -698,14 +710,24 @@ export function ClaudeDesktopProviderForm({
                         key={`${route.route}-${index}`}
                         className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_92px_36px]"
                       >
-                        <Input
-                          value={route.route}
-                          onChange={(event) =>
-                            updateRoute(index, { route: event.target.value })
-                          }
-                          list="claude-desktop-direct-models"
-                          placeholder="claude-deepseek-chat"
-                        />
+                        <div className="flex gap-1">
+                          <Input
+                            value={route.route}
+                            onChange={(event) =>
+                              updateRoute(index, { route: event.target.value })
+                            }
+                            placeholder="claude-deepseek-chat"
+                            className="flex-1"
+                          />
+                          {fetchedModels.length > 0 && (
+                            <ModelDropdown
+                              models={fetchedModels}
+                              onSelect={(id) =>
+                                updateRoute(index, { route: id })
+                              }
+                            />
+                          )}
+                        </div>
                         <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
                           <Checkbox
                             checked={route.supports1m}
@@ -733,25 +755,6 @@ export function ClaudeDesktopProviderForm({
                     ))}
                   </div>
                 ) : null}
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() =>
-                    setRoutes((current) => [
-                      ...current,
-                      {
-                        route: "",
-                        model: "",
-                        displayName: "",
-                        supports1m: false,
-                      },
-                    ])
-                  }
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  {t("claudeDesktop.addModel", { defaultValue: "添加模型" })}
-                </Button>
               </div>
             </CollapsibleContent>
           </Collapsible>

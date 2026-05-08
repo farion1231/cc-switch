@@ -177,8 +177,6 @@
     "mode": "Model handling",
     "modeDirect": "Direct",
     "modeProxy": "Model mapping",
-    "gatewayBaseUrl": "Gateway Base URL",
-    "bearerToken": "Bearer Token",
     "modelMappingToggle": "Needs model mapping",
     "modelMappingOffHint": "Use this when the provider already exposes and accepts claude-* / anthropic/claude-* model IDs through Anthropic Messages. Claude Desktop connects to the provider directly.",
     "modelMappingOnHint": "Claude Desktop only sees claude-* route names. CC Switch local routing maps them to the real upstream models, so local routing must stay running.",

@@ -177,8 +177,6 @@
     "mode": "モデル処理方式",
     "modeDirect": "直結",
     "modeProxy": "モデルマッピング",
-    "gatewayBaseUrl": "Gateway Base URL",
-    "bearerToken": "Bearer Token",
     "modelMappingToggle": "モデルマッピングが必要",
     "modelMappingOffHint": "プロバイダーが Anthropic Messages で claude-* / anthropic/claude-* のモデル ID を公開し、そのまま受け付ける場合に使います。Claude Desktop はプロバイダーへ直接接続します。",
     "modelMappingOnHint": "Claude Desktop には claude-* のルート名だけを見せ、CC Switch のローカルルーティングが実際の上流モデルへマッピングします。ローカルルーティングを起動したままにしてください。",

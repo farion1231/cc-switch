@@ -177,8 +177,6 @@
     "mode": "模型处理方式",
     "modeDirect": "直连",
     "modeProxy": "模型映射",
-    "gatewayBaseUrl": "Gateway Base URL",
-    "bearerToken": "Bearer Token",
     "modelMappingToggle": "需要模型映射",
     "modelMappingOffHint": "适合供应商已经暴露并接受 claude-* / anthropic/claude-* 模型名的 Anthropic Messages API；请求会由 Claude Desktop 直连供应商。",
     "modelMappingOnHint": "Claude Desktop 只看到 claude-* 路由名，CC Switch 本地路由会映射到真实上游模型；需要保持本地路由运行。",
