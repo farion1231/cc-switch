@@ -15,11 +15,15 @@ use super::{
 };
 use crate::database::Database;
 use axum::{
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, State},
+    http::StatusCode,
+    middleware,
+    response::IntoResponse,
     routing::{any, get, post},
-    Router,
+    Json, Router,
 };
 use hyper_util::rt::TokioIo;
+use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
@@ -278,10 +282,8 @@ impl ProxyServer {
     }
 
     fn build_router(&self) -> Router {
-        Router::new()
-            // 健康检查
-            .route("/health", get(handlers::health_check))
-            .route("/status", get(handlers::get_status))
+        // 需要密码认证的 API 路由
+        let api_routes = Router::new()
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
@@ -340,6 +342,18 @@ impl ProxyServer {
             .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
+            // 对 API 路由添加密码认证中间件
+            .layer(middleware::from_fn_with_state(
+                self.state.clone(),
+                proxy_auth_middleware,
+            ));
+
+        // 公共路由（无需认证）+ 合并 API 路由
+        Router::new()
+            // 健康检查（无需认证）
+            .route("/health", get(handlers::health_check))
+            .route("/status", get(handlers::get_status))
+            .merge(api_routes)
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
             .with_state(self.state.clone())
@@ -378,4 +392,74 @@ impl ProxyServer {
             .reset_provider_breaker(provider_id, app_type)
             .await;
     }
+}
+
+/// 代理密码认证中间件
+///
+/// 如果配置了代理密码，所有 API 请求需要携带正确密码。
+/// 支持三种认证头：Authorization (Bearer scheme)、x-api-key、x-goog-api-key。
+/// `/health` 和 `/status` 端点不受此中间件影响（在 router 外单独注册）。
+async fn proxy_auth_middleware(
+    State(state): State<ProxyState>,
+    req: axum::http::Request<axum::body::Body>,
+    next: middleware::Next,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    let password = config.proxy_password.as_deref().unwrap_or("");
+
+    if !password.is_empty() {
+        let mut authorized = false;
+
+        // 检查 Authorization 头（支持 Bearer 前缀）
+        if let Some(val) = req
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+        {
+            let token = val.strip_prefix("Bearer ").unwrap_or(val);
+            if token == password {
+                authorized = true;
+            }
+        }
+
+        // 检查 x-api-key 头
+        if !authorized {
+            if let Some(val) = req
+                .headers()
+                .get("x-api-key")
+                .and_then(|v| v.to_str().ok())
+            {
+                if val == password {
+                    authorized = true;
+                }
+            }
+        }
+
+        // 检查 x-goog-api-key 头
+        if !authorized {
+            if let Some(val) = req
+                .headers()
+                .get("x-goog-api-key")
+                .and_then(|v| v.to_str().ok())
+            {
+                if val == password {
+                    authorized = true;
+                }
+            }
+        }
+
+        if !authorized {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "error": {
+                        "message": "代理需要密码认证，请提供正确的 Authorization、x-api-key 或 x-goog-api-key 请求头",
+                        "type": "auth_error",
+                    }
+                })),
+            ));
+        }
+    }
+
+    Ok(next.run(req).await)
 }

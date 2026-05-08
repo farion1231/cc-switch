@@ -69,7 +69,24 @@ impl ProxyService {
         }
     }
 
-    fn apply_claude_takeover_fields(config: &mut Value, proxy_url: &str) {
+    /// 根据当前 DB 配置决定接管时写入的 auth token
+    ///
+    /// 密码已设置 → 返回密码；密码未设置 → 返回 PROXY_TOKEN_PLACEHOLDER
+    async fn get_current_auth_token(&self) -> String {
+        match self.db.get_proxy_config().await {
+            Ok(config) => {
+                let pwd = config.proxy_password.unwrap_or_default();
+                if pwd.is_empty() {
+                    PROXY_TOKEN_PLACEHOLDER.to_string()
+                } else {
+                    pwd
+                }
+            }
+            Err(_) => PROXY_TOKEN_PLACEHOLDER.to_string(),
+        }
+    }
+
+    fn apply_claude_takeover_fields(config: &mut Value, proxy_url: &str, auth_token: &str) {
         // 必须在 remove/insert 前 snapshot：避免读到自己刚写入的接管别名。
         let takeover_model_fields = Self::build_claude_takeover_model_fields(config);
 
@@ -108,16 +125,13 @@ impl ProxyService {
         let mut replaced_any = false;
         for key in token_keys {
             if env.contains_key(key) {
-                env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                env.insert(key.to_string(), json!(auth_token));
                 replaced_any = true;
             }
         }
 
         if !replaced_any {
-            env.insert(
-                "ANTHROPIC_AUTH_TOKEN".to_string(),
-                json!(PROXY_TOKEN_PLACEHOLDER),
-            );
+            env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), json!(auth_token));
         }
     }
 
@@ -228,7 +242,11 @@ impl ProxyService {
         .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
         let (proxy_url, _) = self.build_proxy_urls().await?;
 
-        Self::apply_claude_takeover_fields(&mut effective_settings, &proxy_url);
+        Self::apply_claude_takeover_fields(
+            &mut effective_settings,
+            &proxy_url,
+            PROXY_TOKEN_PLACEHOLDER,
+        );
         self.write_claude_live(&effective_settings)?;
         Ok(())
     }
@@ -313,8 +331,9 @@ impl ProxyService {
             return Err(format!("设置接管状态失败: {e}"));
         }
 
-        // 4. 接管各应用的 Live 配置（写入代理地址，清空 Token）
-        if let Err(e) = self.takeover_live_configs().await {
+        // 4. 接管各应用的 Live 配置（写入代理地址和 auth token）
+        let auth_token = self.get_current_auth_token().await;
+        if let Err(e) = self.takeover_live_configs(&auth_token).await {
             // 接管失败（可能是部分写入），尝试恢复原始配置；若恢复失败则保留标志与备份，等待下次启动自动恢复。
             log::error!("接管 Live 配置失败，尝试恢复原始配置: {e}");
             match self.restore_live_configs().await {
@@ -436,7 +455,8 @@ impl ProxyService {
             }
 
             // 5) 写入接管配置（仅当前 app）
-            if let Err(e) = self.takeover_live_config_strict(&app).await {
+            let auth_token = self.get_current_auth_token().await;
+            if let Err(e) = self.takeover_live_config_strict(&app, &auth_token).await {
                 log::error!("{app_type_str} 接管 Live 配置失败，尝试恢复: {e}");
                 match self.restore_live_config_for_app(&app).await {
                     Ok(()) => {
@@ -1002,24 +1022,22 @@ impl ProxyService {
     /// - `/v1beta/*` → Gemini
     ///
     /// 因此不需要在 URL 中添加应用前缀。
-    async fn takeover_live_configs(&self) -> Result<(), String> {
+    async fn takeover_live_configs(&self, auth_token: &str) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
-        // Claude: 修改 ANTHROPIC_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
+        // Claude: 修改 ANTHROPIC_BASE_URL，写入 auth_token
         if let Ok(mut live_config) = self.read_claude_live() {
-            Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+            Self::apply_claude_takeover_fields(&mut live_config, &proxy_url, auth_token);
             self.write_claude_live(&live_config)?;
             log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
         }
 
-        // Codex: 修改 config.toml 的 base_url，auth.json 的 OPENAI_API_KEY（代理会注入真实 Token）
+        // Codex: 修改 config.toml 的 base_url，auth.json 的 OPENAI_API_KEY
         if let Ok(mut live_config) = self.read_codex_live() {
-            // 1. 修改 auth.json 中的 OPENAI_API_KEY（使用占位符）
             if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut()) {
-                auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                auth.insert("OPENAI_API_KEY".to_string(), json!(auth_token));
             }
 
-            // 2. 修改 config.toml 中的 base_url
             let config_str = live_config
                 .get("config")
                 .and_then(|v| v.as_str())
@@ -1031,16 +1049,15 @@ impl ProxyService {
             log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
         }
 
-        // Gemini: 修改 GOOGLE_GEMINI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
+        // Gemini: 修改 GOOGLE_GEMINI_BASE_URL
         if let Ok(mut live_config) = self.read_gemini_live() {
             if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                 env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
-                // 使用占位符，避免显示缺少 key 的警告
-                env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                env.insert("GEMINI_API_KEY".to_string(), json!(auth_token));
             } else {
                 live_config["env"] = json!({
                     "GOOGLE_GEMINI_BASE_URL": &proxy_url,
-                    "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                    "GEMINI_API_KEY": auth_token
                 });
             }
             self.write_gemini_live(&live_config)?;
@@ -1051,13 +1068,13 @@ impl ProxyService {
     }
 
     /// 接管指定应用的 Live 配置（严格模式：目标配置不存在则返回错误）
-    async fn takeover_live_config_strict(&self, app_type: &AppType) -> Result<(), String> {
+    async fn takeover_live_config_strict(&self, app_type: &AppType, auth_token: &str) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
         match app_type {
             AppType::Claude => {
                 let mut live_config = self.read_claude_live()?;
-                Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+                Self::apply_claude_takeover_fields(&mut live_config, &proxy_url, auth_token);
                 self.write_claude_live(&live_config)?;
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
             }
@@ -1065,7 +1082,7 @@ impl ProxyService {
                 let mut live_config = self.read_codex_live()?;
 
                 if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut()) {
-                    auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                    auth.insert("OPENAI_API_KEY".to_string(), json!(auth_token));
                 }
 
                 let config_str = live_config
@@ -1083,11 +1100,11 @@ impl ProxyService {
 
                 if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                     env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
-                    env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                    env.insert("GEMINI_API_KEY".to_string(), json!(auth_token));
                 } else {
                     live_config["env"] = json!({
                         "GOOGLE_GEMINI_BASE_URL": &proxy_url,
-                        "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                        "GEMINI_API_KEY": auth_token
                     });
                 }
 
@@ -1101,13 +1118,13 @@ impl ProxyService {
     }
 
     /// 接管指定应用的 Live 配置（尽力而为：配置不存在/读取失败则跳过）
-    async fn takeover_live_config_best_effort(&self, app_type: &AppType) -> Result<(), String> {
+    async fn takeover_live_config_best_effort(&self, app_type: &AppType, auth_token: &str) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
         match app_type {
             AppType::Claude => {
                 if let Ok(mut live_config) = self.read_claude_live() {
-                    Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+                    Self::apply_claude_takeover_fields(&mut live_config, &proxy_url, auth_token);
                     let _ = self.write_claude_live(&live_config);
                 }
             }
@@ -1115,7 +1132,7 @@ impl ProxyService {
                 if let Ok(mut live_config) = self.read_codex_live() {
                     if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut())
                     {
-                        auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                        auth.insert("OPENAI_API_KEY".to_string(), json!(auth_token));
                     }
 
                     let config_str = live_config
@@ -1133,11 +1150,11 @@ impl ProxyService {
                 if let Ok(mut live_config) = self.read_gemini_live() {
                     if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                         env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
-                        env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                        env.insert("GEMINI_API_KEY".to_string(), json!(auth_token));
                     } else {
                         live_config["env"] = json!({
                             "GOOGLE_GEMINI_BASE_URL": &proxy_url,
-                            "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                            "GEMINI_API_KEY": auth_token
                         });
                     }
 
@@ -1940,20 +1957,21 @@ impl ProxyService {
             // 如果当前存在任意 app 的 Live 接管，需要同步更新 Live 中的代理地址（否则客户端仍指向旧端口）
             drop(server_guard);
             if let Ok(takeover) = self.get_takeover_status().await {
+                let auth_token = self.get_current_auth_token().await;
                 let mut updated_any = false;
 
                 if takeover.claude {
-                    self.takeover_live_config_best_effort(&AppType::Claude)
+                    self.takeover_live_config_best_effort(&AppType::Claude, &auth_token)
                         .await?;
                     updated_any = true;
                 }
                 if takeover.codex {
-                    self.takeover_live_config_best_effort(&AppType::Codex)
+                    self.takeover_live_config_best_effort(&AppType::Codex, &auth_token)
                         .await?;
                     updated_any = true;
                 }
                 if takeover.gemini {
-                    self.takeover_live_config_best_effort(&AppType::Gemini)
+                    self.takeover_live_config_best_effort(&AppType::Gemini, &auth_token)
                         .await?;
                     updated_any = true;
                 }
