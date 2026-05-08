@@ -1223,6 +1223,13 @@ pub fn run() {
             commands::remove_from_failover_queue,
             commands::get_auto_failover_enabled,
             commands::set_auto_failover_enabled,
+            // Smart routing
+            commands::get_smart_routing_enabled,
+            commands::set_smart_routing_enabled,
+            commands::get_smart_routing_queue,
+            commands::add_to_smart_routing_queue,
+            commands::remove_from_smart_routing_queue,
+            commands::get_available_providers_for_smart_routing,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_trends,

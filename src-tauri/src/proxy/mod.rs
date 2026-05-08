@@ -20,6 +20,7 @@ pub mod hyper_client;
 pub mod log_codes;
 pub mod model_mapper;
 pub mod provider_router;
+pub mod request_classifier;
 pub mod providers;
 pub mod response_handler;
 pub mod response_processor;

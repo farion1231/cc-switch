@@ -18,7 +18,7 @@ export function AutoFailoverConfigPanel({
   disabled = false,
 }: AutoFailoverConfigPanelProps) {
   const { t } = useTranslation();
-  const { data: config, isLoading, error } = useAppProxyConfig(appType);
+  const { data: config, isLoading, error, refetch } = useAppProxyConfig(appType);
   const updateConfig = useUpdateAppProxyConfig();
 
   // 使用字符串状态以支持完全清空数字输入框
@@ -56,6 +56,11 @@ export function AutoFailoverConfigPanel({
 
   const handleSave = async () => {
     if (!config) return;
+
+    // 先 refetch 最新配置，避免覆盖其他面板（如智能路由）的修改
+    const freshConfig = await refetch();
+    const effectiveConfig = freshConfig.data ?? config;
+
     // 解析数字，返回 NaN 表示无效输入
     const parseNum = (val: string) => {
       const trimmed = val.trim();
@@ -172,6 +177,9 @@ export function AutoFailoverConfigPanel({
         circuitTimeoutSeconds: raw.circuitTimeoutSeconds,
         circuitErrorRateThreshold: raw.circuitErrorRateThreshold / 100,
         circuitMinRequests: raw.circuitMinRequests,
+        smartRoutingEnabled: effectiveConfig.smartRoutingEnabled,
+        mainRequestQueue: effectiveConfig.mainRequestQueue,
+        othersRequestQueue: effectiveConfig.othersRequestQueue,
       });
       toast.success(
         t("proxy.autoFailover.configSaved", "自动故障转移配置已保存"),

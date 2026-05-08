@@ -173,13 +173,31 @@ fn schema_migration_sets_user_version_when_missing() {
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
-    Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
+    // SCHEMA_VERSION + 2 确保绕过优雅降级逻辑（v11 可降级到 v10）
+    Database::set_user_version(&conn, SCHEMA_VERSION + 2).expect("set future version");
 
     let err =
         Database::apply_schema_migrations_on_conn(&conn).expect_err("should reject higher version");
     assert!(
         err.to_string().contains("数据库版本过新"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn schema_migration_gracefully_downgrades_v11_to_v10() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    // 模拟从智能路由开发版（v11）回退到正式版（v10）的场景
+    Database::set_user_version(&conn, 11).expect("set v11");
+
+    // 应该成功（优雅降级），而不是报错
+    Database::apply_schema_migrations_on_conn(&conn).expect("should downgrade v11 gracefully");
+
+    // 验证版本号已降级
+    assert_eq!(
+        Database::get_user_version(&conn).expect("read version"),
+        SCHEMA_VERSION
     );
 }
 

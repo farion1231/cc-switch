@@ -2212,6 +2212,30 @@
       "disabled": "Logging disabled",
       "failed": "Failed to toggle logging"
     },
+    "smartRouting": {
+      "title": "Smart Routing",
+      "description": "Route requests to different providers by type to distribute load",
+      "enable": "Enable Smart Routing",
+      "enableDescription": "When enabled, main conversations and other requests will be routed to separate provider queues",
+      "info": "Smart routing divides requests into \"Main\" and \"Others\" categories. Main requests are directly initiated by the user. Others include sub-agents, Compact, and tool continuations. Each category uses its own failover queue, independent of the other.",
+      "mainQueue": "Main Request Providers",
+      "mainQueueDescription": "User-initiated conversations will be routed based on this queue priority",
+      "othersQueue": "Sub-Agent Providers",
+      "othersQueueDescription": "Sub-agent, Compact, and tool continuation requests will be routed based on this queue priority",
+      "mainProvider": " Main",
+      "othersProvider": " Sub-agent",
+      "proxyRequired": "Start the proxy service first to configure smart routing",
+      "queueEmpty": "Queue is empty, will fall back to the main failover queue",
+      "selectProvider": "Select a provider to add to queue",
+      "noAvailableProviders": "No available providers to add",
+      "addSuccess": "Added to smart routing queue",
+      "addFailed": "Failed to add",
+      "removeSuccess": "Removed from smart routing queue",
+      "removeFailed": "Failed to remove",
+      "enabled": "Smart routing enabled",
+      "disabled": "Smart routing disabled",
+      "toggleFailed": "Operation failed"
+    },
     "server": {
       "started": "Routing service started - {{address}}:{{port}}",
       "startFailed": "Failed to start routing service: {{detail}}"

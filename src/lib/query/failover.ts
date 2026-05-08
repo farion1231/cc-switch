@@ -3,6 +3,7 @@ import { failoverApi } from "@/lib/api/failover";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import type { SmartRoutingQueueType } from "@/types/proxy";
 
 // ========== 熔断器 Hooks ==========
 
@@ -177,6 +178,205 @@ export function useRemoveFromFailoverQueue() {
           variables.appType,
         ],
       });
+    },
+  });
+}
+
+// ========== 智能路由 Hooks ==========
+
+/**
+ * 获取智能路由开关状态
+ */
+export function useSmartRoutingEnabled(appType: string) {
+  return useQuery({
+    queryKey: ["smartRoutingEnabled", appType],
+    queryFn: () => failoverApi.getSmartRoutingEnabled(appType),
+    enabled: !!appType,
+    placeholderData: false,
+  });
+}
+
+/**
+ * 设置智能路由开关状态
+ */
+export function useSetSmartRoutingEnabled() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
+      failoverApi.setSmartRoutingEnabled(appType, enabled),
+
+    onMutate: async ({ appType, enabled }) => {
+      await queryClient.cancelQueries({
+        queryKey: ["smartRoutingEnabled", appType],
+      });
+      const previousValue = queryClient.getQueryData<boolean>([
+        "smartRoutingEnabled",
+        appType,
+      ]);
+      queryClient.setQueryData(["smartRoutingEnabled", appType], enabled);
+      return { previousValue, appType };
+    },
+
+    onSuccess: (_data, variables) => {
+      toast.success(
+        variables.enabled
+          ? t("proxy.smartRouting.enabled", {
+              defaultValue: "智能路由已启用",
+            })
+          : t("proxy.smartRouting.disabled", {
+              defaultValue: "智能路由已关闭",
+            }),
+        { closeButton: true },
+      );
+    },
+
+    onError: (error: Error, _variables, context) => {
+      if (context?.previousValue !== undefined) {
+        queryClient.setQueryData(
+          ["smartRoutingEnabled", context.appType],
+          context.previousValue,
+        );
+      }
+      toast.error(
+        t("proxy.smartRouting.toggleFailed", {
+          defaultValue: "操作失败",
+        }) +
+          ": " +
+          extractErrorMessage(error),
+      );
+    },
+
+    onSettled: (_, __, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["smartRoutingEnabled", variables.appType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["smartRoutingQueue", variables.appType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["availableProvidersForSmartRouting", variables.appType],
+      });
+      queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+    },
+  });
+}
+
+/**
+ * 获取智能路由队列
+ */
+export function useSmartRoutingQueue(
+  appType: string,
+  queueType: SmartRoutingQueueType,
+) {
+  return useQuery({
+    queryKey: ["smartRoutingQueue", appType, queueType],
+    queryFn: () => failoverApi.getSmartRoutingQueue(appType, queueType),
+    enabled: !!appType,
+  });
+}
+
+/**
+ * 获取可添加到智能路由队列的供应商
+ */
+export function useAvailableProvidersForSmartRouting(appType: string) {
+  return useQuery({
+    queryKey: ["availableProvidersForSmartRouting", appType],
+    queryFn: () => failoverApi.getAvailableProvidersForSmartRouting(appType),
+    enabled: !!appType,
+  });
+}
+
+/**
+ * 添加供应商到智能路由队列
+ */
+export function useAddToSmartRoutingQueue() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerId,
+      queueType,
+    }: {
+      appType: string;
+      providerId: string;
+      queueType: SmartRoutingQueueType;
+    }) => failoverApi.addToSmartRoutingQueue(appType, providerId, queueType),
+    onSuccess: (_, variables) => {
+      toast.success(
+        t("proxy.smartRouting.addSuccess", {
+          defaultValue: "已添加到智能路由队列",
+        }),
+        { closeButton: true },
+      );
+      queryClient.invalidateQueries({
+        queryKey: ["smartRoutingQueue", variables.appType, variables.queueType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["availableProvidersForSmartRouting", variables.appType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["proxyStatus"],
+      });
+    },
+    onError: (error: Error) => {
+      toast.error(
+        t("proxy.smartRouting.addFailed", {
+          defaultValue: "添加失败",
+        }) +
+          ": " +
+          extractErrorMessage(error),
+      );
+    },
+  });
+}
+
+/**
+ * 从智能路由队列移除供应商
+ */
+export function useRemoveFromSmartRoutingQueue() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerId,
+      queueType,
+    }: {
+      appType: string;
+      providerId: string;
+      queueType: SmartRoutingQueueType;
+    }) =>
+      failoverApi.removeFromSmartRoutingQueue(appType, providerId, queueType),
+    onSuccess: (_, variables) => {
+      toast.success(
+        t("proxy.smartRouting.removeSuccess", {
+          defaultValue: "已从智能路由队列移除",
+        }),
+        { closeButton: true },
+      );
+      queryClient.invalidateQueries({
+        queryKey: ["smartRoutingQueue", variables.appType, variables.queueType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["availableProvidersForSmartRouting", variables.appType],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["proxyStatus"],
+      });
+    },
+    onError: (error: Error) => {
+      toast.error(
+        t("proxy.smartRouting.removeFailed", {
+          defaultValue: "移除失败",
+        }) +
+          ": " +
+          extractErrorMessage(error),
+      );
     },
   });
 }

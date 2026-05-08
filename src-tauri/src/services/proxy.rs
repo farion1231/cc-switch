@@ -1593,7 +1593,7 @@ impl ProxyService {
 
         if let Some(server) = self.server.read().await.as_ref() {
             server
-                .set_active_target(app_type_enum.as_str(), &provider.id, &provider.name)
+                .set_active_target(app_type_enum.as_str(), &provider.id, &provider.name, None)
                 .await;
         }
 
@@ -1943,6 +1943,15 @@ impl ProxyService {
             log::info!("已重置 Provider {provider_id} (app: {app_type}) 的熔断器");
         }
         Ok(())
+    }
+
+    /// 清除智能路由内存状态（关闭智能路由时调用）
+    ///
+    /// 防止 stale `others_provider` 数据导致 UI 错误显示智能路由双 Provider 状态。
+    pub async fn clear_smart_routing_state(&self, app_type: &str) {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.clear_smart_routing_state(app_type).await;
+        }
     }
 }
 

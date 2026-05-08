@@ -63,3 +63,23 @@ vi.mock("@tauri-apps/api/path", () => ({
   homeDir: async () => "/home/mock",
   join: async (...segments: string[]) => segments.join("/"),
 }));
+
+vi.mock("@tauri-apps/api/window", () => {
+  const windowState = {
+    isMaximized: false,
+    isFullscreen: false,
+  };
+  return {
+    getCurrentWindow: () => ({
+      isMaximized: () => Promise.resolve(windowState.isMaximized),
+      isFullscreen: () => Promise.resolve(windowState.isFullscreen),
+      toggleMaximize: () => Promise.resolve(),
+      minimize: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+      setDecorations: () => Promise.resolve(),
+    }),
+    getAllWindows: () => [],
+    currentMonitor: () => null,
+    getCurrent: () => null,
+  };
+});

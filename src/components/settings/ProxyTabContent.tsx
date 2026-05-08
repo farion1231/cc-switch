@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
+import {
+  Server,
+  Activity,
+  Zap,
+  Globe,
+  ShieldAlert,
+  ArrowRightLeft,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -13,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { ProxyPanel } from "@/components/proxy";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
+import { SmartRoutingPanel } from "@/components/proxy/SmartRoutingPanel";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -244,6 +252,42 @@ export function ProxyTabContent({
                 </TabsContent>
               </Tabs>
             </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Smart Routing */}
+        <AccordionItem
+          value="smartRouting"
+          className="rounded-xl glass-card overflow-hidden"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+            <div className="flex items-center gap-3">
+              <ArrowRightLeft className="h-5 w-5 text-violet-500" />
+              <div className="text-left">
+                <h3 className="text-base font-semibold">
+                  {t("proxy.smartRouting.title", {
+                    defaultValue: "智能路由",
+                  })}
+                </h3>
+                <p className="text-sm text-muted-foreground font-normal">
+                  {t("proxy.smartRouting.description", {
+                    defaultValue: "按请求类型路由到不同供应商，分散并发压力",
+                  })}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+            {!isRunning && (
+              <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                  {t("proxy.smartRouting.proxyRequired", {
+                    defaultValue: "需要先启动代理服务才能配置智能路由",
+                  })}
+                </p>
+              </div>
+            )}
+            <SmartRoutingPanel disabled={!isRunning} />
           </AccordionContent>
         </AccordionItem>
 

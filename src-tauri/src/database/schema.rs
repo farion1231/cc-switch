@@ -133,6 +133,9 @@ impl Database {
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
             default_cost_multiplier TEXT NOT NULL DEFAULT '1',
             pricing_model_source TEXT NOT NULL DEFAULT 'response',
+            smart_routing_enabled INTEGER NOT NULL DEFAULT 0,
+            main_request_queue TEXT NOT NULL DEFAULT '[]',
+            others_request_queue TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -369,11 +372,21 @@ impl Database {
         let mut version = Self::get_user_version(conn)?;
 
         if version > SCHEMA_VERSION {
-            conn.execute("ROLLBACK TO schema_migration;", []).ok();
-            conn.execute("RELEASE schema_migration;", []).ok();
-            return Err(AppError::Database(format!(
-                "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
-            )));
+            // 允许小版本回退：如果高版本仅添加了有默认值的列（如 v10→v11 的智能路由字段），
+            // 则将版本号降级为当前版本继续运行，避免用户切换版本时数据库被拒绝。
+            if version == 11 && SCHEMA_VERSION == 10 {
+                log::warn!(
+                    "数据库版本为 {version}，当前仅支持 {SCHEMA_VERSION}。智能路由字段为纯增量列，降级兼容。"
+                );
+                Self::set_user_version(conn, SCHEMA_VERSION)?;
+                version = SCHEMA_VERSION;
+            } else {
+                conn.execute("ROLLBACK TO schema_migration;", []).ok();
+                conn.execute("RELEASE schema_migration;", []).ok();
+                return Err(AppError::Database(format!(
+                    "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
+                )));
+            }
         }
 
         let result = (|| {
@@ -439,6 +452,10 @@ impl Database {
                 }
                 version = Self::get_user_version(conn)?;
             }
+            // Schema 完整性检查：确保不依赖版本号的增量列存在（如智能路由字段）
+            // 这些列是纯增量的，有安全默认值，不需要升 SCHEMA_VERSION
+            Self::ensure_smart_routing_columns(conn)?;
+
             Ok(())
         })();
 
@@ -1197,6 +1214,58 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11 迁移：添加智能路由配置字段
+    fn ensure_smart_routing_columns(conn: &Connection) -> Result<(), AppError> {
+        // 如果 proxy_config 表不存在（极老的 schema），先创建它
+        if !Self::table_exists(conn, "proxy_config")? {
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS proxy_config (
+                    app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+                    proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                    listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+                    enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                    max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                    streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                    circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                    circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                    circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                    default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                    pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                    smart_routing_enabled INTEGER NOT NULL DEFAULT 0,
+                    main_request_queue TEXT NOT NULL DEFAULT '[]',
+                    others_request_queue TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("创建 proxy_config 表失败: {e}")))?;
+            log::info!("v10 -> v11: 创建 proxy_config 表（旧 schema 中缺失）");
+            return Ok(());
+        }
+
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "smart_routing_enabled",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "main_request_queue",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "proxy_config",
+            "others_request_queue",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+
+        log::info!("v10 -> v11 迁移完成：已添加智能路由配置字段");
         Ok(())
     }
 

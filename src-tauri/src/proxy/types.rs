@@ -89,6 +89,9 @@ pub struct ProxyStatus {
     /// 当前活跃的代理目标列表
     #[serde(default)]
     pub active_targets: Vec<ActiveTarget>,
+    /// 智能路由是否启用（按 app_type）
+    #[serde(default)]
+    pub smart_routing_active: bool,
 }
 
 /// 活跃的代理目标信息
@@ -97,6 +100,25 @@ pub struct ActiveTarget {
     pub app_type: String, // "Claude" | "Codex" | "Gemini"
     pub provider_name: String,
     pub provider_id: String,
+    #[serde(default)]
+    pub request_type: Option<RequestType>,
+}
+
+/// 每个 appType 的智能路由活跃目标（可包含 Main 和 Others 两个方向）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SmartRoutingTarget {
+    #[serde(default)]
+    pub main_provider: Option<(String, String)>,
+    #[serde(default)]
+    pub others_provider: Option<(String, String)>,
+}
+
+/// 请求类型枚举（用于智能路由）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestType {
+    Main,   // 主对话（用户直接发起）
+    Others, // 其他请求（子agent/compact/工具续写）
 }
 
 /// 代理服务器信息
@@ -192,6 +214,15 @@ pub struct AppProxyConfig {
     pub circuit_error_rate_threshold: f64,
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
+    /// 智能路由开关
+    #[serde(default)]
+    pub smart_routing_enabled: bool,
+    /// 主对话请求的供应商队列（JSON 数组，provider_id 顺序）
+    #[serde(default)]
+    pub main_request_queue: Vec<String>,
+    /// 其他请求的供应商队列（JSON 数组，provider_id 顺序）
+    #[serde(default)]
+    pub others_request_queue: Vec<String>,
 }
 
 /// 整流器配置

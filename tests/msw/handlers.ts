@@ -380,4 +380,19 @@ export const handlers = [
   ),
   http.post(`${TAURI_ENDPOINT}/reset_circuit_breaker`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/get_circuit_breaker_stats`, () => success(null)),
+
+  // Smart routing endpoints
+  http.post(`${TAURI_ENDPOINT}/get_smart_routing_enabled`, () => success(false)),
+  http.post(`${TAURI_ENDPOINT}/set_smart_routing_enabled`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/get_smart_routing_queue`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/add_to_smart_routing_queue`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/remove_from_smart_routing_queue`, () => success(true)),
+  http.post(
+    `${TAURI_ENDPOINT}/get_available_providers_for_smart_routing`,
+    () => success([]),
+  ),
+
+  // Auto failover enabled
+  http.post(`${TAURI_ENDPOINT}/get_auto_failover_enabled`, () => success(false)),
+  http.post(`${TAURI_ENDPOINT}/set_auto_failover_enabled`, () => success(true)),
 ];

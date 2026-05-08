@@ -2212,6 +2212,30 @@
       "disabled": "日志记录已关闭",
       "failed": "切换日志状态失败"
     },
+    "smartRouting": {
+      "title": "智能路由",
+      "description": "按请求类型路由到不同供应商，分散并发压力",
+      "enable": "启用智能路由",
+      "enableDescription": "开启后，主对话和其他请求将分别路由到不同的供应商队列",
+      "info": "智能路由将请求分为\"主对话\"和\"其他请求\"两类。主对话指用户直接发起的请求，其他请求包括子Agent、Compact、工具续写等。两类请求分别使用独立的故障转移队列，互不影响。",
+      "mainQueue": "主对话 Providers",
+      "mainQueueDescription": "用户直接发起的对话请求将按此队列顺序路由",
+      "othersQueue": "子Agent Providers",
+      "othersQueueDescription": "子Agent、Compact、工具续写等请求将按此队列顺序路由",
+      "mainProvider": " 主对话",
+      "othersProvider": " 子Agent",
+      "proxyRequired": "需要先启动代理服务才能配置智能路由",
+      "queueEmpty": "队列为空，将回退到主故障转移队列",
+      "selectProvider": "选择供应商添加到队列",
+      "noAvailableProviders": "没有可添加的供应商",
+      "addSuccess": "已添加到智能路由队列",
+      "addFailed": "添加失败",
+      "removeSuccess": "已从智能路由队列移除",
+      "removeFailed": "移除失败",
+      "enabled": "智能路由已启用",
+      "disabled": "智能路由已关闭",
+      "toggleFailed": "操作失败"
+    },
     "server": {
       "started": "路由服务已启动 - {{address}}:{{port}}",
       "startFailed": "启动路由服务失败: {{detail}}"

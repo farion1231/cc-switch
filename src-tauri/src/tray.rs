@@ -509,14 +509,43 @@ pub fn create_tray_menu(
             menu_builder = menu_builder.item(&empty_item);
         } else {
             let current_provider = providers.get(&current_id);
-            let submenu_label = match current_provider {
-                Some(p) => {
+
+            // 智能路由启用时，显示 Main/Others 双 Provider
+            let smart_routing_label = if is_proxy_running {
+                match futures::executor::block_on(
+                    app_state.db.get_proxy_config_for_app(app_type_str),
+                ) {
+                    Ok(cfg) if cfg.smart_routing_enabled => {
+                        let main_name = cfg
+                            .main_request_queue
+                            .first()
+                            .and_then(|id| providers.get(id))
+                            .map(|p| p.name.as_str())
+                            .unwrap_or("\u{2014}");
+                        let others_name = cfg
+                            .others_request_queue
+                            .first()
+                            .and_then(|id| providers.get(id))
+                            .map(|p| p.name.as_str())
+                            .unwrap_or("\u{2014}");
+                        Some(format!("M:{} | A:{}", main_name, others_name))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+            let submenu_label = match (current_provider, smart_routing_label) {
+                (_, Some(sr_label)) => format!("{} · {}", section.header_label, sr_label),
+                (Some(p), None) => {
                     let suffix = format_usage_suffix(app_state, &section.app_type, p, &current_id)
                         .unwrap_or_default();
                     format!("{} · {}{}", section.header_label, p.name, suffix)
                 }
-                None => section.header_label.to_string(),
+                (None, None) => section.header_label.to_string(),
             };
+
             let submenu_id = format!("submenu_{}", app_type_str);
 
             // Check if this app is under proxy takeover (for disabling official providers)
