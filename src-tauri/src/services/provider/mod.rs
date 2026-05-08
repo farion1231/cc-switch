@@ -13,12 +13,12 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::codex_config::{sync_codex_rollout_model_provider, sync_codex_threads_model_provider};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
-
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
@@ -1578,13 +1578,30 @@ impl ProviderService {
             }
         }
 
+        // Codex 特殊处理：切换 live 配置后，同步历史 rollout 首行中的 model_provider，
+        // 避免 thread/list 因历史元数据与当前 provider 不一致而过滤空历史。
+        // 注意：此操作只在正常切换时执行，不在热切换时执行（避免重 I/O 操作增加切换耗时）
+        if matches!(app_type, AppType::Codex) {
+            if let Err(e) = sync_codex_rollout_model_provider(id) {
+                log::warn!("同步 Codex rollout model_provider 失败: {e}");
+                result
+                    .warnings
+                    .push("codex_rollout_sync_failed".to_string());
+            }
+            if let Err(e) = sync_codex_threads_model_provider(id) {
+                log::warn!("同步 Codex threads.model_provider 失败: {e}");
+                result
+                    .warnings
+                    .push("codex_threads_sync_failed".to_string());
+            }
+        }
+
         // Sync MCP
         McpService::sync_all_enabled(state)?;
 
         Ok(result)
     }
 
-    /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
     }

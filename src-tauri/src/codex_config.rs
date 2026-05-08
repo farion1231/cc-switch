@@ -1,4 +1,5 @@
 // unused imports removed
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use crate::config::{
@@ -6,6 +7,7 @@ use crate::config::{
     write_text_file,
 };
 use crate::error::AppError;
+use rusqlite::Connection;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -526,6 +528,115 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
     doc.to_string()
 }
 
+/// 获取 Codex session_index.jsonl 路径
+#[allow(dead_code)]
+pub fn get_codex_session_index_path() -> PathBuf {
+    get_codex_config_dir().join("session_index.jsonl")
+}
+
+/// 获取 Codex state_5.sqlite 路径
+pub fn get_codex_state_db_path() -> PathBuf {
+    get_codex_config_dir().join("state_5.sqlite")
+}
+
+fn collect_rollout_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<(), AppError> {
+    if !root.exists() {
+        return Ok(());
+    }
+
+    let entries = std::fs::read_dir(root).map_err(|e| AppError::io(root, e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| AppError::io(root, e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rollout_files(&path, files)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+/// 修复 Codex 历史 rollout 首行里缺失的 model_provider
+///
+/// 只填充缺失值（空字符串或不存在），不覆盖已有值，避免污染跨 provider 的历史数据。
+///
+/// 注意：此函数在 Codex 运行时执行可能存在竞态条件（读-改-写整文件），
+/// 建议仅在 Codex 未运行时调用，或配合文件锁使用。
+pub fn sync_codex_rollout_model_provider(provider_id: &str) -> Result<usize, AppError> {
+    let root = get_codex_config_dir();
+    let mut files = Vec::new();
+    collect_rollout_files(&root.join("sessions"), &mut files)?;
+    collect_rollout_files(&root.join("archived_sessions"), &mut files)?;
+
+    let mut changed = 0usize;
+
+    for path in files {
+        let file = std::fs::File::open(&path).map_err(|e| AppError::io(&path, e))?;
+        let mut lines: Vec<String> = BufReader::new(file)
+            .lines()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::io(&path, e))?;
+
+        if lines.is_empty() {
+            continue;
+        }
+
+        let mut first: Value = match serde_json::from_str(&lines[0]) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        if first.get("type").and_then(Value::as_str) != Some("session_meta") {
+            continue;
+        }
+
+        let Some(payload) = first.get_mut("payload").and_then(Value::as_object_mut) else {
+            continue;
+        };
+
+        // 只修复缺失值（空字符串或不存在），不覆盖已有 provider
+        let current = payload
+            .get("model_provider")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !current.is_empty() {
+            continue; // 已有 provider，跳过
+        }
+
+        payload.insert(
+            "model_provider".to_string(),
+            Value::String(provider_id.to_string()),
+        );
+        lines[0] =
+            serde_json::to_string(&first).map_err(|e| AppError::JsonSerialize { source: e })?;
+        write_text_file(&path, &(lines.join("\n") + "\n"))?;
+        changed += 1;
+    }
+
+    Ok(changed)
+}
+
+/// 将 Codex state_5.sqlite 中的 threads.model_provider 修复为当前活动 provider
+/// 只修复缺失值（NULL），不覆盖已有值，避免污染跨 provider 的历史数据
+pub fn sync_codex_threads_model_provider(provider_id: &str) -> Result<usize, AppError> {
+    let path = get_codex_state_db_path();
+    if !path.exists() {
+        return Ok(0);
+    }
+
+    let conn = Connection::open(&path).map_err(|e| AppError::Database(e.to_string()))?;
+    // 只修复缺失值，不覆盖已有 provider 的历史记录
+    let changed = conn
+        .execute(
+            "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL",
+            [provider_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -774,7 +885,6 @@ model = "gpt-5.1-codex"
 name = "any"
 wire_api = "responses"
 "#;
-
         let result = update_codex_toml_field(input, "base_url", "https://example.com/v1").unwrap();
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
