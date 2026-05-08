@@ -599,6 +599,8 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
 }
 
 pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError> {
+    // get_proxy_config is async-tagged but its body is fully synchronous (rusqlite
+    // under a Mutex), so block_on cannot deadlock the calling thread.
     let config = futures::executor::block_on(db.get_proxy_config())?;
     Ok(format!(
         "{}{}",
@@ -617,39 +619,32 @@ fn apply_provider_to_paths(
     }
 
     validate_provider(provider)?;
-    let snapshots = snapshot_files(paths)?;
-
-    if let Err(err) = apply_provider_to_paths_inner(db, provider, paths) {
-        if let Err(rollback_err) = restore_snapshots(&snapshots) {
-            log::error!(
-                "Failed to rollback Claude Desktop config after apply error: {rollback_err}"
-            );
-            return Err(AppError::Message(format!(
-                "{err}; rollback failed: {rollback_err}"
-            )));
-        }
-        return Err(err);
-    }
-
-    Ok(())
+    with_rollback(paths, |paths| apply_provider_to_paths_inner(db, provider, paths))
 }
 
 fn restore_official_at_paths(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
+    with_rollback(paths, restore_official_at_paths_inner)
+}
+
+fn with_rollback<F>(paths: &ClaudeDesktopPaths, op: F) -> Result<(), AppError>
+where
+    F: FnOnce(&ClaudeDesktopPaths) -> Result<(), AppError>,
+{
     let snapshots = snapshot_files(paths)?;
-
-    if let Err(err) = restore_official_at_paths_inner(paths) {
-        if let Err(rollback_err) = restore_snapshots(&snapshots) {
-            log::error!(
-                "Failed to rollback Claude Desktop config after restore error: {rollback_err}"
-            );
-            return Err(AppError::Message(format!(
-                "{err}; rollback failed: {rollback_err}"
-            )));
-        }
-        return Err(err);
+    match op(paths) {
+        Ok(()) => Ok(()),
+        Err(err) => match restore_snapshots(&snapshots) {
+            Ok(()) => Err(err),
+            Err(rollback_err) => {
+                log::error!(
+                    "Failed to rollback Claude Desktop config after error: {rollback_err}"
+                );
+                Err(AppError::Message(format!(
+                    "{err}; rollback failed: {rollback_err}"
+                )))
+            }
+        },
     }
-
-    Ok(())
 }
 
 fn apply_provider_to_paths_inner(
