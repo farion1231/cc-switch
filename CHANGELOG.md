@@ -248,6 +248,10 @@ Development since v3.15.0 focuses on making third-party Codex providers work lik
 - **Claude Desktop Guide**: Added localized Claude Desktop guide pages and screenshots for provider setup, import, model mapping, and Local Routing context.
 - **Installation Docs**: Updated installation docs and READMEs to recommend the official Homebrew cask and refreshed the v3.15.0 release-note imposter-site warning wording across locales.
 
+### Added
+
+- **Deep Link Extra Environment Variables (`extraEnv`)**: Claude and Gemini provider deep links now support an `extraEnv` parameter (Base64-encoded JSON object) for merging extra variables into `settings_config.env`. Protected auth/base-URL fields only accept non-empty strings; other boolean/number scalars are stringified, and null/object/array values are skipped. Gemini keys must match `.env` naming rules, and other provider deeplinks reject `extraEnv` explicitly instead of silently ignoring it.
+
 ## [3.15.0] - 2026-05-16
 
 Development since v3.14.1 focuses on a dedicated Claude Desktop surface with third-party provider switching through a proxy gateway, a large reverse-proxy hardening pass (reliability, retries, cache, takeover, Gemini/Vertex/Codex paths), expansion of the third-party provider preset catalog (BytePlus / Volcengine / ClaudeAPI / ClaudeCN / RunAPI / RelaxyCode / PatewayAI / Baidu Qianfan), role-based model mapping with a 1M context flag, Codex OAuth live model discovery, and a long tail of usage, OAuth, Codex, and session quality-of-life fixes.
