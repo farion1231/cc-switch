@@ -1666,6 +1666,7 @@ impl Database {
             ),
             ("kimi-k2.5", "Kimi K2.5", "0.60", "2.50", "0.10", "0"),
             ("kimi-k2.6", "Kimi K2.6", "0.95", "4.00", "0.16", "0"),
+            ("kimi-for-coding", "Kimi for Coding", "0.95", "4.00", "0.16", "0"),
             // MiniMax 系列
             ("minimax-m2.1", "MiniMax M2.1", "0.27", "0.95", "0.03", "0"),
             (
@@ -1716,7 +1717,9 @@ impl Database {
                 "0.009",
                 "0",
             ),
-            ("mimo-v2-pro", "MiMo V2 Pro", "1", "3", "0", "0"),
+            ("mimo-v2-pro", "MiMo V2 Pro", "1", "3", "0.20", "0"),
+            ("mimo-v2.5-pro", "MiMo V2.5 Pro", "1", "3", "0.20", "0"),
+            ("mimo-v2.5", "MiMo V2.5", "0.40", "2", "0.08", "0"),
             // Qwen 系列 (阿里巴巴)
             ("qwen3.6-plus", "Qwen3.6 Plus", "0.325", "1.95", "0", "0"),
             ("qwen3.5-plus", "Qwen3.5 Plus", "0.26", "1.56", "0", "0"),

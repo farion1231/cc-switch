@@ -31,7 +31,7 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   gemini_flash: "subscription.geminiFlash",
   gemini_flash_lite: "subscription.geminiFlashLite",
   // Token Plan（five_hour 已在上方官方映射中）
-  weekly_limit: "subscription.sevenDay",
+  weekly_limit: "subscription.weeklyLimit",
   // GitHub Copilot
   premium: "subscription.copilotPremium",
 };
