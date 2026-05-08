@@ -14,6 +14,13 @@ use std::pin::Pin;
 /// Chat Completions 非流式响应 → Responses API 响应
 ///
 /// `request_body` 用于推理原请求中的 reasoning 参数，以决定是否输出 reasoning item。
+/// 检测上游 Chat Completions 响应是否为错误
+fn is_upstream_error(body: &Value) -> Option<&str> {
+    body.get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|v| v.as_str())
+}
+
 pub fn chat_to_responses(
     body: &Value,
     request_body: Option<&Value>,
@@ -22,6 +29,18 @@ pub fn chat_to_responses(
     let body_str = serde_json::to_string(body).unwrap_or_default();
     let truncated = if body_str.len() > 800 { &body_str[..800] } else { &body_str };
     log::info!("[Codex] <<< Upstream Chat response (truncated): {}", truncated);
+
+    // 检测上游错误（如 DeepSeek 返回 400 但 forwarder 未拦截）
+    if let Some(err_msg) = is_upstream_error(body) {
+        // 返回 Responses API 格式的错误，让 Codex CLI 正确识别
+        log::warn!("[Codex] Upstream error detected: {}", err_msg);
+        return Ok(json!({
+            "error": {
+                "message": err_msg,
+                "type": "upstream_error",
+            }
+        }));
+    }
 
     let root = body;
     let model = root.get("model").and_then(|v| v.as_str()).unwrap_or("unknown");

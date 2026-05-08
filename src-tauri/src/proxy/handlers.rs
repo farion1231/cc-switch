@@ -484,6 +484,25 @@ pub async fn handle_responses(
             .map_err(|e| ProxyError::TransformError(format!("Parse upstream: {e}")))?;
         let r = chat_to_responses::chat_to_responses(&upstream, Some(&body))?;
 
+        // 检测上游错误：如果 DeepSeek 返回了 error 响应（如不支持的 input_image），
+        // 直接以 HTTP 400 错误形式返回，避免 Codex CLI 把错误内容当有效响应回传导致死循环
+        if r.get("error").is_some() {
+            let err_msg = r["error"]["message"].as_str().unwrap_or("Upstream error");
+            let err_type = r["error"]["type"].as_str().unwrap_or("upstream_error");
+            log::error!("[Codex] Upstream error response: {} ({})", err_msg, err_type);
+            let body_str = serde_json::to_string(&json!({
+                "error": {
+                    "message": err_msg,
+                    "type": err_type,
+                }
+            })).unwrap_or_default();
+            return Ok(axum::response::Response::builder()
+                .status(400)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body_str))
+                .unwrap());
+        }
+
         let rid = r.get("id").and_then(|v| v.as_str()).unwrap_or("resp");
         let model = r.get("model").and_then(|v| v.as_str()).unwrap_or("?");
         let output = r.get("output");

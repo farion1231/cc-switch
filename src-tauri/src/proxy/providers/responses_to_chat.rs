@@ -417,10 +417,23 @@ fn convert_message_item(item: &Value, pending_reasoning: &mut Option<String>) ->
                         }
                     }
                     "input_image" => {
-                        // 简单处理：转 image_url（如有需要可扩展）
-                        if let Some(url) = part.get("image_url").and_then(|v| v.as_str()) {
-                            text_parts.push(format!("[Image: {url}]"));
-                        }
+                        // Codex 支持的图片，但 DeepSeek Chat Completions 不支持：
+                        // 转为文本占位符，避免 DeepSeek 反序列化报错
+                        let placeholder = if let Some(url) = part.get("image_url").and_then(|v| v.as_str()) {
+                            format!("[Image: {url}]")
+                        } else if let Some(file_id) = part.get("file_id").and_then(|v| v.as_str()) {
+                            format!("[Image: file_id={file_id}]")
+                        } else if let Some(detail) = part.get("detail").and_then(|v| v.as_str()) {
+                            format!("[Image: detail={detail}]")
+                        } else {
+                            "[Image: format not supported by upstream]".to_string()
+                        };
+                        text_parts.push(placeholder);
+                    }
+                    "input_file" | "file" => {
+                        // Codex 文件附件，DeepSeek 也不支持
+                        let filename = part.get("filename").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        text_parts.push(format!("[File: {filename}]"));
                     }
                     _ => {}
                 }
