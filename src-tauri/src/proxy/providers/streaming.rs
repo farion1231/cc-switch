@@ -97,7 +97,7 @@ struct ToolBlockState {
 }
 
 /// 无限空白 bug 的连续空白字符阈值
-const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
+const INFINITE_WHITESPACE_THRESHOLD: usize = 500;
 
 fn build_anthropic_usage_json(usage: &Usage) -> Value {
     let mut usage_json = json!({
