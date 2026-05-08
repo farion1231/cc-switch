@@ -830,6 +830,21 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.therouter.ai"],
   },
   {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/dashboard/keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.coderplan.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://api.coderplan.ai"],
+    category: "aggregator",
+    icon: "coderplan",
+    iconColor: "#CBA6F7",
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",

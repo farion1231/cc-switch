@@ -348,6 +348,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://api.therouter.ai"],
   },
   {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/dashboard/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.coderplan.ai",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://api.coderplan.ai",
+    model: "gemini-3.1-pro",
+    description: "CoderPlan",
+    category: "aggregator",
+    endpointCandidates: ["https://api.coderplan.ai"],
+    icon: "coderplan",
+    iconColor: "#CBA6F7",
+  },
+  {
     name: "自定义",
     websiteUrl: "",
     settingsConfig: {
