@@ -313,6 +313,169 @@ describe("AboutSection environment doctor", () => {
     });
   });
 
+  it("shows install action on Windows when Claude Code is not installed", async () => {
+    toolVersionsMock.mockResolvedValue([
+      {
+        name: "claude",
+        version: null,
+        latest_version: "2.1.131",
+        error: "not installed",
+        env_type: "windows",
+        wsl_distro: null,
+      },
+    ]);
+
+    render(<AboutSection isPortable={false} />);
+
+    expect(await screen.findByRole("button", {
+      name: "settings.installNow",
+    })).toBeInTheDocument();
+    expect(screen.getByText("settings.installReady")).toBeInTheDocument();
+  });
+
+  it("shows upgrade action on Windows when a newer Claude Code version is available", async () => {
+    toolVersionsMock.mockResolvedValue([
+      {
+        name: "claude",
+        version: "2.1.100",
+        latest_version: "2.1.131",
+        error: null,
+        env_type: "windows",
+        wsl_distro: null,
+      },
+    ]);
+
+    render(<AboutSection isPortable={false} />);
+
+    expect(await screen.findByRole("button", {
+      name: "settings.upgradeNow",
+    })).toBeInTheDocument();
+    expect(screen.getByText("settings.upgradeReady")).toBeInTheDocument();
+  });
+
+  it("shows verification failure toast when Windows install command runs but version is still unavailable", async () => {
+    toolVersionsMock
+      .mockResolvedValueOnce([
+        {
+          name: "claude",
+          version: null,
+          latest_version: "2.1.131",
+          error: "not installed",
+          env_type: "windows",
+          wsl_distro: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          name: "claude",
+          version: null,
+          latest_version: "2.1.131",
+          error: "not installed",
+          env_type: "windows",
+          wsl_distro: null,
+        },
+      ]);
+    installToolMock.mockResolvedValue({
+      success: true,
+      message: "install triggered",
+      action: "install",
+      verified: false,
+      error_code: "install_verification_failed",
+    });
+
+    render(<AboutSection isPortable={false} />);
+
+    const installButton = await screen.findByRole("button", {
+      name: "settings.installNow",
+    });
+    fireEvent.click(installButton);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("doctor.installVerificationFailed", {
+        closeButton: true,
+      });
+    });
+  });
+
+  it("shows already installed toast when Windows install returns none action", async () => {
+    toolVersionsMock.mockResolvedValue([
+      {
+        name: "claude",
+        version: "2.1.131",
+        latest_version: "2.1.131",
+        error: null,
+        env_type: "windows",
+        wsl_distro: null,
+      },
+    ]);
+    installToolMock.mockResolvedValue({
+      success: true,
+      message: "already installed",
+      action: "none",
+      installed_version: "2.1.131",
+      already_installed: true,
+      verified: true,
+    });
+
+    render(<AboutSection isPortable={false} />);
+
+    const installedButton = await screen.findByRole("button", {
+      name: "settings.installed",
+    });
+    expect(installedButton).toBeDisabled();
+
+    await waitFor(() => {
+      expect(installToolMock).not.toHaveBeenCalled();
+    });
+  });
+  it("prefers Chinese verification failure key over backend English message", async () => {
+    toolVersionsMock
+      .mockResolvedValueOnce([
+        {
+          name: "claude",
+          version: null,
+          latest_version: "2.1.131",
+          error: "not installed",
+          env_type: "windows",
+          wsl_distro: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          name: "claude",
+          version: null,
+          latest_version: "2.1.131",
+          error: "not installed",
+          env_type: "windows",
+          wsl_distro: null,
+        },
+      ]);
+    installToolMock.mockResolvedValue({
+      success: false,
+      message: "Verification failed: command not found",
+      action: "install",
+      verified: false,
+      error_code: "install_verification_failed",
+    });
+
+    render(<AboutSection isPortable={false} />);
+
+    const installButton = await screen.findByRole("button", {
+      name: "settings.installNow",
+    });
+    fireEvent.click(installButton);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("doctor.installVerificationFailed", {
+        closeButton: true,
+      });
+    });
+    expect(toast.error).not.toHaveBeenCalledWith(
+      "Verification failed: command not found",
+      expect.anything(),
+    );
+  });
+
   it("shows friendly failure message when install cannot proceed", async () => {
     toolVersionsMock.mockResolvedValue([
       {
@@ -345,5 +508,4 @@ describe("AboutSection environment doctor", () => {
       });
     });
   });
-
 });
