@@ -176,7 +176,7 @@
   "claudeDesktop": {
     "mode": "模型处理方式",
     "modeDirect": "直连",
-    "modeProxy": "模型映射",
+    "modeProxy": "需要路由",
     "modelMappingToggle": "需要模型映射",
     "modelMappingOffHint": "适合供应商已经暴露并接受 claude-* / anthropic/claude-* 模型名的 Anthropic Messages API；请求会由 Claude Desktop 直连供应商。",
     "modelMappingOnHint": "Claude Desktop 目前对模型 ID 进行了限制，如果您的供应商提供的模型不是 Claude 系列模型，则需要打开本开关，并在使用过程中保持本地路由开启。",

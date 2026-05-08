@@ -176,7 +176,7 @@
   "claudeDesktop": {
     "mode": "モデル処理方式",
     "modeDirect": "直結",
-    "modeProxy": "モデルマッピング",
+    "modeProxy": "ルーティング必要",
     "modelMappingToggle": "モデルマッピングが必要",
     "modelMappingOffHint": "プロバイダーが Anthropic Messages で claude-* / anthropic/claude-* のモデル ID を公開し、そのまま受け付ける場合に使います。Claude Desktop はプロバイダーへ直接接続します。",
     "modelMappingOnHint": "Claude Desktop は現在モデル ID を制限しています。お使いのプロバイダーが Claude 系列以外のモデルを提供する場合、このスイッチを有効にし、使用中はローカルルーティングを起動したままにしてください。",
