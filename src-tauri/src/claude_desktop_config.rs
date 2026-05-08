@@ -586,7 +586,16 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     let routes = proxy_model_routes(provider)?;
-    let Some(route) = routes.iter().find(|route| route.route_id == requested) else {
+    let route = routes
+        .iter()
+        .find(|r| r.route_id == requested)
+        .or_else(|| {
+            let base = strip_one_m_context_suffix(&requested);
+            routes
+                .iter()
+                .find(|r| strip_one_m_context_suffix(&r.route_id) == base)
+        });
+    let Some(route) = route else {
         return Err(AppError::localized(
             "claude_desktop.provider.route_unknown",
             format!("Claude Desktop 模型路由未配置: {requested}"),
@@ -1177,6 +1186,18 @@ mod tests {
         let err = map_proxy_request_model(json!({"model": "claude-opus-4-7"}), &provider)
             .expect_err("unknown route should fail");
         assert!(err.to_string().contains("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_maps_route_without_1m_suffix() {
+        let provider = proxy_provider("proxy");
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-sonnet-4-6", "messages": []}),
+            &provider,
+        )
+        .expect("base name should fallback-match the [1M] route");
+        assert_eq!(mapped["model"], json!("kimi-k2 [1M]"));
     }
 
     #[test]
