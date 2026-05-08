@@ -241,6 +241,7 @@ async fn handle_claude_transform(
             "Claude/OpenRouter",
             Some(usage_collector),
             timeout_config,
+            Some(ctx.request_model.clone()),
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -327,6 +328,10 @@ async fn handle_claude_transform(
             }
         });
     }
+
+    // 将转换后的响应 model 字段改写回请求原始模型名
+    let mut anthropic_response = anthropic_response;
+    anthropic_response["model"] = json!(ctx.request_model);
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
