@@ -100,12 +100,15 @@ pub fn switch_provider_test_hook(
 
 #[tauri::command]
 pub fn switch_provider(
+    handle: tauri::AppHandle,
     state: State<'_, AppState>,
     app: String,
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
+    let result = switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())?;
+    crate::tray::update_tray_icon_pub(&handle);
+    Ok(result)
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {

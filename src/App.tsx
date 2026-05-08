@@ -202,6 +202,14 @@ function App() {
     }
   }, [visibleApps, activeApp]);
 
+  // 通知后端当前聚焦 app，用于托盘图标跟随用量
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      invoke("set_tray_focus_app", { appType: activeApp }).catch(() => {});
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [activeApp]);
+
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
     if (
