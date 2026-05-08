@@ -254,7 +254,6 @@ impl ProviderRouter {
             return self.select_providers(app_type).await;
         }
 
-        let mut result = Vec::new();
         let mut skipped_not_found = 0usize;
         let mut skipped_circuit_open = 0usize;
 
@@ -276,24 +275,38 @@ impl ProviderRouter {
         .map_err(|e| AppError::Database(format!("spawn_blocking failed: {e}")))?
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // auto_failover_enabled = false 时：只返回队列中第一个可用的 provider
+        // auto_failover_enabled = true 时：返回队列中所有可用的 provider（支持故障转移）
+        //
+        // 注意：熔断器检查始终执行，即使 auto_failover_enabled = false。
+        // 这是为了避免向已知不可用的 provider 发送请求，提高首次请求成功率。
+        // auto_failover_enabled = false 只控制是否返回多个 provider（用于故障转移链），
+        // 不应影响熔断器过滤逻辑。
+        let target_count = if auto_failover_enabled { queue.len() } else { 1 };
+
+        let mut result = Vec::new();
+
         for provider_id in queue {
+            if result.len() >= target_count {
+                break;
+            }
+
             let Some(provider) = all_providers.get(provider_id).cloned() else {
                 log::warn!("[{app_type}] Smart routing: Provider {provider_id} not found, skipping");
                 skipped_not_found += 1;
                 continue;
             };
 
-            if auto_failover_enabled {
-                let circuit_key = format!("{app_type}:{}", provider.id);
-                let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-                if !breaker.is_available().await {
-                    log::debug!(
-                        "[{app_type}] Smart routing: Provider {} is circuit-open, skipping",
-                        provider.name
-                    );
-                    skipped_circuit_open += 1;
-                    continue;
-                }
+            // 熔断器检查始终执行（不受 auto_failover_enabled 影响）
+            let circuit_key = format!("{app_type}:{}", provider.id);
+            let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+            if !breaker.is_available().await {
+                log::debug!(
+                    "[{app_type}] Smart routing: Provider {} is circuit-open, skipping",
+                    provider.name
+                );
+                skipped_circuit_open += 1;
+                continue;
             }
 
             result.push(provider);
@@ -316,10 +329,12 @@ impl ProviderRouter {
         }
 
         log::debug!(
-            "[{app_type}] Smart routing: selected {} available providers from queue ({} not-found, {} circuit-open)",
+            "[{app_type}] Smart routing: selected {} available providers from queue (target: {}, {} not-found, {} circuit-open, auto_failover: {})",
             result.len(),
+            target_count,
             skipped_not_found,
-            skipped_circuit_open
+            skipped_circuit_open,
+            auto_failover_enabled
         );
 
         Ok(result)
@@ -635,6 +650,326 @@ mod tests {
     }
 
     // ==================== 智能路由测试 ====================
+
+    /// 真实场景测试：智能路由 + auto_failover 关闭时，只返回队列中第一个 provider
+    ///
+    /// 场景描述：
+    /// - 用户在主界面选择了 Provider A（glm5.1）作为当前供应商
+    /// - 在智能路由设置中，将 Main 队列配置为 [Provider A, Provider B]
+    /// - 用户关闭了自动故障转移（auto_failover_enabled = false）
+    /// - 期望：主对话只使用 Provider A，不会 failover 到 Provider B
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_auto_failover_disabled_returns_only_first_provider() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 设置两个 Provider：glm5.1 和 minimax
+        let glm51 = Provider::with_id(
+            "glm5.1".to_string(),
+            "GLM-5.1".to_string(),
+            json!({}),
+            None,
+        );
+        let minimax = Provider::with_id(
+            "minimax".to_string(),
+            "MiniMax".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider("claude", &glm51).unwrap();
+        db.save_provider("claude", &minimax).unwrap();
+
+        // 主界面选择的供应商是 glm5.1
+        db.set_current_provider("claude", "glm5.1").unwrap();
+
+        // 智能路由配置：Main 队列 = [glm5.1, minimax]，auto_failover = false
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.auto_failover_enabled = false;
+        config.main_request_queue = vec!["glm5.1".to_string(), "minimax".to_string()];
+        config.others_request_queue = vec!["minimax".to_string()];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 主对话请求：只应返回 glm5.1，不应返回 minimax
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Main)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            providers.len(),
+            1,
+            "auto_failover=false 时，智能路由应只返回第一个 provider"
+        );
+        assert_eq!(
+            providers[0].id, "glm5.1",
+            "主对话应使用 glm5.1，不应 failover 到 minimax"
+        );
+    }
+
+    /// 真实场景测试：智能路由 + auto_failover 开启时，返回队列中所有可用的 provider
+    ///
+    /// 场景描述：
+    /// - 用户在智能路由设置中，将 Main 队列配置为 [Provider A, Provider B]
+    /// - 用户开启了自动故障转移（auto_failover_enabled = true）
+    /// - 期望：主对话可以使用 Provider A 或 Provider B（故障转移）
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_auto_failover_enabled_returns_all_available_providers() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 设置两个 Provider
+        let glm51 = Provider::with_id(
+            "glm5.1".to_string(),
+            "GLM-5.1".to_string(),
+            json!({}),
+            None,
+        );
+        let minimax = Provider::with_id(
+            "minimax".to_string(),
+            "MiniMax".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider("claude", &glm51).unwrap();
+        db.save_provider("claude", &minimax).unwrap();
+
+        // 智能路由配置：Main 队列 = [glm5.1, minimax]，auto_failover = true
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.auto_failover_enabled = true;
+        config.main_request_queue = vec!["glm5.1".to_string(), "minimax".to_string()];
+        config.others_request_queue = vec!["minimax".to_string()];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 主对话请求：应返回所有可用的 provider（支持故障转移）
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Main)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            providers.len(),
+            2,
+            "auto_failover=true 时，智能路由应返回队列中所有可用的 provider"
+        );
+        assert_eq!(providers[0].id, "glm5.1", "队列第一个应是 glm5.1");
+        assert_eq!(providers[1].id, "minimax", "队列第二个应是 minimax");
+    }
+
+    /// 真实场景测试：智能路由 + auto_failover 关闭 + 第一个 provider 不可用时
+    ///
+    /// 场景描述：
+    /// - Main 队列 = [Provider A, Provider B]
+    /// - auto_failover_enabled = false
+    /// - Provider A 已熔断
+    /// - 期望：返回 Provider B（跳过不可用的第一个）
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_auto_failover_disabled_skips_unavailable_first() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 配置熔断器：1 次失败即熔断
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 999999,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let glm51 = Provider::with_id(
+            "glm5.1".to_string(),
+            "GLM-5.1".to_string(),
+            json!({}),
+            None,
+        );
+        let minimax = Provider::with_id(
+            "minimax".to_string(),
+            "MiniMax".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider("claude", &glm51).unwrap();
+        db.save_provider("claude", &minimax).unwrap();
+
+        // 智能路由配置：Main 队列 = [glm5.1, minimax]，auto_failover = false
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.auto_failover_enabled = false;
+        config.main_request_queue = vec!["glm5.1".to_string(), "minimax".to_string()];
+        config.others_request_queue = vec!["minimax".to_string()];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 让 glm5.1 熔断
+        router
+            .record_result("glm5.1", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // 主对话请求：glm5.1 已熔断，auto_failover=false，但仍应跳过不可用的并返回 minimax
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Main)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            providers.len(),
+            1,
+            "即使 auto_failover=false，也应跳过不可用的 provider 并返回后续可用的"
+        );
+        assert_eq!(
+            providers[0].id, "minimax",
+            "glm5.1 不可用时应使用 minimax"
+        );
+    }
+
+    /// 真实场景测试：智能路由 + auto_failover 关闭 + 所有 provider 都不可用时 fallback
+    ///
+    /// 场景描述：
+    /// - Main 队列 = [Provider A, Provider B]
+    /// - auto_failover_enabled = false
+    /// - Provider A 和 Provider B 都已熔断
+    /// - 期望：fallback 到默认行为（返回 current provider）
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_auto_failover_disabled_all_unavailable_falls_back() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 配置熔断器：1 次失败即熔断
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 999999,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let glm51 = Provider::with_id(
+            "glm5.1".to_string(),
+            "GLM-5.1".to_string(),
+            json!({}),
+            None,
+        );
+        let minimax = Provider::with_id(
+            "minimax".to_string(),
+            "MiniMax".to_string(),
+            json!({}),
+            None,
+        );
+        let deepseek = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider("claude", &glm51).unwrap();
+        db.save_provider("claude", &minimax).unwrap();
+        db.save_provider("claude", &deepseek).unwrap();
+
+        // 设置 current provider 为 deepseek
+        db.set_current_provider("claude", "deepseek").unwrap();
+
+        // 智能路由配置：Main 队列 = [glm5.1, minimax]，auto_failover = false
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.auto_failover_enabled = false;
+        config.main_request_queue = vec!["glm5.1".to_string(), "minimax".to_string()];
+        config.others_request_queue = vec!["minimax".to_string()];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 让 glm5.1 和 minimax 都熔断
+        router
+            .record_result("glm5.1", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+        router
+            .record_result("minimax", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // 主对话请求：队列中所有 provider 都不可用，fallback 到 current provider
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Main)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            providers.len(),
+            1,
+            "所有队列 provider 都不可用时应 fallback"
+        );
+        assert_eq!(
+            providers[0].id, "deepseek",
+            "fallback 应使用 current provider"
+        );
+    }
+
+    /// 真实场景测试：智能路由中子代理请求的行为
+    ///
+    /// 场景描述：
+    /// - Main 队列 = [glm5.1]，Others 队列 = [minimax]
+    /// - auto_failover_enabled = false
+    /// - 主对话使用 glm5.1，子代理使用 minimax
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_others_queue_respects_auto_failover_setting() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let glm51 = Provider::with_id(
+            "glm5.1".to_string(),
+            "GLM-5.1".to_string(),
+            json!({}),
+            None,
+        );
+        let minimax = Provider::with_id(
+            "minimax".to_string(),
+            "MiniMax".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider("claude", &glm51).unwrap();
+        db.save_provider("claude", &minimax).unwrap();
+
+        // 智能路由配置：Main = [glm5.1]，Others = [minimax, glm5.1]，auto_failover = false
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.auto_failover_enabled = false;
+        config.main_request_queue = vec!["glm5.1".to_string()];
+        config.others_request_queue = vec!["minimax".to_string(), "glm5.1".to_string()];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 子代理请求：只应返回 Others 队列中的第一个（minimax）
+        let providers = router
+            .select_providers_for_request("claude", RequestType::Others)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            providers.len(),
+            1,
+            "auto_failover=false 时，Others 队列也应只返回第一个"
+        );
+        assert_eq!(
+            providers[0].id, "minimax",
+            "子代理请求应使用 minimax"
+        );
+    }
 
     #[tokio::test]
     #[serial]
