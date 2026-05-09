@@ -886,6 +886,7 @@
     "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启路由)",
     "apiFormatOpenAIResponses": "OpenAI Responses API (需开启路由)",
     "apiFormatGeminiNative": "Gemini Native generateContent (需开启路由)",
+    "apiFormatDeepseekAnthropic": "DeepSeek（Anthropic 兼容）",
     "authField": "认证字段",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（默认）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",

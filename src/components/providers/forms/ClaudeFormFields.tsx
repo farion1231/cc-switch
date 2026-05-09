@@ -547,6 +547,11 @@ export function ClaudeFormFields({
                         defaultValue: "Gemini Native generateContent (需转换)",
                       })}
                     </SelectItem>
+                    <SelectItem value="deepseek_anthropic">
+                      {t("providerForm.apiFormatDeepseekAnthropic", {
+                        defaultValue: "DeepSeek (Anthropic Compatibility)",
+                      })}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">

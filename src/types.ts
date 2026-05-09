@@ -170,7 +170,8 @@ export interface ProviderMeta {
     | "anthropic"
     | "openai_chat"
     | "openai_responses"
-    | "gemini_native";
+    | "gemini_native"
+    | "deepseek_anthropic";
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -202,7 +203,8 @@ export type ClaudeApiFormat =
   | "anthropic"
   | "openai_chat"
   | "openai_responses"
-  | "gemini_native";
+  | "gemini_native"
+  | "deepseek_anthropic";
 
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";

@@ -54,7 +54,8 @@ export interface ProviderPreset {
     | "anthropic"
     | "openai_chat"
     | "openai_responses"
-    | "gemini_native";
+    | "gemini_native"
+    | "deepseek_anthropic";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
@@ -1025,5 +1026,49 @@ export const providerPresets: ProviderPreset[] = [
     },
     icon: "aws",
     iconColor: "#FF9900",
+  },
+  {
+    name: "DeepSeek (Claude Disguise · Flash)",
+    websiteUrl: "https://platform.deepseek.com",
+    apiKeyUrl: "https://platform.deepseek.com/api_keys",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-4-6",
+      },
+    },
+    apiFormat: "deepseek_anthropic",
+    category: "cn_official",
+    modelsUrl: "https://api.deepseek.com/models",
+    endpointCandidates: ["https://api.deepseek.com/anthropic"],
+    icon: "deepseek",
+    iconColor: "#1E88E5",
+  },
+  {
+    name: "DeepSeek (Claude Disguise · Pro)",
+    websiteUrl: "https://platform.deepseek.com",
+    apiKeyUrl: "https://platform.deepseek.com/api_keys",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "claude-opus-4-7",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-7",
+      },
+    },
+    apiFormat: "deepseek_anthropic",
+    category: "cn_official",
+    modelsUrl: "https://api.deepseek.com/models",
+    endpointCandidates: ["https://api.deepseek.com/anthropic"],
+    icon: "deepseek",
+    iconColor: "#1E88E5",
   },
 ];
