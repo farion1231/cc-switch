@@ -233,20 +233,25 @@ fn handle_reasoning(body: &Value, result: &mut Value, reasoning_effort: Option<&
 
 /// 转换 input 数组到 messages 数组
 ///
-/// 使用三缓冲机制（参考 CLIProxyAPI e193a007）：
+/// 使用三缓冲 + 交错缓冲机制：
 /// - pendingFunctionCalls: 收集连续 function_call
 /// - pendingToolOutputs: 收集对应的 function_call_output
-/// - bufferedMessages: 收集中间交错的消息
+/// - pendingReasoning: 暂存 reasoning summary 文本
+/// - bufferedMessages: 收集中间交错的消息（如 developer approval）
 ///
-/// 在遇到新消息或遍历结束时 flush：
-///   1. emit assistant message with all tool_calls
-///   2. emit tool messages (来自 pendingToolOutputs)
-///   3. emit buffered messages（交错消息，如 developer approval）
+/// 处理两个 DeepSeek Chat Completions 兼容性问题：
+/// 1. tool_calls 消息后必须立即跟随 tool 消息（不允许交错 user 消息）
+/// 2. 不能以 tool_calls 消息结尾（必须有对应的 tool 消息）
+///
+/// 遇到交错消息时：提前 emit tool_calls，缓冲该消息，在 tool outputs 后 emit
+/// 遍历结束悬空 tool_calls：转为文本描述，避免 DeepSeek "insufficient tool messages" 错误
 fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Value>, ProxyError> {
     let mut messages: Vec<Value> = Vec::new();
     let mut pending_calls: Vec<&Value> = Vec::new();
     let mut pending_outputs: Vec<&Value> = Vec::new();
     let mut pending_reasoning: Option<String> = None;
+    // 缓冲出现在 function_call 和 function_call_output 之间的交错消息
+    let mut buffered_messages: Vec<Value> = Vec::new();
 
     // 辅助函数：将 function_calls 合并到前一条 assistant message（如果存在），否则创建新的
     let emit_tool_calls = |messages: &mut Vec<Value>,
@@ -298,19 +303,10 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
         }
     };
 
-    // flush pending batch: emit tool_calls message + tool output messages
-    let flush = |messages: &mut Vec<Value>,
-                 calls: &mut Vec<&Value>,
-                 outputs: &mut Vec<&Value>,
-                 reasoning: &mut Option<String>| {
-        if calls.is_empty() && outputs.is_empty() {
-            return;
-        }
-
-        if !calls.is_empty() {
-            emit_tool_calls(messages, calls, reasoning);
-        }
-
+    // 仅 flush tool output messages（不 emit tool_calls，用于 tool_calls 已提前 emit 的情况）
+    let flush_outputs = |messages: &mut Vec<Value>,
+                          outputs: &mut Vec<&Value>,
+                          compress: bool| {
         for output in outputs.iter() {
             let output_content = output.get("output").and_then(|v| v.as_str()).unwrap_or("");
             let content = if compress {
@@ -325,6 +321,23 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
             });
             messages.push(tool_msg);
         }
+        outputs.clear();
+    };
+
+    // 完整 flush：emit tool_calls + tool outputs
+    let flush = |messages: &mut Vec<Value>,
+                  calls: &mut Vec<&Value>,
+                  outputs: &mut Vec<&Value>,
+                  reasoning: &mut Option<String>| {
+        if calls.is_empty() && outputs.is_empty() {
+            return;
+        }
+
+        if !calls.is_empty() {
+            emit_tool_calls(messages, calls, reasoning);
+        }
+
+        flush_outputs(messages, outputs, compress);
 
         calls.clear();
         outputs.clear();
@@ -340,14 +353,27 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
 
         match effective_type {
             "message" | "" => {
-                // 遇到新消息时，先 flush 之前累积的 function_calls / outputs
-                // 防止不同 assistant 回合的 tool calls 被合并到一起
                 if !pending_calls.is_empty() || !pending_outputs.is_empty() {
-                    flush(&mut messages, &mut pending_calls, &mut pending_outputs, &mut pending_reasoning);
+                    if !pending_calls.is_empty() && pending_outputs.is_empty() {
+                        // [交错消息] 有待处理的 tool_calls 但没有 outputs：
+                        // 提前 emit tool_calls，缓冲此消息，等后续 outputs 到达后再 emit
+                        emit_tool_calls(&mut messages, &pending_calls, &mut pending_reasoning);
+                        pending_calls.clear();
+                        buffered_messages.push(convert_message_item(item, &mut pending_reasoning));
+                    } else {
+                        // 正常情况：有 outputs，flush 完整批次后添加消息
+                        flush(&mut messages, &mut pending_calls, &mut pending_outputs, &mut pending_reasoning);
+                        messages.push(convert_message_item(item, &mut pending_reasoning));
+                    }
+                } else {
+                    messages.push(convert_message_item(item, &mut pending_reasoning));
                 }
-                messages.push(convert_message_item(item, &mut pending_reasoning));
             }
             "function_call" => {
+                // 如果有来自上一轮的 pending_outputs，先 flush 掉再开始新的 function_call
+                if !pending_outputs.is_empty() {
+                    flush_outputs(&mut messages, &mut pending_outputs, compress);
+                }
                 pending_calls.push(item);
             }
             "function_call_output" => {
@@ -373,20 +399,61 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
             }
             _ => {
                 if !pending_calls.is_empty() || !pending_outputs.is_empty() {
-                    flush(&mut messages, &mut pending_calls, &mut pending_outputs, &mut pending_reasoning);
+                    if !pending_calls.is_empty() && pending_outputs.is_empty() {
+                        emit_tool_calls(&mut messages, &pending_calls, &mut pending_reasoning);
+                        pending_calls.clear();
+                        buffered_messages.push(convert_message_item(item, &mut pending_reasoning));
+                    } else {
+                        flush(&mut messages, &mut pending_calls, &mut pending_outputs, &mut pending_reasoning);
+                        messages.push(convert_message_item(item, &mut pending_reasoning));
+                    }
+                } else {
+                    messages.push(convert_message_item(item, &mut pending_reasoning));
                 }
-                messages.push(convert_message_item(item, &mut pending_reasoning));
             }
         }
     }
 
     // 遍历结束，flush 剩余
-    flush(
-        &mut messages,
-        &mut pending_calls,
-        &mut pending_outputs,
-        &mut pending_reasoning,
-    );
+    if !pending_calls.is_empty() || !pending_outputs.is_empty() {
+        if !pending_calls.is_empty() {
+            if !pending_outputs.is_empty() {
+                // 正常情况：有 calls 和 outputs
+                emit_tool_calls(&mut messages, &pending_calls, &mut pending_reasoning);
+                flush_outputs(&mut messages, &mut pending_outputs, compress);
+            } else {
+                // [悬空 tool_calls] 有 calls 但没有 outputs（会话以 tool call 中断）：
+                // 不能 emit tool_calls（DeepSeek 要求 tool_calls 后必须有 tool 消息）
+                // 转为文本描述
+                let tool_names: String = pending_calls.iter()
+                    .filter_map(|c| c.get("name").and_then(|v| v.as_str()))
+                    .collect::<Vec<&str>>()
+                    .join(", ");
+                let text = if tool_names.is_empty() {
+                    "[工具调用暂未执行]".to_string()
+                } else {
+                    format!("[待执行工具调用: {}]", tool_names)
+                };
+                let mut msg = json!({"role": "assistant", "content": text});
+                if let Some(rt) = pending_reasoning.take() {
+                    if !rt.is_empty() {
+                        msg["reasoning_content"] = json!(rt);
+                    }
+                }
+                messages.push(msg);
+            }
+            pending_calls.clear();
+            pending_outputs.clear();
+        } else {
+            // 只有 outputs（tool_calls 已提前 emit），flush outputs
+            flush_outputs(&mut messages, &mut pending_outputs, compress);
+        }
+    }
+
+    // 最后 emit 缓冲的交错消息（在 tool outputs 之后，保持 Chat Completions 格式合法）
+    for msg in buffered_messages.drain(..) {
+        messages.push(msg);
+    }
 
     Ok(messages)
 }
@@ -581,13 +648,14 @@ mod tests {
         assert_eq!(messages[0]["role"], "assistant");
         assert!(messages[0]["tool_calls"].is_array());
 
-        // user message comes BEFORE tool results (chronological order preserved)
-        assert_eq!(messages[1]["role"], "user");
-        assert_eq!(messages[1]["content"], "Please approve this search");
+        // Chat Completions 规范要求 tool 消息必须紧随 assistant(tool_calls) 之后，
+        // 因此交错 user 消息被重排到 tool results 之后
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["content"], "Results");
 
-        // tool result comes after the interleaved user message
-        assert_eq!(messages[2]["role"], "tool");
-        assert_eq!(messages[2]["content"], "Results");
+        // user message comes AFTER tool results (Chat Completions spec compliance)
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"], "Please approve this search");
     }
 
     #[test]
@@ -778,5 +846,28 @@ mod tests {
             .iter().find(|m| m["role"] == "tool").unwrap();
         let content2 = tool_msg2["content"].as_str().unwrap();
         assert_eq!(content2.len(), 10000, "非 chat_compat 模式不应压缩");
+    }
+
+    #[test]
+    fn test_dangling_tool_calls_no_output() {
+        // 会话以 function_call 结尾，没有对应的 function_call_output：
+        // 应转为文本而非 tool_calls，避免 DeepSeek "insufficient tool messages" 错误
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "List files"}]},
+                {"type": "function_call", "call_id": "call_1", "name": "exec", "arguments": "{\"cmd\":\"ls\"}"},
+            ],
+            "stream": false,
+        });
+
+        let result = responses_to_chat(&input, None, None, false).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // 不应包含 tool_calls
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert!(messages[1].get("tool_calls").is_none(), "悬空 tool_calls 不应以 tool_calls 形式发出");
+        assert!(messages[1]["content"].as_str().unwrap().contains("待执行"), "应转为文本描述");
     }
 }
