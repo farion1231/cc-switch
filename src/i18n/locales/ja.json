@@ -2177,6 +2177,14 @@
           "label": "ログ記録を有効化",
           "description": "トラブルシューティングのためにすべてのルーティングリクエストを記録"
         },
+        "password": {
+          "label": "プロキシパスワード（任意）",
+          "placeholder": "空白の場合はパスワード認証を無効",
+          "description": "設定すると、LANデバイスはリクエストヘッダーにパスワードを提供する必要があります。CC Switchはテイクオーバーモードで自動的に設定します。",
+          "status": "パスワード認証",
+          "enabled": "有効 — クライアントはAuthorization、x-api-keyまたはx-goog-api-keyヘッダーでパスワードを提供する必要があります",
+          "disabled": "無効 — LANデバイスは直接アクセス可能"
+        },
         "streamingFirstByteTimeout": {
           "label": "ストリーミング初回バイトタイムアウト（秒）",
           "description": "最初のデータチャンクを待つ最大時間"

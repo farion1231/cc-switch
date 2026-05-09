@@ -2177,6 +2177,14 @@
           "label": "启用日志记录",
           "description": "记录所有路由请求，便于排查问题"
         },
+        "password": {
+          "label": "代理密码（可选）",
+          "placeholder": "留空则不启用密码认证",
+          "description": "设置后局域网设备需在请求头中提供密码才能使用代理。CC Switch 接管模式下会自动配置。",
+          "status": "密码认证",
+          "enabled": "已启用，客户端需在 Authorization、x-api-key 或 x-goog-api-key 头中提供密码",
+          "disabled": "未启用，局域网设备可直接访问"
+        },
         "streamingFirstByteTimeout": {
           "label": "流式首字超时（秒）",
           "description": "等待首个数据块的最大时间"
