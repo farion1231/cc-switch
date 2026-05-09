@@ -233,18 +233,20 @@ fn handle_reasoning(body: &Value, result: &mut Value, reasoning_effort: Option<&
 
 /// 转换 input 数组到 messages 数组
 ///
-/// 使用三缓冲 + 交错缓冲机制：
+/// 使用四缓冲机制：
 /// - pendingFunctionCalls: 收集连续 function_call
 /// - pendingToolOutputs: 收集对应的 function_call_output
 /// - pendingReasoning: 暂存 reasoning summary 文本
 /// - bufferedMessages: 收集中间交错的消息（如 developer approval）
 ///
-/// 处理两个 DeepSeek Chat Completions 兼容性问题：
+/// 处理 DeepSeek Chat Completions 兼容性问题：
 /// 1. tool_calls 消息后必须立即跟随 tool 消息（不允许交错 user 消息）
-/// 2. 不能以 tool_calls 消息结尾（必须有对应的 tool 消息）
+/// 2. 不能有未匹配的 tool_calls（每个 tool_call_id 必须有对应的 tool 消息）
 ///
-/// 遇到交错消息时：提前 emit tool_calls，缓冲该消息，在 tool outputs 后 emit
-/// 遍历结束悬空 tool_calls：转为文本描述，避免 DeepSeek "insufficient tool messages" 错误
+/// 关键思路：不在遇到 function_call_output 或交错消息时立即 emit tool_calls，
+/// 而是延迟到自然边界（新消息、新 function_call、遍历结束）才执行 emit_batch。
+/// emit_batch 会匹配 calls 和 outputs 的 call_id，只 emit 有对应输出的 tool_calls，
+/// 未匹配的 calls 转为文本描述。
 fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Value>, ProxyError> {
     let mut messages: Vec<Value> = Vec::new();
     let mut pending_calls: Vec<&Value> = Vec::new();
@@ -303,7 +305,7 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
         }
     };
 
-    // 仅 flush tool output messages（不 emit tool_calls，用于 tool_calls 已提前 emit 的情况）
+    // 仅 flush tool output messages（不 emit tool_calls）
     let flush_outputs = |messages: &mut Vec<Value>,
                           outputs: &mut Vec<&Value>,
                           compress: bool| {
@@ -324,23 +326,72 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
         outputs.clear();
     };
 
-    // 完整 flush：emit tool_calls + tool outputs
-    let flush = |messages: &mut Vec<Value>,
-                  calls: &mut Vec<&Value>,
-                  outputs: &mut Vec<&Value>,
-                  reasoning: &mut Option<String>| {
-        if calls.is_empty() && outputs.is_empty() {
+    // 核心函数：匹配 calls 和 outputs，仅 emit 有对应输出的 tool_calls
+    // 未匹配的 calls 转为文本描述，避免 DeepSeek "insufficient tool messages" 错误
+    let emit_batch = |messages: &mut Vec<Value>,
+                      calls: &mut Vec<&Value>,
+                      outputs: &mut Vec<&Value>,
+                      reasoning: &mut Option<String>,
+                      compress: bool,
+                      buffer: &mut Vec<Value>| {
+        if calls.is_empty() && outputs.is_empty() && buffer.is_empty() {
             return;
         }
 
-        if !calls.is_empty() {
-            emit_tool_calls(messages, calls, reasoning);
-        }
+        if !calls.is_empty() || !outputs.is_empty() {
+            // 收集 outputs 中有哪些 call_id
+            let output_call_ids: std::collections::HashSet<&str> = outputs.iter()
+                .filter_map(|o| o.get("call_id").and_then(|v| v.as_str()))
+                .collect();
 
-        flush_outputs(messages, outputs, compress);
+            // 分离 matched（有对应输出）和 unmatched（无对应输出）的工具调用
+            let mut matched_calls: Vec<&Value> = Vec::new();
+            let mut unmatched_calls: Vec<&Value> = Vec::new();
+            for c in calls.iter() {
+                let cid = c.get("call_id").and_then(|v| v.as_str());
+                if cid.map_or(false, |id| output_call_ids.contains(id)) {
+                    matched_calls.push(c);
+                } else {
+                    unmatched_calls.push(c);
+                }
+            }
+
+            // 只 emit 有对应输出的 tool_calls
+            if !matched_calls.is_empty() {
+                emit_tool_calls(messages, &matched_calls, reasoning);
+            }
+
+            // emit tool messages
+            flush_outputs(messages, outputs, compress);
+
+            // 未匹配的 calls → 转为文本描述（避免悬空 tool_calls）
+            if !unmatched_calls.is_empty() {
+                let tool_names: String = unmatched_calls.iter()
+                    .filter_map(|c| c.get("name").and_then(|v| v.as_str()))
+                    .collect::<Vec<&str>>()
+                    .join(", ");
+                let text = if tool_names.is_empty() {
+                    "[未执行的工具调用]".to_string()
+                } else {
+                    format!("[未执行的工具调用: {}]", tool_names)
+                };
+                let mut msg = json!({"role": "assistant", "content": text});
+                if let Some(rt) = reasoning.take() {
+                    if !rt.is_empty() {
+                        msg["reasoning_content"] = json!(rt);
+                    }
+                }
+                messages.push(msg);
+            }
+        }
 
         calls.clear();
         outputs.clear();
+
+        // 缓冲的交错消息（在 tool results 之后 emit，保持 Chat Completions 顺序合法）
+        for msg in buffer.drain(..) {
+            messages.push(msg);
+        }
     };
 
     for item in input {
@@ -354,15 +405,14 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
         match effective_type {
             "message" | "" => {
                 if !pending_calls.is_empty() || !pending_outputs.is_empty() {
-                    if !pending_calls.is_empty() && pending_outputs.is_empty() {
-                        // [交错消息] 有待处理的 tool_calls 但没有 outputs：
-                        // 提前 emit tool_calls，缓冲此消息，等后续 outputs 到达后再 emit
-                        emit_tool_calls(&mut messages, &pending_calls, &mut pending_reasoning);
-                        pending_calls.clear();
+                    if pending_outputs.is_empty() {
+                        // [交错消息] 有 calls 但没有 outputs：
+                        // 缓冲此消息，不提前 emit tool_calls（等所有 outputs 到达后统一匹配）
                         buffered_messages.push(convert_message_item(item, &mut pending_reasoning));
                     } else {
-                        // 正常情况：有 outputs，flush 完整批次后添加消息
-                        flush(&mut messages, &mut pending_calls, &mut pending_outputs, &mut pending_reasoning);
+                        // 有 outputs，执行统一匹配批次
+                        emit_batch(&mut messages, &mut pending_calls, &mut pending_outputs,
+                                   &mut pending_reasoning, compress, &mut buffered_messages);
                         messages.push(convert_message_item(item, &mut pending_reasoning));
                     }
                 } else {
@@ -370,18 +420,16 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
                 }
             }
             "function_call" => {
-                // 如果有来自上一轮的 pending_outputs，先 flush 掉再开始新的 function_call
+                // 只在有 pending_outputs 时 flush（完整的上一批次）
+                // 如果只有 pending_calls，说明还是同一批次，继续累积
                 if !pending_outputs.is_empty() {
-                    flush_outputs(&mut messages, &mut pending_outputs, compress);
+                    emit_batch(&mut messages, &mut pending_calls, &mut pending_outputs,
+                               &mut pending_reasoning, compress, &mut buffered_messages);
                 }
                 pending_calls.push(item);
             }
             "function_call_output" => {
-                // 先 flush pending calls（同一回合的 tool_calls 合并到前一条 assistant）
-                if !pending_calls.is_empty() {
-                    emit_tool_calls(&mut messages, &pending_calls, &mut pending_reasoning);
-                    pending_calls.clear();
-                }
+                // 不立即 emit tool_calls！只缓冲输出，等边界处统一匹配
                 pending_outputs.push(item);
             }
             "reasoning" => {
@@ -399,12 +447,11 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
             }
             _ => {
                 if !pending_calls.is_empty() || !pending_outputs.is_empty() {
-                    if !pending_calls.is_empty() && pending_outputs.is_empty() {
-                        emit_tool_calls(&mut messages, &pending_calls, &mut pending_reasoning);
-                        pending_calls.clear();
+                    if pending_outputs.is_empty() {
                         buffered_messages.push(convert_message_item(item, &mut pending_reasoning));
                     } else {
-                        flush(&mut messages, &mut pending_calls, &mut pending_outputs, &mut pending_reasoning);
+                        emit_batch(&mut messages, &mut pending_calls, &mut pending_outputs,
+                                   &mut pending_reasoning, compress, &mut buffered_messages);
                         messages.push(convert_message_item(item, &mut pending_reasoning));
                     }
                 } else {
@@ -414,46 +461,9 @@ fn convert_input_to_messages(input: &[Value], compress: bool) -> Result<Vec<Valu
         }
     }
 
-    // 遍历结束，flush 剩余
-    if !pending_calls.is_empty() || !pending_outputs.is_empty() {
-        if !pending_calls.is_empty() {
-            if !pending_outputs.is_empty() {
-                // 正常情况：有 calls 和 outputs
-                emit_tool_calls(&mut messages, &pending_calls, &mut pending_reasoning);
-                flush_outputs(&mut messages, &mut pending_outputs, compress);
-            } else {
-                // [悬空 tool_calls] 有 calls 但没有 outputs（会话以 tool call 中断）：
-                // 不能 emit tool_calls（DeepSeek 要求 tool_calls 后必须有 tool 消息）
-                // 转为文本描述
-                let tool_names: String = pending_calls.iter()
-                    .filter_map(|c| c.get("name").and_then(|v| v.as_str()))
-                    .collect::<Vec<&str>>()
-                    .join(", ");
-                let text = if tool_names.is_empty() {
-                    "[工具调用暂未执行]".to_string()
-                } else {
-                    format!("[待执行工具调用: {}]", tool_names)
-                };
-                let mut msg = json!({"role": "assistant", "content": text});
-                if let Some(rt) = pending_reasoning.take() {
-                    if !rt.is_empty() {
-                        msg["reasoning_content"] = json!(rt);
-                    }
-                }
-                messages.push(msg);
-            }
-            pending_calls.clear();
-            pending_outputs.clear();
-        } else {
-            // 只有 outputs（tool_calls 已提前 emit），flush outputs
-            flush_outputs(&mut messages, &mut pending_outputs, compress);
-        }
-    }
-
-    // 最后 emit 缓冲的交错消息（在 tool outputs 之后，保持 Chat Completions 格式合法）
-    for msg in buffered_messages.drain(..) {
-        messages.push(msg);
-    }
+    // 遍历结束，emit_batch 剩余
+    emit_batch(&mut messages, &mut pending_calls, &mut pending_outputs,
+               &mut pending_reasoning, compress, &mut buffered_messages);
 
     Ok(messages)
 }
@@ -868,6 +878,91 @@ mod tests {
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[1]["role"], "assistant");
         assert!(messages[1].get("tool_calls").is_none(), "悬空 tool_calls 不应以 tool_calls 形式发出");
-        assert!(messages[1]["content"].as_str().unwrap().contains("待执行"), "应转为文本描述");
+        assert!(messages[1]["content"].as_str().unwrap().contains("未执行"), "应转为文本描述");
+    }
+
+    #[test]
+    fn test_unbalanced_tool_calls() {
+        // 3 个 function_call 但只有 2 个 function_call_output：
+        // emit_batch 应只匹配有对应 call_id 的 calls，未匹配的转为文本
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "input": [
+                {"type": "function_call", "call_id": "call_1", "name": "read", "arguments": "{\"file\":\"a.txt\"}"},
+                {"type": "function_call", "call_id": "call_2", "name": "search", "arguments": "{\"q\":\"test\"}"},
+                {"type": "function_call", "call_id": "call_3", "name": "exec", "arguments": "{\"cmd\":\"ls\"}"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "content of a.txt"},
+                {"type": "function_call_output", "call_id": "call_2", "output": "search results"},
+                {"role": "user", "content": [{"type": "input_text", "text": "Thanks"}]}
+            ],
+            "stream": false,
+        });
+
+        let result = responses_to_chat(&input, None, None, false).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // match: assistant(tc: [call_1, call_2])
+        assert_eq!(messages[0]["role"], "assistant");
+        let tc = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tc.len(), 2, "只应有 2 个工具调用（有对应输出的）");
+        assert_eq!(tc[0]["id"], "call_1");
+        assert_eq!(tc[1]["id"], "call_2");
+
+        // 2 tool messages
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["tool_call_id"], "call_2");
+
+        // unmatched: assistant("[未执行的工具调用: exec]")
+        assert_eq!(messages[3]["role"], "assistant");
+        assert!(messages[3].get("tool_calls").is_none());
+        assert!(messages[3]["content"].as_str().unwrap().contains("未执行"));
+
+        // user
+        assert_eq!(messages[4]["role"], "user");
+        assert_eq!(messages[4]["content"], "Thanks");
+    }
+
+    #[test]
+    fn test_interleaved_with_unbalanced() {
+        // 交错消息 + 不平衡：fn_call, fn_call, user, fn_output
+        // call_2 没有对应输出，应转为文本
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "input": [
+                {"type": "function_call", "call_id": "call_1", "name": "read", "arguments": "{\"file\":\"a.txt\"}"},
+                {"type": "function_call", "call_id": "call_2", "name": "exec", "arguments": "{\"cmd\":\"ls\"}"},
+                {"role": "user", "content": [{"type": "input_text", "text": "Run this command"}]},
+                {"type": "function_call_output", "call_id": "call_1", "output": "file content"},
+                {"role": "assistant", "content": [{"type": "output_text", "text": "Done"}]}
+            ],
+            "stream": false,
+        });
+
+        let result = responses_to_chat(&input, None, None, false).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // batch: matched call_1 → tool_calls([call_1])
+        assert_eq!(messages[0]["role"], "assistant");
+        let tc = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tc.len(), 1, "只应有 1 个 tool_call（call_1 有输出）");
+        assert_eq!(tc[0]["id"], "call_1");
+
+        // tool message for call_1
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
+
+        // unmatched call_2 → text
+        assert_eq!(messages[2]["role"], "assistant");
+        assert!(messages[2].get("tool_calls").is_none());
+        assert!(messages[2]["content"].as_str().unwrap().contains("未执行"));
+
+        // buffered user message comes after tool results (Chat Completions spec)
+        assert_eq!(messages[3]["role"], "user");
+
+        // final assistant message
+        assert_eq!(messages[4]["role"], "assistant");
+        assert_eq!(messages[4]["content"], "Done");
     }
 }
