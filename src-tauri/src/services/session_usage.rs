@@ -110,29 +110,24 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
 /// 收集目录下所有 .jsonl 文件
 fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
+    collect_jsonl_recursive(projects_dir, &mut files);
+    files
+}
 
-    let entries = match fs::read_dir(projects_dir) {
+/// 递归收集目录下所有 .jsonl 文件（含 subagents/ 等子目录）
+fn collect_jsonl_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return files,
+        Err(_) => return,
     };
-
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        // 每个项目目录下的 .jsonl 文件
-        if let Ok(sub_entries) = fs::read_dir(&path) {
-            for sub_entry in sub_entries.flatten() {
-                let sub_path = sub_entry.path();
-                if sub_path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-                    files.push(sub_path);
-                }
-            }
+        if path.is_dir() {
+            collect_jsonl_recursive(&path, files);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            files.push(path);
         }
     }
-
-    files
 }
 
 /// 同步单个 JSONL 文件，返回 (imported, skipped)

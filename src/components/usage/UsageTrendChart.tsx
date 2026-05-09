@@ -47,7 +47,11 @@ export function UsageTrendChart({
     );
   }
 
-  const durationSeconds = Math.max(endDate - startDate, 0);
+  // "all time" has no bounds — use a large sentinel so isHourly stays false (daily granularity)
+  const durationSeconds =
+    startDate !== undefined && endDate !== undefined
+      ? Math.max(endDate - startDate, 0)
+      : Number.MAX_SAFE_INTEGER;
   const isHourly = durationSeconds <= 24 * 60 * 60;
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const dateLocale = getLocaleFromLanguage(language);

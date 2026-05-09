@@ -1,10 +1,11 @@
 import { useMemo } from "react";
+import type React from "react";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent } from "@/components/ui/card";
 import { useUsageSummary } from "@/lib/query/usage";
 import { Activity, DollarSign, Layers, Database, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
-import { fmtUsd, parseFiniteNumber } from "./format";
+import { fmtUsd, fmtTokenAbbr, parseFiniteNumber } from "./format";
 import type { UsageRangeSelection } from "@/types/usage";
 
 interface UsageSummaryCardsProps {
@@ -30,32 +31,40 @@ export function UsageSummaryCards({
 
     const inputTokens = summary?.totalInputTokens ?? 0;
     const outputTokens = summary?.totalOutputTokens ?? 0;
-    const totalTokens = inputTokens + outputTokens;
-
     const cacheWriteTokens = summary?.totalCacheCreationTokens ?? 0;
     const cacheReadTokens = summary?.totalCacheReadTokens ?? 0;
+    const totalTokens = inputTokens + outputTokens + cacheWriteTokens + cacheReadTokens;
     const totalCacheTokens = cacheWriteTokens + cacheReadTokens;
+    const totalInputWithCache = inputTokens + cacheWriteTokens + cacheReadTokens;
+
+    const cacheHitRate =
+      totalCacheTokens > 0
+        ? (cacheReadTokens / totalCacheTokens) * 100
+        : null;
 
     return [
       {
         title: t("usage.totalRequests"),
         value: totalRequests.toLocaleString(),
+        abbr: undefined as string | undefined,
         icon: Activity,
         color: "text-blue-500",
         bg: "bg-blue-500/10",
-        subValue: null,
+        subValue: null as React.ReactNode,
       },
       {
         title: t("usage.totalCost"),
         value: totalCost == null ? "--" : fmtUsd(totalCost, 4),
+        abbr: undefined as string | undefined,
         icon: DollarSign,
         color: "text-green-500",
         bg: "bg-green-500/10",
-        subValue: null,
+        subValue: null as React.ReactNode,
       },
       {
         title: t("usage.totalTokens"),
         value: totalTokens.toLocaleString(),
+        abbr: fmtTokenAbbr(totalTokens),
         icon: Layers,
         color: "text-purple-500",
         bg: "bg-purple-500/10",
@@ -64,21 +73,22 @@ export function UsageSummaryCards({
             <div className="flex justify-between items-center">
               <span>{t("usage.input")}</span>
               <span className="text-foreground/80">
-                {(inputTokens / 1000).toFixed(1)}k
+                {fmtTokenAbbr(totalInputWithCache)}
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span>{t("usage.output")}</span>
               <span className="text-foreground/80">
-                {(outputTokens / 1000).toFixed(1)}k
+                {fmtTokenAbbr(outputTokens)}
               </span>
             </div>
           </div>
-        ),
+        ) as React.ReactNode,
       },
       {
         title: t("usage.cacheTokens"),
         value: totalCacheTokens.toLocaleString(),
+        abbr: undefined as string | undefined,
         icon: Database,
         color: "text-orange-500",
         bg: "bg-orange-500/10",
@@ -96,8 +106,16 @@ export function UsageSummaryCards({
                 {(cacheReadTokens / 1000).toFixed(1)}k
               </span>
             </div>
+            {cacheHitRate != null && (
+              <div className="flex justify-between items-center pt-1 border-t border-border/30">
+                <span>{t("usage.cacheHitRate")}</span>
+                <span className="text-foreground/80 font-medium">
+                  {cacheHitRate.toFixed(1)}%
+                </span>
+              </div>
+            )}
           </div>
-        ),
+        ) as React.ReactNode,
       },
     ];
   }, [summary, t]);
@@ -154,10 +172,15 @@ export function UsageSummaryCards({
                 </div>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 <h3 className="text-2xl font-bold truncate" title={stat.value}>
                   {stat.value}
                 </h3>
+                {stat.abbr && (
+                  <div className={`text-4xl font-bold ${stat.color}`}>
+                    {stat.abbr}
+                  </div>
+                )}
               </div>
 
               {stat.subValue || (

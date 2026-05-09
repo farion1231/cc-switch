@@ -15,7 +15,7 @@ import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 
 type DraftField = "start" | "end";
 
-const PRESETS: UsageRangePreset[] = ["today", "1d", "7d", "14d", "30d"];
+const PRESETS: UsageRangePreset[] = ["all", "today", "1d", "7d", "14d", "30d"];
 
 interface UsageDateRangePickerProps {
   selection: UsageRangeSelection;
@@ -106,10 +106,11 @@ export function UsageDateRangePicker({
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [activeField, setActiveField] = useState<DraftField>("start");
-  const resolvedRange = useMemo(
-    () => resolveUsageRange(selection),
-    [selection],
-  );
+  const resolvedRange = useMemo(() => {
+    const r = resolveUsageRange(selection);
+    const now = Math.floor(Date.now() / 1000);
+    return { startDate: r.startDate ?? now, endDate: r.endDate ?? now };
+  }, [selection]);
   const [draftStart, setDraftStart] = useState(resolvedRange.startDate);
   const [draftEnd, setDraftEnd] = useState(resolvedRange.endDate);
   const [displayMonth, setDisplayMonth] = useState(
@@ -129,14 +130,13 @@ export function UsageDateRangePicker({
   useEffect(() => {
     if (!open) return;
     const r = resolveUsageRange(selection);
-    setDraftStart(r.startDate);
-    setDraftEnd(r.endDate);
+    const now = Math.floor(Date.now() / 1000);
+    const start = r.startDate ?? now;
+    const end = r.endDate ?? now;
+    setDraftStart(start);
+    setDraftEnd(end);
     setDisplayMonth(
-      new Date(
-        fromTs(r.startDate).getFullYear(),
-        fromTs(r.startDate).getMonth(),
-        1,
-      ),
+      new Date(fromTs(start).getFullYear(), fromTs(start).getMonth(), 1),
     );
     setActiveField("start");
     setError(null);

@@ -121,7 +121,7 @@ export interface ProviderLimitStatus {
   monthlyExceeded: boolean;
 }
 
-export type UsageRangePreset = "today" | "1d" | "7d" | "14d" | "30d" | "custom";
+export type UsageRangePreset = "all" | "today" | "1d" | "7d" | "14d" | "30d" | "custom";
 
 export interface UsageRangeSelection {
   preset: UsageRangePreset;

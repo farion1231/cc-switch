@@ -4,8 +4,8 @@ const DAY_SECONDS = 24 * 60 * 60;
 const DAY_MS = DAY_SECONDS * 1000;
 
 export interface ResolvedUsageRange {
-  startDate: number;
-  endDate: number;
+  startDate?: number;
+  endDate?: number;
 }
 
 function getStartOfLocalDayDate(nowMs: number): Date {
@@ -14,7 +14,7 @@ function getStartOfLocalDayDate(nowMs: number): Date {
 }
 
 function getPresetLookbackStart(
-  preset: Exclude<UsageRangePreset, "today" | "1d" | "custom">,
+  preset: Exclude<UsageRangePreset, "all" | "today" | "1d" | "custom">,
   nowMs: number,
 ): number {
   const dayCount = preset === "7d" ? 7 : preset === "14d" ? 14 : 30;
@@ -30,6 +30,11 @@ export function resolveUsageRange(
   const endDate = Math.floor(nowMs / 1000);
 
   switch (selection.preset) {
+    case "all":
+      return {
+        startDate: Math.floor(new Date(2025, 0, 1).getTime() / 1000),
+        endDate,
+      };
     case "today":
       return {
         startDate: Math.floor(getStartOfLocalDayDate(nowMs).getTime() / 1000),
@@ -63,6 +68,8 @@ export function getUsageRangePresetLabel(
   t: (key: string, options?: { defaultValue?: string }) => string,
 ): string {
   switch (preset) {
+    case "all":
+      return t("usage.presetAll", { defaultValue: "所有时间" });
     case "today":
       return t("usage.presetToday", { defaultValue: "当天" });
     case "1d":

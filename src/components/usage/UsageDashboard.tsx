@@ -40,7 +40,7 @@ const APP_FILTER_OPTIONS: AppTypeFilter[] = [
 export function UsageDashboard() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<UsageRangeSelection>({ preset: "today" });
+  const [range, setRange] = useState<UsageRangeSelection>({ preset: "all" });
   const [appType, setAppType] = useState<AppTypeFilter>("all");
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
 
@@ -60,14 +60,22 @@ export function UsageDashboard() {
   const locale = getLocaleFromLanguage(language);
   const resolvedRange = useMemo(() => resolveUsageRange(range), [range]);
   const rangeLabel = useMemo(() => {
-    if (range.preset !== "custom") {
-      return getUsageRangePresetLabel(range.preset, t);
+    const fmtDate = (ts: number) =>
+      new Date(ts * 1000).toLocaleDateString(locale, {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+
+    const { startDate, endDate } = resolvedRange;
+    const presetLabel = getUsageRangePresetLabel(range.preset, t);
+
+    if (range.preset === "custom") {
+      return `${fmtDate(startDate!)} ~ ${fmtDate(endDate!)}`;
     }
 
-    return `${new Date(resolvedRange.startDate * 1000).toLocaleString(locale)} - ${new Date(
-      resolvedRange.endDate * 1000,
-    ).toLocaleString(locale)}`;
-  }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
+    return `${presetLabel} · ${fmtDate(startDate!)} ~ ${fmtDate(endDate!)}`;
+  }, [locale, range, resolvedRange, t]);
 
   return (
     <motion.div
