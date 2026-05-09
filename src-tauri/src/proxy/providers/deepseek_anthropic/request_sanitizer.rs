@@ -273,3 +273,129 @@ mod tests_thinking_blocks {
         assert_eq!(msgs[0]["role"], "user");
     }
 }
+
+pub(crate) fn normalize_tool_result_content(messages: &mut Vec<serde_json::Value>) {
+    for msg in messages.iter_mut() {
+        let Some(content) = msg.get_mut("content").and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        for block in content.iter_mut() {
+            if block.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+                continue;
+            }
+            let Some(obj) = block.as_object_mut() else { continue; };
+            let normalized: String = match obj.get("content") {
+                None => String::new(),
+                Some(serde_json::Value::String(_)) => continue,
+                Some(serde_json::Value::Array(arr)) => {
+                    arr.iter()
+                        .map(|item| {
+                            if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                item.get("text")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("")
+                                    .to_string()
+                            } else {
+                                serde_json::to_string(item).unwrap_or_default()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+                Some(other) => serde_json::to_string(other).unwrap_or_default(),
+            };
+            obj.insert("content".into(), serde_json::Value::String(normalized));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_normalize_tool_result {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_string_content_unchanged() {
+        let mut msgs = vec![json!({
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "already string"}]
+        })];
+        normalize_tool_result_content(&mut msgs);
+        assert_eq!(msgs[0]["content"][0]["content"], "already string");
+    }
+
+    #[test]
+    fn test_array_of_text_blocks_joined() {
+        let mut msgs = vec![json!({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "t1",
+                "content": [
+                    {"type": "text", "text": "line1"},
+                    {"type": "text", "text": "line2"}
+                ]
+            }]
+        })];
+        normalize_tool_result_content(&mut msgs);
+        assert_eq!(msgs[0]["content"][0]["content"], "line1\nline2");
+    }
+
+    #[test]
+    fn test_array_with_non_text_block_json_serialized() {
+        let mut msgs = vec![json!({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "t1",
+                "content": [
+                    {"type": "text", "text": "result:"},
+                    {"type": "image", "source": {"type": "url", "url": "http://x"}}
+                ]
+            }]
+        })];
+        normalize_tool_result_content(&mut msgs);
+        let s = msgs[0]["content"][0]["content"].as_str().unwrap();
+        assert!(s.contains("result:"));
+        assert!(s.contains("image"));
+    }
+
+    #[test]
+    fn test_dict_content_json_serialized() {
+        let mut msgs = vec![json!({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "t1",
+                "content": {"key": "val"}
+            }]
+        })];
+        normalize_tool_result_content(&mut msgs);
+        let s = msgs[0]["content"][0]["content"].as_str().unwrap();
+        assert!(s.contains("key"));
+        assert!(s.contains("val"));
+    }
+
+    #[test]
+    fn test_null_content_becomes_empty_string() {
+        let mut msgs = vec![json!({
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1"}]
+        })];
+        normalize_tool_result_content(&mut msgs);
+        assert_eq!(msgs[0]["content"][0]["content"], "");
+    }
+
+    #[test]
+    fn test_non_tool_result_blocks_not_touched() {
+        let mut msgs = vec![json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hi"},
+                {"type": "tool_result", "tool_use_id": "t1", "content": ["should be string"]}
+            ]
+        })];
+        normalize_tool_result_content(&mut msgs);
+        assert_eq!(msgs[0]["content"][0]["text"], "hi");
+    }
+}
