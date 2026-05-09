@@ -12,7 +12,9 @@ use crate::app_config::AppType;
 use crate::codex_config::{
     get_codex_auth_path, get_codex_config_path, write_codex_live_atomic_with_stable_provider,
 };
-use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{
+    atomic_write, delete_file, get_claude_settings_path, read_json_file, write_json_file,
+};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -641,7 +643,7 @@ pub(crate) enum LiveSnapshot {
         settings: Option<Value>,
     },
     Codex {
-        auth: Option<Value>,
+        auth: Option<Vec<u8>>,
         config: Option<String>,
     },
     Gemini {
@@ -666,7 +668,7 @@ impl LiveSnapshot {
                 let auth_path = get_codex_auth_path();
                 let config_path = get_codex_config_path();
                 let auth = if auth_path.exists() {
-                    Some(read_json_file::<Value>(&auth_path)?)
+                    Some(fs::read(&auth_path).map_err(|e| AppError::io(&auth_path, e))?)
                 } else {
                     None
                 };
@@ -726,8 +728,8 @@ impl LiveSnapshot {
             LiveSnapshot::Codex { auth, config } => {
                 let auth_path = get_codex_auth_path();
                 let config_path = get_codex_config_path();
-                if let Some(value) = auth {
-                    write_json_file(&auth_path, value)?;
+                if let Some(bytes) = auth {
+                    atomic_write(&auth_path, bytes)?;
                 } else if auth_path.exists() {
                     delete_file(&auth_path)?;
                 }
@@ -1563,6 +1565,74 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock};
+
+    struct TempHome {
+        _dir: tempfile::TempDir,
+        old_home: Option<OsString>,
+        old_userprofile: Option<OsString>,
+        old_test_home: Option<OsString>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let old_home = std::env::var_os("HOME");
+            let old_userprofile = std::env::var_os("USERPROFILE");
+            let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+
+            std::env::set_var("HOME", dir.path());
+            std::env::set_var("USERPROFILE", dir.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::update_settings(crate::settings::AppSettings::default())
+                .expect("reset settings");
+
+            Self {
+                _dir: dir,
+                old_home,
+                old_userprofile,
+                old_test_home,
+            }
+        }
+
+        fn codex_dir(&self) -> PathBuf {
+            crate::codex_config::get_codex_config_dir()
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.old_userprofile {
+                Some(value) => std::env::set_var("USERPROFILE", value),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+            match &self.old_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    fn live_snapshot_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+    }
+
+    fn write_text(path: &Path, text: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent dir");
+        }
+        fs::write(path, text).expect("write test file");
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
@@ -1606,6 +1676,36 @@ mod tests {
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn codex_live_snapshot_capture_preserves_malformed_auth_json() {
+        let _guard = live_snapshot_test_guard();
+        let home = TempHome::new();
+        let codex_dir = home.codex_dir();
+        let auth_path = codex_dir.join("auth.json");
+        let config_path = codex_dir.join("config.toml");
+        let broken_auth = "{not-valid-json";
+        let config = "model_provider = \"bold_ai_api\"\n";
+
+        write_text(&auth_path, broken_auth);
+        write_text(&config_path, config);
+
+        let snapshot = LiveSnapshot::capture(&AppType::Codex)
+            .expect("malformed auth.json should not block snapshot capture");
+
+        write_text(&auth_path, "{}");
+        write_text(&config_path, "");
+        snapshot.restore().expect("restore snapshot");
+
+        assert_eq!(
+            fs::read_to_string(&auth_path).expect("read restored auth"),
+            broken_auth
+        );
+        assert_eq!(
+            fs::read_to_string(&config_path).expect("read restored config"),
+            config
+        );
     }
 
     #[test]
