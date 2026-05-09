@@ -105,6 +105,50 @@ pub async fn handle_claude_desktop_models(
     Ok(Json(response))
 }
 
+/// GET /v1/models — 返回当前 Claude provider 的模型列表
+///
+/// Claude Code 启动时会请求 `GET /v1/models` 和 `GET /v1/models?limit=1`
+/// 来验证连接和获取可用模型。此端点复用 `model_list_response` 构造响应，
+/// 如果 provider 没有配置 `claude_desktop_model_routes`，则从 `settings_config`
+/// 中提取 `ANTHROPIC_MODEL` 构造一个基本的单模型列表。
+pub async fn handle_models(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, ProxyError> {
+    let providers = state
+        .provider_router
+        .select_providers("claude")
+        .await
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
+
+    // 优先使用 claude_desktop_model_routes 构造完整列表
+    if let Ok(response) = crate::claude_desktop_config::model_list_response(provider) {
+        return Ok(Json(response));
+    }
+
+    // 兜底：从 settings_config.env 中提取 ANTHROPIC_MODEL 构造基本列表
+    let model_id = provider
+        .settings_config
+        .get("env")
+        .and_then(|env| env.get("ANTHROPIC_MODEL"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("claude-sonnet-4-20250514");
+
+    Ok(Json(json!({
+        "data": [
+            {
+                "type": "model",
+                "id": model_id,
+                "display_name": model_id,
+                "created_at": "2025-05-14T00:00:00Z",
+            }
+        ],
+        "has_more": false,
+        "first_id": model_id,
+        "last_id": model_id,
+    })))
+}
+
 async fn handle_messages_for_app(
     state: ProxyState,
     request: axum::extract::Request,
