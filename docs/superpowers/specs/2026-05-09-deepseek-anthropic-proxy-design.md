@@ -83,25 +83,37 @@ export type ClaudeApiFormat =
 
 ```ts
 {
-  name: "DeepSeek (Flash)",
+  name: "DeepSeek V4 Flash",
   websiteUrl: "https://platform.deepseek.com",
   apiKeyUrl: "https://platform.deepseek.com/api_keys",
   settingsConfig: {
     env: { ANTHROPIC_API_KEY: "" },
     baseURL: "https://api.deepseek.com/anthropic",
     api_format: "deepseek_anthropic",
-    target_model: "deepseek-chat",
+    target_model: "deepseek-chat",   // 实际发给 DeepSeek 的模型名
+    fake_model: "claude-sonnet-4-6", // Claude Code 看到的伪装模型名
   },
   apiFormat: "deepseek_anthropic",
   apiKeyField: "ANTHROPIC_API_KEY",
   category: "cn_official",
   endpointCandidates: ["https://api.deepseek.com/anthropic"],
-  modelsUrl: "https://api.deepseek.com/anthropic/v1/models",
 },
 {
-  name: "DeepSeek (Pro)",
-  // 同上，target_model: "deepseek-reasoner"
-}
+  name: "DeepSeek V4 Pro",
+  websiteUrl: "https://platform.deepseek.com",
+  apiKeyUrl: "https://platform.deepseek.com/api_keys",
+  settingsConfig: {
+    env: { ANTHROPIC_API_KEY: "" },
+    baseURL: "https://api.deepseek.com/anthropic",
+    api_format: "deepseek_anthropic",
+    target_model: "deepseek-reasoner", // 实际发给 DeepSeek 的模型名
+    fake_model: "claude-opus-4-7",     // Claude Code 看到的伪装模型名
+  },
+  apiFormat: "deepseek_anthropic",
+  apiKeyField: "ANTHROPIC_API_KEY",
+  category: "cn_official",
+  endpointCandidates: ["https://api.deepseek.com/anthropic"],
+},
 ```
 
 #### 修改：`src/i18n/locales/{zh,en,ja}.json`
@@ -113,28 +125,36 @@ export type ClaudeApiFormat =
 ## 数据流
 
 ```
-Claude Code
-    │ POST /v1/messages (model: claude-sonnet-4-5, with thinking history)
+Claude Code（配置伪装模型名，如 claude-sonnet-4-6 / claude-opus-4-7）
+    │ POST /v1/messages (model: "claude-sonnet-4-6")
     ▼
 cc-switch proxy
     │ 1. 检测 api_format == "deepseek_anthropic"
     │ 2. sanitize_request():
-    │    - 删 output_config / thinking
-    │    - 过滤 thinking/redacted_thinking 历史块
+    │    - 保存原始 model 名 "claude-sonnet-4-6" 作为 fake_model
+    │    - 将 model 替换为 target_model（如 "deepseek-chat"）
+    │    - 删 output_config / thinking 顶层字段
+    │    - 过滤消息历史里 type=thinking/redacted_thinking 的块
     │    - web_search → web_search_20250305
-    │    - model → deepseek-chat (or deepseek-reasoner)
-    │    - 保存原始 model 名
     ▼
 DeepSeek API (https://api.deepseek.com/anthropic/v1/messages)
-    │ SSE 响应（model: deepseek-chat）
+    │ SSE 响应（model: "deepseek-chat"）
     ▼
 cc-switch proxy
-    │ 3. 每个 SSE chunk：patch_sse_chunk()
-    │    - "model":"deepseek-chat" → "model":"claude-sonnet-4-5"
+    │ 3. 每个 SSE chunk：patch_sse_chunk(fake_model="claude-sonnet-4-6")
+    │    - "model":"deepseek-chat" → "model":"claude-sonnet-4-6"
     │    - "type":"thinking" → "type":"text"
+    │    - "type":"redacted_thinking" → "type":"text"
     ▼
-Claude Code（看到的是合法的 Claude 响应）
+Claude Code（看到的 model 名是 claude-sonnet-4-6，校验通过）
 ```
+
+**伪装映射：**
+
+| 预设 | Claude Code 看到 | 实际请求 DeepSeek |
+|------|-----------------|-----------------|
+| DeepSeek V4 Flash | `claude-sonnet-4-6` | `deepseek-chat` |
+| DeepSeek V4 Pro | `claude-opus-4-7` | `deepseek-reasoner` |
 
 ---
 
