@@ -47,6 +47,32 @@ export interface ClaudeDesktopDefaultRoute {
   supports1m: boolean;
 }
 
+export interface CodexModelProviderCount {
+  modelProvider: string;
+  count: number;
+}
+
+export interface CodexStateDiagnosis {
+  configModelProvider?: string | null;
+  effectiveModelProvider: string;
+  authMode: string;
+  stateDbPath?: string | null;
+  providerCounts: CodexModelProviderCount[];
+  configAuthMismatch: boolean;
+  indexMismatch: boolean;
+  inconsistent: boolean;
+  repairableRows: number;
+}
+
+export interface CodexStateRepairResult {
+  dryRun: boolean;
+  targetModelProvider: string;
+  affectedRows: number;
+  backupPath?: string | null;
+  diagnosisBefore: CodexStateDiagnosis;
+  diagnosisAfter?: CodexStateDiagnosis | null;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -106,6 +132,14 @@ export const providersApi = {
 
   async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {
     return await invoke("get_claude_desktop_default_routes");
+  },
+
+  async diagnoseCodexState(): Promise<CodexStateDiagnosis> {
+    return await invoke("diagnose_codex_state");
+  },
+
+  async repairCodexState(dryRun: boolean): Promise<CodexStateRepairResult> {
+    return await invoke("repair_codex_state", { dryRun });
   },
 
   async updateTrayMenu(): Promise<boolean> {

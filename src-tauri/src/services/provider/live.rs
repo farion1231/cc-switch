@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::fs;
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -650,6 +651,67 @@ pub(crate) enum LiveSnapshot {
 }
 
 impl LiveSnapshot {
+    pub(crate) fn capture(app_type: &AppType) -> Result<Self, AppError> {
+        match app_type {
+            AppType::Claude => {
+                let path = get_claude_settings_path();
+                let settings = if path.exists() {
+                    Some(read_json_file::<Value>(&path)?)
+                } else {
+                    None
+                };
+                Ok(LiveSnapshot::Claude { settings })
+            }
+            AppType::Codex => {
+                let auth_path = get_codex_auth_path();
+                let config_path = get_codex_config_path();
+                let auth = if auth_path.exists() {
+                    Some(read_json_file::<Value>(&auth_path)?)
+                } else {
+                    None
+                };
+                let config = if config_path.exists() {
+                    Some(
+                        fs::read_to_string(&config_path)
+                            .map_err(|e| AppError::io(&config_path, e))?,
+                    )
+                } else {
+                    None
+                };
+                Ok(LiveSnapshot::Codex { auth, config })
+            }
+            AppType::Gemini => {
+                use crate::gemini_config::{
+                    get_gemini_env_path, get_gemini_settings_path, parse_env_file,
+                };
+
+                let env_path = get_gemini_env_path();
+                let env = if env_path.exists() {
+                    let content =
+                        fs::read_to_string(&env_path).map_err(|e| AppError::io(&env_path, e))?;
+                    Some(parse_env_file(&content))
+                } else {
+                    None
+                };
+
+                let settings_path = get_gemini_settings_path();
+                let config = if settings_path.exists() {
+                    Some(read_json_file::<Value>(&settings_path)?)
+                } else {
+                    None
+                };
+
+                Ok(LiveSnapshot::Gemini { env, config })
+            }
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+                Err(AppError::Message(format!(
+                    "{} does not use an exclusive live snapshot",
+                    app_type.as_str()
+                )))
+            }
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn restore(&self) -> Result<(), AppError> {
         match self {

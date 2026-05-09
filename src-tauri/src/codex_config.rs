@@ -12,6 +12,9 @@ use std::path::Path;
 use toml_edit::DocumentMut;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
+pub const CODEX_OFFICIAL_MODEL_PROVIDER_ID: &str = "openai";
+pub const CODEX_AUTH_MODE_CHATGPT: &str = "chatgpt";
+pub const CODEX_AUTH_MODE_APIKEY: &str = "apikey";
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
 /// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
@@ -157,6 +160,40 @@ fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .map(str::to_string)
+}
+
+pub fn effective_codex_model_provider_id_from_config(config_text: &str) -> String {
+    if config_text.trim().is_empty() {
+        return CODEX_OFFICIAL_MODEL_PROVIDER_ID.to_string();
+    }
+
+    config_text
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| active_codex_model_provider_id(&doc))
+        .unwrap_or_else(|| CODEX_OFFICIAL_MODEL_PROVIDER_ID.to_string())
+}
+
+pub fn infer_codex_auth_mode_from_settings(settings: &Value) -> &'static str {
+    let auth_has_key = settings
+        .get("auth")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("OPENAI_API_KEY"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+
+    let config_has_custom_provider = settings
+        .get("config")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+
+    if auth_has_key || config_has_custom_provider {
+        CODEX_AUTH_MODE_APIKEY
+    } else {
+        CODEX_AUTH_MODE_CHATGPT
+    }
 }
 
 fn is_custom_codex_model_provider_id(id: &str) -> bool {
@@ -529,6 +566,39 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn official_empty_config_uses_openai_provider_bucket() {
+        assert_eq!(
+            effective_codex_model_provider_id_from_config(""),
+            CODEX_OFFICIAL_MODEL_PROVIDER_ID
+        );
+        assert_eq!(
+            effective_codex_model_provider_id_from_config(r#"model = "gpt-5.1""#),
+            CODEX_OFFICIAL_MODEL_PROVIDER_ID
+        );
+    }
+
+    #[test]
+    fn codex_auth_mode_infers_chatgpt_vs_apikey() {
+        assert_eq!(
+            infer_codex_auth_mode_from_settings(&json!({"auth": {}, "config": ""})),
+            CODEX_AUTH_MODE_CHATGPT
+        );
+        assert_eq!(
+            infer_codex_auth_mode_from_settings(
+                &json!({"auth": {"OPENAI_API_KEY": "sk-test"}, "config": ""})
+            ),
+            CODEX_AUTH_MODE_APIKEY
+        );
+        assert_eq!(
+            infer_codex_auth_mode_from_settings(
+                &json!({"auth": {}, "config": "model_provider = \"bold_ai_api\""})
+            ),
+            CODEX_AUTH_MODE_APIKEY
+        );
+    }
 
     #[test]
     fn normalize_live_config_preserves_current_custom_model_provider_id() {

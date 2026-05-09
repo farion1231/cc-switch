@@ -189,6 +189,7 @@ function ProviderFormFull({
     category?: ProviderCategory;
     isPartner?: boolean;
     partnerPromotionKey?: string;
+    codexAuthMode?: "chatgpt" | "apikey";
     suggestedDefaults?: OpenClawSuggestedDefaults;
   } | null>(null);
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
@@ -1166,6 +1167,23 @@ function ProviderFormFull({
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType =
       templatePreset?.providerType || initialData?.meta?.providerType;
+    let codexAuthHasApiKey = false;
+    if (appId === "codex") {
+      try {
+        const authJson = JSON.parse(codexAuth || "{}");
+        codexAuthHasApiKey =
+          typeof authJson?.OPENAI_API_KEY === "string" &&
+          authJson.OPENAI_API_KEY.trim() !== "";
+      } catch {
+        codexAuthHasApiKey = false;
+      }
+    }
+    const codexAuthMode =
+      appId === "codex"
+        ? (activePreset?.codexAuthMode ??
+          initialData?.meta?.codexAuthMode ??
+          (codexAuthHasApiKey || codexConfig.trim() ? "apikey" : "chatgpt"))
+        : undefined;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -1181,6 +1199,7 @@ function ProviderFormFull({
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
       providerType,
+      codexAuthMode,
       authBinding: isCopilotProvider
         ? {
             source: "managed_account",
@@ -1375,11 +1394,17 @@ function ProviderFormFull({
       return;
     }
 
+    const codexPreset =
+      appId === "codex" ? (entry.preset as CodexProviderPreset) : undefined;
     setActivePreset({
       id: value,
       category: entry.preset.category,
       isPartner: entry.preset.isPartner,
       partnerPromotionKey: entry.preset.partnerPromotionKey,
+      codexAuthMode: codexPreset
+        ? (codexPreset.codexAuthMode ??
+          ((codexPreset.config ?? "").trim() ? "apikey" : "chatgpt"))
+        : undefined,
     });
 
     if (appId === "codex") {

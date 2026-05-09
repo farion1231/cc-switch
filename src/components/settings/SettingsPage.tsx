@@ -9,6 +9,7 @@ import {
   ScrollText,
   HardDriveDownload,
   FlaskConical,
+  Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -44,6 +45,7 @@ import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import { CodexStateRepairPanel } from "@/components/settings/CodexStateRepairPanel";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -435,6 +437,33 @@ export function SettingsPage({
                         </AccordionTrigger>
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
                           <ModelTestConfigPanel />
+                        </AccordionContent>
+                      </AccordionItem>
+
+                      <AccordionItem
+                        value="codexState"
+                        className="rounded-xl glass-card overflow-hidden"
+                      >
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                          <div className="flex items-center gap-3">
+                            <Wrench className="h-5 w-5 text-orange-500" />
+                            <div className="text-left">
+                              <h3 className="text-base font-semibold">
+                                {t("settings.advanced.codexState.title", {
+                                  defaultValue: "Codex State Repair",
+                                })}
+                              </h3>
+                              <p className="text-sm text-muted-foreground font-normal">
+                                {t("settings.advanced.codexState.description", {
+                                  defaultValue:
+                                    "Diagnose and repair Codex provider, auth, and history index mismatches",
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                          <CodexStateRepairPanel />
                         </AccordionContent>
                       </AccordionItem>
 
