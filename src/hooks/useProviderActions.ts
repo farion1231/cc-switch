@@ -172,6 +172,13 @@ export function useProviderActions(
             defaultValue: "使用 OpenAI Responses 接口格式",
           });
         } else if (
+          activeApp === "claude-desktop" &&
+          provider.meta?.claudeDesktopMode === "proxy"
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonClaudeDesktop", {
+            defaultValue: "使用 Claude Desktop 本地路由模式",
+          });
+        } else if (
           provider.meta?.isFullUrl &&
           (activeApp === "claude" || activeApp === "codex")
         ) {
@@ -220,16 +227,21 @@ export function useProviderActions(
 
         // 若已弹过 proxyRequired 警告则不再弹 success
         if (!proxyRequiredReason) {
-          // OpenCode/OpenClaw: show "added to config" message instead of "switched"
-          const isMultiProviderApp =
-            activeApp === "opencode" || activeApp === "openclaw";
-          const messageKey = isMultiProviderApp
-            ? "notifications.addToConfigSuccess"
-            : "notifications.switchSuccess";
-          const defaultMessage = isMultiProviderApp
-            ? "已添加到配置"
-            : "切换成功！";
-
+          let messageKey = "notifications.switchSuccess";
+          let defaultMessage = "切换成功！";
+          if (activeApp === "claude-desktop") {
+            if (provider.meta?.claudeDesktopMode === "proxy") {
+              messageKey = "notifications.claudeDesktopProxyRestartRequired";
+              defaultMessage =
+                "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效";
+            } else {
+              messageKey = "notifications.claudeDesktopRestartRequired";
+              defaultMessage = "切换成功，重启 Claude Desktop 后生效";
+            }
+          } else if (activeApp === "opencode" || activeApp === "openclaw") {
+            messageKey = "notifications.addToConfigSuccess";
+            defaultMessage = "已添加到配置";
+          }
           toast.success(t(messageKey, { defaultValue: defaultMessage }), {
             closeButton: true,
           });

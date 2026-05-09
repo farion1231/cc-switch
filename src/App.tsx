@@ -65,6 +65,7 @@ import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { ProxyToggle } from "@/components/proxy/ProxyToggle";
+import { ClaudeDesktopRouteToggle } from "@/components/proxy/ClaudeDesktopRouteToggle";
 import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
@@ -119,6 +120,7 @@ const HEADER_HEIGHT = 64; // px
 const STORAGE_KEY = "cc-switch-last-app";
 const VALID_APPS: AppId[] = [
   "claude",
+  "claude-desktop",
   "codex",
   "gemini",
   "opencode",
@@ -186,6 +188,7 @@ function App() {
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
   const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
     claude: true,
+    "claude-desktop": true,
     codex: true,
     gemini: true,
     opencode: true,
@@ -195,6 +198,7 @@ function App() {
 
   const getFirstVisibleApp = (): AppId => {
     if (visibleApps.claude) return "claude";
+    if (visibleApps["claude-desktop"]) return "claude-desktop";
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
     if (visibleApps.opencode) return "opencode";
@@ -276,7 +280,7 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = true;
+  const hasSkillsSupport = activeApp !== "claude-desktop";
   const hasSessionSupport =
     activeApp === "claude" ||
     activeApp === "codex" ||
@@ -1273,12 +1277,17 @@ function App() {
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
                 >
-                  {settingsData?.enableLocalProxy && (
-                    <ProxyToggle activeApp={activeApp} />
+                  {activeApp === "claude-desktop" ? (
+                    <ClaudeDesktopRouteToggle />
+                  ) : (
+                    settingsData?.enableLocalProxy && (
+                      <ProxyToggle activeApp={activeApp} />
+                    )
                   )}
-                  {settingsData?.enableFailoverToggle && (
-                    <FailoverToggle activeApp={activeApp} />
-                  )}
+                  {activeApp !== "claude-desktop" &&
+                    settingsData?.enableFailoverToggle && (
+                      <FailoverToggle activeApp={activeApp} />
+                    )}
                 </div>
               )}
             <div
@@ -1519,15 +1528,17 @@ function App() {
                               >
                                 <Wrench className="flex-shrink-0 w-4 h-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("prompts")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("prompts.manage")}
-                              >
-                                <Book className="w-4 h-4" />
-                              </Button>
+                              {activeApp !== "claude-desktop" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("prompts")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title={t("prompts.manage")}
+                                >
+                                  <Book className="w-4 h-4" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1543,15 +1554,17 @@ function App() {
                               >
                                 <History className="flex-shrink-0 w-4 h-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("mcp")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("mcp.title")}
-                              >
-                                <McpIcon size={16} />
-                              </Button>
+                              {activeApp !== "claude-desktop" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("mcp")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title={t("mcp.title")}
+                                >
+                                  <McpIcon size={16} />
+                                </Button>
+                              )}
                             </>
                           )}
                         </motion.div>

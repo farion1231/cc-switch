@@ -28,6 +28,13 @@ fn default_true() -> bool {
 pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub claude: bool,
+    #[serde(
+        rename = "claude-desktop",
+        alias = "claudeDesktop",
+        alias = "claude_desktop",
+        default = "default_true"
+    )]
+    pub claude_desktop: bool,
     #[serde(default = "default_true")]
     pub codex: bool,
     #[serde(default = "default_true")]
@@ -44,6 +51,7 @@ impl Default for VisibleApps {
     fn default() -> Self {
         Self {
             claude: true,
+            claude_desktop: true,
             codex: true,
             gemini: true,
             opencode: true,
@@ -58,6 +66,7 @@ impl VisibleApps {
     pub fn is_visible(&self, app: &AppType) -> bool {
         match app {
             AppType::Claude => self.claude,
+            AppType::ClaudeDesktop => self.claude_desktop,
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
@@ -262,6 +271,9 @@ pub struct AppSettings {
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_claude: Option<String>,
+    /// 当前 Claude Desktop 供应商 ID（本地存储，优先于数据库 is_current）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_claude_desktop: Option<String>,
     /// 当前 Codex 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_codex: Option<String>,
@@ -352,6 +364,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             current_provider_claude: None,
+            current_provider_claude_desktop: None,
             current_provider_codex: None,
             current_provider_gemini: None,
             current_provider_opencode: None,
@@ -771,6 +784,11 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         {
             let value = match app_type {
                 AppType::Claude => &profile.current_provider_claude,
+                AppType::ClaudeDesktop => {
+                    // ClaudeDesktop is device-level only, not stored in profiles
+                    // Skip profile lookup and use top-level field directly
+                    return settings.current_provider_claude_desktop.clone();
+                }
                 AppType::Codex => &profile.current_provider_codex,
                 AppType::Gemini => &profile.current_provider_gemini,
                 AppType::OpenCode => &profile.current_provider_opencode,
@@ -785,6 +803,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
     // Fallback to top-level fields for backward compatibility
     match app_type {
         AppType::Claude => settings.current_provider_claude.clone(),
+        AppType::ClaudeDesktop => settings.current_provider_claude_desktop.clone(),
         AppType::Codex => settings.current_provider_codex.clone(),
         AppType::Gemini => settings.current_provider_gemini.clone(),
         AppType::OpenCode => settings.current_provider_opencode.clone(),
@@ -811,6 +830,10 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
             {
                 match cloned_app_type {
                     AppType::Claude => profile.current_provider_claude = cloned_id.clone(),
+                    AppType::ClaudeDesktop => {
+                        // ClaudeDesktop is device-level only, not stored in profiles
+                        settings.current_provider_claude_desktop = cloned_id.clone();
+                    }
                     AppType::Codex => profile.current_provider_codex = cloned_id.clone(),
                     AppType::Gemini => profile.current_provider_gemini = cloned_id.clone(),
                     AppType::OpenCode => profile.current_provider_opencode = cloned_id.clone(),
@@ -823,6 +846,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         // Fallback to top-level fields for backward compatibility
         match cloned_app_type {
             AppType::Claude => settings.current_provider_claude = cloned_id.clone(),
+            AppType::ClaudeDesktop => settings.current_provider_claude_desktop = cloned_id.clone(),
             AppType::Codex => settings.current_provider_codex = cloned_id.clone(),
             AppType::Gemini => settings.current_provider_gemini = cloned_id.clone(),
             AppType::OpenCode => settings.current_provider_opencode = cloned_id.clone(),
@@ -1179,5 +1203,36 @@ mod tests {
         // No legacy fields, so no migration
         assert!(s.config_dir_profiles.is_empty());
         assert!(s.active_config_dir_profile_id.is_none());
+    }
+
+    #[test]
+    fn visible_apps_old_settings_default_claude_desktop_visible() {
+        let visible: VisibleApps = serde_json::from_value(serde_json::json!({
+            "claude": true,
+            "codex": true,
+            "gemini": true,
+            "opencode": true,
+            "openclaw": true,
+            "hermes": true
+        }))
+        .expect("visible apps");
+
+        assert!(visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn visible_apps_accepts_claude_desktop_aliases() {
+        let visible: VisibleApps = serde_json::from_value(serde_json::json!({
+            "claude": true,
+            "claudeDesktop": false,
+            "codex": true,
+            "gemini": true,
+            "opencode": true,
+            "openclaw": true,
+            "hermes": true
+        }))
+        .expect("visible apps");
+
+        assert!(!visible.is_visible(&AppType::ClaudeDesktop));
     }
 }
