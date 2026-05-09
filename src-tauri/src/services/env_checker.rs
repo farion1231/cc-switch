@@ -116,22 +116,9 @@ fn check_shell_configs(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
 
     for file_path in config_files {
         if let Ok(content) = fs::read_to_string(&file_path) {
-            // Parse lines for export statements
             for (line_num, line) in content.lines().enumerate() {
-                let trimmed = line.trim();
-
-                if trimmed.starts_with('#') {
+                let Some(assignment) = extract_exporting_assignment(line.trim()) else {
                     continue;
-                }
-
-                // Only treat lines as env assignments when they are explicit exports
-                // or bare `NAME=VALUE` forms. Skip alias/function/local/declare/etc.
-                let assignment = if let Some(rest) = trimmed.strip_prefix("export ") {
-                    rest.trim_start()
-                } else if !trimmed.contains('=') {
-                    continue;
-                } else {
-                    trimmed
                 };
 
                 let Some(eq_pos) = assignment.find('=') else {
@@ -162,6 +149,61 @@ fn check_shell_configs(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
     }
 
     Ok(conflicts)
+}
+
+/// Strip exporting builtins (`export`, `declare -x`, `typeset -gx`, …) from a
+/// trimmed shell line and return the inner `NAME=VALUE` portion. Returns None
+/// for comments, non-assignment lines, or `declare`/`typeset` calls without
+/// `-x` (which create function-local, non-exported variables).
+#[cfg(not(target_os = "windows"))]
+fn extract_exporting_assignment(trimmed: &str) -> Option<&str> {
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("export ") {
+        return Some(rest.trim_start());
+    }
+
+    // bash `declare` and zsh `typeset` only export when `-x` is in the flags
+    // (e.g. `declare -x FOO=bar`, `typeset -gx FOO=bar`).
+    for builtin in ["declare", "typeset"] {
+        let Some(after) = trimmed.strip_prefix(builtin) else {
+            continue;
+        };
+        let Some(first) = after.chars().next() else {
+            continue;
+        };
+        if !first.is_whitespace() {
+            // e.g. `declared=foo` — different variable, fall through to bare path.
+            continue;
+        }
+
+        let mut s = after.trim_start();
+        let mut has_x = false;
+        while let Some(rest) = s.strip_prefix('-') {
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            let flag = &rest[..end];
+            if flag == "-" {
+                // `--` end-of-options marker
+                s = rest[end..].trim_start();
+                break;
+            }
+            if flag.contains('x') {
+                has_x = true;
+            }
+            s = rest[end..].trim_start();
+        }
+
+        return if has_x { Some(s) } else { None };
+    }
+
+    // Bare `NAME=VALUE` — common in rc files paired with a later `export NAME`.
+    if trimmed.contains('=') {
+        Some(trimmed)
+    } else {
+        None
+    }
 }
 
 /// A valid POSIX-ish env var name: starts with letter or `_`, then alphanumerics/`_`.
@@ -203,5 +245,65 @@ mod tests {
         assert!(!is_valid_env_name("1FOO"));
         assert!(!is_valid_env_name(""));
         assert!(!is_valid_env_name("FOO-BAR"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_extract_exporting_assignment() {
+        // export
+        assert_eq!(
+            extract_exporting_assignment("export GEMINI_API_KEY=foo"),
+            Some("GEMINI_API_KEY=foo")
+        );
+
+        // bash `declare -x`
+        assert_eq!(
+            extract_exporting_assignment("declare -x OPENAI_API_KEY=sk-x"),
+            Some("OPENAI_API_KEY=sk-x")
+        );
+
+        // zsh `typeset -gx` (combined flags)
+        assert_eq!(
+            extract_exporting_assignment("typeset -gx GEMINI_API_KEY=bar"),
+            Some("GEMINI_API_KEY=bar")
+        );
+
+        // Multiple flags including -x
+        assert_eq!(
+            extract_exporting_assignment("declare -r -x ANTHROPIC_API_KEY=k"),
+            Some("ANTHROPIC_API_KEY=k")
+        );
+
+        // declare without -x is function-local — must be skipped
+        assert_eq!(
+            extract_exporting_assignment("declare GEMINI_API_KEY=local"),
+            None
+        );
+        assert_eq!(
+            extract_exporting_assignment("typeset -g GEMINI_API_KEY=local"),
+            None
+        );
+
+        // alias must fall through and be rejected later by is_valid_env_name
+        assert_eq!(
+            extract_exporting_assignment("alias gemini=\"/path/to/gemini -y\""),
+            Some("alias gemini=\"/path/to/gemini -y\"")
+        );
+
+        // bare assignment is preserved
+        assert_eq!(
+            extract_exporting_assignment("FOO=bar"),
+            Some("FOO=bar")
+        );
+
+        // comments and empty lines
+        assert_eq!(extract_exporting_assignment("# export FOO=bar"), None);
+        assert_eq!(extract_exporting_assignment(""), None);
+
+        // `declared` (different variable name starting with "declare") should not be eaten
+        assert_eq!(
+            extract_exporting_assignment("declared=foo"),
+            Some("declared=foo")
+        );
     }
 }
