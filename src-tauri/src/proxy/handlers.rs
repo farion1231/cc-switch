@@ -94,15 +94,96 @@ pub async fn handle_claude_desktop_models(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Value>, ProxyError> {
     validate_claude_desktop_gateway_auth(&state, &headers)?;
-    let providers = state
-        .provider_router
-        .select_providers("claude-desktop")
-        .await
-        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
-    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
-    let response = crate::claude_desktop_config::model_list_response(provider)
+    let provider = select_models_endpoint_provider(&state, "claude-desktop").await?;
+
+    if get_claude_api_format(&provider) == "deepseek_anthropic" {
+        return Ok(Json(build_deepseek_disguised_models_payload(&provider)));
+    }
+
+    let response = crate::claude_desktop_config::model_list_response(&provider)
         .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
     Ok(Json(response))
+}
+
+/// 处理 /v1/models 请求（Claude API）
+///
+/// 仅在 DeepSeek Anthropic 兼容供应商上返回伪装的模型列表（claude-* 名）。
+/// 其它 Claude 供应商上游若未实现 /v1/models，统一返回 404，避免误透传。
+pub async fn handle_claude_models(
+    State(state): State<ProxyState>,
+    _headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let provider = match select_models_endpoint_provider(&state, "claude").await {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
+    };
+    if get_claude_api_format(&provider) == "deepseek_anthropic" {
+        return Json(build_deepseek_disguised_models_payload(&provider)).into_response();
+    }
+    StatusCode::NOT_FOUND.into_response()
+}
+
+/// 用于伪装模型列表的 env keys（顺序 = 输出顺序）
+const MODEL_ENV_KEYS: &[&str] = &[
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+];
+
+/// 从 provider.settings_config.env 中提取 ANTHROPIC_* 模型名，构建伪装的 /v1/models 响应。
+///
+/// - 按 MODEL_ENV_KEYS 顺序取值，跳过空字符串
+/// - 去重（按出现顺序保留首次）
+/// - 若全空，回退为 ["claude-sonnet-4-6"]
+pub(crate) fn build_deepseek_disguised_models_payload(
+    provider: &crate::provider::Provider,
+) -> Value {
+    let env_map = provider
+        .settings_config
+        .get("env")
+        .and_then(|v| v.as_object());
+    let mut disguised: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for key in MODEL_ENV_KEYS {
+        if let Some(s) = env_map
+            .and_then(|m| m.get(*key))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            if seen.insert(s.to_string()) {
+                disguised.push(s.to_string());
+            }
+        }
+    }
+    if disguised.is_empty() {
+        disguised.push("claude-sonnet-4-6".to_string());
+    }
+    let data: Vec<Value> = disguised
+        .into_iter()
+        .map(|name| json!({"type": "model", "id": name, "display_name": name}))
+        .collect();
+    json!({ "data": data })
+}
+
+/// /v1/models 端点选取 provider 的统一逻辑（不做健康度过滤外的额外校验）
+async fn select_models_endpoint_provider(
+    state: &ProxyState,
+    app_type_str: &'static str,
+) -> Result<crate::provider::Provider, ProxyError> {
+    let providers = state
+        .provider_router
+        .select_providers(app_type_str)
+        .await
+        .map_err(|e| match e {
+            crate::error::AppError::AllProvidersCircuitOpen => ProxyError::AllProvidersCircuitOpen,
+            crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
+            other => ProxyError::DatabaseError(other.to_string()),
+        })?;
+    providers
+        .into_iter()
+        .next()
+        .ok_or(ProxyError::NoAvailableProvider)
 }
 
 async fn handle_messages_for_app(
@@ -920,5 +1001,89 @@ data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"upstr
 data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n\n";
 
         assert!(responses_sse_to_response_value(sse).is_err());
+    }
+}
+
+#[cfg(test)]
+mod tests_models {
+    use super::build_deepseek_disguised_models_payload;
+    use crate::provider::Provider;
+    use serde_json::json;
+
+    fn make_provider_with_env(env: serde_json::Value) -> Provider {
+        Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({ "env": env }),
+            website_url: None,
+            category: Some("claude".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    #[test]
+    fn test_disguised_payload_basic() {
+        let provider = make_provider_with_env(json!({
+            "ANTHROPIC_MODEL": "claude-opus-4-7",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-sonnet-4-6",
+        }));
+        let payload = build_deepseek_disguised_models_payload(&provider);
+        let data = payload["data"].as_array().unwrap();
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0]["id"], "claude-opus-4-7");
+        assert_eq!(data[1]["id"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn test_disguised_payload_empty_env_fallback() {
+        let provider = make_provider_with_env(json!({}));
+        let payload = build_deepseek_disguised_models_payload(&provider);
+        let data = payload["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["id"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn test_disguised_payload_deduplication_order() {
+        let provider = make_provider_with_env(json!({
+            "ANTHROPIC_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7",
+        }));
+        let payload = build_deepseek_disguised_models_payload(&provider);
+        let data = payload["data"].as_array().unwrap();
+        assert_eq!(data[0]["id"], "claude-sonnet-4-6");
+        assert_eq!(data[1]["id"], "claude-opus-4-7");
+    }
+
+    #[test]
+    fn test_disguised_payload_skips_empty_string() {
+        let provider = make_provider_with_env(json!({
+            "ANTHROPIC_MODEL": "",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
+        }));
+        let payload = build_deepseek_disguised_models_payload(&provider);
+        let data = payload["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["id"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn test_disguised_payload_item_shape() {
+        let provider = make_provider_with_env(json!({
+            "ANTHROPIC_MODEL": "claude-opus-4-7",
+        }));
+        let payload = build_deepseek_disguised_models_payload(&provider);
+        let item = &payload["data"][0];
+        assert_eq!(item["type"], "model");
+        assert_eq!(item["id"], "claude-opus-4-7");
+        assert_eq!(item["display_name"], "claude-opus-4-7");
     }
 }

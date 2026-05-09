@@ -285,6 +285,9 @@ impl ProxyServer {
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
+            // /v1/models（仅在 DeepSeek Anthropic 兼容场景下返回伪装模型列表）
+            .route("/v1/models", get(handlers::handle_claude_models))
+            .route("/claude/v1/models", get(handlers::handle_claude_models))
             // Claude Desktop 3P 本地 gateway（独立 provider namespace）
             .route(
                 "/claude-desktop/v1/models",
