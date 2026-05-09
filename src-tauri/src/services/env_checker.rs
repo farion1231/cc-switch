@@ -120,35 +120,59 @@ fn check_shell_configs(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
             for (line_num, line) in content.lines().enumerate() {
                 let trimmed = line.trim();
 
-                // Match patterns like: export VAR=value or VAR=value
-                if trimmed.starts_with("export ")
-                    || (!trimmed.starts_with('#') && trimmed.contains('='))
-                {
-                    let export_line = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+                if trimmed.starts_with('#') {
+                    continue;
+                }
 
-                    if let Some(eq_pos) = export_line.find('=') {
-                        let var_name = export_line[..eq_pos].trim();
-                        let var_value = export_line[eq_pos + 1..].trim();
+                // Only treat lines as env assignments when they are explicit exports
+                // or bare `NAME=VALUE` forms. Skip alias/function/local/declare/etc.
+                let assignment = if let Some(rest) = trimmed.strip_prefix("export ") {
+                    rest.trim_start()
+                } else if !trimmed.contains('=') {
+                    continue;
+                } else {
+                    trimmed
+                };
 
-                        // Check if variable name contains any keyword
-                        if keywords.iter().any(|k| var_name.to_uppercase().contains(k)) {
-                            conflicts.push(EnvConflict {
-                                var_name: var_name.to_string(),
-                                var_value: var_value
-                                    .trim_matches('"')
-                                    .trim_matches('\'')
-                                    .to_string(),
-                                source_type: "file".to_string(),
-                                source_path: format!("{}:{}", file_path, line_num + 1),
-                            });
-                        }
-                    }
+                let Some(eq_pos) = assignment.find('=') else {
+                    continue;
+                };
+                let var_name = assignment[..eq_pos].trim();
+                let var_value = assignment[eq_pos + 1..].trim();
+
+                // Reject anything that isn't a valid shell identifier — this filters
+                // out aliases (`alias gemini=...`), functions, and lines with spaces.
+                if !is_valid_env_name(var_name) {
+                    continue;
+                }
+
+                if keywords.iter().any(|k| var_name.to_uppercase().contains(k)) {
+                    conflicts.push(EnvConflict {
+                        var_name: var_name.to_string(),
+                        var_value: var_value
+                            .trim_matches('"')
+                            .trim_matches('\'')
+                            .to_string(),
+                        source_type: "file".to_string(),
+                        source_path: format!("{}:{}", file_path, line_num + 1),
+                    });
                 }
             }
         }
     }
 
     Ok(conflicts)
+}
+
+/// A valid POSIX-ish env var name: starts with letter or `_`, then alphanumerics/`_`.
+#[cfg(not(target_os = "windows"))]
+fn is_valid_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]
@@ -164,5 +188,20 @@ mod tests {
             vec!["GEMINI", "GOOGLE_GEMINI"]
         );
         assert_eq!(get_keywords_for_app("unknown"), Vec::<&str>::new());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_is_valid_env_name() {
+        assert!(is_valid_env_name("GEMINI_API_KEY"));
+        assert!(is_valid_env_name("_FOO"));
+        assert!(is_valid_env_name("Foo123"));
+
+        // aliases / functions / multi-word — must be rejected
+        assert!(!is_valid_env_name("alias gemini"));
+        assert!(!is_valid_env_name("function gemini()"));
+        assert!(!is_valid_env_name("1FOO"));
+        assert!(!is_valid_env_name(""));
+        assert!(!is_valid_env_name("FOO-BAR"));
     }
 }

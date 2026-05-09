@@ -573,6 +573,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
+        push_unique_path(&mut search_paths, home.join(".bun/bin"));
     }
 
     #[cfg(target_os = "macos")]
