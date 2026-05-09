@@ -11,7 +11,7 @@ import { TEMPLATE_TYPES } from "@/config/constants";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
-  id: "kimi" | "zhipu" | "minimax";
+  id: "kimi" | "zhipu" | "minimax" | "zenmux";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -29,6 +29,11 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "minimax",
     label: "MiniMax",
     pattern: /api\.minimaxi?\.com|api\.minimax\.io/i,
+  },
+  {
+    id: "zenmux",
+    label: "ZenMux",
+    pattern: /zenmux\./i,
   },
 ] as const;
 

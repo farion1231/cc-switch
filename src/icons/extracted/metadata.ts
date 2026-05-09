@@ -226,6 +226,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["minimax"],
     defaultColor: "#FF6B6B",
   },
+  zenmux: {
+    name: "zenmux",
+    displayName: "ZenMux",
+    category: "ai-provider",
+    keywords: ["zenmux", "zen", "mux"],
+    defaultColor: "#6366F1",
+  },
   mistral: {
     name: "mistral",
     displayName: "Mistral",
