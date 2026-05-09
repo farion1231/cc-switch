@@ -74,6 +74,26 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       "NewAPI 是一个可自部署的 API 网关，支持 Anthropic、OpenAI、Gemini 等多种协议",
   },
   {
+    name: "DeepSeek",
+    providerType: "deepseek",
+    defaultApps: {
+      claude: false,
+      codex: true,
+      gemini: false,
+    },
+    defaultModels: {
+      codex: {
+        model: "deepseek-chat",
+        reasoningEffort: "medium",
+      },
+    },
+    websiteUrl: "https://platform.deepseek.com",
+    icon: "deepseek",
+    iconColor: "#4D6BFE",
+    description:
+      "DeepSeek 深度求索官方 API，支持 Chat Completions 格式（需通过 Codex 应用配置）",
+  },
+  {
     name: "自定义网关",
     providerType: "custom_gateway",
     defaultApps: {

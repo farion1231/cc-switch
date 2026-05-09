@@ -508,6 +508,20 @@ impl StreamCheckService {
         }
     }
 
+    /// 检测 Codex provider 是否使用 chat_completions 格式
+    fn is_codex_chat_completions_format(provider: &Provider) -> bool {
+        provider
+            .settings_config
+            .get("api_format")
+            .and_then(|v| v.as_str())
+            == Some("chat_completions")
+            || provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.api_format.as_deref())
+                == Some("chat_completions")
+    }
+
     /// Codex 流式检查
     ///
     /// 严格按照 Codex CLI 真实请求格式构建请求 (Responses API)
@@ -533,6 +547,21 @@ impl StreamCheckService {
         // 获取本地系统信息
         let os_name = Self::get_os_name();
         let arch_name = Self::get_arch_name();
+
+        // 检测是否使用 Chat Completions 格式（如 DeepSeek）
+        if Self::is_codex_chat_completions_format(provider) {
+            return Self::check_codex_chat_completions_stream(
+                client,
+                base_url,
+                auth,
+                &actual_model,
+                test_prompt,
+                timeout,
+                provider,
+                &os_name,
+                &arch_name,
+            ).await;
+        }
 
         // Responses API 请求体格式 (input 必须是数组)
         let mut body = json!({
@@ -589,6 +618,86 @@ impl StreamCheckService {
 
         Err(AppError::Message(
             "No valid Codex responses endpoint found".to_string(),
+        ))
+    }
+
+    /// Codex Chat Completions 流式检查（用于 DeepSeek 等不支持 Responses API 的供应商）
+    async fn check_codex_chat_completions_stream(
+        client: &Client,
+        base_url: &str,
+        auth: &AuthInfo,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+        provider: &Provider,
+        os_name: &str,
+        arch_name: &str,
+    ) -> Result<(u16, String), AppError> {
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+
+        let urls = if is_full_url {
+            vec![base_url.to_string()]
+        } else {
+            let base = base_url.trim_end_matches('/');
+            if base.ends_with("/v1") {
+                vec![format!("{base}/chat/completions")]
+            } else {
+                vec![format!("{base}/chat/completions"), format!("{base}/v1/chat/completions")]
+            }
+        };
+
+        // Chat Completions 请求体格式
+        let body = json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": test_prompt }],
+            "stream": true
+        });
+
+        for (i, url) in urls.iter().enumerate() {
+            let response = client
+                .post(url)
+                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity")
+                .header(
+                    "user-agent",
+                    format!("codex_cli_rs/0.80.0 ({os_name} 15.7.2; {arch_name}) Terminal"),
+                )
+                .header("originator", "codex_cli_rs")
+                .timeout(timeout)
+                .json(&body)
+                .send()
+                .await
+                .map_err(Self::map_request_error)?;
+
+            let status = response.status().as_u16();
+
+            if !response.status().is_success() {
+                let error_text = response.text().await.unwrap_or_default();
+                if i == 0 && status == 404 && urls.len() > 1 {
+                    continue;
+                }
+                return Err(Self::http_status_error(status, error_text));
+            }
+
+            let mut stream = response.bytes_stream();
+            if let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(_) => return Ok((status, model.to_string())),
+                    Err(e) => return Err(AppError::Message(format!("Stream read failed: {e}"))),
+                }
+            }
+
+            return Err(AppError::Message("No response data received".to_string()));
+        }
+
+        Err(AppError::Message(
+            "No valid Codex chat completions endpoint found".to_string(),
         ))
     }
 

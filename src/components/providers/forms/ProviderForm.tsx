@@ -14,6 +14,7 @@ import type {
   ProviderMeta,
   ProviderTestConfig,
   ClaudeApiFormat,
+  CodexApiFormat,
   ClaudeApiKeyField,
 } from "@/types";
 import {
@@ -407,6 +408,12 @@ export function ProviderForm({
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
+
+  const [codexApiFormat, setCodexApiFormat] = useState<
+    CodexApiFormat | ""
+  >(() => {
+    return (initialData?.settingsConfig?.api_format as string) === 'chat_completions' ? 'chat_completions' : '';
+  });
 
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
@@ -1019,6 +1026,7 @@ export function ProviderForm({
         const authJson = JSON.parse(codexAuth);
         const configObj = {
           auth: authJson,
+          api_format: codexApiFormat || undefined,
           config: codexConfig ?? "",
         };
         settingsConfig = JSON.stringify(configObj);
@@ -1108,14 +1116,14 @@ export function ProviderForm({
     if (!isEditMode && draftCustomEndpoints.length > 0) {
       const customEndpointsToSave: Record<
         string,
-        import("@/types").CustomEndpoint
+        CustomEndpoint
       > = draftCustomEndpoints.reduce(
         (acc, url) => {
           const now = Date.now();
           acc[url] = { url, addedAt: now, lastUsed: undefined };
           return acc;
         },
-        {} as Record<string, import("@/types").CustomEndpoint>,
+        {} as Record<string, CustomEndpoint>,
       );
 
       const hadEndpoints =
@@ -1839,6 +1847,8 @@ export function ProviderForm({
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}
               speedTestEndpoints={speedTestEndpoints}
+              apiFormat={codexApiFormat}
+              onApiFormatChange={setCodexApiFormat}
             />
           )}
 

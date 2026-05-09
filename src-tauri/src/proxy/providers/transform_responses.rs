@@ -575,6 +575,191 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
 
     Ok(result)
 }
+/// Validate and fix the Chat Completions message sequence for DeepSeek compliance.
+///
+/// DeepSeek strictly requires every assistant message with tool_calls to be
+/// immediately followed by tool messages matching each tool_call_id — no other
+/// message types may appear between the assistant and its tool results.
+///
+/// This function:
+/// - Builds an index of all tool messages by tool_call_id.
+/// - For each assistant with tool_calls, collects matching tool messages and
+///   places them right after the assistant.
+/// - Strips orphan tool_calls that have no matching tool message anywhere.
+/// - Drops orphan tool messages that have no matching assistant tool_call.
+fn reorder_tool_messages(messages: Vec<Value>) -> Vec<Value> {
+    use std::collections::{HashMap, HashSet};
+
+    // Phase 0: Build index of tool messages by tool_call_id.
+    // Multi-map because a single tool_call_id may appear multiple times
+    // (e.g. across different conversation turns).
+    let mut tool_by_call_id: HashMap<String, Vec<Value>> = HashMap::new();
+    let mut tool_indices: Vec<usize> = Vec::new(); // positions of tool messages
+
+    for (idx, msg) in messages.iter().enumerate() {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("tool") {
+            if let Some(call_id) = msg.get("tool_call_id").and_then(|i| i.as_str()) {
+                tool_by_call_id
+                    .entry(call_id.to_string())
+                    .or_default()
+                    .push(msg.clone());
+            }
+            tool_indices.push(idx);
+        }
+    }
+
+    // Phase 1: Identify which tool_call_ids exist (have at least one tool message).
+    let existing_tool_ids: HashSet<&str> = tool_by_call_id.keys().map(|s| s.as_str()).collect();
+
+    // Phase 2: For each assistant, collect all tool_calls that have matching
+    // tool messages, and record their positions.
+    struct AssistantInfo {
+        idx: usize,
+        tool_call_ids: Vec<String>, // only those with matching tool messages
+    }
+    let mut assistant_infos: Vec<AssistantInfo> = Vec::new();
+
+    for (idx, msg) in messages.iter().enumerate() {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+            if let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) {
+                let matching_ids: Vec<String> = tool_calls
+                    .iter()
+                    .filter_map(|tc| {
+                        tc.get("id")
+                            .and_then(|id| id.as_str())
+                            .map(|id| id.to_string())
+                    })
+                    .filter(|id| existing_tool_ids.contains(&**id))
+                    .collect();
+
+                if !matching_ids.is_empty() {
+                    assistant_infos.push(AssistantInfo {
+                        idx,
+                        tool_call_ids: matching_ids,
+                    });
+                }
+            }
+        }
+    }
+
+    // Phase 3: Build output — copy messages, inserting tool messages after
+    // each assistant. Track which tool messages have been consumed.
+    let tool_indices_set: HashSet<usize> = tool_indices.into_iter().collect();
+    let mut consumed_tool_positions: HashSet<usize> = HashSet::new();
+    let mut result: Vec<Value> = Vec::new();
+
+    let mut assistant_iter = assistant_infos.iter().peekable();
+    let mut pending_orphan_tools: usize = 0;
+
+    for (idx, msg) in messages.iter().enumerate() {
+        let is_tool = tool_indices_set.contains(&idx);
+
+        if is_tool {
+            // Tool messages are handled when their matching assistant is processed
+            if !consumed_tool_positions.contains(&idx) {
+                consumed_tool_positions.insert(idx);
+                pending_orphan_tools += 1;
+            }
+            continue;
+        }
+
+        // Check if this is an assistant that needs tool messages inserted
+        if let Some(info) = assistant_iter.next_if(|a| a.idx == idx) {
+            // Clone and strip orphan tool_calls (no matching tool message)
+            let mut msg = msg.clone();
+            if let Some(tool_calls) = msg.get_mut("tool_calls").and_then(|t| t.as_array_mut()) {
+                let before = tool_calls.len();
+                tool_calls.retain(|tc| {
+                    tc.get("id")
+                        .and_then(|id| id.as_str())
+                        .map(|id| existing_tool_ids.contains(id))
+                        .unwrap_or(false)
+                });
+                let removed = before - tool_calls.len();
+                if removed > 0 {
+                    log::warn!(
+                        "[Codex] 移除了 {} 个孤儿 tool_calls（无对应 tool 消息）",
+                        removed
+                    );
+                }
+                if tool_calls.is_empty() {
+                    let content_is_null = msg.get("content").map_or(false, |c| c.is_null());
+                if let Some(obj) = msg.as_object_mut() {
+                    obj.remove("tool_calls");
+                    if content_is_null {
+                        obj.insert("content".to_string(), json!(""));
+                    }
+                }
+                }
+            }
+            result.push(msg);
+
+            // Insert matching tool messages immediately after
+            for call_id in &info.tool_call_ids {
+                if let Some(tool_msgs) = tool_by_call_id.get(call_id) {
+                    for t in tool_msgs {
+                        result.push(t.clone());
+                    }
+                }
+            }
+        } else {
+            // Regular message (user, system, assistant without tool_calls, etc.)
+            result.push(msg.clone());
+        }
+    }
+
+    if pending_orphan_tools > 0 {
+        log::warn!(
+            "[Codex] 丢弃 {} 个孤儿 tool 消息（无前置 assistant 的 tool_calls 匹配）",
+            pending_orphan_tools
+        );
+    }
+
+    if result.len() != messages.len() {
+        log::info!(
+            "[Codex] Tool 消息清理: {} → {} 条消息",
+            messages.len(),
+            result.len()
+        );
+    }
+
+    result
+}/// Recursively strip all image content blocks from a content value,
+/// replacing them with "[Image]" text placeholders. This is a safety net
+/// for text-only models (DeepSeek, etc.) that reject image_url blocks.
+fn sanitize_image_content(content: &Value) -> Value {
+    match content {
+        Value::Array(arr) => {
+            let sanitized: Vec<Value> = arr
+                .iter()
+                .map(|item| {
+                    if let Some(bt) = item.get("type").and_then(|t| t.as_str()) {
+                        match bt {
+                            // Chat Completions image format
+                            "image_url" => {
+                                json!({"type": "text", "text": "[Image]"})
+                            }
+                            // Responses API image format (should not appear here,
+                            // but handled defensively)
+                            "input_image" | "output_image" => {
+                                json!({"type": "text", "text": "[Image]"})
+                            }
+                            // Pass through non-image blocks unchanged
+                            _ => item.clone(),
+                        }
+                    } else {
+                        item.clone()
+                    }
+                })
+                .collect();
+            Value::Array(sanitized)
+        }
+        // String content is always safe
+        _ => content.clone(),
+    }
+}
+
+
 
 /// OpenAI Responses 请求 → Chat Completions 请求
 ///
@@ -592,6 +777,23 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
 /// - `reasoning.effort` → `reasoning_effort` (DeepSeek 兼容)
 /// - `tools` → 透传（Responses API 的 function tool 格式与 Chat Completions 兼容）
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
+    // If the request is already in Chat Completions format (has "messages" not "input"),
+    // Codex may have sent it directly for providers it knows support Chat Completions.
+    // In that case, pass through without double-transforming.
+    if body.get("messages").is_some() && body.get("input").is_none() {
+        log::info!("[Codex] 请求已是 Chat Completions 格式，跳过转换，执行图片安全检查");
+        let mut body = body;
+        // Safety net: strip image content for text-only models (DeepSeek)
+        if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+            for msg in messages.iter_mut() {
+                if let Some(msg_content) = msg.get("content").cloned() {
+                    msg["content"] = sanitize_image_content(&msg_content);
+                }
+            }
+        }
+        return Ok(body);
+    }
+
     let mut result = json!({});
 
     // model
@@ -651,8 +853,7 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
                     };
                     if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
                         let mut text_parts: Vec<String> = Vec::new();
-                        let mut image_parts: Vec<Value> = Vec::new();
-                        for block in content {
+                                                for block in content {
                             let bt = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
                             match bt {
                                 "input_text" | "output_text" => {
@@ -663,29 +864,44 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
                                     }
                                 }
                                 "input_image" => {
-                                    if let Some(url) = block.get("image_url") {
-                                        image_parts.push(json!({
-                                            "type": "image_url",
-                                            "image_url": url
-                                        }));
+                                    // DeepSeek and other text-only models don't support
+                                    // multimodal input. Replace image with a text
+                                    // placeholder so the request doesn't fail.
+                                    if let Some(img_url) = block.get("image_url") {
+                                        if let Some(url_str) = img_url.as_str() {
+                                            if url_str.len() <= 120 {
+                                                text_parts.push(format!("[Image: {}]", url_str));
+                                            } else {
+                                                // Truncate long data URIs to keep prompt size reasonable
+                                                text_parts.push(format!(
+                                                    "[Image: {}...]",
+                                                    &url_str[..117]
+                                                ));
+                                            }
+                                        } else {
+                                            text_parts.push("[Image]".to_string());
+                                        }
+                                    } else {
+                                        text_parts.push("[Image]".to_string());
                                     }
                                 }
                                 _ => {}
                             }
                         }
-                        // Build content: string if pure text & single, array if multimodal
-                        if image_parts.is_empty() && text_parts.len() <= 1 {
+                        // Build content: always text-only (multimodal images
+                        // are converted to [Image] placeholders above for
+                        // text-only model compatibility)
+                        if text_parts.len() <= 1 {
                             let text = text_parts.first().cloned().unwrap_or_default();
                             messages.push(json!({
                                 "role": role,
                                 "content": text
                             }));
                         } else {
-                            let mut parts: Vec<Value> = Vec::new();
-                            for t in &text_parts {
-                                parts.push(json!({"type": "text", "text": t}));
-                            }
-                            parts.extend(image_parts);
+                            let parts: Vec<Value> = text_parts
+                                .iter()
+                                .map(|t| json!({"type": "text", "text": t}))
+                                .collect();
                             messages.push(json!({
                                 "role": role,
                                 "content": parts
@@ -766,7 +982,12 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
 
                 Some("function_call_output") => {
                     let call_id = item.get("call_id").and_then(|i| i.as_str()).unwrap_or("");
-                    let output = item.get("output").and_then(|o| o.as_str()).unwrap_or("");
+                    // Output may be a string, object, or array — serialize non-string outputs
+                    let output = match item.get("output") {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(v) => serde_json::to_string(v).unwrap_or_default(),
+                        None => String::new(),
+                    };
                     messages.push(json!({
                         "role": "tool",
                         "tool_call_id": call_id,
@@ -775,17 +996,43 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
                 }
 
                 _ => {
-                    // Unknown item type — pass through as a user message
-                    if let Some(role) = item.get("role").and_then(|r| r.as_str()) {
+                    // Unknown item type — determine proper role mapping.
+                    // Items with a call_id are tool outputs (e.g. web_search_call_output,
+                    // computer_call_output, etc.) and must be mapped to tool messages
+                    // so the Chat Completions tool_calls → tool sequence stays intact.
+                    if let Some(call_id) = item.get("call_id").and_then(|c| c.as_str()) {
+                        let output = item.get("output").and_then(|o| o.as_str()).unwrap_or("");
+                        messages.push(json!({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": output
+                        }));
+                    } else if let Some(role) = item.get("role").and_then(|r| r.as_str()) {
+                        let raw_content = item.get("content").cloned().unwrap_or(json!(""));
+                        let safe_content = sanitize_image_content(&raw_content);
                         messages.push(json!({
                             "role": role,
-                            "content": item.get("content").cloned().unwrap_or(json!(""))
+                            "content": safe_content
                         }));
                     }
                 }
             }
         }
     }
+    // Final safety net: strip any image content from all messages.
+    // Text-only models (DeepSeek, etc.) reject image_url / input_image blocks.
+    for msg in &mut messages {
+        if let Some(msg_content) = msg.get("content").cloned() {
+            msg["content"] = sanitize_image_content(&msg_content);
+        }
+    }
+
+    // Reorder tool messages to satisfy DeepSeek's strict validation:
+    // Every assistant message with tool_calls must be immediately followed
+    // by ALL matching tool messages (one per tool_call_id), with no
+    // non-tool messages in between.
+    messages = reorder_tool_messages(messages);
+
     result["messages"] = json!(messages);
 
     // max_output_tokens → max_tokens

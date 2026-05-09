@@ -194,6 +194,11 @@ export type ClaudeApiFormat =
   | "openai_responses"
   | "gemini_native";
 
+
+// Codex API 格式类型
+// - "responses": 原生 OpenAI Responses API 格式，直接透传（默认）
+// - "chat_completions": OpenAI Chat Completions 格式，需要格式转换
+export type CodexApiFormat = "responses" | "chat_completions";
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 

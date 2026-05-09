@@ -220,6 +220,17 @@ impl ProviderAdapter for CodexAdapter {
             }
         }
 
+        // 3. 检查 meta.apiFormat（从 Codex 供应商表单的 API 格式下拉框设置）
+        if let Some(fmt) = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.api_format.as_deref())
+        {
+            if fmt == "chat_completions" {
+                return true;
+            }
+        }
+
         false
     }
 
