@@ -104,6 +104,7 @@
     "noProvidersDescription": "If you already have a config, click \"Import Current Config\" — all data will be safely saved in a default provider",
     "noProvidersDescriptionSnippet": "Settings other than API key and endpoint (e.g. plugins) will be saved to a common config snippet for sharing across providers",
     "importCurrent": "Import Current Config",
+    "importFromClaude": "Import Compatible Providers from Claude",
     "importCurrentDescription": "Import current live config as default provider",
     "currentlyUsing": "Currently Using",
     "enable": "Enable",
@@ -172,11 +173,46 @@
       }
     }
   },
+  "claudeDesktop": {
+    "mode": "Model handling",
+    "modeDirect": "Direct",
+    "modeProxy": "Requires routing",
+    "modelMappingToggle": "Needs model mapping",
+    "modelMappingOffHint": "Use this when the provider already exposes and accepts claude-* / anthropic/claude-* model IDs through Anthropic Messages. Claude Desktop connects to the provider directly.",
+    "modelMappingOnHint": "Claude Desktop currently restricts model IDs. If your provider offers non-Claude models, enable this switch and keep local routing running while in use.",
+    "routeMapTitle": "Model mapping",
+    "routeMapHint": "Enter the model name provided by your provider. The display name is shown in the Claude Desktop model list.",
+    "upstreamModelLabel": "Requested model",
+    "displayNameLabel": "Display name",
+    "supports1mLabel": "1M",
+    "directModelListTitle": "Manually specify Claude Desktop models (advanced, optional)",
+    "directModelListCollapsedHint": "Native Claude model providers usually do not need this. Claude Desktop will fetch /v1/models automatically.",
+    "directModelListHint": "Only fill this when the provider's /v1/models is unavailable or does not return Claude Desktop-safe claude-* model IDs. Checking 1M writes the [1M] marker after the model ID.",
+    "directModelInvalid": "Direct models must use claude-* / anthropic/claude-* model IDs",
+    "addModel": "Add model",
+    "addRoute": "Add model",
+    "routeInvalid": "Please enter the upstream model name",
+    "routesRequired": "At least one upstream model is required",
+    "statusTitle": "Claude Desktop configuration needs attention",
+    "statusUnsupported": "This platform does not support writing Claude Desktop 3P configuration yet.",
+    "statusStaleRawModels": "The Claude Desktop profile contains non-claude-* model IDs. Newer Claude Desktop versions may reject it; switch to the current provider again to repair it.",
+    "statusMissingRouteMappings": "The current provider has model mapping enabled but no valid routes. Edit the provider and add at least one mapping.",
+    "statusGatewayTokenMissing": "The local routing token has not been generated yet. Switching to this provider again will write a new local token.",
+    "statusBaseUrlMismatch": "The Claude Desktop profile points to a different URL than the current provider. Current: {{actual}}; expected: {{expected}}. Switch to the current provider again to repair it.",
+    "route": {
+      "tooltip": {
+        "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
+        "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}"
+      }
+    }
+  },
   "notifications": {
     "providerAdded": "Provider added",
     "providerSaved": "Provider configuration saved",
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",
+    "claudeDesktopRestartRequired": "Switched successfully. Restart Claude Desktop to apply changes.",
+    "claudeDesktopProxyRestartRequired": "Switched successfully. Keep CC Switch running and restart Claude Desktop to apply changes.",
     "addToConfigSuccess": "Added to config",
     "removeFromConfigSuccess": "Removed from config",
     "switchFailedTitle": "Switch failed",
@@ -661,6 +697,7 @@
   },
   "apps": {
     "claude": "Claude",
+    "claudeDesktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",

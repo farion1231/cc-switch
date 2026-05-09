@@ -118,7 +118,7 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
 ///
-/// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi
+/// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi/DeepSeek
 /// `reasoning_content` 兼容字段的 provider。默认转换保持通用 OpenAI-compatible
 /// 请求体，避免向严格后端发送未知字段。
 pub fn anthropic_to_openai_with_reasoning_content(
@@ -332,7 +332,7 @@ fn convert_message_to_openai(
     if let Some(blocks) = content.as_array() {
         let mut content_parts = Vec::new();
         let mut tool_calls = Vec::new();
-        // reasoning_parts: 仅在兼容 Moonshot/Kimi thinking tool-call 路径时
+        // reasoning_parts: 仅在兼容 Moonshot/Kimi/DeepSeek thinking tool-call 路径时
         // 生成 reasoning_content，通用 OpenAI-compatible 路径不发送该非标准字段。
         let mut reasoning_parts = Vec::new();
 
@@ -492,6 +492,13 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
 
     let mut content = Vec::new();
     let mut has_tool_use = false;
+
+    // DeepSeek provider 会把思考内容放在 message.reasoning_content。
+    if let Some(reasoning_content) = message.get("reasoning_content").and_then(|r| r.as_str()) {
+        if !reasoning_content.is_empty() {
+            content.push(json!({"type": "thinking", "thinking": reasoning_content}));
+        }
+    }
 
     // 文本/拒绝内容
     if let Some(msg_content) = message.get("content") {
@@ -1046,6 +1053,59 @@ mod tests {
         assert_eq!(result["content"][0]["name"], "get_weather");
         assert_eq!(result["content"][0]["input"]["location"], "Tokyo");
         assert_eq!(result["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn test_deepseek_reasoning_content_round_trips_for_tool_calls() {
+        let upstream_response = json!({
+            "id": "chatcmpl-deepseek",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "deepseek-v4-flash",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "reasoning_content": "Need the current date before calling weather.",
+                    "content": "Let me check the date first.",
+                    "tool_calls": [{
+                        "id": "call_date",
+                        "type": "function",
+                        "function": {"name": "get_date", "arguments": "{}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+
+        let anthropic_response = openai_to_anthropic(upstream_response).unwrap();
+        assert_eq!(anthropic_response["content"][0]["type"], "thinking");
+        assert_eq!(
+            anthropic_response["content"][0]["thinking"],
+            "Need the current date before calling weather."
+        );
+        assert_eq!(anthropic_response["content"][1]["type"], "text");
+        assert_eq!(anthropic_response["content"][2]["type"], "tool_use");
+        assert_eq!(anthropic_response["content"][2]["id"], "call_date");
+
+        let follow_up_request = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": anthropic_response["content"].clone()
+            }]
+        });
+        let replayed = anthropic_to_openai_with_reasoning_content(follow_up_request, true).unwrap();
+        let msg = &replayed["messages"][0];
+
+        assert_eq!(
+            msg["reasoning_content"],
+            "Need the current date before calling weather."
+        );
+        assert_eq!(msg["tool_calls"][0]["id"], "call_date");
+        assert_eq!(msg["tool_calls"][0]["function"]["name"], "get_date");
     }
 
     #[test]

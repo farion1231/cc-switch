@@ -104,6 +104,7 @@
     "noProvidersDescription": "既存の設定がある場合は「現在の設定をインポート」をクリックしてください。すべてのデータが default プロバイダーに安全に保存されます",
     "noProvidersDescriptionSnippet": "API キーとリクエスト URL 以外のデータ（プラグインなど）は共通設定スニペットに保存され、プロバイダー間で共有できます",
     "importCurrent": "現在の設定をインポート",
+    "importFromClaude": "Claude から互換プロバイダーをインポート",
     "importCurrentDescription": "現在使用中の設定をデフォルトプロバイダーとしてインポート",
     "currentlyUsing": "現在使用中",
     "enable": "有効化",
@@ -172,11 +173,46 @@
       }
     }
   },
+  "claudeDesktop": {
+    "mode": "モデル処理方式",
+    "modeDirect": "直結",
+    "modeProxy": "ルーティング必要",
+    "modelMappingToggle": "モデルマッピングが必要",
+    "modelMappingOffHint": "プロバイダーが Anthropic Messages で claude-* / anthropic/claude-* のモデル ID を公開し、そのまま受け付ける場合に使います。Claude Desktop はプロバイダーへ直接接続します。",
+    "modelMappingOnHint": "Claude Desktop は現在モデル ID を制限しています。お使いのプロバイダーが Claude 系列以外のモデルを提供する場合、このスイッチを有効にし、使用中はローカルルーティングを起動したままにしてください。",
+    "routeMapTitle": "モデルマッピング",
+    "routeMapHint": "プロバイダーが実際に提供するモデル名を入力してください。表示名は Claude Desktop のモデルリストに表示される名前です。",
+    "upstreamModelLabel": "リクエストモデル",
+    "displayNameLabel": "表示名",
+    "supports1mLabel": "1M",
+    "directModelListTitle": "Claude Desktop モデルを手動指定（高度・任意）",
+    "directModelListCollapsedHint": "ネイティブ Claude モデルのプロバイダーでは通常不要です。Claude Desktop が /v1/models を自動取得します。",
+    "directModelListHint": "プロバイダーの /v1/models が使えない、または Claude Desktop が認識できる claude-* モデル ID を返さない場合だけ入力してください。1M をオンにするとモデル ID の後ろに [1M] マーカーを書き込みます。",
+    "directModelInvalid": "直結モデルは claude-* / anthropic/claude-* のモデル ID を使う必要があります",
+    "addModel": "モデルを追加",
+    "addRoute": "モデルを追加",
+    "routeInvalid": "上流モデル名を入力してください",
+    "routesRequired": "少なくとも 1 つの上流モデルが必要です",
+    "statusTitle": "Claude Desktop 設定の確認が必要です",
+    "statusUnsupported": "このプラットフォームでは Claude Desktop 3P 設定の書き込みはまだサポートされていません。",
+    "statusStaleRawModels": "Claude Desktop profile に claude-* ではないモデル ID が含まれています。新しい Claude Desktop では拒否される可能性があります。現在のプロバイダーへ再度切り替えると修復できます。",
+    "statusMissingRouteMappings": "現在のプロバイダーはモデルマッピングを有効にしていますが、有効なルートがありません。プロバイダーを編集し、少なくとも 1 つのマッピングを追加してください。",
+    "statusGatewayTokenMissing": "ローカルルーティング token がまだ生成されていません。このプロバイダーへ再度切り替えると新しい token が書き込まれます。",
+    "statusBaseUrlMismatch": "Claude Desktop profile の URL が現在のプロバイダーと一致しません。現在: {{actual}}、期待値: {{expected}}。現在のプロバイダーへ再度切り替えると修復できます。",
+    "route": {
+      "tooltip": {
+        "active": "Claude Desktop ローカルルーティングは起動中です - {{address}}:{{port}}",
+        "inactive": "モデルマッピングや形式変換が必要なプロバイダー向けに Claude Desktop ローカルルーティングを起動します。設定アドレス: {{address}}:{{port}}"
+      }
+    }
+  },
   "notifications": {
     "providerAdded": "プロバイダーを追加しました",
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
+    "claudeDesktopRestartRequired": "切り替えました。反映するには Claude Desktop を再起動してください",
+    "claudeDesktopProxyRestartRequired": "切り替えました。CC Switch を起動したまま Claude Desktop を再起動してください",
     "addToConfigSuccess": "設定に追加しました",
     "removeFromConfigSuccess": "設定から削除しました",
     "switchFailedTitle": "切り替えに失敗しました",
@@ -661,6 +697,7 @@
   },
   "apps": {
     "claude": "Claude",
+    "claudeDesktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",

@@ -62,6 +62,10 @@ interface ProviderCardProps {
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+  if (provider.category === "official") {
+    return true;
+  }
+
   const config = provider.settingsConfig as Record<string, any>;
   if (appId === "claude") {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
@@ -317,6 +321,16 @@ export function ProviderCard({
                   Slim
                 </span>
               )}
+
+              {appId === "claude-desktop" &&
+                provider.category !== "official" &&
+                provider.meta?.claudeDesktopMode === "proxy" && (
+                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                    {t("claudeDesktop.modeProxy", {
+                      defaultValue: "需要路由",
+                    })}
+                  </span>
+                )}
 
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge

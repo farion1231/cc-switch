@@ -466,10 +466,7 @@ impl ProxyService {
             AppType::Claude => self.read_claude_live()?,
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy features
-                return Err("该应用不支持代理功能".to_string());
-            }
+            _ => return Err("该应用不支持代理功能".to_string()),
         };
 
         self.sync_live_config_to_provider(app_type, &live_config)
@@ -683,9 +680,7 @@ impl ProxyService {
                     }
                 }
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy features, skip silently
-            }
+            _ => {}
         }
 
         Ok(())
@@ -864,10 +859,7 @@ impl ProxyService {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy features
-                return Err("该应用不支持代理功能".to_string());
-            }
+            _ => return Err("该应用不支持代理功能".to_string()),
         };
 
         let json_str = serde_json::to_string(&config)
@@ -1008,10 +1000,7 @@ impl ProxyService {
                 self.write_gemini_live(&live_config)?;
                 log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy features
-                return Err("该应用不支持代理功能".to_string());
-            }
+            _ => return Err("该应用不支持代理功能".to_string()),
         }
 
         Ok(())
@@ -1061,9 +1050,7 @@ impl ProxyService {
                     let _ = self.write_gemini_live(&live_config);
                 }
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy features, skip silently
-            }
+            _ => {}
         }
 
         Ok(())
@@ -1101,9 +1088,7 @@ impl ProxyService {
                     log::info!("Gemini Live 配置已恢复");
                 }
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy features, skip silently
-            }
+            _ => {}
         }
 
         Ok(())
@@ -1192,10 +1177,7 @@ impl ProxyService {
             AppType::Claude => self.write_claude_live(config),
             AppType::Codex => self.write_codex_live(config),
             AppType::Gemini => self.write_gemini_live(config),
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy features
-                Err("该应用不支持代理功能".to_string())
-            }
+            _ => Err("该应用不支持代理功能".to_string()),
         }
     }
 
@@ -1213,10 +1195,7 @@ impl ProxyService {
                 Ok(config) => Self::is_gemini_live_taken_over(&config),
                 Err(_) => false,
             },
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy takeover
-                false
-            }
+            _ => false,
         }
     }
 
@@ -1256,10 +1235,7 @@ impl ProxyService {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy features
-                Ok(())
-            }
+            _ => Ok(()),
         }
     }
 
@@ -1520,9 +1496,7 @@ impl ProxyService {
                 serde_json::to_string(&env_backup)
                     .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                return Err(format!("未知的应用类型: {app_type}"));
-            }
+            _ => return Err(format!("未知的应用类型: {app_type}")),
         };
 
         self.db

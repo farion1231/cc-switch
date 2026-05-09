@@ -131,12 +131,22 @@ export interface AuthBinding {
   accountId?: string;
 }
 
+export interface ClaudeDesktopModelRoute {
+  model: string;
+  displayName?: string;
+  supports1m?: boolean;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
   commonConfigEnabled?: boolean;
+  // Claude Desktop 3P 配置写入模式
+  claudeDesktopMode?: "direct" | "proxy";
+  // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
+  claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
   // 用量查询脚本配置
   usage_script?: UsageScript;
   // 请求地址管理：测速后自动选择最佳端点
@@ -200,6 +210,7 @@ export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 // 主页面显示的应用配置
 export interface VisibleApps {
   claude: boolean;
+  "claude-desktop": boolean;
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
@@ -304,6 +315,8 @@ export interface Settings {
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
   currentProviderClaude?: string;
+  // 当前 Claude Desktop 供应商 ID（优先于数据库 is_current）
+  currentProviderClaudeDesktop?: string;
   // 当前 Codex 供应商 ID（优先于数据库 is_current）
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
@@ -369,6 +382,7 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   claude: boolean;
+  "claude-desktop"?: boolean;
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
