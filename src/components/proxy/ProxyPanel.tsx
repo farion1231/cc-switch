@@ -623,7 +623,7 @@ export function ProxyPanel({
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                    tabIndex={-1}
+                    aria-label={showPassword ? "隐藏密码" : "显示密码"}
                   >
                     {showPassword ? (
                       <EyeOff className="h-4 w-4" />
@@ -635,7 +635,7 @@ export function ProxyPanel({
                 <p className="text-xs text-muted-foreground">
                   {t("proxy.settings.fields.password.description", {
                     defaultValue:
-                      "设置后局域网设备需在请求头中提供密码才能使用代理。CCI Switch 接管模式下会自动配置。",
+                      "设置后局域网设备需在请求头中提供密码才能使用代理。CC Switch 接管模式下会自动配置。",
                   })}
                 </p>
               </div>

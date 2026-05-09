@@ -61,14 +61,15 @@ impl Database {
     pub async fn get_global_proxy_config(&self) -> Result<GlobalProxyConfig, AppError> {
         let result = {
             let conn = lock_conn!(self.conn);
-            let pwd: Option<String> = conn
-                .query_row(
-                    "SELECT value FROM settings WHERE key = 'proxy_password'",
-                    [],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .ok()
-                .flatten();
+            let pwd: Option<String> = match conn.query_row(
+                "SELECT value FROM settings WHERE key = 'proxy_password'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            ) {
+                Ok(val) => val,
+                Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                Err(e) => return Err(AppError::Database(e.to_string())),
+            };
             conn.query_row(
                 "SELECT proxy_enabled, listen_address, listen_port, enable_logging
                  FROM proxy_config WHERE app_type = 'claude'",
@@ -432,14 +433,15 @@ impl Database {
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
                 |row| {
-                    let pwd: Option<String> = conn
-                        .query_row(
-                            "SELECT value FROM settings WHERE key = 'proxy_password'",
-                            [],
-                            |r| r.get::<_, Option<String>>(0),
-                        )
-                        .ok()
-                        .flatten();
+                    let pwd: Option<String> = match conn.query_row(
+                        "SELECT value FROM settings WHERE key = 'proxy_password'",
+                        [],
+                        |r| r.get::<_, Option<String>>(0),
+                    ) {
+                        Ok(val) => val,
+                        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                        Err(e) => return Err(e),
+                    };
 
                     Ok(ProxyConfig {
                         listen_address: row.get(0)?,

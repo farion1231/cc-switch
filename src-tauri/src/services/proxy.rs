@@ -605,6 +605,12 @@ impl ProxyService {
                         self.db.get_provider_by_id(&provider_id, "claude")
                     {
                         if let Some(env) = live_config.get("env").and_then(|v| v.as_object()) {
+                            // 如果 base_url 指向本地代理，token 是代理认证凭据，不同步回 provider
+                            let base_url_is_local = env
+                                .get("ANTHROPIC_BASE_URL")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost"));
+
                             let token_pair = [
                                 "ANTHROPIC_AUTH_TOKEN",
                                 "ANTHROPIC_API_KEY",
@@ -618,7 +624,7 @@ impl ProxyService {
                                     .map(|s| (key, s.trim()))
                             })
                             .filter(|(_, token)| {
-                                !token.is_empty() && *token != PROXY_TOKEN_PLACEHOLDER
+                                !token.is_empty() && *token != PROXY_TOKEN_PLACEHOLDER && !base_url_is_local
                             });
 
                             if let Some((token_key, token)) = token_pair {
@@ -699,12 +705,18 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "codex")
                     {
+                        // 如果 config 指向本地代理，token 是代理认证凭据，不同步回 provider
+                        let codex_is_local = live_config
+                            .get("config")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|c| c.contains("127.0.0.1"));
+
                         if let Some(token) = live_config
                             .get("auth")
                             .and_then(|v| v.get("OPENAI_API_KEY"))
                             .and_then(|v| v.as_str())
                             .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER && !codex_is_local)
                         {
                             if let Some(auth_obj) = provider
                                 .settings_config
@@ -751,12 +763,19 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "gemini")
                     {
+                        // 如果 base_url 指向本地代理，token 是代理认证凭据，不同步回 provider
+                        let gemini_is_local = live_config
+                            .get("env")
+                            .and_then(|v| v.get("GOOGLE_GEMINI_BASE_URL"))
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost"));
+
                         if let Some(token) = live_config
                             .get("env")
                             .and_then(|v| v.get("GEMINI_API_KEY"))
                             .and_then(|v| v.as_str())
                             .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER && !gemini_is_local)
                         {
                             if let Some(env_obj) = provider
                                 .settings_config
@@ -1508,13 +1527,24 @@ impl ProxyService {
             None => return false,
         };
 
+        // 检查 base_url 是否指向本地代理
+        let base_url_is_local = env
+            .get("ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost"));
+
         for key in [
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_API_KEY",
             "OPENROUTER_API_KEY",
             "OPENAI_API_KEY",
         ] {
-            if env.get(key).and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            let token = env.get(key).and_then(|v| v.as_str());
+            if token == Some(PROXY_TOKEN_PLACEHOLDER) {
+                return true;
+            }
+            // 非空 token + 本地代理 base_url 也视为已接管（密码认证模式）
+            if base_url_is_local && token.is_some_and(|t| !t.is_empty()) {
                 return true;
             }
         }
@@ -1527,7 +1557,23 @@ impl ProxyService {
             Some(auth) => auth,
             None => return false,
         };
-        auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
+
+        // OPENAI_API_KEY 为占位符 → 已接管
+        if auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            return true;
+        }
+
+        // 检查 base_url 是否指向本地代理 + 非空 token 存在（密码认证模式）
+        let base_url_is_local = config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains("127.0.0.1");
+        base_url_is_local
+            && auth
+                .get("OPENAI_API_KEY")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| !t.is_empty())
     }
 
     fn is_gemini_live_taken_over(config: &Value) -> bool {
@@ -1535,7 +1581,22 @@ impl ProxyService {
             Some(env) => env,
             None => return false,
         };
-        env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
+
+        // GEMINI_API_KEY 为占位符 → 已接管
+        if env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            return true;
+        }
+
+        // 检查 base_url 是否指向本地代理 + 非空 token 存在（密码认证模式）
+        let base_url_is_local = env
+            .get("GOOGLE_GEMINI_BASE_URL")
+            .and_then(|v| v.as_str())
+            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost"));
+        base_url_is_local
+            && env
+                .get("GEMINI_API_KEY")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| !t.is_empty())
     }
 
     /// 从供应商配置更新 Live 备份（用于代理模式下的热切换）

@@ -404,19 +404,25 @@ async fn proxy_auth_middleware(
     req: axum::http::Request<axum::body::Body>,
     next: middleware::Next,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    let password = config.proxy_password.as_deref().unwrap_or("");
+    // 提前提取密码并释放 config 读锁，避免长连接阻塞配置写入
+    let password = {
+        let config = state.config.read().await;
+        config.proxy_password.clone().unwrap_or_default()
+    };
 
     if !password.is_empty() {
         let mut authorized = false;
 
-        // 检查 Authorization 头（支持 Bearer 前缀）
+        // 检查 Authorization 头（Bearer 大小写不敏感，per RFC 6750）
         if let Some(val) = req
             .headers()
             .get("authorization")
             .and_then(|v| v.to_str().ok())
         {
-            let token = val.strip_prefix("Bearer ").unwrap_or(val);
+            let token = val
+                .strip_prefix("Bearer ")
+                .or_else(|| val.strip_prefix("bearer "))
+                .unwrap_or(val);
             if token == password {
                 authorized = true;
             }
