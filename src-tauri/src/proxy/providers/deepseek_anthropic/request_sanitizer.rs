@@ -399,3 +399,114 @@ mod tests_normalize_tool_result {
         assert_eq!(msgs[0]["content"][0]["text"], "hi");
     }
 }
+
+pub(crate) fn filter_context_management_edits(body: &mut serde_json::Value) {
+    let Some(obj) = body.as_object_mut() else { return; };
+    let Some(cm) = obj.get_mut("context_management").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+
+    if let Some(edits) = cm.get_mut("edits").and_then(|v| v.as_array_mut()) {
+        edits.retain(|e| {
+            e.get("type")
+                .and_then(|t| t.as_str())
+                .map(|t| !t.starts_with("clear_thinking_"))
+                .unwrap_or(true)
+        });
+    }
+
+    let edits_empty = cm
+        .get("edits")
+        .and_then(|v| v.as_array())
+        .map(|a| a.is_empty())
+        .unwrap_or(false);
+    if edits_empty {
+        cm.remove("edits");
+    }
+
+    if cm.is_empty() {
+        obj.remove("context_management");
+    }
+}
+
+#[cfg(test)]
+mod tests_context_management {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_clear_thinking_edit_removed() {
+        let mut body = json!({
+            "context_management": {
+                "edits": [
+                    {"type": "clear_thinking_blocks"},
+                    {"type": "keep_this"}
+                ]
+            }
+        });
+        filter_context_management_edits(&mut body);
+        let edits = body["context_management"]["edits"].as_array().unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0]["type"], "keep_this");
+    }
+
+    #[test]
+    fn test_edits_all_removed_field_deleted() {
+        let mut body = json!({
+            "context_management": {
+                "edits": [{"type": "clear_thinking_history"}]
+            }
+        });
+        filter_context_management_edits(&mut body);
+        assert!(body["context_management"].get("edits").is_none());
+    }
+
+    #[test]
+    fn test_context_management_empty_object_deleted() {
+        let mut body = json!({
+            "context_management": {
+                "edits": [{"type": "clear_thinking_blocks"}]
+            }
+        });
+        filter_context_management_edits(&mut body);
+        assert!(body.get("context_management").is_none());
+    }
+
+    #[test]
+    fn test_context_management_other_fields_kept() {
+        let mut body = json!({
+            "context_management": {
+                "edits": [{"type": "clear_thinking_blocks"}],
+                "other_field": "value"
+            }
+        });
+        filter_context_management_edits(&mut body);
+        assert_eq!(body["context_management"]["other_field"], "value");
+        assert!(body["context_management"].get("edits").is_none());
+    }
+
+    #[test]
+    fn test_no_context_management_no_panic() {
+        let mut body = json!({"model": "m", "messages": []});
+        filter_context_management_edits(&mut body);
+        assert_eq!(body["model"], "m");
+    }
+
+    #[test]
+    fn test_multiple_clear_thinking_variants_all_removed() {
+        let mut body = json!({
+            "context_management": {
+                "edits": [
+                    {"type": "clear_thinking_blocks"},
+                    {"type": "clear_thinking_history"},
+                    {"type": "clear_thinking_foo_bar"},
+                    {"type": "normal_edit"}
+                ]
+            }
+        });
+        filter_context_management_edits(&mut body);
+        let edits = body["context_management"]["edits"].as_array().unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0]["type"], "normal_edit");
+    }
+}
