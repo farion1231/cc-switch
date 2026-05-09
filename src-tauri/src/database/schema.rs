@@ -1278,7 +1278,14 @@ impl Database {
                 circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold,
                 circuit_min_requests, default_cost_multiplier, pricing_model_source,
                 live_takeover_active, created_at, updated_at
-            ) SELECT * FROM proxy_config",
+            ) SELECT
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries, streaming_first_byte_timeout,
+                streaming_idle_timeout, non_streaming_timeout, circuit_failure_threshold,
+                circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold,
+                circuit_min_requests, default_cost_multiplier, pricing_model_source,
+                live_takeover_active, created_at, updated_at
+            FROM proxy_config",
             [],
         )?;
 
