@@ -88,6 +88,16 @@ webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
+# 已经存在于 winreg 的传递依赖中，这里显式声明仅启用 winuser 特性，
+# 用于广播 WM_SETTINGCHANGE 让其他进程感知环境变量变化，等价于 setx
+# 的行为。不会让用户多下载东西。
+winapi = { version = "0.3", features = [
+    "basetsd",
+    "guiddef",
+    "minwindef",
+    "windef",
+    "winuser",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
