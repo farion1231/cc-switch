@@ -11,6 +11,7 @@ use super::{
     usage::parser::TokenUsage,
     ProxyError,
 };
+use crate::proxy::forwarder::DeepseekContext;
 use axum::http::{header::HeaderMap, HeaderName};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -181,6 +182,7 @@ pub async fn handle_streaming(
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    deepseek_context: Option<&DeepseekContext>,
 ) -> Response {
     let status = response.status();
     log::debug!(
@@ -221,7 +223,17 @@ pub async fn handle_streaming(
     let logged_stream =
         create_logged_passthrough_stream(stream, ctx.tag, Some(usage_collector), timeout_config);
 
-    let body = axum::body::Body::from_stream(logged_stream);
+    let body = if let Some(dsk) = deepseek_context {
+        axum::body::Body::from_stream(
+            crate::proxy::providers::deepseek_anthropic::wrap_sse_stream(
+                logged_stream,
+                dsk.fake_model.clone(),
+                dsk.effective_thinking_enabled,
+            ),
+        )
+    } else {
+        axum::body::Body::from_stream(logged_stream)
+    };
     match builder.body(body) {
         Ok(resp) => resp,
         Err(e) => {
@@ -237,6 +249,7 @@ pub async fn handle_non_streaming(
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    deepseek_context: Option<&DeepseekContext>,
 ) -> Result<Response, ProxyError> {
     // 整包超时：仅在故障转移开启且配置值非零时生效
     let body_timeout =
@@ -314,6 +327,28 @@ pub async fn handle_non_streaming(
         );
     }
 
+    // DeepSeek: patch non-streaming response body (model masquerade + thinking blocks)
+    let body_bytes = if let Some(dsk) = deepseek_context {
+        if let Ok(mut json_value) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+            crate::proxy::providers::deepseek_anthropic::patch_non_streaming_response(
+                &mut json_value,
+                &dsk.fake_model,
+                dsk.effective_thinking_enabled,
+            );
+            match serde_json::to_vec(&json_value) {
+                Ok(new_bytes) => {
+                    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+                    bytes::Bytes::from(new_bytes)
+                }
+                Err(_) => body_bytes,
+            }
+        } else {
+            body_bytes
+        }
+    } else {
+        body_bytes
+    };
+
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
     for (key, value) in response_headers.iter() {
@@ -335,11 +370,12 @@ pub async fn process_response(
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    deepseek_context: Option<&DeepseekContext>,
 ) -> Result<Response, ProxyError> {
     if is_sse_response(&response) {
-        Ok(handle_streaming(response, ctx, state, parser_config).await)
+        Ok(handle_streaming(response, ctx, state, parser_config, deepseek_context).await)
     } else {
-        handle_non_streaming(response, ctx, state, parser_config).await
+        handle_non_streaming(response, ctx, state, parser_config, deepseek_context).await
     }
 }
 
