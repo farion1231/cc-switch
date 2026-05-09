@@ -145,14 +145,12 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
         });
     }
 
-    let current_version = crate::commands::misc::get_tool_versions(
-        Some(vec!["claude".to_string()]),
-        None,
-    )
-    .await
-    .map_err(|e| format!("检查 Claude Code 当前状态失败: {}", e))?
-    .into_iter()
-    .find(|tool| tool.name == "claude");
+    let current_version =
+        crate::commands::misc::get_tool_versions(Some(vec!["claude".to_string()]), None)
+            .await
+            .map_err(|e| format!("检查 Claude Code 当前状态失败: {}", e))?
+            .into_iter()
+            .find(|tool| tool.name == "claude");
 
     if let Some(tool_version) = current_version.as_ref() {
         if let Some(version) = tool_version.version.clone() {
@@ -225,28 +223,24 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
         installer::install_claude_code().map_err(|e| format!("安装 Claude Code 失败: {}", e))?;
 
     if result.success {
-        let verified = crate::commands::misc::get_tool_versions(
-            Some(vec!["claude".to_string()]),
-            None,
-        )
-        .await
-        .map_err(|e| format!("验证 Claude Code 安装结果失败: {}", e))?
-        .into_iter()
-        .find(|tool| tool.name == "claude")
-        .and_then(|tool| tool.version);
+        let verified =
+            crate::commands::misc::get_tool_versions(Some(vec!["claude".to_string()]), None)
+                .await
+                .map_err(|e| format!("验证 Claude Code 安装结果失败: {}", e))?
+                .into_iter()
+                .find(|tool| tool.name == "claude")
+                .and_then(|tool| tool.version);
 
         result.verified = Some(verified.is_some());
         if let Some(version) = verified {
             result.installed_version = Some(version);
         }
         if result.action.is_none() {
-            result.action = Some(
-                if current_version.and_then(|tool| tool.version).is_some() {
-                    "upgrade".to_string()
-                } else {
-                    "install".to_string()
-                },
-            );
+            result.action = Some(if current_version.and_then(|tool| tool.version).is_some() {
+                "upgrade".to_string()
+            } else {
+                "install".to_string()
+            });
         }
     }
 

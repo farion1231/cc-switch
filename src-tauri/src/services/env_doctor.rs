@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 /// 诊断结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,10 +183,7 @@ async fn diagnose_tools(
             severity: IssueSeverity::Critical,
             category: IssueCategory::NotInstalled,
             title: format!("{} 未安装", tool_display_name(tool)),
-            description: format!(
-                "{} 未安装或未在 PATH 中找到。",
-                tool_display_name(tool)
-            ),
+            description: format!("{} 未安装或未在 PATH 中找到。", tool_display_name(tool)),
             auto_fixable: true,
             fix_action: Some(FixAction::InstallTool {
                 tool: tool.to_string(),
@@ -232,10 +229,7 @@ async fn diagnose_nodejs(issues: &mut Vec<DiagnosisIssue>) {
                 severity: IssueSeverity::Critical,
                 category: IssueCategory::NodeJsMissing,
                 title: "Node.js 版本过低".to_string(),
-                description: format!(
-                    "当前 Node.js 版本为 {}，需要 >= 18.0.0",
-                    ver
-                ),
+                description: format!("当前 Node.js 版本为 {}，需要 >= 18.0.0", ver),
                 auto_fixable: false,
                 fix_action: Some(FixAction::InstallNodeJs),
             });
@@ -381,9 +375,12 @@ fn determine_overall_status(
     }
 
     // 检查是否有 Critical 或 High 级别的问题
-    let has_critical_or_high = issues
-        .iter()
-        .any(|issue| matches!(issue.severity, IssueSeverity::Critical | IssueSeverity::High));
+    let has_critical_or_high = issues.iter().any(|issue| {
+        matches!(
+            issue.severity,
+            IssueSeverity::Critical | IssueSeverity::High
+        )
+    });
 
     if has_critical_or_high {
         return HealthStatus::NeedsRepair;
@@ -410,10 +407,7 @@ fn check_nodejs_version() -> (Option<String>, Option<String>) {
     let output = match Command::new("node").arg("--version").output() {
         Ok(output) => output,
         Err(_) => {
-            return (
-                None,
-                Some("Node.js 未安装或未在 PATH 中找到".to_string()),
-            );
+            return (None, Some("Node.js 未安装或未在 PATH 中找到".to_string()));
         }
     };
 
@@ -575,7 +569,9 @@ pub async fn fix_environment(issues: Vec<DiagnosisIssue>) -> Result<FixResult, S
             FixAction::RepairConfig { path } => repair_config_file(path).await,
             FixAction::FixPermission { path } => fix_permission(path).await,
             // 安装和更新操作不在此处理，需要用户明确触发
-            FixAction::InstallTool { .. } | FixAction::InstallNodeJs | FixAction::UpdateTool { .. } => {
+            FixAction::InstallTool { .. }
+            | FixAction::InstallNodeJs
+            | FixAction::UpdateTool { .. } => {
                 continue;
             }
         };
@@ -688,13 +684,11 @@ async fn repair_config_file(path: String) -> Result<(), String> {
 
     // 确保父目录存在
     if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("创建配置目录失败: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
     }
 
     // 写入默认配置
-    fs::write(&config_path, default_config)
-        .map_err(|e| format!("写入默认配置失败: {}", e))?;
+    fs::write(&config_path, default_config).map_err(|e| format!("写入默认配置失败: {}", e))?;
 
     Ok(())
 }
@@ -725,8 +719,7 @@ async fn fix_permission(path: String) -> Result<(), String> {
 
     // 设置权限为 755 (rwxr-xr-x)
     let permissions = fs::Permissions::from_mode(0o755);
-    fs::set_permissions(&target_path, permissions)
-        .map_err(|e| format!("修复权限失败: {}", e))?;
+    fs::set_permissions(&target_path, permissions).map_err(|e| format!("修复权限失败: {}", e))?;
 
     Ok(())
 }
@@ -843,12 +836,13 @@ mod tests {
 
     #[test]
     fn config_permission_remediation_on_windows_is_not_auto_fixable_and_includes_icacls_hint() {
-        let (auto_fixable, description) = config_permission_remediation(
-            r"C:\Users\me\.claude\settings.json",
-            true,
-        );
+        let (auto_fixable, description) =
+            config_permission_remediation(r"C:\Users\me\.claude\settings.json", true);
 
-        assert!(!auto_fixable, "Windows 上必须隐藏一键修复按钮，避免按下去报错");
+        assert!(
+            !auto_fixable,
+            "Windows 上必须隐藏一键修复按钮，避免按下去报错"
+        );
         assert!(
             description.contains("icacls"),
             "description 必须给出可复制的 icacls 命令，实际：{description}"
@@ -861,10 +855,8 @@ mod tests {
 
     #[test]
     fn config_permission_remediation_on_unix_keeps_auto_fixable() {
-        let (auto_fixable, description) = config_permission_remediation(
-            "/home/me/.claude/settings.json",
-            false,
-        );
+        let (auto_fixable, description) =
+            config_permission_remediation("/home/me/.claude/settings.json", false);
 
         assert!(auto_fixable);
         assert!(!description.contains("icacls"));
@@ -949,4 +941,3 @@ mod tests {
         assert!(matches!(issue.fix_action, Some(FixAction::InstallNodeJs)));
     }
 }
-
