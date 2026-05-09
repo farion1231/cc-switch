@@ -242,10 +242,12 @@ impl ProxyService {
         .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
         let (proxy_url, _) = self.build_proxy_urls().await?;
 
+        let auth_token = self.get_current_auth_token().await;
+
         Self::apply_claude_takeover_fields(
             &mut effective_settings,
             &proxy_url,
-            PROXY_TOKEN_PLACEHOLDER,
+            &auth_token,
         );
         self.write_claude_live(&effective_settings)?;
         Ok(())
