@@ -392,8 +392,19 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       }
 
       if (result.failed.length > 0) {
-        const failedMessages = result.failed.map(([id, err]) => `${id}: ${err}`).join("\n");
-        toast.error(t("doctor.fixFailed", { error: failedMessages }));
+        const requiresAdmin = result.failed.some(
+          (failure) => failure.errorCode === "requires_admin",
+        );
+        if (requiresAdmin) {
+          // HKLM 写注册表必须 elevated。直接展示 raw error 容易让用户
+          // 误以为是 cc-doctor 出 bug，所以走专门的引导文案。
+          toast.error(t("doctor.fixRequiresAdmin"), { closeButton: true });
+        } else {
+          const failedMessages = result.failed
+            .map((failure) => `${failure.issueId}: ${failure.message}`)
+            .join("\n");
+          toast.error(t("doctor.fixFailed", { error: failedMessages }));
+        }
       }
 
       await runDiagnosis(); // 重新诊断

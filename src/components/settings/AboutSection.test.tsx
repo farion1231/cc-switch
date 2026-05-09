@@ -476,6 +476,58 @@ describe("AboutSection environment doctor", () => {
     );
   });
 
+  it("shows admin-required toast when fix fails with requires_admin code", async () => {
+    diagnoseEnvironmentMock.mockResolvedValue({
+      overall_status: "NeedsRepair",
+      issues: [
+        {
+          id: "env_conflict_ANTHROPIC_API_KEY",
+          severity: "High",
+          category: "EnvConflict",
+          title: "环境变量冲突",
+          description: "HKLM 注册表里检测到冲突",
+          auto_fixable: true,
+          fix_action: {
+            type: "RemoveEnvVar",
+            var_name: "ANTHROPIC_API_KEY",
+            source: "HKEY_LOCAL_MACHINE\\SYSTEM\\...",
+            var_value: "sk-test",
+          },
+        },
+      ],
+      tools_status: {},
+    });
+    fixEnvironmentMock.mockResolvedValue({
+      fixed: [],
+      failed: [
+        {
+          issueId: "env_conflict_ANTHROPIC_API_KEY",
+          message:
+            "删除环境变量失败: 打开系统注册表失败 (需要以管理员身份重启 cc-doctor): Access is denied. (os error 5)",
+          errorCode: "requires_admin",
+        },
+      ],
+    });
+
+    render(<AboutSection isPortable={false} />);
+
+    const fixButton = await screen.findByRole("button", {
+      name: "doctor.oneClickFix",
+    });
+    fireEvent.click(fixButton);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("doctor.fixRequiresAdmin", {
+        closeButton: true,
+      });
+    });
+    // 不应再把 raw error 同时弹给用户，避免双 toast 噪音
+    expect(toast.error).not.toHaveBeenCalledWith(
+      expect.stringContaining("doctor.fixFailed"),
+      expect.anything(),
+    );
+  });
+
   it("shows friendly failure message when install cannot proceed", async () => {
     toolVersionsMock.mockResolvedValue([
       {

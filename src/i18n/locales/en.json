@@ -678,6 +678,7 @@
     "installVerificationFailed": "The install command ran, but verification has not succeeded yet. Please refresh and try again later.",
     "fixSuccess": "Successfully fixed {{count}} issue(s)",
     "fixFailed": "Fix failed: {{error}}",
+    "fixRequiresAdmin": "Modifying system-level environment variables requires admin rights. Please close cc-doctor and reopen it as administrator, then click Fix again.",
     "autoFixable": "Auto-fixable",
     "issuesFound": "{{count}} issue(s) found",
     "status": {

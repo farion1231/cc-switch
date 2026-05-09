@@ -62,9 +62,19 @@ export interface InstallResult {
   error_code?: string;
 }
 
+export interface FixError {
+  issueId: string;
+  message: string;
+  /**
+   * 机器可读的错误码。常见值：
+   * - "requires_admin"：HKLM 注册表写入失败，需要以管理员身份重启 cc-doctor
+   */
+  errorCode?: string;
+}
+
 export interface FixResult {
   fixed: string[];
-  failed: Array<[string, string]>;
+  failed: FixError[];
 }
 
 // ─── API ──────────────────────────────────────────────────────

@@ -9,6 +9,13 @@ use winreg::enums::*;
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 
+/// 错误信息前缀，标记此次失败是因为缺少管理员权限。
+///
+/// 上层（`env_doctor::fix_environment`）会识别这个前缀，把它归一化成
+/// `error_code: "requires_admin"`，让前端弹"请以管理员身份重启"的
+/// 友好 toast。改名时务必同步 `env_doctor` 的归一化逻辑及其测试。
+pub const REQUIRES_ADMIN_SENTINEL: &str = "[REQUIRES_ADMIN] ";
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupInfo {
@@ -89,10 +96,19 @@ fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
                         "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
                         KEY_ALL_ACCESS,
                     )
-                    .map_err(|e| format!("打开系统注册表失败 (需要管理员权限): {}", e))?;
+                    .map_err(|e| {
+                        format!(
+                            "{}打开系统注册表失败 (需要以管理员身份重启 cc-doctor): {}",
+                            REQUIRES_ADMIN_SENTINEL, e
+                        )
+                    })?;
 
-                hklm.delete_value(&conflict.var_name)
-                    .map_err(|e| format!("删除系统注册表项失败: {}", e))?;
+                hklm.delete_value(&conflict.var_name).map_err(|e| {
+                    format!(
+                        "{}删除系统注册表项失败 (需要以管理员身份重启 cc-doctor): {}",
+                        REQUIRES_ADMIN_SENTINEL, e
+                    )
+                })?;
             }
             Ok(())
         }
@@ -182,10 +198,20 @@ fn restore_single_env(conflict: &EnvConflict) -> Result<(), String> {
                     .create_subkey(
                         "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
                     )
-                    .map_err(|e| format!("打开系统注册表失败 (需要管理员权限): {}", e))?;
+                    .map_err(|e| {
+                        format!(
+                            "{}打开系统注册表失败 (需要以管理员身份重启 cc-doctor): {}",
+                            REQUIRES_ADMIN_SENTINEL, e
+                        )
+                    })?;
 
                 hklm.set_value(&conflict.var_name, &conflict.var_value)
-                    .map_err(|e| format!("恢复系统注册表项失败: {}", e))?;
+                    .map_err(|e| {
+                        format!(
+                            "{}恢复系统注册表项失败 (需要以管理员身份重启 cc-doctor): {}",
+                            REQUIRES_ADMIN_SENTINEL, e
+                        )
+                    })?;
             }
             Ok(())
         }

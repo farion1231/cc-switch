@@ -522,8 +522,21 @@ fn extract_version(raw: &str) -> String {
 pub struct FixResult {
     /// 成功修复的问题 ID 列表
     pub fixed: Vec<String>,
-    /// 修复失败的问题列表 (问题 ID, 错误信息)
-    pub failed: Vec<(String, String)>,
+    /// 修复失败的问题列表
+    pub failed: Vec<FixError>,
+}
+
+/// 单个修复失败的详情
+///
+/// 比起 `(issue_id, message)` 元组多了一个 `error_code`，让前端可以根据
+/// 机器可读的错误码弹专门的友好提示（例如 "requires_admin" → 引导用户
+/// 以管理员身份重启 cc-doctor）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FixError {
+    pub issue_id: String,
+    pub message: String,
+    pub error_code: Option<String>,
 }
 
 /// 批量修复环境问题
@@ -569,11 +582,32 @@ pub async fn fix_environment(issues: Vec<DiagnosisIssue>) -> Result<FixResult, S
 
         match result {
             Ok(_) => fixed.push(issue.id),
-            Err(e) => failed.push((issue.id, e)),
+            Err(e) => failed.push(classify_fix_error(issue.id, e)),
         }
     }
 
     Ok(FixResult { fixed, failed })
+}
+
+/// 把 `delete_env_vars` 等底层抛出的 String 错误归一化成带错误码的
+/// `FixError`。识别 `env_manager::REQUIRES_ADMIN_SENTINEL` 前缀，剥掉
+/// 之后用 `requires_admin` 作为机器可读的错误码——前端据此弹"以管
+/// 理员身份重启"的专用 toast，而不是把英文 raw error 直接糊给用户。
+fn classify_fix_error(issue_id: String, raw_message: String) -> FixError {
+    let sentinel = super::env_manager::REQUIRES_ADMIN_SENTINEL;
+    if raw_message.contains(sentinel) {
+        FixError {
+            issue_id,
+            message: raw_message.replace(sentinel, ""),
+            error_code: Some("requires_admin".to_string()),
+        }
+    } else {
+        FixError {
+            issue_id,
+            message: raw_message,
+            error_code: None,
+        }
+    }
 }
 
 /// 修复环境变量冲突
@@ -834,6 +868,38 @@ mod tests {
 
         assert!(auto_fixable);
         assert!(!description.contains("icacls"));
+    }
+
+    #[test]
+    fn classify_fix_error_extracts_requires_admin_code_and_strips_sentinel() {
+        let raw = format!(
+            "删除环境变量失败: {}打开系统注册表失败 (需要以管理员身份重启 cc-doctor): Access is denied. (os error 5)",
+            super::super::env_manager::REQUIRES_ADMIN_SENTINEL,
+        );
+        let error = classify_fix_error("env_conflict_FOO".to_string(), raw);
+
+        assert_eq!(error.issue_id, "env_conflict_FOO");
+        assert_eq!(error.error_code.as_deref(), Some("requires_admin"));
+        assert!(
+            !error.message.contains("[REQUIRES_ADMIN]"),
+            "sentinel 前缀必须从 message 里剥掉，避免直接展示给用户：{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("管理员"),
+            "用户可读的提示要保留：{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn classify_fix_error_passes_through_unmarked_messages_without_code() {
+        let error = classify_fix_error(
+            "env_conflict_BAR".to_string(),
+            "无效的文件路径格式".to_string(),
+        );
+        assert_eq!(error.error_code, None);
+        assert_eq!(error.message, "无效的文件路径格式");
     }
 
     #[test]

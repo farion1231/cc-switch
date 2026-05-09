@@ -678,6 +678,7 @@
     "installVerificationFailed": "安装命令已执行，但暂未验证成功，请稍后刷新重试。",
     "fixSuccess": "成功修复 {{count}} 个问题",
     "fixFailed": "修复失败：{{error}}",
+    "fixRequiresAdmin": "修改系统级环境变量需要管理员权限。请关闭 cc-doctor 后右键以管理员身份重新打开，再点击一键修复。",
     "autoFixable": "可自动修复",
     "issuesFound": "发现 {{count}} 个问题",
     "status": {

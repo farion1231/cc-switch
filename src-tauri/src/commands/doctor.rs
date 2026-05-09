@@ -92,8 +92,13 @@ pub async fn fix_environment(issues: Vec<DiagnosisIssue>) -> Result<FixResult, S
     );
 
     if !result.failed.is_empty() {
-        for (issue_id, error) in &result.failed {
-            log::warn!("修复失败 [{}]: {}", issue_id, error);
+        for failure in &result.failed {
+            log::warn!(
+                "修复失败 [{}] code={:?}: {}",
+                failure.issue_id,
+                failure.error_code,
+                failure.message
+            );
         }
     }
 
