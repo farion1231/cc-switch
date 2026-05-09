@@ -535,3 +535,281 @@ mod tests_add_delete_ops {
         assert!(plan.deleted_by_user[&1].contains(&0));
     }
 }
+
+pub(crate) fn aggregate_paired_remaining(messages: &[serde_json::Value], plan: &mut ToolRepairPlan) {
+    let mut user_will_be_removed: HashSet<usize> = HashSet::new();
+    for op in &plan.ops {
+        match op {
+            RepairOp::SplitAndPromote { source_user_idx, .. } => {
+                if !plan
+                    .extracted_by_user
+                    .get(source_user_idx)
+                    .map(|s| s.is_empty())
+                    .unwrap_or(true)
+                {
+                    user_will_be_removed.insert(*source_user_idx);
+                }
+            }
+            RepairOp::SynthesizePlaceholder {
+                candidate_source_user_idx: Some(u),
+                ..
+            } => {
+                user_will_be_removed.insert(*u);
+            }
+            _ => {}
+        }
+    }
+
+    let conflict_users: Vec<usize> = plan
+        .accepted_in_place_by_user
+        .keys()
+        .filter(|u| user_will_be_removed.contains(u))
+        .copied()
+        .collect();
+    for u in conflict_users {
+        if let Some(accepted) = plan.accepted_in_place_by_user.remove(&u) {
+            let deleted = plan.deleted_by_user.entry(u).or_default();
+            for bi in &accepted {
+                deleted.insert(*bi);
+                plan.ops.push(RepairOp::DeleteBlock {
+                    user_idx: u,
+                    block_idx: *bi,
+                });
+            }
+        }
+    }
+
+    let mut final_remaining: HashMap<usize, Vec<serde_json::Value>> = HashMap::new();
+    for (&user_idx, original) in &plan.original_content {
+        let extracted = plan.extracted_by_user.get(&user_idx);
+        let deleted = plan.deleted_by_user.get(&user_idx);
+        let accepted = plan.accepted_in_place_by_user.get(&user_idx);
+
+        let remaining: Vec<serde_json::Value> = original
+            .iter()
+            .enumerate()
+            .filter_map(|(bi, block)| {
+                let in_extracted = extracted.map(|s| s.contains(&bi)).unwrap_or(false);
+                let in_deleted = deleted.map(|s| s.contains(&bi)).unwrap_or(false);
+                let in_accepted = accepted.map(|s| s.contains(&bi)).unwrap_or(false);
+                if in_extracted || in_deleted || in_accepted {
+                    None
+                } else {
+                    Some(block.clone())
+                }
+            })
+            .collect();
+
+        if user_will_be_removed.contains(&user_idx) && !remaining.is_empty() {
+            final_remaining.insert(user_idx, remaining);
+        }
+    }
+
+    let mut source_to_op_indices: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+    for (op_idx, op) in plan.ops.iter().enumerate() {
+        match op {
+            RepairOp::SplitAndPromote {
+                source_user_idx,
+                insert_after_assistant_idx,
+                ..
+            } => {
+                source_to_op_indices
+                    .entry(*source_user_idx)
+                    .or_default()
+                    .push((op_idx, *insert_after_assistant_idx));
+            }
+            RepairOp::SynthesizePlaceholder {
+                candidate_source_user_idx: Some(u),
+                insert_after_assistant_idx,
+                ..
+            } => {
+                source_to_op_indices
+                    .entry(*u)
+                    .or_default()
+                    .push((op_idx, *insert_after_assistant_idx));
+            }
+            _ => {}
+        }
+    }
+
+    for (source_user, mut op_indices) in source_to_op_indices {
+        op_indices.sort_by_key(|&(_, ia)| ia);
+        let (last_op_idx, _) = *op_indices.last().unwrap();
+        let remaining = final_remaining.remove(&source_user).unwrap_or_default();
+        match &mut plan.ops[last_op_idx] {
+            RepairOp::SplitAndPromote {
+                ref mut paired_remaining_blocks,
+                ref mut paired_source_user_idx,
+                ..
+            } => {
+                *paired_remaining_blocks = remaining;
+                *paired_source_user_idx = Some(source_user);
+            }
+            RepairOp::SynthesizePlaceholder {
+                ref mut paired_remaining_blocks,
+                ref mut paired_source_user_idx,
+                ..
+            } => {
+                *paired_remaining_blocks = remaining;
+                *paired_source_user_idx = Some(source_user);
+            }
+            _ => {}
+        }
+    }
+
+    for (&user_idx, deleted_set) in &plan.deleted_by_user {
+        if user_will_be_removed.contains(&user_idx) {
+            continue;
+        }
+        let original_len = plan
+            .original_content
+            .get(&user_idx)
+            .map(|v| v.len())
+            .unwrap_or(0);
+        let total_removed = deleted_set.len()
+            + plan
+                .accepted_in_place_by_user
+                .get(&user_idx)
+                .map(|s| s.len())
+                .unwrap_or(0);
+        if total_removed >= original_len {
+            plan.ops.push(RepairOp::RemoveEmptyUser { user_idx });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_aggregate {
+    use super::*;
+    use serde_json::json;
+
+    fn make_split_op(source: usize, assistant: usize) -> RepairOp {
+        RepairOp::SplitAndPromote {
+            source_user_idx: source,
+            blocks_to_extract: vec![1],
+            synthetic_blocks: vec![
+                json!({"type": "tool_result", "tool_use_id": "A", "_dsk_accepted": true}),
+            ],
+            insert_after_assistant_idx: assistant,
+            paired_remaining_blocks: Vec::new(),
+            paired_source_user_idx: None,
+        }
+    }
+
+    #[test]
+    fn test_remaining_text_bound_to_last_op() {
+        let messages = vec![
+            json!({"role": "assistant", "content": [{"type": "tool_use", "id": "A", "name": "b", "input": {}}]}),
+            json!({"role": "user", "content": [
+                {"type": "text", "text": "before"},
+                {"type": "tool_result", "tool_use_id": "A", "content": "ok", "_dsk_accepted": true},
+                {"type": "text", "text": "after"}
+            ]}),
+        ];
+        let mut plan = ToolRepairPlan::default();
+        plan.original_content
+            .insert(1, messages[1]["content"].as_array().unwrap().clone());
+        plan.extracted_by_user.entry(1).or_default().insert(1);
+        plan.ops.push(make_split_op(1, 0));
+
+        aggregate_paired_remaining(&messages, &mut plan);
+
+        if let RepairOp::SplitAndPromote {
+            ref paired_remaining_blocks,
+            ref paired_source_user_idx,
+            ..
+        } = plan.ops[0]
+        {
+            assert_eq!(*paired_source_user_idx, Some(1));
+            assert_eq!(paired_remaining_blocks.len(), 2);
+        } else {
+            panic!("expected SplitAndPromote");
+        }
+    }
+
+    #[test]
+    fn test_two_ops_same_source_last_gets_remaining() {
+        let messages = vec![
+            json!({"role": "assistant", "content": [{"type": "tool_use", "id": "A", "name": "b", "input": {}}]}),
+            json!({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "A", "content": "ok", "_dsk_accepted": true},
+                {"type": "tool_result", "tool_use_id": "B", "content": "ok", "_dsk_accepted": true},
+                {"type": "text", "text": "remaining"}
+            ]}),
+            json!({"role": "assistant", "content": [{"type": "tool_use", "id": "B", "name": "b", "input": {}}]}),
+        ];
+        let mut plan = ToolRepairPlan::default();
+        plan.original_content
+            .insert(1, messages[1]["content"].as_array().unwrap().clone());
+        plan.extracted_by_user.entry(1).or_default().extend([0, 1]);
+        plan.ops.push(RepairOp::SplitAndPromote {
+            source_user_idx: 1,
+            blocks_to_extract: vec![0],
+            synthetic_blocks: vec![json!({"type": "tool_result", "tool_use_id": "A"})],
+            insert_after_assistant_idx: 0,
+            paired_remaining_blocks: Vec::new(),
+            paired_source_user_idx: None,
+        });
+        plan.ops.push(RepairOp::SplitAndPromote {
+            source_user_idx: 1,
+            blocks_to_extract: vec![1],
+            synthetic_blocks: vec![json!({"type": "tool_result", "tool_use_id": "B"})],
+            insert_after_assistant_idx: 2,
+            paired_remaining_blocks: Vec::new(),
+            paired_source_user_idx: None,
+        });
+
+        aggregate_paired_remaining(&messages, &mut plan);
+
+        if let RepairOp::SplitAndPromote {
+            insert_after_assistant_idx: 2,
+            ref paired_remaining_blocks,
+            ref paired_source_user_idx,
+            ..
+        } = plan.ops[1]
+        {
+            assert_eq!(*paired_source_user_idx, Some(1));
+            assert_eq!(paired_remaining_blocks.len(), 1);
+            assert_eq!(paired_remaining_blocks[0]["text"], "remaining");
+        } else {
+            panic!("expected last op to carry remaining");
+        }
+
+        if let RepairOp::SplitAndPromote {
+            insert_after_assistant_idx: 0,
+            ref paired_source_user_idx,
+            ..
+        } = plan.ops[0]
+        {
+            assert_eq!(*paired_source_user_idx, None);
+        } else {
+            panic!("first op should not carry remaining");
+        }
+    }
+
+    #[test]
+    fn test_remove_empty_user_added_when_all_blocks_deleted() {
+        let messages = vec![
+            json!({"role": "assistant", "content": [{"type": "tool_use", "id": "A", "name": "b", "input": {}}]}),
+            json!({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "ORPHAN", "content": "ok"}
+            ]}),
+        ];
+        let mut plan = ToolRepairPlan::default();
+        plan.original_content
+            .insert(1, messages[1]["content"].as_array().unwrap().clone());
+        plan.deleted_by_user.entry(1).or_default().insert(0);
+        plan.ops.push(RepairOp::DeleteBlock {
+            user_idx: 1,
+            block_idx: 0,
+        });
+
+        aggregate_paired_remaining(&messages, &mut plan);
+
+        let has_remove = plan
+            .ops
+            .iter()
+            .any(|op| matches!(op, RepairOp::RemoveEmptyUser { user_idx: 1 }));
+        assert!(has_remove, "fully-cleared user should get RemoveEmptyUser");
+    }
+}
