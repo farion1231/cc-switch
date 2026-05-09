@@ -312,18 +312,50 @@ async fn diagnose_config_file(issues: &mut Vec<DiagnosisIssue>) {
         }
         Err(_) => {
             // 文件不可读，可能是权限问题
-            issues.push(DiagnosisIssue {
-                id: "config_permission".to_string(),
-                severity: IssueSeverity::Medium,
-                category: IssueCategory::PermissionDenied,
-                title: "配置文件权限不足".to_string(),
-                description: format!("无法读取配置文件 {}", config_path.display()),
-                auto_fixable: true,
-                fix_action: Some(FixAction::FixPermission {
-                    path: config_path.to_string_lossy().to_string(),
-                }),
-            });
+            issues.push(build_config_permission_issue(&config_path));
         }
+    }
+}
+
+/// 构造"配置文件权限不足"的诊断 issue。
+///
+/// Windows 上 `fix_permission` 没有 chmod 等价物——NTFS ACL 自动修复风险
+/// 大（可能是 EFS 加密、被恶意软件改坏，或目录映射到网络盘），因此把
+/// `auto_fixable` 置为 false 让一键修复按钮自然消失，并在 description 里
+/// 给一条可直接复制粘贴的 `icacls` 命令，引导用户在管理员 PowerShell 中
+/// 自行修复。Unix 维持原行为，由 `fix_permission` 用 chmod 自动处理。
+fn build_config_permission_issue(config_path: &std::path::Path) -> DiagnosisIssue {
+    let path_str = config_path.to_string_lossy().to_string();
+    let (auto_fixable, description) =
+        config_permission_remediation(&path_str, cfg!(target_os = "windows"));
+    DiagnosisIssue {
+        id: "config_permission".to_string(),
+        severity: IssueSeverity::Medium,
+        category: IssueCategory::PermissionDenied,
+        title: "配置文件权限不足".to_string(),
+        description,
+        auto_fixable,
+        fix_action: Some(FixAction::FixPermission { path: path_str }),
+    }
+}
+
+fn config_permission_remediation(path: &str, is_windows: bool) -> (bool, String) {
+    if is_windows {
+        // 对目录授权而不是单个文件，避免 settings.json 之外的同目录文件
+        // （如 mcp.json、备份）也读不到。如果父目录拿不到就退回到原路径。
+        let target = std::path::Path::new(path)
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| path.to_string());
+        (
+            false,
+            format!(
+                "无法读取配置文件 {path}。Windows 上请以管理员身份打开 PowerShell 执行下列命令后重试：\n\
+                 icacls \"{target}\" /grant \"%USERNAME%\":F /T"
+            ),
+        )
+    } else {
+        (true, format!("无法读取配置文件 {path}"))
     }
 }
 
@@ -773,6 +805,50 @@ mod tests {
 
         assert_eq!(conflict.source_type, "file");
         assert_eq!(conflict.source_path, "/home/me/.zshrc:42");
+    }
+
+    #[test]
+    fn config_permission_remediation_on_windows_is_not_auto_fixable_and_includes_icacls_hint() {
+        let (auto_fixable, description) = config_permission_remediation(
+            r"C:\Users\me\.claude\settings.json",
+            true,
+        );
+
+        assert!(!auto_fixable, "Windows 上必须隐藏一键修复按钮，避免按下去报错");
+        assert!(
+            description.contains("icacls"),
+            "description 必须给出可复制的 icacls 命令，实际：{description}"
+        );
+        assert!(
+            description.contains(r"C:\Users\me\.claude"),
+            "icacls 应作用于配置目录而非单个文件，实际：{description}"
+        );
+    }
+
+    #[test]
+    fn config_permission_remediation_on_unix_keeps_auto_fixable() {
+        let (auto_fixable, description) = config_permission_remediation(
+            "/home/me/.claude/settings.json",
+            false,
+        );
+
+        assert!(auto_fixable);
+        assert!(!description.contains("icacls"));
+    }
+
+    #[test]
+    fn build_config_permission_issue_uses_fix_permission_action_with_full_path() {
+        let path = std::path::PathBuf::from("/tmp/cc-doctor-test/settings.json");
+        let issue = build_config_permission_issue(&path);
+
+        assert_eq!(issue.id, "config_permission");
+        assert_eq!(issue.category, IssueCategory::PermissionDenied);
+        match issue.fix_action {
+            Some(FixAction::FixPermission { path: action_path }) => {
+                assert_eq!(action_path, "/tmp/cc-doctor-test/settings.json");
+            }
+            other => panic!("expected FixPermission action, got {other:?}"),
+        }
     }
 
     #[test]
