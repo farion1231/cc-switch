@@ -1,5 +1,7 @@
 // Implemented by T04a–T07
 use serde_json::{json, Value};
+use crate::proxy::providers::deepseek_anthropic::model_mapping::map_claude_to_deepseek;
+use crate::proxy::providers::deepseek_anthropic::tool_repair::repair_tool_order;
 
 pub(crate) const UNSUPPORTED_BLOCK_TYPES: &[&str] = &[
     "image",
@@ -1085,5 +1087,205 @@ mod tests_output_config_and_tokens {
         let mut body = json!({"model": "m"});
         remove_mcp_servers(&mut body);
         assert!(body.get("mcp_servers").is_none());
+    }
+}
+
+pub struct SanitizeResult {
+    pub fake_model: String,
+    pub target_model: String,
+    pub effective_thinking_enabled: bool,
+}
+
+pub fn sanitize_request(body: &mut serde_json::Value) -> SanitizeResult {
+    // ① model mapping
+    let fake_model = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+    let target_model = map_claude_to_deepseek(&fake_model).to_string();
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert(
+            "model".into(),
+            serde_json::Value::String(target_model.clone()),
+        );
+    }
+
+    // ② server tools blacklist
+    filter_server_tools(body);
+
+    // ③ thinking field rebuild
+    let effective_thinking_enabled = rebuild_thinking_field(body, &target_model);
+
+    // ④ output_config whitelist
+    let unsafe_tool_followup =
+        detect_tool_history(body) && !detect_replayable_thinking_before_tool_use(body);
+    sanitize_output_config(body, unsafe_tool_followup);
+
+    // ⑤ mcp_servers removal
+    remove_mcp_servers(body);
+
+    // ⑥ messages pipeline
+    if let Some(messages) = body
+        .get_mut("messages")
+        .and_then(|m| m.as_array_mut())
+    {
+        strip_unsupported_attachments(messages);
+        sanitize_thinking_blocks(messages, effective_thinking_enabled);
+        normalize_tool_result_content(messages);
+        strip_reasoning_content(messages);
+        for msg in messages.iter_mut() {
+            if let Some(content) = msg.get_mut("content").and_then(|v| v.as_array_mut()) {
+                if content.is_empty() {
+                    content.push(serde_json::json!({"type": "text", "text": "(empty)"}));
+                }
+            }
+        }
+    }
+
+    // ⑦ context_management edits filter
+    filter_context_management_edits(body);
+
+    // ⑧ tool order repair
+    if let Some(messages) = body
+        .get_mut("messages")
+        .and_then(|m| m.as_array_mut())
+    {
+        repair_tool_order(messages);
+    }
+
+    // ⑨ max_tokens fallback
+    apply_max_tokens_fallback(body);
+
+    // ⑩ tool_choice sanitize
+    sanitize_tool_choice(body);
+
+    // cleanup _dsk_accepted (from tool_repair)
+    if let Some(messages) = body
+        .get_mut("messages")
+        .and_then(|m| m.as_array_mut())
+    {
+        for msg in messages.iter_mut() {
+            if let Some(content) = msg.get_mut("content").and_then(|v| v.as_array_mut()) {
+                for block in content.iter_mut() {
+                    if let Some(obj) = block.as_object_mut() {
+                        obj.remove("_dsk_accepted");
+                    }
+                }
+            }
+        }
+    }
+
+    SanitizeResult {
+        fake_model,
+        target_model,
+        effective_thinking_enabled,
+    }
+}
+
+#[cfg(test)]
+mod tests_sanitize_request {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_model_mapping_applied() {
+        let mut body = json!({
+            "model": "claude-opus-4-7",
+            "messages": [],
+            "max_tokens": 1024
+        });
+        let result = sanitize_request(&mut body);
+        assert_eq!(result.fake_model, "claude-opus-4-7");
+        assert_eq!(result.target_model, "deepseek-v4-pro");
+        assert_eq!(body["model"], "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn test_max_tokens_fallback_applied() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": []
+        });
+        sanitize_request(&mut body);
+        assert_eq!(body["max_tokens"], 8192);
+    }
+
+    #[test]
+    fn test_mcp_servers_removed() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [],
+            "mcp_servers": [{"name": "fs"}]
+        });
+        sanitize_request(&mut body);
+        assert!(body.get("mcp_servers").is_none());
+    }
+
+    #[test]
+    fn test_server_tools_removed_client_tools_kept() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [],
+            "tools": [
+                {"type": "web_search_20250305", "name": "web_search"},
+                {"name": "Bash", "input_schema": {}}
+            ]
+        });
+        sanitize_request(&mut body);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "Bash");
+    }
+
+    #[test]
+    fn test_flash_thinking_disabled() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": []
+        });
+        let result = sanitize_request(&mut body);
+        assert!(!result.effective_thinking_enabled);
+        assert_eq!(body["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn test_stream_field_preserved() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [],
+            "stream": false
+        });
+        sanitize_request(&mut body);
+        assert_eq!(body["stream"], false);
+    }
+
+    #[test]
+    fn test_dsk_accepted_cleaned_up() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok", "_dsk_accepted": true}]
+            }]
+        });
+        sanitize_request(&mut body);
+        let block = &body["messages"][0]["content"][0];
+        assert!(block.get("_dsk_accepted").is_none());
+    }
+
+    #[test]
+    fn test_empty_content_fallback_applied_after_stripping() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "image", "source": {}}]
+            }]
+        });
+        sanitize_request(&mut body);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
     }
 }
