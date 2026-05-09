@@ -510,3 +510,233 @@ mod tests_context_management {
         assert_eq!(edits[0]["type"], "normal_edit");
     }
 }
+
+fn detect_tool_history(body: &serde_json::Value) -> bool {
+    let Some(messages) = body.get("messages").and_then(|m| m.as_array()) else {
+        return false;
+    };
+    messages.iter().any(|msg| {
+        msg.get("content")
+            .and_then(|c| c.as_array())
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn detect_replayable_thinking_before_tool_use(body: &serde_json::Value) -> bool {
+    let Some(messages) = body.get("messages").and_then(|m| m.as_array()) else {
+        return false;
+    };
+    for msg in messages {
+        if msg.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(content) = msg.get("content").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        let has_tool_use = content
+            .iter()
+            .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"));
+        if !has_tool_use {
+            continue;
+        }
+        let has_thinking = content
+            .iter()
+            .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("thinking"));
+        if has_thinking {
+            return true;
+        }
+    }
+    false
+}
+
+pub(crate) fn rebuild_thinking_field(body: &mut serde_json::Value, target_model: &str) -> bool {
+    // Run immutable checks before taking mutable borrow
+    let has_tool_history = detect_tool_history(body);
+    let has_replayable = detect_replayable_thinking_before_tool_use(body);
+
+    let obj = body.as_object_mut().expect("body must be object");
+
+    let original_thinking = obj.remove("thinking");
+    let client_intent: Option<bool> = original_thinking
+        .as_ref()
+        .and_then(|t| t.get("type"))
+        .and_then(|s| s.as_str())
+        .and_then(|s| match s {
+            "enabled" => Some(true),
+            "disabled" => Some(false),
+            _ => None,
+        });
+
+    let target_default =
+        crate::proxy::providers::deepseek_anthropic::model_mapping::is_reasoner_target(
+            target_model,
+        );
+    let intended = client_intent.unwrap_or(target_default);
+
+    let unsafe_tool_followup = has_tool_history && !has_replayable;
+
+    let effective = intended && !unsafe_tool_followup;
+
+    if effective {
+        let budget_tokens = original_thinking
+            .as_ref()
+            .and_then(|t| t.get("budget_tokens"))
+            .cloned();
+        let mut thinking_obj = serde_json::Map::new();
+        thinking_obj.insert(
+            "type".into(),
+            serde_json::Value::String("enabled".into()),
+        );
+        if let Some(bt) = budget_tokens {
+            thinking_obj.insert("budget_tokens".into(), bt);
+        }
+        obj.insert(
+            "thinking".into(),
+            serde_json::Value::Object(thinking_obj),
+        );
+    } else {
+        obj.insert(
+            "thinking".into(),
+            serde_json::json!({"type": "disabled"}),
+        );
+    }
+
+    effective
+}
+
+#[cfg(test)]
+mod tests_thinking_rebuild {
+    use super::*;
+    use serde_json::json;
+
+    fn make_body_with_tool_history(has_thinking: bool) -> serde_json::Value {
+        json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": if has_thinking {
+                        json!([
+                            {"type": "thinking", "thinking": "chain"},
+                            {"type": "tool_use", "id": "t1", "name": "bash", "input": {}}
+                        ])
+                    } else {
+                        json!([
+                            {"type": "tool_use", "id": "t1", "name": "bash", "input": {}}
+                        ])
+                    }
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "next turn"}]
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn test_detect_tool_history_true_when_tool_result_present() {
+        let body = make_body_with_tool_history(false);
+        assert!(detect_tool_history(&body));
+    }
+
+    #[test]
+    fn test_detect_tool_history_false_when_no_tool_result() {
+        let body = json!({
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "hello"}]}
+            ]
+        });
+        assert!(!detect_tool_history(&body));
+    }
+
+    #[test]
+    fn test_detect_replayable_thinking_true_when_thinking_before_tool_use() {
+        let body = make_body_with_tool_history(true);
+        assert!(detect_replayable_thinking_before_tool_use(&body));
+    }
+
+    #[test]
+    fn test_detect_replayable_thinking_false_when_no_thinking() {
+        let body = make_body_with_tool_history(false);
+        assert!(!detect_replayable_thinking_before_tool_use(&body));
+    }
+
+    #[test]
+    fn test_pro_no_tool_history_default_enabled() {
+        let mut body = json!({"model": "deepseek-v4-pro", "messages": []});
+        let enabled = rebuild_thinking_field(&mut body, "deepseek-v4-pro");
+        assert!(enabled);
+        assert_eq!(body["thinking"]["type"], "enabled");
+    }
+
+    #[test]
+    fn test_pro_unsafe_tool_followup_forced_disabled() {
+        let mut body = make_body_with_tool_history(false);
+        body["thinking"] = json!(null);
+        let enabled = rebuild_thinking_field(&mut body, "deepseek-v4-pro");
+        assert!(!enabled);
+        assert_eq!(body["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn test_pro_explicit_disabled_respected() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [],
+            "thinking": {"type": "disabled"}
+        });
+        let enabled = rebuild_thinking_field(&mut body, "deepseek-v4-pro");
+        assert!(!enabled);
+        assert_eq!(body["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn test_flash_no_client_intent_default_disabled() {
+        let mut body = json!({"model": "deepseek-v4-flash", "messages": []});
+        let enabled = rebuild_thinking_field(&mut body, "deepseek-v4-flash");
+        assert!(!enabled);
+        assert_eq!(body["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn test_flash_client_explicit_enabled_respected() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [],
+            "thinking": {"type": "enabled"}
+        });
+        let enabled = rebuild_thinking_field(&mut body, "deepseek-v4-flash");
+        assert!(enabled);
+        assert_eq!(body["thinking"]["type"], "enabled");
+    }
+
+    #[test]
+    fn test_unknown_thinking_type_falls_back_to_target_default() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [],
+            "thinking": {"type": "future_type"}
+        });
+        let enabled = rebuild_thinking_field(&mut body, "deepseek-v4-flash");
+        assert!(!enabled);
+    }
+
+    #[test]
+    fn test_pro_with_replayable_thinking_stays_enabled() {
+        let mut body = make_body_with_tool_history(true);
+        let enabled = rebuild_thinking_field(&mut body, "deepseek-v4-pro");
+        assert!(enabled);
+        assert_eq!(body["thinking"]["type"], "enabled");
+    }
+}
