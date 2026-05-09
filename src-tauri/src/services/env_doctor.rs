@@ -90,7 +90,16 @@ pub enum FixAction {
     /// 安装 Node.js
     InstallNodeJs,
     /// 移除环境变量
-    RemoveEnvVar { var_name: String, source: String },
+    ///
+    /// `var_value` 在诊断阶段由 `EnvConflict` 透传过来，这样修复阶段就不必
+    /// 二次读 `std::env::var`——对 Windows 来说至关重要：注册表里的值跟当
+    /// 前进程环境可能不同步（用户改了注册表但还没重启 cc-doctor），如果再
+    /// 走 `std::env::var` 备份的就是空字符串，名义上有备份实质无法回滚。
+    RemoveEnvVar {
+        var_name: String,
+        source: String,
+        var_value: String,
+    },
     /// 修复配置文件
     RepairConfig { path: String },
     /// 修复权限
@@ -257,6 +266,7 @@ async fn diagnose_env_conflicts(issues: &mut Vec<DiagnosisIssue>) {
             fix_action: Some(FixAction::RemoveEnvVar {
                 var_name: conflict.var_name,
                 source: conflict.source_path,
+                var_value: conflict.var_value,
             }),
         });
     }
@@ -512,9 +522,11 @@ pub async fn fix_environment(issues: Vec<DiagnosisIssue>) -> Result<FixResult, S
 
         // 根据修复动作类型执行对应的修复操作
         let result = match fix_action {
-            FixAction::RemoveEnvVar { var_name, source } => {
-                fix_env_conflict(var_name, source).await
-            }
+            FixAction::RemoveEnvVar {
+                var_name,
+                source,
+                var_value,
+            } => fix_env_conflict(var_name, source, var_value).await,
             FixAction::RepairConfig { path } => repair_config_file(path).await,
             FixAction::FixPermission { path } => fix_permission(path).await,
             // 安装和更新操作不在此处理，需要用户明确触发
@@ -540,28 +552,45 @@ pub async fn fix_environment(issues: Vec<DiagnosisIssue>) -> Result<FixResult, S
 /// # 参数
 /// - `var_name`: 环境变量名称
 /// - `source`: 环境变量来源路径
+/// - `var_value`: 诊断阶段从 `EnvConflict` 透传过来的真实值，用于备份
 ///
 /// # 平台支持
 /// - macOS: 从 shell 配置文件中删除（.zshrc, .bashrc 等）
 /// - Linux: 从 shell 配置文件中删除
-/// - Windows: 暂不支持（需要管理员权限操作注册表）
-async fn fix_env_conflict(var_name: String, source: String) -> Result<(), String> {
-    // 构造 EnvConflict 对象
-    let conflict = super::env_checker::EnvConflict {
-        var_name: var_name.clone(),
-        var_value: std::env::var(&var_name).unwrap_or_default(),
-        source_type: if source.contains("HKEY") {
-            "system".to_string()
-        } else {
-            "file".to_string()
-        },
-        source_path: source,
-    };
+/// - Windows: 通过注册表 API 删除（HKLM 路径需要管理员权限）
+async fn fix_env_conflict(
+    var_name: String,
+    source: String,
+    var_value: String,
+) -> Result<(), String> {
+    let conflict = build_conflict_for_removal(var_name, source, var_value);
 
-    // 复用 env_manager 的删除功能（会自动备份）
     super::env_manager::delete_env_vars(vec![conflict])
         .map(|_| ())
         .map_err(|e| format!("删除环境变量失败: {}", e))
+}
+
+/// 根据诊断阶段透传的字段构造 `EnvConflict`，用于交给 `env_manager` 删除/备份。
+///
+/// `source_type` 通过 `source_path` 是否包含 `HKEY` 推断：注册表路径归到
+/// `system`，其它（shell rc 文件 / 进程环境）归到 `file`。这一推断与
+/// `env_checker::check_env_conflicts` 的输出形态保持一致。
+fn build_conflict_for_removal(
+    var_name: String,
+    source: String,
+    var_value: String,
+) -> super::env_checker::EnvConflict {
+    let source_type = if source.contains("HKEY") {
+        "system".to_string()
+    } else {
+        "file".to_string()
+    };
+    super::env_checker::EnvConflict {
+        var_name,
+        var_value,
+        source_type,
+        source_path: source,
+    }
 }
 
 /// 修复配置文件
@@ -714,6 +743,52 @@ mod tests {
             determine_overall_status(&issues, &tools_status),
             HealthStatus::NeedsInstall
         );
+    }
+
+    #[test]
+    fn build_conflict_for_removal_preserves_passed_value_without_reading_env() {
+        // 关键回归保护：哪怕进程环境里同名变量已被删/未注入，备份依然
+        // 保留诊断阶段读到的真实值。Windows 注册表与进程环境不同步时
+        // 这一点决定了"修复后能否回滚"。
+        let unique_var = "CC_DOCTOR_TEST_NEVER_SET_VAR";
+        std::env::remove_var(unique_var);
+
+        let conflict = build_conflict_for_removal(
+            unique_var.to_string(),
+            r"HKEY_CURRENT_USER\Environment".to_string(),
+            "real-value-from-registry".to_string(),
+        );
+
+        assert_eq!(conflict.var_value, "real-value-from-registry");
+        assert_eq!(conflict.source_type, "system");
+    }
+
+    #[test]
+    fn build_conflict_for_removal_classifies_non_registry_source_as_file() {
+        let conflict = build_conflict_for_removal(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "/home/me/.zshrc:42".to_string(),
+            "https://example.com".to_string(),
+        );
+
+        assert_eq!(conflict.source_type, "file");
+        assert_eq!(conflict.source_path, "/home/me/.zshrc:42");
+    }
+
+    #[test]
+    fn remove_env_var_fix_action_serializes_with_var_value_field() {
+        // 防止重构时不小心把字段名改回 snake_case 之外的形式，导致前端
+        // 拿不到 var_value（备份会变空）。
+        let action = FixAction::RemoveEnvVar {
+            var_name: "ANTHROPIC_API_KEY".to_string(),
+            source: r"HKEY_CURRENT_USER\Environment".to_string(),
+            var_value: "sk-test".to_string(),
+        };
+        let json = serde_json::to_value(&action).expect("serialize FixAction");
+        assert_eq!(json["type"], "RemoveEnvVar");
+        assert_eq!(json["var_name"], "ANTHROPIC_API_KEY");
+        assert_eq!(json["source"], r"HKEY_CURRENT_USER\Environment");
+        assert_eq!(json["var_value"], "sk-test");
     }
 
     #[test]

@@ -19,6 +19,11 @@ export interface FixAction {
   tool?: string;
   var_name?: string;
   source?: string;
+  /**
+   * RemoveEnvVar 专用：诊断阶段从 EnvConflict 透传过来的真实值。
+   * Windows 上注册表与进程环境可能不同步，这里保留真实值用于备份回滚。
+   */
+  var_value?: string;
   path?: string;
   current?: string;
   latest?: string;
