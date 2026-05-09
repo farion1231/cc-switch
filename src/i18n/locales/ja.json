@@ -674,6 +674,8 @@
     "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
     "sessionList": "セッション一覧",
+    "allProjects": "全プロジェクト",
+    "clearProjectFilter": "プロジェクトフィルターをクリア",
     "manageBatchTooltip": "一括管理に入る",
     "exitBatchModeTooltip": "一括管理を終了",
     "batchModeHint": "削除するセッションを選択",

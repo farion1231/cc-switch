@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
+import { useProjectList } from "@/hooks/useProjectList";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
@@ -15,6 +16,7 @@ import {
   FolderOpen,
   X,
   CheckSquare,
+  ChevronDown,
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
@@ -32,7 +34,12 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
@@ -92,11 +99,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     appId as ProviderFilter,
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
+
+  const projectList = useProjectList(sessions, providerFilter);
 
   // 使用 FlexSearch 全文搜索
   const { search: searchSessions } = useSessionSearch({
     sessions,
     providerFilter,
+    projectFilter,
   });
 
   const filteredSessions = useMemo(() => {
@@ -505,12 +516,76 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
-                        <CardTitle className="text-sm font-medium whitespace-nowrap">
-                          {t("sessionManager.sessionList")}
-                        </CardTitle>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              className="text-sm font-medium whitespace-nowrap cursor-pointer hover:text-foreground/80 transition-colors flex items-center gap-1 max-w-[200px] truncate text-left"
+                            >
+                              {projectFilter
+                                ? projectList.find(
+                                    (p) => p.projectDir === projectFilter,
+                                  )?.projectName ?? projectFilter
+                                : t("sessionManager.sessionList")}
+                              <ChevronDown className="size-3 shrink-0" />
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            className="w-64 p-1"
+                            align="start"
+                          >
+                            <div className="max-h-60 overflow-y-auto">
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent transition-colors"
+                                onClick={() => setProjectFilter(null)}
+                              >
+                                <FolderOpen className="size-3.5 text-muted-foreground" />
+                                <span>{t("sessionManager.allProjects")}</span>
+                              </button>
+                              {projectList.map((project) => (
+                                <button
+                                  key={project.projectDir}
+                                  type="button"
+                                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent transition-colors"
+                                  onClick={() =>
+                                    setProjectFilter(project.projectDir)
+                                  }
+                                >
+                                  <FolderOpen className="size-3.5 text-muted-foreground shrink-0" />
+                                  <span className="truncate flex-1 text-left">
+                                    {project.projectName}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground shrink-0">
+                                    {project.count}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                         <Badge variant="secondary" className="text-xs">
                           {filteredSessions.length}
                         </Badge>
+                        {projectFilter && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                className="flex items-center justify-center size-4 rounded-full border text-muted-foreground hover:text-foreground hover:border-foreground transition-colors shrink-0"
+                                aria-label={t(
+                                  "sessionManager.clearProjectFilter",
+                                )}
+                                onClick={() => setProjectFilter(null)}
+                              >
+                                <X className="size-2.5" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {t("sessionManager.clearProjectFilter")}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {(selectionMode ||

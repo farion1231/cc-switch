@@ -674,6 +674,8 @@
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
     "sessionList": "会话列表",
+    "allProjects": "所有项目",
+    "clearProjectFilter": "清除项目过滤",
     "manageBatchTooltip": "进入批量管理",
     "exitBatchModeTooltip": "退出批量管理",
     "batchModeHint": "勾选要删除的会话",
