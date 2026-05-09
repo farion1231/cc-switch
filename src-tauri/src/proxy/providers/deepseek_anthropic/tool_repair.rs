@@ -225,9 +225,179 @@ pub fn inspect_plan(messages: &mut Vec<Value>) -> Vec<String> {
     plan.ops.iter().map(|op| format!("{:?}", op)).collect()
 }
 
-pub fn repair_tool_order(_messages: &mut Vec<Value>) {
-    // implemented in T09-T11
-    todo!()
+fn after_insert(map: &mut HashMap<usize, usize>, pos: usize) {
+    for v in map.values_mut() {
+        if *v >= pos {
+            *v += 1;
+        }
+    }
+}
+
+fn after_remove(map: &mut HashMap<usize, usize>, pos: usize) {
+    map.retain(|_, v| *v != pos);
+    for v in map.values_mut() {
+        if *v > pos {
+            *v -= 1;
+        }
+    }
+}
+
+pub(crate) fn apply_plan(messages: &mut Vec<Value>, plan: ToolRepairPlan) {
+    let mut snap_to_cur: HashMap<usize, usize> = (0..messages.len()).map(|i| (i, i)).collect();
+
+    // Phase A: DeleteBlock — per-user descending block_idx
+    let mut delete_ops: Vec<(usize, usize)> = plan
+        .ops
+        .iter()
+        .filter_map(|op| {
+            if let RepairOp::DeleteBlock { user_idx, block_idx } = op {
+                Some((*user_idx, *block_idx))
+            } else {
+                None
+            }
+        })
+        .collect();
+    delete_ops.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+
+    for (user_idx, block_idx) in delete_ops {
+        let actual_user = match snap_to_cur.get(&user_idx) {
+            Some(&v) => v,
+            None => continue,
+        };
+        if let Some(content) = messages[actual_user]
+            .get_mut("content")
+            .and_then(|v| v.as_array_mut())
+        {
+            if block_idx < content.len() {
+                content.remove(block_idx);
+            }
+        }
+    }
+
+    // Phase B: SplitAndPromote / SynthesizePlaceholder — descending insert_after_assistant_idx
+    let mut b_op_indices: Vec<usize> = plan
+        .ops
+        .iter()
+        .enumerate()
+        .filter_map(|(i, op)| match op {
+            RepairOp::SplitAndPromote { .. } | RepairOp::SynthesizePlaceholder { .. } => Some(i),
+            _ => None,
+        })
+        .collect();
+    b_op_indices.sort_by_key(|&i| {
+        match &plan.ops[i] {
+            RepairOp::SplitAndPromote {
+                insert_after_assistant_idx: ia,
+                ..
+            } => usize::MAX - ia,
+            RepairOp::SynthesizePlaceholder {
+                insert_after_assistant_idx: ia,
+                ..
+            } => usize::MAX - ia,
+            _ => 0,
+        }
+    });
+
+    for op_idx in b_op_indices {
+        let (insert_after_snap, synthetic_blocks, paired_remaining, paired_source_snap) =
+            match &plan.ops[op_idx] {
+                RepairOp::SplitAndPromote {
+                    insert_after_assistant_idx,
+                    synthetic_blocks,
+                    paired_remaining_blocks,
+                    paired_source_user_idx,
+                    ..
+                } => (
+                    *insert_after_assistant_idx,
+                    synthetic_blocks.clone(),
+                    paired_remaining_blocks.clone(),
+                    *paired_source_user_idx,
+                ),
+                RepairOp::SynthesizePlaceholder {
+                    insert_after_assistant_idx,
+                    synthetic_blocks,
+                    paired_remaining_blocks,
+                    paired_source_user_idx,
+                    ..
+                } => (
+                    *insert_after_assistant_idx,
+                    synthetic_blocks.clone(),
+                    paired_remaining_blocks.clone(),
+                    *paired_source_user_idx,
+                ),
+                _ => continue,
+            };
+
+        let mut content = synthetic_blocks;
+        content.extend(paired_remaining);
+        for block in content.iter_mut() {
+            if let Some(obj) = block.as_object_mut() {
+                obj.remove("_dsk_accepted");
+            }
+        }
+        let synthetic_user = json!({"role": "user", "content": content});
+
+        let actual_a = snap_to_cur[&insert_after_snap];
+        let insert_pos = actual_a + 1;
+        messages.insert(insert_pos, synthetic_user);
+        after_insert(&mut snap_to_cur, insert_pos);
+
+        if let Some(p_snap) = paired_source_snap {
+            if let Some(&actual_p) = snap_to_cur.get(&p_snap) {
+                messages.remove(actual_p);
+                after_remove(&mut snap_to_cur, actual_p);
+            }
+        }
+    }
+
+    // Phase C: RemoveEmptyUser — descending user_idx
+    let mut c_op_indices: Vec<usize> = plan
+        .ops
+        .iter()
+        .enumerate()
+        .filter_map(|(i, op)| {
+            if matches!(op, RepairOp::RemoveEmptyUser { .. }) {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .collect();
+    c_op_indices.sort_by_key(|&i| {
+        if let RepairOp::RemoveEmptyUser { user_idx } = &plan.ops[i] {
+            usize::MAX - user_idx
+        } else {
+            0
+        }
+    });
+
+    for op_idx in c_op_indices {
+        if let RepairOp::RemoveEmptyUser { user_idx } = &plan.ops[op_idx] {
+            if let Some(&actual_user) = snap_to_cur.get(user_idx) {
+                messages.remove(actual_user);
+                after_remove(&mut snap_to_cur, actual_user);
+            }
+        }
+    }
+
+    // cleanup _dsk_accepted
+    for msg in messages.iter_mut() {
+        if let Some(content) = msg.get_mut("content").and_then(|v| v.as_array_mut()) {
+            for block in content.iter_mut() {
+                if let Some(obj) = block.as_object_mut() {
+                    obj.remove("_dsk_accepted");
+                }
+            }
+        }
+    }
+}
+
+pub fn repair_tool_order(messages: &mut Vec<Value>) {
+    let mut plan = build_plan(messages);
+    let messages_snapshot: Vec<Value> = messages.clone();
+    add_delete_ops(&messages_snapshot, &mut plan);
+    aggregate_paired_remaining(&messages_snapshot, &mut plan);
+    apply_plan(messages, plan);
 }
 
 #[cfg(test)]
@@ -666,12 +836,7 @@ pub(crate) fn aggregate_paired_remaining(messages: &[serde_json::Value], plan: &
             .get(&user_idx)
             .map(|v| v.len())
             .unwrap_or(0);
-        let total_removed = deleted_set.len()
-            + plan
-                .accepted_in_place_by_user
-                .get(&user_idx)
-                .map(|s| s.len())
-                .unwrap_or(0);
+        let total_removed = deleted_set.len();
         if total_removed >= original_len {
             plan.ops.push(RepairOp::RemoveEmptyUser { user_idx });
         }
@@ -811,5 +976,164 @@ mod tests_aggregate {
             .iter()
             .any(|op| matches!(op, RepairOp::RemoveEmptyUser { user_idx: 1 }));
         assert!(has_remove, "fully-cleared user should get RemoveEmptyUser");
+    }
+}
+
+#[cfg(test)]
+mod tests_apply_plan {
+    use super::*;
+    use serde_json::json;
+
+    fn tool_use(id: &str) -> Value {
+        json!({"type": "tool_use", "id": id, "name": "bash", "input": {}})
+    }
+
+    fn tool_result(id: &str) -> Value {
+        json!({"type": "tool_result", "tool_use_id": id, "content": "ok"})
+    }
+
+    #[test]
+    fn test_case_a_no_change() {
+        let mut messages = vec![
+            json!({"role": "assistant", "content": [tool_use("A")]}),
+            json!({"role": "user", "content": [tool_result("A")]}),
+        ];
+        repair_tool_order(&mut messages);
+        assert_eq!(messages.len(), 2);
+        assert!(
+            messages[1]["content"][0].get("_dsk_accepted").is_none(),
+            "cleanup should have removed _dsk_accepted"
+        );
+    }
+
+    #[test]
+    fn test_case_b_reorder_fixed() {
+        let mut messages = vec![
+            json!({"role": "assistant", "content": [tool_use("A"), tool_use("B")]}),
+            json!({"role": "user", "content": [tool_result("B"), tool_result("A")]}),
+        ];
+        repair_tool_order(&mut messages);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["content"][0]["tool_use_id"], "A");
+        assert_eq!(messages[1]["content"][1]["tool_use_id"], "B");
+    }
+
+    #[test]
+    fn test_case_b_text_mixed_split() {
+        let mut messages = vec![
+            json!({"role": "assistant", "content": [tool_use("A")]}),
+            json!({"role": "user", "content": [
+                {"type": "text", "text": "before"},
+                tool_result("A"),
+                {"type": "text", "text": "after"}
+            ]}),
+        ];
+        repair_tool_order(&mut messages);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"][0]["tool_use_id"], "A");
+        let texts: Vec<_> = messages[1]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["type"] == "text")
+            .collect();
+        assert_eq!(texts.len(), 2);
+    }
+
+    #[test]
+    fn test_case_c_placeholder_inserted() {
+        let mut messages = vec![
+            json!({"role": "assistant", "content": [tool_use("A"), tool_use("B")]}),
+            json!({"role": "user", "content": [{"type": "text", "text": "followup"}]}),
+        ];
+        repair_tool_order(&mut messages);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["content"][0]["tool_use_id"], "A");
+        assert_eq!(messages[1]["content"][0]["content"], "[no result]");
+        assert_eq!(messages[1]["content"][1]["tool_use_id"], "B");
+        assert_eq!(messages[1]["content"][2]["type"], "text");
+        assert_eq!(messages[1]["content"][2]["text"], "followup");
+    }
+
+    #[test]
+    fn test_orphan_block_deleted() {
+        let mut messages = vec![
+            json!({"role": "assistant", "content": [tool_use("A")]}),
+            json!({"role": "user", "content": [
+                tool_result("A"),
+                tool_result("ORPHAN")
+            ]}),
+        ];
+        repair_tool_order(&mut messages);
+        let content = messages[1]["content"].as_array().unwrap();
+        assert!(content
+            .iter()
+            .all(|b| b.get("tool_use_id").map(|id| id != "ORPHAN").unwrap_or(true)));
+    }
+
+    #[test]
+    fn test_dsk_accepted_cleaned_up() {
+        let mut messages = vec![
+            json!({"role": "assistant", "content": [tool_use("A")]}),
+            json!({"role": "user", "content": [tool_result("A")]}),
+        ];
+        repair_tool_order(&mut messages);
+        for msg in &messages {
+            if let Some(content) = msg["content"].as_array() {
+                for block in content {
+                    assert!(
+                        block.get("_dsk_accepted").is_none(),
+                        "_dsk_accepted should be cleaned up"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_three_phase_ordering_phase_a_before_b() {
+        let mut messages = vec![
+            json!({"role": "assistant", "content": [tool_use("A")]}),
+            json!({"role": "user", "content": [
+                tool_result("B"),
+                tool_result("A"),
+            ]}),
+        ];
+        repair_tool_order(&mut messages);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["content"][0]["tool_use_id"], "A");
+        let no_b = messages[1]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|b| b.get("tool_use_id").map(|id| id != "B").unwrap_or(true));
+        assert!(no_b, "orphan B should be deleted");
+    }
+
+    #[test]
+    fn test_multiple_assistants_independent() {
+        let mut messages = vec![
+            json!({"role": "assistant", "content": [tool_use("A")]}),
+            json!({"role": "user", "content": [tool_result("B"), tool_result("A")]}),
+            json!({"role": "assistant", "content": [tool_use("B")]}),
+            json!({"role": "user", "content": [{"type": "text", "text": "next"}]}),
+        ];
+        repair_tool_order(&mut messages);
+        for msg in &messages {
+            if let Some(content) = msg["content"].as_array() {
+                for block in content {
+                    assert!(block.get("_dsk_accepted").is_none());
+                }
+            }
+        }
+        let roles: Vec<_> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
+        for w in roles.windows(2) {
+            assert!(!(w[0] == "user" && w[1] == "user"), "consecutive users found");
+        }
     }
 }
