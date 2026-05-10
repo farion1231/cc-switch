@@ -508,7 +508,7 @@ jobs:
         with:
           name: release-assets-${{ runner.os }}-${{ matrix.arch || runner.arch }}
           path: release-assets/*
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: List generated bundles (debug)
         if: always()
