@@ -1025,7 +1025,10 @@
     "pricingModelSourceInherit": "グローバル設定を継承",
     "pricingModelSourceRequest": "リクエストモデル",
     "pricingModelSourceResponse": "レスポンスモデル",
-    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
+    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択",
+    "customCliArgs": "カスタム CLI 引数",
+    "customCliArgsPlaceholder": "--dangerously-skip-permissions",
+    "customCliArgsHint": "ターミナルを開く際に起動コマンドに追加される引数。複数ある場合はスペースで区切ります。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

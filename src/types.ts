@@ -185,6 +185,8 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // 附加 CLI 启动参数（比如 --dangerously-skip-permissions）
+  customCliArgs?: string;
 }
 
 // Skill 同步方式

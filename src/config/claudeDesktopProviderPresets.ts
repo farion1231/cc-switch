@@ -330,11 +330,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimaxi.com/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes(
-      "MiniMax-M2.7",
-      "MiniMax-M2.7",
-      "MiniMax-M2.7",
-    ),
+    modelRoutes: brandedRoutes("MiniMax-M2.7", "MiniMax-M2.7", "MiniMax-M2.7"),
     isPartner: true,
     partnerPromotionKey: "minimax_cn",
     theme: {
@@ -352,11 +348,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimax.io/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes(
-      "MiniMax-M2.7",
-      "MiniMax-M2.7",
-      "MiniMax-M2.7",
-    ),
+    modelRoutes: brandedRoutes("MiniMax-M2.7", "MiniMax-M2.7", "MiniMax-M2.7"),
     isPartner: true,
     partnerPromotionKey: "minimax_en",
     theme: {
@@ -389,11 +381,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.tbox.cn/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes(
-      "Ling-2.5-1T",
-      "Ling-2.5-1T",
-      "Ling-2.5-1T",
-    ),
+    modelRoutes: brandedRoutes("Ling-2.5-1T", "Ling-2.5-1T", "Ling-2.5-1T"),
   },
   {
     name: "AiHubMix",
@@ -797,11 +785,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.xiaomimimo.com/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes(
-      "mimo-v2-pro",
-      "mimo-v2-pro",
-      "mimo-v2-pro",
-    ),
+    modelRoutes: brandedRoutes("mimo-v2-pro", "mimo-v2-pro", "mimo-v2-pro"),
     icon: "xiaomimimo",
     iconColor: "#000000",
   },

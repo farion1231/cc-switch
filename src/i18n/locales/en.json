@@ -1025,7 +1025,10 @@
     "pricingModelSourceInherit": "Inherit global default",
     "pricingModelSourceRequest": "Request model",
     "pricingModelSourceResponse": "Response model",
-    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model"
+    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model",
+    "customCliArgs": "Custom CLI Arguments",
+    "customCliArgsPlaceholder": "--dangerously-skip-permissions",
+    "customCliArgsHint": "Additional arguments appended to the launch command when opening the terminal, separate multiple args with spaces"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
