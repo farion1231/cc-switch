@@ -174,21 +174,29 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          # Tauri quirk: APPLE_SIGNING_IDENTITY 设为空字符串时不会跳过签名，
+          # 而是用空 identity 调 codesign 导致 "item not found in keychain"。
+          # 未签名路径必须完全 unset 这些 env，Tauri 才会真正跳过签名/公证。
+          if [ "${{ steps.apple_check.outputs.available }}" != "true" ]; then
+            unset APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            echo "ℹ️ Unsigned build — APPLE_* env unset, Tauri will skip codesign/notarize"
+          fi
+
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
-            echo "=== macOS build/notarization attempt ${attempt}/${max_attempts} ==="
+            echo "=== macOS build attempt ${attempt}/${max_attempts} ==="
             if pnpm tauri build --target universal-apple-darwin; then
-              echo "✅ macOS build/notarization succeeded"
+              echo "✅ macOS build succeeded"
               exit 0
             fi
 
             if [ "$attempt" -eq "$max_attempts" ]; then
-              echo "❌ macOS build/notarization failed after ${max_attempts} attempts" >&2
+              echo "❌ macOS build failed after ${max_attempts} attempts" >&2
               exit 1
             fi
 
             sleep_seconds=$((attempt * 60))
-            echo "⚠️ macOS build/notarization failed, retrying in ${sleep_seconds}s..."
+            echo "⚠️ macOS build failed, retrying in ${sleep_seconds}s..."
             sleep "$sleep_seconds"
           done
 
