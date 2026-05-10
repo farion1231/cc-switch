@@ -109,6 +109,7 @@ pub async fn execute_usage_script(
 
     // 6. 发送 HTTP 请求
     let response_data = send_http_request(&request, timeout_secs).await?;
+    let _content_type = response_data.content_type.as_deref();
 
     // 7. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
     let result: Value = {
@@ -148,7 +149,7 @@ pub async fn execute_usage_script(
 
             // 将响应数据转换为 JS 值
             let response_js: rquickjs::Value =
-                ctx.json_parse(response_data.as_str()).map_err(|e| {
+                ctx.json_parse(response_data.body.as_str()).map_err(|e| {
                     AppError::localized(
                         "usage_script.response_parse_failed",
                         format!("解析响应 JSON 失败: {e}"),
@@ -208,6 +209,13 @@ pub async fn execute_usage_script(
     Ok(result)
 }
 
+/// HTTP 响应结构
+#[derive(Debug)]
+struct HttpResponse {
+    content_type: Option<String>,
+    body: String,
+}
+
 /// 请求配置结构
 #[derive(Debug, serde::Deserialize)]
 struct RequestConfig {
@@ -220,7 +228,7 @@ struct RequestConfig {
 }
 
 /// 发送 HTTP 请求
-async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
+async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<HttpResponse, AppError> {
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
     // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
@@ -259,6 +267,11 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     })?;
 
     let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
     let text = resp.text().await.map_err(|e| {
         AppError::localized(
             "usage_script.read_response_failed",
@@ -284,7 +297,10 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
         ));
     }
 
-    Ok(text)
+    Ok(HttpResponse {
+        content_type,
+        body: text,
+    })
 }
 
 /// 验证脚本返回值（支持单对象或数组）
