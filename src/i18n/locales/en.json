@@ -577,6 +577,12 @@
       "title": "Preferred Terminal",
       "description": "Choose which terminal app to use when clicking the terminal button",
       "fallbackHint": "If the selected terminal is unavailable, the system default will be used",
+      "customCliArgs": {
+        "title": "Custom CLI Arguments",
+        "description": "Additional arguments appended to the command when opening a terminal",
+        "placeholder": "--dangerously-skip-permissions",
+        "hint": "Multiple arguments can be separated by spaces, e.g. --dangerously-skip-permissions --verbose"
+      },
       "options": {
         "macos": {
           "terminal": "Terminal.app",

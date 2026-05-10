@@ -301,6 +301,9 @@ pub struct AppSettings {
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
+    /// 附加 CLI 启动参数（比如 --dangerously-skip-permissions）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_cli_args: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -351,6 +354,7 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            custom_cli_args: None,
         }
     }
 }
@@ -758,6 +762,18 @@ pub fn get_preferred_terminal() -> Option<String> {
             e.into_inner()
         })
         .preferred_terminal
+        .clone()
+}
+
+/// 获取附加 CLI 启动参数
+pub fn get_custom_cli_args() -> Option<String> {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .custom_cli_args
         .clone()
 }
 

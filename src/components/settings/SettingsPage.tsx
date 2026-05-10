@@ -250,6 +250,10 @@ export function SettingsPage({
                       onChange={(terminal) =>
                         handleAutoSave({ preferredTerminal: terminal })
                       }
+                      customCliArgs={settings.customCliArgs}
+                      onCustomCliArgsChange={(args) =>
+                        handleAutoSave({ customCliArgs: args })
+                      }
                     />
                   </motion.div>
                 ) : null}

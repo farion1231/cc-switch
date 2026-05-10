@@ -6,6 +6,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { isMac, isWindows, isLinux } from "@/lib/platform";
 
 // Terminal options per platform
@@ -76,9 +77,11 @@ function getDefaultTerminal(): string {
 export interface TerminalSettingsProps {
   value?: string;
   onChange: (value: string) => void;
+  customCliArgs?: string;
+  onCustomCliArgsChange: (value: string) => void;
 }
 
-export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
+export function TerminalSettings({ value, onChange, customCliArgs, onCustomCliArgsChange }: TerminalSettingsProps) {
   const { t } = useTranslation();
   const terminals = getTerminalOptions();
   const defaultTerminal = getDefaultTerminal();
@@ -108,6 +111,20 @@ export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
       </Select>
       <p className="text-xs text-muted-foreground">
         {t("settings.terminal.fallbackHint")}
+      </p>
+      <header className="space-y-1 mt-4">
+        <h3 className="text-sm font-medium">{t("settings.terminal.customCliArgs.title")}</h3>
+        <p className="text-xs text-muted-foreground">
+          {t("settings.terminal.customCliArgs.description")}
+        </p>
+      </header>
+      <Input
+        value={customCliArgs || ""}
+        onChange={(e) => onCustomCliArgsChange(e.target.value)}
+        placeholder={t("settings.terminal.customCliArgs.placeholder")}
+      />
+      <p className="text-xs text-muted-foreground">
+        {t("settings.terminal.customCliArgs.hint")}
       </p>
     </section>
   );
