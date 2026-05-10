@@ -586,15 +586,12 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     let routes = proxy_model_routes(provider)?;
-    let route = routes
-        .iter()
-        .find(|r| r.route_id == requested)
-        .or_else(|| {
-            let base = strip_one_m_context_suffix(&requested);
-            routes
-                .iter()
-                .find(|r| strip_one_m_context_suffix(&r.route_id) == base)
-        });
+    let route = routes.iter().find(|r| r.route_id == requested).or_else(|| {
+        let base = strip_one_m_context_suffix(&requested);
+        routes
+            .iter()
+            .find(|r| strip_one_m_context_suffix(&r.route_id) == base)
+    });
     let Some(route) = route else {
         return Err(AppError::localized(
             "claude_desktop.provider.route_unknown",
@@ -628,7 +625,9 @@ fn apply_provider_to_paths(
     }
 
     validate_provider(provider)?;
-    with_rollback(paths, |paths| apply_provider_to_paths_inner(db, provider, paths))
+    with_rollback(paths, |paths| {
+        apply_provider_to_paths_inner(db, provider, paths)
+    })
 }
 
 fn restore_official_at_paths(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
@@ -645,9 +644,7 @@ where
         Err(err) => match restore_snapshots(&snapshots) {
             Ok(()) => Err(err),
             Err(rollback_err) => {
-                log::error!(
-                    "Failed to rollback Claude Desktop config after error: {rollback_err}"
-                );
+                log::error!("Failed to rollback Claude Desktop config after error: {rollback_err}");
                 Err(AppError::Message(format!(
                     "{err}; rollback failed: {rollback_err}"
                 )))
@@ -894,6 +891,7 @@ fn is_supported_platform() -> bool {
     cfg!(any(target_os = "macos", windows))
 }
 
+#[allow(clippy::needless_return)]
 fn current_platform_paths() -> Result<ClaudeDesktopPaths, AppError> {
     #[cfg(target_os = "macos")]
     {

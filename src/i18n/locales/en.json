@@ -698,6 +698,7 @@
   "apps": {
     "claude": "Claude",
     "claudeDesktop": "Claude Desktop",
+    "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
