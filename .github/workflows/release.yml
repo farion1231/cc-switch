@@ -265,6 +265,8 @@ jobs:
             CODESIGN_ARGS=(--codesign "$APPLE_SIGNING_IDENTITY")
           fi
 
+          # 注意：set -u 下展开空数组会报 unbound variable，
+          # 用 ${arr[@]+"${arr[@]}"} 写法在数组为空时直接什么都不展开。
           create-dmg \
             --volname "CC Doctor" \
             --background "src-tauri/icons/dmg-background.png" \
@@ -274,7 +276,7 @@ jobs:
             --icon "CC Doctor.app" 180 220 \
             --hide-extension "CC Doctor.app" \
             --app-drop-link 480 220 \
-            "${CODESIGN_ARGS[@]}" \
+            ${CODESIGN_ARGS[@]+"${CODESIGN_ARGS[@]}"} \
             --no-internet-enable \
             "release-assets/$NEW_DMG" \
             "$DMG_STAGE_DIR"
