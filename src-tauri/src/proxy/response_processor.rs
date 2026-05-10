@@ -15,7 +15,7 @@ use axum::http::{header::HeaderMap, HeaderName};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     io::Read,
     sync::{
@@ -218,8 +218,13 @@ pub async fn handle_streaming(
     let timeout_config = ctx.streaming_timeout_config();
 
     // 创建带日志和超时的透传流
-    let logged_stream =
-        create_logged_passthrough_stream(stream, ctx.tag, Some(usage_collector), timeout_config);
+    let logged_stream = create_logged_passthrough_stream(
+        stream,
+        ctx.tag,
+        Some(usage_collector),
+        timeout_config,
+        Some(ctx.request_model.clone()),
+    );
 
     let body = axum::body::Body::from_stream(logged_stream);
     match builder.body(body) {
@@ -254,6 +259,21 @@ pub async fn handle_non_streaming(
         ctx.tag,
         String::from_utf8_lossy(&body_bytes)
     );
+
+    // 将响应中的 model 字段改写回请求时的原始模型名
+    // 确保客户端（如 Claude Code /context）显示正确的模型名称
+    let mut body_bytes = body_bytes;
+    if let Ok(mut json_val) = serde_json::from_slice::<Value>(&body_bytes) {
+        if json_val.get("model").and_then(|m| m.as_str()) == Some(ctx.request_model.as_str()) {
+            // model 未被改写，无需处理
+        } else if json_val.as_object_mut().is_some() {
+            json_val["model"] = json!(ctx.request_model);
+            if let Ok(new_bytes) = serde_json::to_vec(&json_val) {
+                body_bytes = Bytes::from(new_bytes);
+                response_headers.remove(axum::http::header::CONTENT_LENGTH);
+            }
+        }
+    }
 
     // 解析并记录使用量
     if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
@@ -604,6 +624,7 @@ pub fn create_logged_passthrough_stream(
     tag: &'static str,
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
+    request_model: Option<String>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -662,13 +683,36 @@ pub fn create_logged_passthrough_stream(
                     crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                     // 尝试解析并记录完整的 SSE 事件
+                    let mut chunk = bytes.to_vec();
                     while let Some(event_text) = take_sse_block(&mut buffer) {
+                        let event_start_in_buffer = buffer.len();
                         if !event_text.trim().is_empty() {
                             // 提取 data 部分并尝试解析为 JSON
                             for line in event_text.lines() {
                                 if let Some(data) = strip_sse_field(line, "data") {
                                     if data.trim() != "[DONE]" {
                                         if let Ok(json_value) = serde_json::from_str::<Value>(data) {
+                                            // 将 SSE 事件中的 model 字段改写回请求原始模型名
+                                            if let Some(ref rm) = request_model {
+                                                if json_value.get("type").and_then(|t| t.as_str()) == Some("message_start") {
+                                                    if let Some(message) = json_value.get("message") {
+                                                        if message.get("model").and_then(|m| m.as_str()) != Some(rm.as_str()) {
+                                                            let mut ev = json_value.clone();
+                                                            ev["message"]["model"] = json!(rm);
+                                                            if let Ok(new_data) = serde_json::to_string(&ev) {
+                                                                let old_line = format!("data: {data}");
+                                                                let new_line = format!("data: {new_data}");
+                                                                let line_in_event = event_text.find(&old_line).unwrap_or(0);
+                                                                let line_start_in_buffer = event_start_in_buffer + line_in_event;
+                                                                let line_end = line_start_in_buffer + old_line.len();
+                                                                if line_end <= chunk.len() {
+                                                                    chunk.splice(line_start_in_buffer..line_end, new_line.bytes());
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             if let Some(c) = &collector {
                                                 c.push(json_value.clone()).await;
                                             }
@@ -684,7 +728,7 @@ pub fn create_logged_passthrough_stream(
                         }
                     }
 
-                    yield Ok(bytes);
+                    yield Ok(Bytes::from(chunk));
                 }
                 Some(Err(e)) => {
                     log::error!("[{tag}] 流错误: {e}");
