@@ -1,8 +1,8 @@
-# CC-Switch "工作目录" 功能 — 实施方案
+# CC-Doctor "工作目录" 功能 — 实施方案
 
 ## Context
 
-CC-Switch 管理 5 个 CLI 工具（Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw）的供应商、MCP 服务器、Skills、提示词配置。当前所有启用状态是全局的——用户在不同项目间切换时需要手动 toggle。
+CC-Doctor 管理 5 个 CLI 工具（Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw）的供应商、MCP 服务器、Skills、提示词配置。当前所有启用状态是全局的——用户在不同项目间切换时需要手动 toggle。
 
 本功能允许用户注册多个工作目录（项目文件夹），切换目录时自动保存/恢复各实体的启用状态。**不做数据隔离**——所有实体共享全局池，仅 "谁是激活的" 按目录区分。
 

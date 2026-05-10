@@ -1,10 +1,10 @@
 mod support;
 
-use cc_switch_lib::{hermes_config, update_settings, AppSettings};
+use cc_doctor_lib::{hermes_config, update_settings, AppSettings};
 
 /// 读取并回写 Hermes provider 时，Hermes v12+ 新增或未来才会出现的字段
 /// （例如 `rate_limit_delay`、`key_env`）必须透传，不能因为 UI 不感知就静默丢弃。
-/// 否则用户在 Hermes Web UI 配置的高级字段会在 CC Switch 编辑后消失。
+/// 否则用户在 Hermes Web UI 配置的高级字段会在 CC Doctor 编辑后消失。
 fn with_temp_hermes_dir<F: FnOnce(&std::path::Path)>(f: F) {
     let guard = support::test_mutex().lock().expect("test mutex poisoned");
     let home = support::ensure_test_home();

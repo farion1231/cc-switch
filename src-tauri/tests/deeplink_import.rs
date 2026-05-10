@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use cc_switch_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState, Database};
+use cc_doctor_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState, Database};
 
 #[path = "support.rs"]
 mod support;
@@ -12,7 +12,7 @@ fn deeplink_import_claude_provider_persists_to_db() {
     reset_test_fs();
     let _home = ensure_test_home();
 
-    let url = "ccswitch://v1/import?resource=provider&app=claude&name=DeepLink%20Claude&homepage=https%3A%2F%2Fexample.com&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test-claude-key&model=claude-sonnet-4&icon=claude";
+    let url = "ccdoctor://v1/import?resource=provider&app=claude&name=DeepLink%20Claude&homepage=https%3A%2F%2Fexample.com&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test-claude-key&model=claude-sonnet-4&icon=claude";
     let request = parse_deeplink_url(url).expect("parse deeplink url");
 
     let db = Arc::new(Database::memory().expect("create memory db"));
@@ -48,7 +48,7 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
     reset_test_fs();
     let _home = ensure_test_home();
 
-    let url = "ccswitch://v1/import?resource=provider&app=codex&name=DeepLink%20Codex&homepage=https%3A%2F%2Fopenai.example&endpoint=https%3A%2F%2Fapi.openai.example%2Fv1&apiKey=sk-test-codex-key&model=gpt-4o&icon=openai";
+    let url = "ccdoctor://v1/import?resource=provider&app=codex&name=DeepLink%20Codex&homepage=https%3A%2F%2Fopenai.example&endpoint=https%3A%2F%2Fapi.openai.example%2Fv1&apiKey=sk-test-codex-key&model=gpt-4o&icon=openai";
     let request = parse_deeplink_url(url).expect("parse deeplink url");
 
     let db = Arc::new(Database::memory().expect("create memory db"));

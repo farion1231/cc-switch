@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { configApi } from "@/lib/api";
 
-const LEGACY_STORAGE_KEY = "cc-switch:gemini-common-config-snippet";
+const LEGACY_STORAGE_KEY = "cc-doctor:gemini-common-config-snippet";
 const DEFAULT_GEMINI_COMMON_CONFIG_SNIPPET = "{}";
 
 const GEMINI_COMMON_ENV_FORBIDDEN_KEYS = [

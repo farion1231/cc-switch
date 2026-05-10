@@ -4,6 +4,11 @@ use std::process::{Command, Stdio};
 
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+
+use crate::services::stream_command::{
+    emit_error_line, emit_progress, stream_command, SessionState,
+};
 
 // ─── 数据结构 ───
 
@@ -60,7 +65,10 @@ impl UninstallReport {
         if backup_failed {
             return UninstallOverallStatus::Failed;
         }
-        if steps.iter().all(|s| s.status == UninstallStepStatus::Success) {
+        if steps
+            .iter()
+            .all(|s| s.status == UninstallStepStatus::Success)
+        {
             UninstallOverallStatus::Success
         } else {
             UninstallOverallStatus::Partial
@@ -72,7 +80,7 @@ impl UninstallReport {
 
 /// 一键卸载 Claude Code
 ///
-/// 执行 5 步清理流程：
+/// 执行 5 步清理流程，每步进度通过 stream_command 实时推送给前端：
 /// 1. 创建备份目录
 /// 2. 备份并删除 ~/.claude/
 /// 3. 清理系统凭证（钥匙串 / 凭据管理器）
@@ -80,8 +88,14 @@ impl UninstallReport {
 /// 5. 卸载 Claude Code CLI
 ///
 /// # 参数
+/// - `app` / `state` / `channel_id`: 流式日志通道，由 commands 层注入
 /// - `dry_run`: 为 true 时不执行破坏性操作，仅返回将要执行的操作说明
-pub async fn uninstall_claude_code(dry_run: bool) -> Result<UninstallReport, String> {
+pub async fn uninstall_claude_code(
+    app: &AppHandle,
+    state: &SessionState,
+    channel_id: &str,
+    dry_run: bool,
+) -> Result<UninstallReport, String> {
     let app_config_dir = crate::config::get_app_config_dir();
 
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -90,32 +104,82 @@ pub async fn uninstall_claude_code(dry_run: bool) -> Result<UninstallReport, Str
         .join(format!("uninstall-{}", timestamp));
     let backup_dir_str = backup_dir.to_string_lossy().to_string();
 
+    emit_progress(
+        app,
+        channel_id,
+        format!("===== 开始卸载 Claude Code (dry_run={}) =====", dry_run),
+    );
+
     let mut steps: Vec<UninstallStep> = Vec::new();
 
-    // Step 1: 创建备份
-    let step1 = step_create_backup(&backup_dir, dry_run).await;
+    let mut cancelled_after: Option<usize> = None;
+    macro_rules! check_cancel {
+        ($idx:expr) => {
+            if !dry_run && state.cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+                emit_error_line(app, channel_id, "用户已取消，停止后续步骤");
+                cancelled_after = Some($idx);
+            }
+        };
+    }
+
+    // Step 1
+    let step1 = step_create_backup(app, channel_id, &backup_dir, dry_run).await;
     let step1_failed = step1.status == UninstallStepStatus::Failed;
     steps.push(step1);
+    check_cancel!(steps.len());
 
-    // Step 2: 备份并删除 ~/.claude/
-    let claude_dir = crate::config::get_claude_config_dir();
-    let step2 = step_backup_delete_claude(&claude_dir, &backup_dir, dry_run).await;
-    steps.push(step2);
+    // Step 2
+    if cancelled_after.is_none() {
+        let claude_dir = crate::config::get_claude_config_dir();
+        let step2 =
+            step_backup_delete_claude(app, state, channel_id, &claude_dir, &backup_dir, dry_run)
+                .await;
+        steps.push(step2);
+        check_cancel!(steps.len());
+    }
 
-    // Step 3: 清理系统凭证
-    let step3 = step_clean_credentials(dry_run).await;
-    steps.push(step3);
+    // Step 3
+    if cancelled_after.is_none() {
+        let step3 = step_clean_credentials(app, state, channel_id, dry_run).await;
+        steps.push(step3);
+        check_cancel!(steps.len());
+    }
 
-    // Step 4: 清理 shell 环境变量
-    let home = crate::config::get_home_dir();
-    let step4 = step_clean_shell_env(&home, &backup_dir, dry_run).await;
-    steps.push(step4);
+    // Step 4
+    if cancelled_after.is_none() {
+        let home = crate::config::get_home_dir();
+        let step4 = step_clean_shell_env(app, channel_id, &home, &backup_dir, dry_run).await;
+        steps.push(step4);
+        check_cancel!(steps.len());
+    }
 
-    // Step 5: 卸载 Claude Code CLI
-    let step5 = step_uninstall_cli(dry_run).await;
-    steps.push(step5);
+    // Step 5
+    if cancelled_after.is_none() {
+        let step5 = step_uninstall_cli(app, state, channel_id, dry_run).await;
+        steps.push(step5);
+    }
 
-    let overall = UninstallReport::determine_overall(&steps, step1_failed);
+    // 把因取消而未执行的步骤补成 Skipped("已取消")，便于前端展示
+    let total_steps = 5;
+    while steps.len() < total_steps {
+        steps.push(UninstallStep {
+            name: format!("步骤 {}", steps.len() + 1),
+            status: UninstallStepStatus::Skipped,
+            message: "用户已取消，未执行".to_string(),
+        });
+    }
+
+    let overall = if cancelled_after.is_some() {
+        UninstallOverallStatus::Failed
+    } else {
+        UninstallReport::determine_overall(&steps, step1_failed)
+    };
+
+    emit_progress(
+        app,
+        channel_id,
+        format!("===== 卸载完成: {:?} =====", overall),
+    );
 
     Ok(UninstallReport {
         backup_path: backup_dir_str,
@@ -126,11 +190,20 @@ pub async fn uninstall_claude_code(dry_run: bool) -> Result<UninstallReport, Str
 
 // ─── Step 1: 创建备份 ───
 
-async fn step_create_backup(backup_dir: &Path, dry_run: bool) -> UninstallStep {
-    log::info!("Step 1/5: 创建备份 -> {:?}", backup_dir);
+async fn step_create_backup(
+    app: &AppHandle,
+    cid: &str,
+    backup_dir: &Path,
+    dry_run: bool,
+) -> UninstallStep {
+    emit_progress(app, cid, format!("Step 1/5: 创建备份 -> {:?}", backup_dir));
 
     if dry_run {
-        log::info!("  [dry-run] 将创建备份目录: {:?}", backup_dir);
+        emit_progress(
+            app,
+            cid,
+            format!("  [dry-run] 将创建备份目录: {:?}", backup_dir),
+        );
         return UninstallStep {
             name: "创建备份".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -140,7 +213,7 @@ async fn step_create_backup(backup_dir: &Path, dry_run: bool) -> UninstallStep {
 
     match fs::create_dir_all(backup_dir) {
         Ok(()) => {
-            log::info!("  ✓ 备份目录创建成功");
+            emit_progress(app, cid, "  ✓ 备份目录创建成功");
             UninstallStep {
                 name: "创建备份".to_string(),
                 status: UninstallStepStatus::Success,
@@ -148,7 +221,7 @@ async fn step_create_backup(backup_dir: &Path, dry_run: bool) -> UninstallStep {
             }
         }
         Err(e) => {
-            log::error!("  ✗ 备份目录创建失败: {}", e);
+            emit_error_line(app, cid, format!("  ✗ 备份目录创建失败: {}", e));
             UninstallStep {
                 name: "创建备份".to_string(),
                 status: UninstallStepStatus::Failed,
@@ -161,14 +234,17 @@ async fn step_create_backup(backup_dir: &Path, dry_run: bool) -> UninstallStep {
 // ─── Step 2: 备份并删除 ~/.claude/ ───
 
 async fn step_backup_delete_claude(
+    app: &AppHandle,
+    state: &SessionState,
+    cid: &str,
     claude_dir: &Path,
     backup_dir: &Path,
     dry_run: bool,
 ) -> UninstallStep {
-    log::info!("Step 2/5: 备份并删除 ~/.claude/");
+    emit_progress(app, cid, "Step 2/5: 备份并删除 ~/.claude/");
 
     if !claude_dir.exists() {
-        log::info!("  ~/.claude 目录不存在，跳过");
+        emit_progress(app, cid, "  ~/.claude 目录不存在，跳过");
         return UninstallStep {
             name: "备份并删除 ~/.claude/".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -177,9 +253,13 @@ async fn step_backup_delete_claude(
     }
 
     if dry_run {
-        log::info!(
-            "  [dry-run] 将备份并删除 ~/.claude/ (路径: {:?})",
-            claude_dir
+        emit_progress(
+            app,
+            cid,
+            format!(
+                "  [dry-run] 将备份并删除 ~/.claude/ (路径: {:?})",
+                claude_dir
+            ),
         );
         return UninstallStep {
             name: "备份并删除 ~/.claude/".to_string(),
@@ -196,56 +276,49 @@ async fn step_backup_delete_claude(
     let source_str = claude_dir.to_string_lossy().to_string();
     let dest_str = dest.to_string_lossy().to_string();
 
-    // cp -R 复制整个目录作为备份
-    let cp_result = Command::new("cp")
-        .arg("-R")
-        .arg(&source_str)
-        .arg(&dest_str)
-        .output();
+    // cp -R 流式备份
+    let cp_outcome =
+        match stream_command(app, state, cid, "cp", &["-R", &source_str, &dest_str]).await {
+            Ok(o) => o,
+            Err(e) => {
+                emit_error_line(app, cid, format!("  ✗ 执行 cp 命令失败: {}", e));
+                return UninstallStep {
+                    name: "备份并删除 ~/.claude/".to_string(),
+                    status: UninstallStepStatus::Failed,
+                    message: format!("执行 cp 命令失败: {}", e),
+                };
+            }
+        };
 
-    match cp_result {
-        Ok(output) if output.status.success() => {
-            log::info!("  ✓ ~/.claude 已备份到 {:?}", dest);
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let err_msg = if stderr.is_empty() {
-                "cp 命令失败，未知错误".to_string()
-            } else {
-                format!("cp 失败: {}", stderr.trim())
-            };
-            log::error!("  ✗ 备份 ~/.claude 失败: {}", err_msg);
-            return UninstallStep {
-                name: "备份并删除 ~/.claude/".to_string(),
-                status: UninstallStepStatus::Failed,
-                message: format!("备份 ~/.claude 失败: {}", err_msg),
-            };
-        }
-        Err(e) => {
-            log::error!("  ✗ 执行 cp 命令失败: {}", e);
-            return UninstallStep {
-                name: "备份并删除 ~/.claude/".to_string(),
-                status: UninstallStepStatus::Failed,
-                message: format!("执行 cp 命令失败: {}", e),
-            };
-        }
+    if cp_outcome.cancelled {
+        return UninstallStep {
+            name: "备份并删除 ~/.claude/".to_string(),
+            status: UninstallStepStatus::Failed,
+            message: "已取消".to_string(),
+        };
+    }
+    if !cp_outcome.success {
+        emit_error_line(app, cid, "  ✗ 备份 ~/.claude 失败");
+        return UninstallStep {
+            name: "备份并删除 ~/.claude/".to_string(),
+            status: UninstallStepStatus::Failed,
+            message: format!("备份 ~/.claude 失败 (exit_code={:?})", cp_outcome.exit_code),
+        };
     }
 
-    // 删除原始目录
+    emit_progress(app, cid, format!("  ✓ ~/.claude 已备份到 {:?}", dest));
+
     match fs::remove_dir_all(claude_dir) {
         Ok(()) => {
-            log::info!("  ✓ ~/.claude 已删除");
+            emit_progress(app, cid, "  ✓ ~/.claude 已删除");
             UninstallStep {
                 name: "备份并删除 ~/.claude/".to_string(),
                 status: UninstallStepStatus::Success,
-                message: format!(
-                    "~/.claude 已备份到 {} 并删除",
-                    dest.display()
-                ),
+                message: format!("~/.claude 已备份到 {} 并删除", dest.display()),
             }
         }
         Err(e) => {
-            log::error!("  ✗ 删除 ~/.claude 失败: {}", e);
+            emit_error_line(app, cid, format!("  ✗ 删除 ~/.claude 失败: {}", e));
             UninstallStep {
                 name: "备份并删除 ~/.claude/".to_string(),
                 status: UninstallStepStatus::Failed,
@@ -257,14 +330,29 @@ async fn step_backup_delete_claude(
 
 // ─── Step 3: 清理系统凭证 ───
 
-async fn step_clean_credentials(dry_run: bool) -> UninstallStep {
-    log::info!("Step 3/5: 清理系统凭证");
-    step_clean_credentials_impl(dry_run).await
+async fn step_clean_credentials(
+    app: &AppHandle,
+    state: &SessionState,
+    cid: &str,
+    dry_run: bool,
+) -> UninstallStep {
+    emit_progress(app, cid, "Step 3/5: 清理系统凭证");
+    step_clean_credentials_impl(app, state, cid, dry_run).await
 }
 
 #[cfg(target_os = "macos")]
-async fn step_clean_credentials_impl(dry_run: bool) -> UninstallStep {
+async fn step_clean_credentials_impl(
+    app: &AppHandle,
+    state: &SessionState,
+    cid: &str,
+    dry_run: bool,
+) -> UninstallStep {
     if dry_run {
+        emit_progress(
+            app,
+            cid,
+            "  [dry-run] 将检查并清理 macOS 钥匙串中的 Claude Code 凭证",
+        );
         return UninstallStep {
             name: "清理系统凭证".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -272,20 +360,22 @@ async fn step_clean_credentials_impl(dry_run: bool) -> UninstallStep {
         };
     }
 
-    // 检查凭证是否存在（隐藏输出，避免密码泄漏）
+    // find 命令静默执行（避免在日志里泄露凭据元信息），不走 stream_command
+    emit_progress(
+        app,
+        cid,
+        "  检测钥匙串中是否存在 Claude Code-credentials...",
+    );
     let find_output = Command::new("security")
         .args(["find-generic-password", "-s", "Claude Code-credentials"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .output();
 
-    let exists = match &find_output {
-        Ok(output) => output.status.success(),
-        Err(_) => false,
-    };
+    let exists = matches!(&find_output, Ok(o) if o.status.success());
 
     if !exists {
-        log::info!("  macOS 钥匙串中未找到 Claude Code 凭证");
+        emit_progress(app, cid, "  macOS 钥匙串中未找到 Claude Code 凭证");
         return UninstallStep {
             name: "清理系统凭证".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -293,49 +383,64 @@ async fn step_clean_credentials_impl(dry_run: bool) -> UninstallStep {
         };
     }
 
-    // 删除凭证
-    let del_output = Command::new("security")
-        .args(["delete-generic-password", "-s", "Claude Code-credentials"])
-        .stdout(Stdio::null())
-        .output();
-
-    match del_output {
-        Ok(output) if output.status.success() => {
-            log::info!("  ✓ macOS 钥匙串凭证已删除");
-            UninstallStep {
-                name: "清理系统凭证".to_string(),
-                status: UninstallStepStatus::Success,
-                message: "macOS 钥匙串中的 Claude Code 凭证已删除".to_string(),
-            }
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let err = if stderr.trim().is_empty() {
-                "未知错误".to_string()
-            } else {
-                stderr.trim().to_string()
-            };
-            log::error!("  ✗ 删除钥匙串凭证失败: {}", err);
-            UninstallStep {
-                name: "清理系统凭证".to_string(),
-                status: UninstallStepStatus::Failed,
-                message: format!("删除钥匙串凭证失败: {}", err),
-            }
-        }
+    // delete 走流式日志（虽然通常没什么输出）
+    let outcome = match stream_command(
+        app,
+        state,
+        cid,
+        "security",
+        &["delete-generic-password", "-s", "Claude Code-credentials"],
+    )
+    .await
+    {
+        Ok(o) => o,
         Err(e) => {
-            log::error!("  ✗ 删除钥匙串凭证失败: {}", e);
-            UninstallStep {
+            return UninstallStep {
                 name: "清理系统凭证".to_string(),
                 status: UninstallStepStatus::Failed,
                 message: format!("删除钥匙串凭证失败: {}", e),
-            }
+            };
+        }
+    };
+
+    if outcome.cancelled {
+        return UninstallStep {
+            name: "清理系统凭证".to_string(),
+            status: UninstallStepStatus::Failed,
+            message: "已取消".to_string(),
+        };
+    }
+
+    if outcome.success {
+        emit_progress(app, cid, "  ✓ macOS 钥匙串凭证已删除");
+        UninstallStep {
+            name: "清理系统凭证".to_string(),
+            status: UninstallStepStatus::Success,
+            message: "macOS 钥匙串中的 Claude Code 凭证已删除".to_string(),
+        }
+    } else {
+        emit_error_line(app, cid, "  ✗ 删除钥匙串凭证失败");
+        UninstallStep {
+            name: "清理系统凭证".to_string(),
+            status: UninstallStepStatus::Failed,
+            message: format!("删除钥匙串凭证失败 (exit_code={:?})", outcome.exit_code),
         }
     }
 }
 
 #[cfg(target_os = "windows")]
-async fn step_clean_credentials_impl(dry_run: bool) -> UninstallStep {
+async fn step_clean_credentials_impl(
+    app: &AppHandle,
+    state: &SessionState,
+    cid: &str,
+    dry_run: bool,
+) -> UninstallStep {
     if dry_run {
+        emit_progress(
+            app,
+            cid,
+            "  [dry-run] 将检查并清理 Windows 凭据管理器中的 Claude Code 凭证",
+        );
         return UninstallStep {
             name: "清理系统凭证".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -343,11 +448,11 @@ async fn step_clean_credentials_impl(dry_run: bool) -> UninstallStep {
         };
     }
 
-    // 列出所有凭据
+    emit_progress(app, cid, "  执行 cmdkey /list 列出凭据条目...");
     let list_output = match Command::new("cmdkey").arg("/list").output() {
         Ok(o) => o,
         Err(e) => {
-            log::error!("  ✗ cmdkey /list 执行失败: {}", e);
+            emit_error_line(app, cid, format!("  ✗ cmdkey /list 执行失败: {}", e));
             return UninstallStep {
                 name: "清理系统凭证".to_string(),
                 status: UninstallStepStatus::Failed,
@@ -370,7 +475,11 @@ async fn step_clean_credentials_impl(dry_run: bool) -> UninstallStep {
     }
 
     if targets.is_empty() {
-        log::info!("  Windows 凭据管理器中未找到 Claude Code 相关条目");
+        emit_progress(
+            app,
+            cid,
+            "  Windows 凭据管理器中未找到 Claude Code 相关条目",
+        );
         return UninstallStep {
             name: "清理系统凭证".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -382,32 +491,44 @@ async fn step_clean_credentials_impl(dry_run: bool) -> UninstallStep {
     let mut errors: Vec<String> = Vec::new();
 
     for target in &targets {
-        let del_output = Command::new("cmdkey")
-            .arg(format!("/delete:{}", target))
-            .stdout(Stdio::null())
-            .output();
-
-        match del_output {
-            Ok(o) if o.status.success() => {
-                deleted_count += 1;
-            }
-            Ok(o) => {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                let err = if stderr.trim().is_empty() {
-                    "未知错误".to_string()
-                } else {
-                    stderr.trim().to_string()
-                };
-                errors.push(format!("删除 {} 失败: {}", target, err));
-            }
+        let outcome = match stream_command(
+            app,
+            state,
+            cid,
+            "cmdkey",
+            &[&format!("/delete:{}", target)],
+        )
+        .await
+        {
+            Ok(o) => o,
             Err(e) => {
                 errors.push(format!("删除 {} 失败: {}", target, e));
+                continue;
             }
+        };
+        if outcome.cancelled {
+            return UninstallStep {
+                name: "清理系统凭证".to_string(),
+                status: UninstallStepStatus::Failed,
+                message: "已取消".to_string(),
+            };
+        }
+        if outcome.success {
+            deleted_count += 1;
+        } else {
+            errors.push(format!(
+                "删除 {} 失败 (exit_code={:?})",
+                target, outcome.exit_code
+            ));
         }
     }
 
     if errors.is_empty() {
-        log::info!("  ✓ 已删除 {} 个 Windows 凭据条目", deleted_count);
+        emit_progress(
+            app,
+            cid,
+            format!("  ✓ 已删除 {} 个 Windows 凭据条目", deleted_count),
+        );
         UninstallStep {
             name: "清理系统凭证".to_string(),
             status: UninstallStepStatus::Success,
@@ -415,7 +536,7 @@ async fn step_clean_credentials_impl(dry_run: bool) -> UninstallStep {
         }
     } else {
         let error_msg = errors.join("; ");
-        log::error!("  ✗ 部分凭据删除失败: {}", error_msg);
+        emit_error_line(app, cid, format!("  ✗ 部分凭据删除失败: {}", error_msg));
         UninstallStep {
             name: "清理系统凭证".to_string(),
             status: UninstallStepStatus::Failed,
@@ -425,8 +546,13 @@ async fn step_clean_credentials_impl(dry_run: bool) -> UninstallStep {
 }
 
 #[cfg(target_os = "linux")]
-async fn step_clean_credentials_impl(_dry_run: bool) -> UninstallStep {
-    log::info!("  Linux 凭证清理未实现");
+async fn step_clean_credentials_impl(
+    app: &AppHandle,
+    _state: &SessionState,
+    cid: &str,
+    _dry_run: bool,
+) -> UninstallStep {
+    emit_progress(app, cid, "  Linux 凭证清理未实现，跳过");
     UninstallStep {
         name: "清理系统凭证".to_string(),
         status: UninstallStepStatus::Skipped,
@@ -436,8 +562,14 @@ async fn step_clean_credentials_impl(_dry_run: bool) -> UninstallStep {
 
 // ─── Step 4: 清理 shell 环境变量 ───
 
-async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> UninstallStep {
-    log::info!("Step 4/5: 清理 shell 环境变量");
+async fn step_clean_shell_env(
+    app: &AppHandle,
+    cid: &str,
+    home: &Path,
+    backup_dir: &Path,
+    dry_run: bool,
+) -> UninstallStep {
+    emit_progress(app, cid, "Step 4/5: 清理 shell 环境变量");
 
     let files_to_check = [".zshrc", ".bashrc", ".bash_profile"];
     let mut existing_files: Vec<PathBuf> = Vec::new();
@@ -450,7 +582,7 @@ async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> 
     }
 
     if existing_files.is_empty() {
-        log::info!("  未找到 shell 配置文件，跳过");
+        emit_progress(app, cid, "  未找到 shell 配置文件，跳过");
         return UninstallStep {
             name: "清理 shell 环境变量".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -463,7 +595,15 @@ async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> 
             .iter()
             .map(|p| p.display().to_string())
             .collect();
-        log::info!("  [dry-run] 将处理 {} 个文件: {:?}", existing_files.len(), file_list);
+        emit_progress(
+            app,
+            cid,
+            format!(
+                "  [dry-run] 将处理 {} 个文件: {:?}",
+                existing_files.len(),
+                file_list
+            ),
+        );
         return UninstallStep {
             name: "清理 shell 环境变量".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -478,7 +618,6 @@ async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> 
     let mut file_errors: Vec<String> = Vec::new();
 
     for file_path in &existing_files {
-        // 备份到备份目录（filename.bak）
         let file_name = file_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -488,22 +627,25 @@ async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> 
 
         match fs::copy(file_path, &bak_path) {
             Ok(_) => {
-                log::info!("  ✓ 已备份 {} -> {:?}", file_path.display(), bak_path);
+                emit_progress(
+                    app,
+                    cid,
+                    format!("  ✓ 已备份 {} -> {:?}", file_path.display(), bak_path),
+                );
             }
             Err(e) => {
                 let err_msg = format!("备份 {} 失败: {}", file_path.display(), e);
-                log::error!("  ✗ {}", err_msg);
+                emit_error_line(app, cid, format!("  ✗ {}", err_msg));
                 file_errors.push(err_msg);
                 continue;
             }
         }
 
-        // 读取文件内容并过滤
         let content = match fs::read_to_string(file_path) {
             Ok(s) => s,
             Err(e) => {
                 let err_msg = format!("读取 {} 失败: {}", file_path.display(), e);
-                log::error!("  ✗ {}", err_msg);
+                emit_error_line(app, cid, format!("  ✗ {}", err_msg));
                 file_errors.push(err_msg);
                 continue;
             }
@@ -518,15 +660,16 @@ async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> 
 
         let removed_count = lines.len() - filtered_lines.len();
 
-        // 如果没有任何行被过滤，跳过写入
         if removed_count == 0 {
-            log::info!("  {} 中没有需要清理的 export 行", file_path.display());
+            emit_progress(
+                app,
+                cid,
+                format!("  {} 中没有需要清理的 export 行", file_path.display()),
+            );
             continue;
         }
 
-        // 写回文件（保持原有的换行风格）
         let new_content = filtered_lines.join("\n");
-        // 如果原始文件末尾有换行，追加一个
         let new_content = if content.ends_with('\n') {
             format!("{}\n", new_content)
         } else {
@@ -535,17 +678,20 @@ async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> 
 
         match fs::write(file_path, &new_content) {
             Ok(()) => {
-                log::info!(
-                    "  ✓ {}: 已清理 {} 条环境变量",
-                    file_path.display(),
-                    removed_count
+                emit_progress(
+                    app,
+                    cid,
+                    format!(
+                        "  ✓ {}: 已清理 {} 条环境变量",
+                        file_path.display(),
+                        removed_count
+                    ),
                 );
                 total_cleaned += removed_count;
             }
             Err(e) => {
-                let err_msg =
-                    format!("写入 {} 失败: {}", file_path.display(), e);
-                log::error!("  ✗ {}", err_msg);
+                let err_msg = format!("写入 {} 失败: {}", file_path.display(), e);
+                emit_error_line(app, cid, format!("  ✗ {}", err_msg));
                 file_errors.push(err_msg);
             }
         }
@@ -553,7 +699,7 @@ async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> 
 
     if !file_errors.is_empty() {
         let errors = file_errors.join("; ");
-        log::error!("  ✗ 部分文件清理失败: {}", errors);
+        emit_error_line(app, cid, format!("  ✗ 部分文件清理失败: {}", errors));
         return UninstallStep {
             name: "清理 shell 环境变量".to_string(),
             status: UninstallStepStatus::Failed,
@@ -562,7 +708,11 @@ async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> 
     }
 
     if total_cleaned == 0 {
-        log::info!("  shell 配置文件中未找到需要清理的 ANTHROPIC_/CLAUDE_ 环境变量");
+        emit_progress(
+            app,
+            cid,
+            "  shell 配置文件中未找到需要清理的 ANTHROPIC_/CLAUDE_ 环境变量",
+        );
         return UninstallStep {
             name: "清理 shell 环境变量".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -570,7 +720,7 @@ async fn step_clean_shell_env(home: &Path, backup_dir: &Path, dry_run: bool) -> 
         };
     }
 
-    log::info!("  ✓ 共清理 {} 条环境变量", total_cleaned);
+    emit_progress(app, cid, format!("  ✓ 共清理 {} 条环境变量", total_cleaned));
     UninstallStep {
         name: "清理 shell 环境变量".to_string(),
         status: UninstallStepStatus::Success,
@@ -598,14 +748,18 @@ fn is_env_export_line(line: &str) -> bool {
 
 // ─── Step 5: 卸载 Claude Code CLI ───
 
-async fn step_uninstall_cli(dry_run: bool) -> UninstallStep {
-    log::info!("Step 5/5: 卸载 Claude Code CLI");
+async fn step_uninstall_cli(
+    app: &AppHandle,
+    state: &SessionState,
+    cid: &str,
+    dry_run: bool,
+) -> UninstallStep {
+    emit_progress(app, cid, "Step 5/5: 卸载 Claude Code CLI");
 
-    // 检查 claude 命令是否存在
     let claude_exists = check_claude_exists();
 
     if !claude_exists {
-        log::info!("  Claude Code 尚未安装，跳过");
+        emit_progress(app, cid, "  Claude Code 尚未安装，跳过");
         return UninstallStep {
             name: "卸载 Claude Code CLI".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -614,7 +768,11 @@ async fn step_uninstall_cli(dry_run: bool) -> UninstallStep {
     }
 
     if dry_run {
-        log::info!("  [dry-run] 将执行 npm uninstall -g @anthropic-ai/claude-code");
+        emit_progress(
+            app,
+            cid,
+            "  [dry-run] 将执行 npm uninstall -g @anthropic-ai/claude-code",
+        );
         return UninstallStep {
             name: "卸载 Claude Code CLI".to_string(),
             status: UninstallStepStatus::Skipped,
@@ -622,41 +780,51 @@ async fn step_uninstall_cli(dry_run: bool) -> UninstallStep {
         };
     }
 
-    // 执行卸载
-    let uninstall_output = Command::new("npm")
-        .args(["uninstall", "-g", "@anthropic-ai/claude-code"])
-        .output();
-
-    match uninstall_output {
-        Ok(output) if output.status.success() => {
-            log::info!("  ✓ Claude Code CLI 已卸载");
-            UninstallStep {
-                name: "卸载 Claude Code CLI".to_string(),
-                status: UninstallStepStatus::Success,
-                message: "Claude Code CLI 已成功卸载".to_string(),
-            }
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let err = if stderr.trim().is_empty() {
-                "npm uninstall 命令执行失败".to_string()
-            } else {
-                stderr.trim().to_string()
-            };
-            log::error!("  ✗ 卸载失败: {}", err);
-            UninstallStep {
-                name: "卸载 Claude Code CLI".to_string(),
-                status: UninstallStepStatus::Failed,
-                message: format!("卸载失败: {}", err),
-            }
-        }
+    let outcome = match stream_command(
+        app,
+        state,
+        cid,
+        "npm",
+        &["uninstall", "-g", "@anthropic-ai/claude-code"],
+    )
+    .await
+    {
+        Ok(o) => o,
         Err(e) => {
-            log::error!("  ✗ 执行 npm uninstall 失败: {}", e);
-            UninstallStep {
+            emit_error_line(app, cid, format!("  ✗ 执行 npm uninstall 失败: {}", e));
+            return UninstallStep {
                 name: "卸载 Claude Code CLI".to_string(),
                 status: UninstallStepStatus::Failed,
                 message: format!("执行 npm uninstall 失败: {}", e),
-            }
+            };
+        }
+    };
+
+    if outcome.cancelled {
+        return UninstallStep {
+            name: "卸载 Claude Code CLI".to_string(),
+            status: UninstallStepStatus::Failed,
+            message: "已取消".to_string(),
+        };
+    }
+
+    if outcome.success {
+        emit_progress(app, cid, "  ✓ Claude Code CLI 已卸载");
+        UninstallStep {
+            name: "卸载 Claude Code CLI".to_string(),
+            status: UninstallStepStatus::Success,
+            message: "Claude Code CLI 已成功卸载".to_string(),
+        }
+    } else {
+        emit_error_line(
+            app,
+            cid,
+            format!("  ✗ npm uninstall 失败 (exit_code={:?})", outcome.exit_code),
+        );
+        UninstallStep {
+            name: "卸载 Claude Code CLI".to_string(),
+            status: UninstallStepStatus::Failed,
+            message: format!("卸载失败 (exit_code={:?})", outcome.exit_code),
         }
     }
 }
@@ -693,7 +861,9 @@ mod tests {
     #[test]
     fn test_is_env_export_line_positive() {
         assert!(is_env_export_line("export ANTHROPIC_API_KEY=sk-xxx"));
-        assert!(is_env_export_line("export ANTHROPIC_BASE_URL=https://example.com"));
+        assert!(is_env_export_line(
+            "export ANTHROPIC_BASE_URL=https://example.com"
+        ));
         assert!(is_env_export_line("export CLAUDE_CODE_API_KEY=abc123"));
         assert!(is_env_export_line("  export ANTHROPIC_API_KEY=value"));
     }
@@ -717,7 +887,9 @@ mod tests {
     #[test]
     fn test_is_env_export_line_multiple_assignments() {
         // 在同一行有后续赋值仍应匹配
-        assert!(is_env_export_line("export ANTHROPIC_BASE_URL=http://a.com ANOTHER_VAR=b"));
+        assert!(is_env_export_line(
+            "export ANTHROPIC_BASE_URL=http://a.com ANOTHER_VAR=b"
+        ));
     }
 
     #[test]

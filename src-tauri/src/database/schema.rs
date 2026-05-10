@@ -917,7 +917,7 @@ impl Database {
             .map_err(|e| AppError::Database(format!("序列化旧 skills 快照失败: {e}")))?;
 
         // 标记：需要在启动后从文件系统扫描并重建 Skills 数据
-        // 说明：v3 结构将 Skills 的 SSOT 迁移到 ~/.cc-switch/skills/，
+        // 说明：v3 结构将 Skills 的 SSOT 迁移到 ~/.cc-doctor/skills/，
         // 旧表只存“安装记录”，无法直接无损迁移到新结构，因此改为启动后扫描 app 目录导入。
         let _ = conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES ('skills_ssot_migration_pending', 'true')",

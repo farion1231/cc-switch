@@ -127,7 +127,7 @@ const BUILTIN_AGENT_KEYS_SLIM = new Set(
   OMO_SLIM_BUILTIN_AGENTS.map((a) => a.key),
 );
 const BUILTIN_CATEGORY_KEYS = new Set(OMO_BUILTIN_CATEGORIES.map((c) => c.key));
-const EMPTY_VARIANT_VALUE = "__cc_switch_omo_variant_empty__";
+const EMPTY_VARIANT_VALUE = "__cc_doctor_omo_variant_empty__";
 
 function ModelCombobox({
   value,

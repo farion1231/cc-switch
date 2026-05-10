@@ -609,7 +609,7 @@ mod tests {
     /// relay base must have its `/v1beta` suffix **stripped** so the
     /// appended standard endpoint (`/v1beta/models/{model}:method`) does
     /// not produce a doubled `/v1beta/v1beta/models/...` path. Non-full
-    /// mode's contract is "base URL + cc-switch appends the canonical
+    /// mode's contract is "base URL + cc-doctor appends the canonical
     /// Gemini endpoint" — a user who wants a relay's custom namespace
     /// (e.g. `/v1/models/...`) must use full-URL mode instead.
     ///

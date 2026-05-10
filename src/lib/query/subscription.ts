@@ -38,7 +38,7 @@ export interface UseCodexOauthQuotaOptions {
 /**
  * Codex OAuth (ChatGPT Plus/Pro 反代) 订阅额度查询 hook
  *
- * 与 `useSubscriptionQuota` 平行：数据走 cc-switch 自管的 OAuth token，
+ * 与 `useSubscriptionQuota` 平行：数据走 cc-doctor 自管的 OAuth token，
  * 而不是 Codex CLI 的 ~/.codex/auth.json。
  *
  * Query key 包含 accountId，多张卡片绑定到同一账号时会自动去重共享请求。

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# CC Switch 环境诊断与修复功能自动化验收脚本
+# CC Doctor 环境诊断与修复功能自动化验收脚本
 # 用于验证后端功能是否正常工作
 
 set -e
@@ -13,7 +13,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "========================================="
-echo "CC Switch 功能验收测试"
+echo "CC Doctor 功能验收测试"
 echo "========================================="
 echo ""
 

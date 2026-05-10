@@ -17,6 +17,7 @@ pub mod session_usage_gemini;
 pub mod skill;
 pub mod speedtest;
 pub mod stream_check;
+pub mod stream_command;
 pub mod subscription;
 pub mod uninstall;
 pub mod usage_cache;

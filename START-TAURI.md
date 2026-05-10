@@ -1,11 +1,11 @@
-# 启动 CC Switch Tauri 应用
+# 启动 CC Doctor Tauri 应用
 
 ## 快速启动命令
 
 在终端中执行以下命令：
 
 ```bash
-cd ~/Desktop/cc-switch
+cd ~/Desktop/cc-doctor
 pnpm tauri dev
 ```
 
@@ -17,7 +17,7 @@ pnpm tauri dev
 
 2. **后续启动**：编译完成后，再次启动只需要 **10-30 秒**
 
-3. **应用窗口**：编译完成后，CC Switch 应用窗口会自动打开
+3. **应用窗口**：编译完成后，CC Doctor 应用窗口会自动打开
 
 ## 如何测试环境诊断功能
 
@@ -76,7 +76,7 @@ kill -9 <PID>
 ### 清理重新编译
 如果遇到编译错误：
 ```bash
-cd ~/Desktop/cc-switch
+cd ~/Desktop/cc-doctor
 rm -rf src-tauri/target
 pnpm tauri dev
 ```

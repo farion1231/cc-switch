@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
-const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
+const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Doctor SQLite 导出";
 
 /// Tables whose data rows are skipped when exporting for WebDAV sync.
 const SYNC_SKIP_TABLES: &[&str] = &[
@@ -97,7 +97,7 @@ impl Database {
         preserve_tables: &[&str],
     ) -> Result<String, AppError> {
         let sql_content = sql_raw.trim_start_matches('\u{feff}');
-        Self::validate_cc_switch_sql_export(sql_content)?;
+        Self::validate_cc_doctor_sql_export(sql_content)?;
 
         // 导入前备份现有数据库
         let backup_path = self.backup_database_file()?;
@@ -163,7 +163,7 @@ impl Database {
         Ok(snapshot)
     }
 
-    fn validate_cc_switch_sql_export(sql: &str) -> Result<(), AppError> {
+    fn validate_cc_doctor_sql_export(sql: &str) -> Result<(), AppError> {
         let trimmed = sql.trim_start();
         if trimmed.starts_with(CC_SWITCH_SQL_EXPORT_HEADER) {
             return Ok(());
@@ -171,8 +171,8 @@ impl Database {
 
         Err(AppError::localized(
             "backup.sql.invalid_format",
-            "仅支持导入由 CC Switch 导出的 SQL 备份文件。",
-            "Only SQL backups exported by CC Switch are supported.",
+            "仅支持导入由 CC Doctor 导出的 SQL 备份文件。",
+            "Only SQL backups exported by CC Doctor are supported.",
         ))
     }
 
@@ -296,7 +296,7 @@ impl Database {
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
-        let db_path = get_app_config_dir().join("cc-switch.db");
+        let db_path = get_app_config_dir().join("cc-doctor.db");
         if !db_path.exists() {
             return Ok(None);
         }
@@ -392,7 +392,7 @@ impl Database {
             .unwrap_or(0);
 
         output.push_str(&format!(
-            "-- CC Switch SQLite 导出\n-- 生成时间: {timestamp}\n-- user_version: {user_version}\n"
+            "-- CC Doctor SQLite 导出\n-- 生成时间: {timestamp}\n-- user_version: {user_version}\n"
         ));
         output.push_str("PRAGMA foreign_keys=OFF;\n");
         output.push_str(&format!("PRAGMA user_version={user_version};\n"));
@@ -786,7 +786,7 @@ mod tests {
     fn periodic_maintenance_runs_even_when_auto_backup_disabled() -> Result<(), AppError> {
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let test_home =
-            std::env::temp_dir().join("cc-switch-periodic-maintenance-backup-disabled-test");
+            std::env::temp_dir().join("cc-doctor-periodic-maintenance-backup-disabled-test");
         let _ = std::fs::remove_dir_all(&test_home);
         std::fs::create_dir_all(&test_home).expect("create test home");
         std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);

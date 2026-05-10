@@ -514,7 +514,7 @@ impl ProviderAdapter for ClaudeAdapter {
                 // for expired credentials. In both cases we would otherwise
                 // send `Authorization: Bearer ` to upstream and get a 401.
                 //
-                // CC Switch does not currently exchange the refresh_token for
+                // CC Doctor does not currently exchange the refresh_token for
                 // a fresh access_token. Until that path exists, degrade to
                 // plain GoogleOAuth strategy (which still sends the raw key
                 // as a fallback) and log loudly so users know to refresh
@@ -623,7 +623,7 @@ impl ProviderAdapter for ClaudeAdapter {
                     ),
                     (
                         HeaderName::from_static("originator"),
-                        HeaderValue::from_static("cc-switch"),
+                        HeaderValue::from_static("cc-doctor"),
                     ),
                 ]
             }

@@ -192,7 +192,7 @@ impl Database {
         tx: &rusqlite::Transaction<'_>,
         config: &MultiAppConfig,
     ) -> Result<(), AppError> {
-        // v3.10.0+：Skills 的 SSOT 已迁移到文件系统（~/.cc-switch/skills/）+ 数据库统一结构。
+        // v3.10.0+：Skills 的 SSOT 已迁移到文件系统（~/.cc-doctor/skills/）+ 数据库统一结构。
         //
         // 旧版 config.json 里的 `skills.skills` 仅记录“安装状态”，但不包含完整元数据，
         // 且无法保证 SSOT 目录中一定存在对应的 skill 文件。

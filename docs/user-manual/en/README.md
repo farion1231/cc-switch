@@ -1,11 +1,11 @@
-# CC Switch User Manual
+# CC Doctor User Manual
 
 > All-in-One Assistant for Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw
 
 ## Table of Contents
 
 ```
-CC Switch User Manual
+CC Doctor User Manual
 │
 ├── 1. Getting Started
 │   ├── 1.1 Introduction
@@ -88,7 +88,7 @@ CC Switch User Manual
 
 | File | Description |
 |------|-------------|
-| [5.1-config-files.md](./5-faq/5.1-config-files.md) | CC Switch storage, CLI configuration file formats |
+| [5.1-config-files.md](./5-faq/5.1-config-files.md) | CC Doctor storage, CLI configuration file formats |
 | [5.2-questions.md](./5-faq/5.2-questions.md) | Frequently asked questions |
 | [5.3-deeplink.md](./5-faq/5.3-deeplink.md) | Deep link protocol, generation and usage |
 | [5.4-env-conflict.md](./5-faq/5.4-env-conflict.md) | Environment variable conflict detection and resolution |
@@ -105,7 +105,7 @@ CC Switch User Manual
 
 - Documentation version: v3.13.0
 - Last updated: 2026-04-08
-- Applicable to CC Switch v3.13.0+
+- Applicable to CC Doctor v3.13.0+
 
 ### v3.13.0 Highlights
 
@@ -121,5 +121,5 @@ CC Switch User Manual
 
 Feel free to submit Issues or PRs to improve the documentation:
 
-- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
-- [GitHub Repository](https://github.com/farion1231/cc-switch)
+- [GitHub Issues](https://github.com/diaojz/cc-doctor/issues)
+- [GitHub Repository](https://github.com/diaojz/cc-doctor)

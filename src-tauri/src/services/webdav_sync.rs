@@ -29,7 +29,7 @@ use archive::{
 
 // ─── Protocol constants ──────────────────────────────────────
 
-const PROTOCOL_FORMAT: &str = "cc-switch-webdav-sync";
+const PROTOCOL_FORMAT: &str = "cc-doctor-webdav-sync";
 const PROTOCOL_VERSION: u32 = 2;
 const DB_COMPAT_VERSION: u32 = 6;
 const LEGACY_DB_COMPAT_VERSION: u32 = 5;
@@ -702,23 +702,23 @@ mod tests {
     #[test]
     fn remote_dir_segments_uses_current_layout() {
         let settings = WebDavSyncSettings {
-            remote_root: "cc-switch-sync".to_string(),
+            remote_root: "cc-doctor-sync".to_string(),
             profile: "default".to_string(),
             ..WebDavSyncSettings::default()
         };
         let segs = remote_dir_segments(&settings, RemoteLayout::Current);
-        assert_eq!(segs, vec!["cc-switch-sync", "v2", "db-v6", "default"]);
+        assert_eq!(segs, vec!["cc-doctor-sync", "v2", "db-v6", "default"]);
     }
 
     #[test]
     fn remote_dir_segments_uses_legacy_layout() {
         let settings = WebDavSyncSettings {
-            remote_root: "cc-switch-sync".to_string(),
+            remote_root: "cc-doctor-sync".to_string(),
             profile: "default".to_string(),
             ..WebDavSyncSettings::default()
         };
         let segs = remote_dir_segments(&settings, RemoteLayout::Legacy);
-        assert_eq!(segs, vec!["cc-switch-sync", "v2", "default"]);
+        assert_eq!(segs, vec!["cc-doctor-sync", "v2", "default"]);
     }
 
     #[test]

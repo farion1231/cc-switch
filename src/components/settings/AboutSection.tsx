@@ -246,13 +246,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
       if (!displayVersion) {
         await settingsApi.openExternal(
-          "https://github.com/farion1231/cc-switch/releases",
+          "https://github.com/diaojz/cc-doctor/releases",
         );
         return;
       }
 
       await settingsApi.openExternal(
-        `https://github.com/farion1231/cc-switch/releases/tag/${displayVersion}`,
+        `https://github.com/diaojz/cc-doctor/releases/tag/${displayVersion}`,
       );
     } catch (error) {
       console.error("[AboutSection] Failed to open release notes", error);
@@ -325,11 +325,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     }
   }, []);
 
-  const handleInstall = useCallback(async (tool: string) => {
+  const handleInstall = useCallback(async (tool: string, channelId?: string) => {
     const toolLabel = tool === "claude" ? "Claude Code" : tool;
+    // 工具卡片按钮直接调用时不带 channelId，发一个 fallback 让后端仍能 emit
+    // 但前端不订阅。EnvironmentDoctorPanel 入口会传真实 channelId 用于流式日志。
+    const cid = channelId ?? `legacy-install-${Date.now()}`;
     setIsInstalling(true);
     try {
-      const result = await doctorApi.installTool(tool);
+      const result = await doctorApi.installTool(tool, cid);
 
       if (result.already_installed || result.action === "none") {
         toast.success(t("doctor.alreadyInstalled", { tool: toolLabel }));

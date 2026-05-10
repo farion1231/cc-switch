@@ -16,25 +16,25 @@ static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
 /// 当前代理 URL（用于日志和状态查询）
 static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
 
-/// CC Switch 代理服务器当前监听的端口
+/// CC Doctor 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
 
-/// 设置 CC Switch 代理服务器的监听端口
+/// 设置 CC Doctor 代理服务器的监听端口
 ///
 /// 应在代理服务器启动时调用，以便系统代理检测能正确识别自己的端口
 pub fn set_proxy_port(port: u16) {
     if let Some(lock) = CC_SWITCH_PROXY_PORT.get() {
         if let Ok(mut current_port) = lock.write() {
             *current_port = port;
-            log::debug!("[GlobalProxy] Updated CC Switch proxy port to {port}");
+            log::debug!("[GlobalProxy] Updated CC Doctor proxy port to {port}");
         }
     } else {
         let _ = CC_SWITCH_PROXY_PORT.set(RwLock::new(port));
-        log::debug!("[GlobalProxy] Initialized CC Switch proxy port to {port}");
+        log::debug!("[GlobalProxy] Initialized CC Doctor proxy port to {port}");
     }
 }
 
-/// 获取 CC Switch 代理服务器的监听端口
+/// 获取 CC Doctor 代理服务器的监听端口
 fn get_proxy_port() -> u16 {
     CC_SWITCH_PROXY_PORT
         .get()
@@ -289,17 +289,17 @@ fn proxy_points_to_loopback(value: &str) -> bool {
             .unwrap_or(false)
     }
 
-    // 检查是否指向 CC Switch 自己的代理端口
+    // 检查是否指向 CC Doctor 自己的代理端口
     // 只有指向自己的代理才需要跳过，避免递归
-    fn is_cc_switch_proxy_port(port: Option<u16>) -> bool {
-        let cc_switch_port = get_proxy_port();
-        port == Some(cc_switch_port)
+    fn is_cc_doctor_proxy_port(port: Option<u16>) -> bool {
+        let cc_doctor_port = get_proxy_port();
+        port == Some(cc_doctor_port)
     }
 
     if let Ok(parsed) = url::Url::parse(value) {
         if let Some(host) = parsed.host_str() {
-            // 只有当主机是 loopback 且端口是 CC Switch 的端口时才返回 true
-            return host_is_loopback(host) && is_cc_switch_proxy_port(parsed.port());
+            // 只有当主机是 loopback 且端口是 CC Doctor 的端口时才返回 true
+            return host_is_loopback(host) && is_cc_doctor_proxy_port(parsed.port());
         }
         return false;
     }
@@ -307,7 +307,7 @@ fn proxy_points_to_loopback(value: &str) -> bool {
     let with_scheme = format!("http://{value}");
     if let Ok(parsed) = url::Url::parse(&with_scheme) {
         if let Some(host) = parsed.host_str() {
-            return host_is_loopback(host) && is_cc_switch_proxy_port(parsed.port());
+            return host_is_loopback(host) && is_cc_doctor_proxy_port(parsed.port());
         }
     }
 
@@ -393,10 +393,10 @@ mod tests {
 
     #[test]
     fn test_proxy_points_to_loopback() {
-        // 设置 CC Switch 代理端口为 15721（默认值）
+        // 设置 CC Doctor 代理端口为 15721（默认值）
         set_proxy_port(15721);
 
-        // 只有指向 CC Switch 自己端口的 loopback 地址才返回 true
+        // 只有指向 CC Doctor 自己端口的 loopback 地址才返回 true
         assert!(proxy_points_to_loopback("http://127.0.0.1:15721"));
         assert!(proxy_points_to_loopback("socks5://localhost:15721"));
         assert!(proxy_points_to_loopback("127.0.0.1:15721"));
@@ -414,7 +414,7 @@ mod tests {
     fn test_system_proxy_points_to_loopback() {
         let _guard = env_lock().lock().unwrap();
 
-        // 设置 CC Switch 代理端口
+        // 设置 CC Doctor 代理端口
         set_proxy_port(15721);
 
         let keys = [
@@ -430,7 +430,7 @@ mod tests {
             std::env::remove_var(key);
         }
 
-        // 指向 CC Switch 端口的代理应该被跳过
+        // 指向 CC Doctor 端口的代理应该被跳过
         std::env::set_var("HTTP_PROXY", "http://127.0.0.1:15721");
         assert!(system_proxy_points_to_loopback());
 

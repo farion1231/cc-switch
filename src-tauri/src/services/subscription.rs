@@ -639,7 +639,7 @@ fn unix_ts_to_iso(ts: i64) -> Option<String> {
 ///
 /// 参数化 `tool_label` 和 `expired_message` 让该函数可被两个调用点共用：
 /// - `"codex"` + "Please re-login with Codex CLI."（CLI 凭据路径）
-/// - `"codex_oauth"` + "Please re-login via cc-switch."（cc-switch 自管 OAuth 路径）
+/// - `"codex_oauth"` + "Please re-login via cc-doctor."（cc-doctor 自管 OAuth 路径）
 pub(crate) async fn query_codex_quota(
     access_token: &str,
     account_id: Option<&str>,

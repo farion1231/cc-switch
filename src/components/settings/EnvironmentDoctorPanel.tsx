@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import {
@@ -32,10 +32,13 @@ import type {
   DiagnosisIssue,
   UninstallReport,
 } from "@/lib/api/doctor";
+import { useInstallLogStream } from "@/hooks/useInstallLogStream";
+import { InstallLogPanel } from "./InstallLogPanel";
 
 interface EnvironmentDoctorPanelProps {
   diagnosis: DiagnosisResult;
-  onInstall: (tool: string) => Promise<void>;
+  /** 用户点「一键安装」时调用，channelId 由 panel 内部生成并透传给后端流式日志 */
+  onInstall: (tool: string, channelId: string) => Promise<void>;
   onFix: () => Promise<void>;
   isInstalling: boolean;
   isFixing: boolean;
@@ -122,10 +125,9 @@ export function EnvironmentDoctorPanel({
 }: EnvironmentDoctorPanelProps) {
   const { t } = useTranslation();
 
-  // ─── 卸载状态 ───
+  // ─── 弹窗 / 报告状态 ───
   const [showPreview, setShowPreview] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [isUninstalling, setIsUninstalling] = useState(false);
   const [uninstallReport, setUninstallReport] =
     useState<UninstallReport | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -133,15 +135,37 @@ export function EnvironmentDoctorPanel({
     null,
   );
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
-  const [currentLoadingStep, setCurrentLoadingStep] = useState(-1);
-  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
   const [copySuccess, setCopySuccess] = useState(false);
 
-  // ─── 卸载处理函数 ───
+  // ─── 流式日志 ───
+  // 同一时间只有一个会话；用 sessionType 区分本次是 install 还是 uninstall
+  const log = useInstallLogStream();
+  const [sessionType, setSessionType] = useState<
+    "install" | "uninstall" | null
+  >(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const isUninstalling =
+    sessionType === "uninstall" && log.status === "running";
+
+  // ─── 处理函数 ───
+  const handleStartInstall = async (tool: string) => {
+    const cid = log.start();
+    setSessionType("install");
+    try {
+      await onInstall(tool, cid);
+    } catch (err) {
+      console.error("[Doctor] install failed:", err);
+      log.finish("failed");
+    }
+  };
+
   const handlePreview = async () => {
     setIsPreviewLoading(true);
     try {
-      const report = await doctorApi.uninstallClaudeCode(true);
+      // 预览是 dry-run、瞬时返回，不需要日志通道；用一次性 channelId 占位
+      const cid = `preview-${Date.now()}`;
+      const report = await doctorApi.uninstallClaudeCode(true, cid);
       setPreviewReport(report);
       setShowPreview(true);
     } catch (err) {
@@ -154,23 +178,37 @@ export function EnvironmentDoctorPanel({
   const handleConfirmUninstall = async () => {
     setShowConfirm(false);
     setAcknowledged(false);
-    setIsUninstalling(true);
+    const cid = log.start();
+    setSessionType("uninstall");
+    setUninstallReport(null);
 
     try {
-      const report = await doctorApi.uninstallClaudeCode(false);
+      const report = await doctorApi.uninstallClaudeCode(false, cid);
       setUninstallReport(report);
     } catch (err) {
       console.error("卸载失败:", err);
-      setIsUninstalling(false);
+      log.finish("failed");
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!log.channelId || isCancelling) return;
+    setIsCancelling(true);
+    try {
+      await doctorApi.cancelInstall(log.channelId);
+      // 后端收到 kill 后会 emit done(cancelled=true)，hook 自动切 status
+    } catch (err) {
+      console.error("取消失败:", err);
+    } finally {
+      setIsCancelling(false);
     }
   };
 
   const handleReset = () => {
     setUninstallReport(null);
-    setIsUninstalling(false);
-    setCompletedSteps(new Set());
-    setCurrentLoadingStep(-1);
+    setSessionType(null);
     setCopySuccess(false);
+    log.reset();
   };
 
   const handleCopy = async (text: string) => {
@@ -182,47 +220,6 @@ export function EnvironmentDoctorPanel({
       // 剪贴板不可用时静默失败
     }
   };
-
-  // ─── 步骤动画 ───
-  useEffect(() => {
-    if (!uninstallReport) return;
-
-    const steps = uninstallReport.steps;
-    let cancelled = false;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-
-    const animateStep = (index: number) => {
-      if (cancelled || index >= steps.length) {
-        if (!cancelled) setIsUninstalling(false);
-        return;
-      }
-
-      setCurrentLoadingStep(index);
-
-      const completeTimer = setTimeout(() => {
-        if (cancelled) return;
-        setCompletedSteps((prev) => {
-          const next = new Set(prev);
-          next.add(index);
-          return next;
-        });
-        setCurrentLoadingStep(-1);
-
-        const nextTimer = setTimeout(() => animateStep(index + 1), 200);
-        timers.push(nextTimer);
-      }, 600);
-
-      timers.push(completeTimer);
-    };
-
-    const startTimer = setTimeout(() => animateStep(0), 300);
-    timers.push(startTimer);
-
-    return () => {
-      cancelled = true;
-      timers.forEach(clearTimeout);
-    };
-  }, [uninstallReport]);
 
   const getStatusIcon = () => {
     switch (diagnosis.overall_status) {
@@ -292,23 +289,33 @@ export function EnvironmentDoctorPanel({
             const toolToInstall = installIssue?.fix_action?.tool || "claude";
 
             return (
-              <div className="flex justify-end pt-2">
-                <Button
-                  onClick={() => onInstall(toolToInstall)}
-                  disabled={isInstalling}
-                >
-                  {isInstalling ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      {t("doctor.installing")}
-                    </>
-                  ) : (
-                    <>
-                      <Download className="h-4 w-4" />
-                      {t("doctor.oneClickInstall")}
-                    </>
-                  )}
-                </Button>
+              <div className="space-y-3 pt-2">
+                <div className="flex justify-end">
+                  <Button
+                    onClick={() => handleStartInstall(toolToInstall)}
+                    disabled={isInstalling || sessionType === "install"}
+                  >
+                    {isInstalling || sessionType === "install" ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {t("doctor.installing")}
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4" />
+                        {t("doctor.oneClickInstall")}
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {sessionType === "install" && (
+                  <InstallLogPanel
+                    status={log.status}
+                    lines={log.lines}
+                    onCancel={handleCancel}
+                    isCancelling={isCancelling}
+                  />
+                )}
               </div>
             );
           })()}
@@ -374,7 +381,7 @@ export function EnvironmentDoctorPanel({
         </div>
 
         {/* --- 空闲态：显示操作按钮 --- */}
-        {!isUninstalling && !uninstallReport && (
+        {sessionType !== "uninstall" && (
           <div className="flex flex-wrap gap-2 pt-2">
             <Button
               variant="outline"
@@ -395,57 +402,38 @@ export function EnvironmentDoctorPanel({
           </div>
         )}
 
-        {/* --- 执行中 --- */}
-        {isUninstalling && (
-          <div className="space-y-3 pt-2">
-            {!uninstallReport ? (
-              <div className="flex items-center gap-2 text-sm">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>正在执行卸载...</span>
+        {/* --- 取消 / 失败但没有 report：仅显示日志 + 关闭按钮 --- */}
+        {sessionType === "uninstall" &&
+          !isUninstalling &&
+          !uninstallReport && (
+            <div className="space-y-3 pt-2">
+              <InstallLogPanel status={log.status} lines={log.lines} />
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={handleReset}>
+                  关闭
+                </Button>
               </div>
-            ) : (
-              uninstallReport.steps.map((step, idx) => {
-                const isLoading = currentLoadingStep === idx;
-                const isCompleted = completedSteps.has(idx);
-                const isPending = !isLoading && !isCompleted;
+            </div>
+          )}
 
-                return (
-                  <div key={idx} className="flex items-center gap-2 text-sm">
-                    {isLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-                    ) : isCompleted ? (
-                      step.status === "Success" ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
-                      ) : step.status === "Skipped" ? (
-                        <Info className="h-4 w-4 text-yellow-500" />
-                      ) : (
-                        <XCircle className="h-4 w-4 text-red-500" />
-                      )
-                    ) : (
-                      <div className="h-4 w-4 rounded-full border border-gray-300 dark:border-gray-600" />
-                    )}
-                    <span
-                      className={
-                        isPending ? "text-muted-foreground" : "text-foreground"
-                      }
-                    >
-                      {step.name}
-                    </span>
-                    {isCompleted && step.message && (
-                      <span className="text-xs text-muted-foreground ml-1">
-                        {step.message}
-                      </span>
-                    )}
-                  </div>
-                );
-              })
-            )}
+        {/* --- 执行中：实时日志 --- */}
+        {sessionType === "uninstall" && isUninstalling && (
+          <div className="space-y-3 pt-2">
+            <InstallLogPanel
+              status={log.status}
+              lines={log.lines}
+              onCancel={handleCancel}
+              isCancelling={isCancelling}
+            />
           </div>
         )}
 
         {/* --- 完成态 --- */}
-        {uninstallReport && !isUninstalling && (
+        {uninstallReport && !isUninstalling && sessionType === "uninstall" && (
           <div className="space-y-3 pt-2">
+            {/* 折叠日志区，方便用户回看 */}
+            <InstallLogPanel status={log.status} lines={log.lines} />
+
             {/* 总体状态 */}
             <div className="flex items-center gap-2">
               {uninstallReport.overall === "Success" ? (
@@ -526,7 +514,7 @@ export function EnvironmentDoctorPanel({
         )}
 
         <p className="text-xs text-muted-foreground pt-1">
-          卸载前会自动备份到 ~/.cc-switch/backups/
+          卸载前会自动备份到 ~/.cc-doctor/backups/
         </p>
       </motion.div>
 

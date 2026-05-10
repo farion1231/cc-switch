@@ -13,14 +13,14 @@ GEMINI.md
 /.claude
 /.codex
 /.gemini
-/.cc-switch
+/.cc-doctor
 /.idea
 /.vscode
 vitest-report.json
 nul
 
 # Flatpak build artifacts
-flatpak/cc-switch.deb
+flatpak/cc-doctor.deb
 flatpak-build/
 flatpak-repo/
 .worktrees/

@@ -1,4 +1,4 @@
-use cc_switch_lib::{
+use cc_doctor_lib::{
     get_default_cost_multiplier_test_hook, get_pricing_model_source_test_hook,
     set_default_cost_multiplier_test_hook, set_pricing_model_source_test_hook, AppError,
 };

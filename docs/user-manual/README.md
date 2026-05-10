@@ -1,4 +1,4 @@
-# CC Switch User Manual / 用户手册 / ユーザーマニュアル
+# CC Doctor User Manual / 用户手册 / ユーザーマニュアル
 
 > Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw
 
@@ -14,9 +14,9 @@
 
 - Documentation version: v3.13.0
 - Last updated: 2026-04-08
-- Compatible with CC Switch v3.13.0+
+- Compatible with CC Doctor v3.13.0+
 
 ## Links
 
-- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
-- [GitHub Repository](https://github.com/farion1231/cc-switch)
+- [GitHub Issues](https://github.com/diaojz/cc-doctor/issues)
+- [GitHub Repository](https://github.com/diaojz/cc-doctor)

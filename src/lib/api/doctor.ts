@@ -111,15 +111,29 @@ export const doctorApi = {
     return await invoke("diagnose_environment");
   },
 
-  async installTool(tool: string): Promise<InstallResult> {
-    return await invoke("install_tool", { tool });
+  /**
+   * 流式安装：channelId 由前端生成（通常来自 useInstallLogStream.start()），
+   * 后端会按该 id emit `install-log` / `install-log-done` 事件。
+   */
+  async installTool(tool: string, channelId: string): Promise<InstallResult> {
+    return await invoke("install_tool", { tool, channelId });
   },
 
   async fixEnvironment(issues: DiagnosisIssue[]): Promise<FixResult> {
     return await invoke("fix_environment", { issues });
   },
 
-  async uninstallClaudeCode(dryRun: boolean): Promise<UninstallReport> {
-    return await invoke("uninstall_claude_code", { dryRun });
+  async uninstallClaudeCode(
+    dryRun: boolean,
+    channelId: string,
+  ): Promise<UninstallReport> {
+    return await invoke("uninstall_claude_code", { dryRun, channelId });
+  },
+
+  /**
+   * 中止某个进行中的会话。命令幂等：channel 不存在或已结束都返回 false。
+   */
+  async cancelInstall(channelId: string): Promise<boolean> {
+    return await invoke("cancel_install", { channelId });
   },
 };

@@ -248,7 +248,10 @@ describe("AboutSection environment doctor", () => {
     fireEvent.click(installButton);
 
     await waitFor(() => {
-      expect(installToolMock).toHaveBeenCalledWith("claude");
+      expect(installToolMock).toHaveBeenCalledWith(
+        "claude",
+        expect.any(String),
+      );
     });
 
     expect(clipboardWriteTextMock).not.toHaveBeenCalled();

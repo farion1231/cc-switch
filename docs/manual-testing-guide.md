@@ -1,8 +1,8 @@
-# CC Switch 环境诊断与修复功能手动测试指引
+# CC Doctor 环境诊断与修复功能手动测试指引
 
 ## 测试环境
 - 平台：macOS
-- 应用：CC Switch (Tauri 桌面应用)
+- 应用：CC Doctor (Tauri 桌面应用)
 - 分支：feature/environment-doctor
 - 测试日期：2026年5月5日
 
@@ -10,7 +10,7 @@
 
 应用已通过以下命令启动：
 ```bash
-cd ~/Desktop/cc-switch
+cd ~/Desktop/cc-doctor
 pnpm tauri dev
 ```
 

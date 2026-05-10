@@ -1,5 +1,8 @@
+use tauri::{AppHandle, State};
+
 use crate::services::env_doctor::{DiagnosisIssue, DiagnosisResult, FixResult};
 use crate::services::installer::{self, InstallResult};
+use crate::services::stream_command::{emit_done, emit_error_line, emit_progress, ProcessRegistry};
 
 /// 执行环境诊断
 ///
@@ -130,11 +133,17 @@ pub async fn fix_environment(issues: Vec<DiagnosisIssue>) -> Result<FixResult, S
 ///
 /// 如果安装过程中发生错误，返回错误信息字符串
 #[tauri::command]
-pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
+pub async fn install_tool(
+    app: AppHandle,
+    registry: State<'_, ProcessRegistry>,
+    tool: String,
+    channel_id: String,
+) -> Result<InstallResult, String> {
     let tool_lower = tool.to_lowercase();
+    let cid = channel_id.as_str();
 
     if tool_lower != "claude" {
-        return Ok(InstallResult {
+        let result = InstallResult {
             success: false,
             message: format!("不支持的工具: {}。当前仅支持: claude", tool),
             installed_version: None,
@@ -142,9 +151,35 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
             already_installed: None,
             verified: Some(false),
             error_code: Some("unsupported_tool".to_string()),
-        });
+        };
+        emit_done(&app, cid, false, None, false);
+        return Ok(result);
     }
 
+    let state = registry.begin_session(cid).await;
+    emit_progress(&app, cid, "===== 开始安装 Claude Code =====");
+
+    let result = run_install_claude_flow(&app, &registry, &state, cid).await;
+
+    registry.end_session(cid).await;
+
+    let cancelled = result
+        .as_ref()
+        .ok()
+        .and_then(|r| r.error_code.as_deref())
+        .map(|c| c == "cancelled")
+        .unwrap_or(false);
+    let success = result.as_ref().map(|r| r.success).unwrap_or(false);
+    emit_done(&app, cid, success, None, cancelled);
+    result
+}
+
+async fn run_install_claude_flow(
+    app: &AppHandle,
+    registry: &ProcessRegistry,
+    state: &crate::services::stream_command::SessionState,
+    cid: &str,
+) -> Result<InstallResult, String> {
     let current_version =
         crate::commands::misc::get_tool_versions(Some(vec!["claude".to_string()]), None)
             .await
@@ -161,6 +196,11 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
                 .unwrap_or(false);
 
             if !needs_upgrade {
+                emit_progress(
+                    app,
+                    cid,
+                    format!("Claude Code 已是最新版本 ({})，无需安装", version),
+                );
                 return Ok(InstallResult {
                     success: true,
                     message: "Claude Code 已安装，无需重复安装".to_string(),
@@ -178,11 +218,11 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
         installer::check_nodejs_installed().map_err(|e| format!("检查 Node.js 失败: {}", e))?;
 
     if !nodejs_installed {
-        log::info!("Node.js 未安装，开始安装 Node.js...");
-        let nodejs_result =
-            installer::install_nodejs().map_err(|e| format!("安装 Node.js 失败: {}", e))?;
+        emit_progress(app, cid, "Node.js 未安装，开始安装 Node.js...");
+        let nodejs_result = installer::install_nodejs(app, state, cid).await?;
 
         if !nodejs_result.success {
+            emit_error_line(app, cid, "Node.js 安装失败，终止流程");
             return Ok(InstallResult {
                 success: false,
                 message: "安装未完成，请检查网络或 Node.js 环境后重试。".to_string(),
@@ -193,17 +233,25 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
                 error_code: nodejs_result.error_code,
             });
         }
-        log::info!("Node.js 安装成功: {:?}", nodejs_result.installed_version);
+        emit_progress(
+            app,
+            cid,
+            format!("Node.js 安装成功: {:?}", nodejs_result.installed_version),
+        );
     } else {
         let version_sufficient = installer::check_nodejs_version_sufficient()
             .map_err(|e| format!("检查 Node.js 版本失败: {}", e))?;
 
         if !version_sufficient {
-            log::info!("Node.js 版本不满足要求（需要 >= 18.0.0），开始升级...");
-            let nodejs_result =
-                installer::install_nodejs().map_err(|e| format!("升级 Node.js 失败: {}", e))?;
+            emit_progress(
+                app,
+                cid,
+                "Node.js 版本不满足要求（需要 >= 18.0.0），开始升级...",
+            );
+            let nodejs_result = installer::install_nodejs(app, state, cid).await?;
 
             if !nodejs_result.success {
+                emit_error_line(app, cid, "Node.js 升级失败，终止流程");
                 return Ok(InstallResult {
                     success: false,
                     message: "安装未完成，请检查网络或 Node.js 环境后重试。".to_string(),
@@ -214,13 +262,27 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
                     error_code: nodejs_result.error_code,
                 });
             }
-            log::info!("Node.js 升级成功: {:?}", nodejs_result.installed_version);
+            emit_progress(
+                app,
+                cid,
+                format!("Node.js 升级成功: {:?}", nodejs_result.installed_version),
+            );
         }
     }
 
-    log::info!("开始安装 Claude Code...");
-    let mut result =
-        installer::install_claude_code().map_err(|e| format!("安装 Claude Code 失败: {}", e))?;
+    if registry.is_cancelled(cid).await {
+        return Ok(InstallResult {
+            success: false,
+            message: "已取消".to_string(),
+            installed_version: None,
+            action: None,
+            already_installed: None,
+            verified: Some(false),
+            error_code: Some("cancelled".to_string()),
+        });
+    }
+
+    let mut result = installer::install_claude_code(app, state, cid).await?;
 
     if result.success {
         let verified =
@@ -244,9 +306,21 @@ pub async fn install_tool(tool: String) -> Result<InstallResult, String> {
         }
     }
 
-    if !result.success {
+    if !result.success && result.error_code.as_deref() != Some("cancelled") {
         result.message = "安装未完成，请检查网络或 Node.js 环境后重试。".to_string();
     }
 
     Ok(result)
+}
+
+/// 取消正在执行的安装/卸载流程
+///
+/// 前端在用户点「取消」按钮时调用：标记会话为已取消并通过 Notify 唤醒所有
+/// 正在等待 child.wait() 的 stream_command 任务，让它们走 kill 分支。
+#[tauri::command]
+pub async fn cancel_install(
+    registry: State<'_, ProcessRegistry>,
+    channel_id: String,
+) -> Result<bool, String> {
+    Ok(registry.cancel(&channel_id).await)
 }

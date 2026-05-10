@@ -4,7 +4,7 @@ version = "3.14.1"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
-repository = "https://github.com/farion1231/cc-switch"
+repository = "https://github.com/diaojz/cc-doctor"
 edition = "2021"
 rust-version = "1.85.0"
 
@@ -43,7 +43,7 @@ reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream", "socks
 arboard = "3.6"
 flate2 = "1"
 brotli = "7"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "process", "io-util"] }
 futures = "0.3"
 async-stream = "0.3"
 bytes = "1.5"

@@ -263,7 +263,7 @@ pub fn merge_tool_results(mut body: Value) -> Value {
 
 /// 基于最后一条用户消息内容生成确定性 Request ID。
 ///
-/// CC Switch 额外策略（参考项目 copilot-api 使用随机 UUID）：
+/// CC Doctor 额外策略（参考项目 copilot-api 使用随机 UUID）：
 /// - 哈希输入: sessionId + lastUserContent（排除 tool_result 和 cache_control）
 /// - 相同内容产生相同 ID，可能帮助 Copilot 去重
 /// - 找不到用户内容时退化为随机 UUID

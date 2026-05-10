@@ -2,17 +2,26 @@
 ///
 /// 提供自动化安装 Claude Code 及其依赖（Node.js）的能力。
 /// 所有安装操作都通过 shell 命令执行，支持 macOS、Linux 平台。
-
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use tauri::AppHandle;
 
+use crate::services::stream_command::{
+    capture_command, emit_error_line, emit_progress, stream_command, SessionState,
+};
+
+// 以下 sync 命令运行抽象仅供 tests 模块的 install_windows_package_with_runner 单测使用。
+// 生产 Windows 路径已切换到 install_windows_package_streaming，但保留这些类型可以
+// 让现有的 FakeCommandRunner 单测继续验证 primary/fallback 选择逻辑。
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
     pub program: String,
     pub args: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandResult {
     pub success: bool,
@@ -20,10 +29,12 @@ pub struct CommandResult {
     pub stderr: String,
 }
 
+#[allow(dead_code)]
 trait CommandRunner {
     fn run(&mut self, spec: &CommandSpec) -> Result<CommandResult, String>;
 }
 
+#[allow(dead_code)]
 struct SystemCommandRunner;
 
 impl CommandRunner for SystemCommandRunner {
@@ -31,7 +42,14 @@ impl CommandRunner for SystemCommandRunner {
         let output = Command::new(&spec.program)
             .args(&spec.args)
             .output()
-            .map_err(|e| format!("执行命令失败 ({} {}): {}", spec.program, spec.args.join(" "), e))?;
+            .map_err(|e| {
+                format!(
+                    "执行命令失败 ({} {}): {}",
+                    spec.program,
+                    spec.args.join(" "),
+                    e
+                )
+            })?;
 
         Ok(CommandResult {
             success: output.status.success(),
@@ -157,15 +175,16 @@ fn check_homebrew_installed() -> Result<bool, String> {
     Ok(output.status.success())
 }
 
-/// 通过 Homebrew 安装 Node.js（仅 macOS）
-///
-/// # Returns
-/// - `Ok(InstallResult)` - 安装结果
-/// - `Err(String)` - 安装失败
+/// 通过 Homebrew 流式安装 Node.js（仅 macOS）
 #[cfg(target_os = "macos")]
-pub fn install_nodejs() -> Result<InstallResult, String> {
-    // 检查 Homebrew 是否可用
+pub async fn install_nodejs(
+    app: &AppHandle,
+    state: &SessionState,
+    channel_id: &str,
+) -> Result<InstallResult, String> {
+    emit_progress(app, channel_id, "[1/3] 检测 Homebrew 是否可用...");
     if !check_homebrew_installed()? {
+        emit_error_line(app, channel_id, "Homebrew 未安装");
         return Ok(InstallResult {
             success: false,
             message: "Homebrew 未安装，请先安装 Homebrew: https://brew.sh".to_string(),
@@ -177,18 +196,31 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
         });
     }
 
-    // 执行安装命令
-    let output = Command::new("/bin/bash")
-        .arg("-c")
-        .arg("brew install node")
-        .output()
-        .map_err(|e| format!("执行 brew install node 失败: {}", e))?;
+    emit_progress(
+        app,
+        channel_id,
+        "[2/3] 执行 brew install node（可能需要数分钟）...",
+    );
+    let outcome = stream_command(
+        app,
+        state,
+        channel_id,
+        "/bin/bash",
+        &["-c", "brew install node"],
+    )
+    .await?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if outcome.cancelled {
+        return Ok(cancelled_result("Node.js 安装已取消"));
+    }
+    if !outcome.success {
+        emit_error_line(app, channel_id, "brew install node 失败");
         return Ok(InstallResult {
             success: false,
-            message: format!("安装 Node.js 失败: {}", stderr),
+            message: format!(
+                "安装 Node.js 失败 (exit_code={:?})。请查看上方日志。",
+                outcome.exit_code
+            ),
             installed_version: None,
             action: None,
             already_installed: None,
@@ -197,18 +229,21 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
         });
     }
 
-    // 验证安装结果
-    let version_output = Command::new("/bin/bash")
-        .arg("-c")
-        .arg("node --version")
-        .output()
-        .map_err(|e| format!("验证 Node.js 安装失败: {}", e))?;
-
-    let version = if version_output.status.success() {
-        Some(String::from_utf8_lossy(&version_output.stdout).trim().to_string())
+    emit_progress(app, channel_id, "[3/3] 验证 node --version...");
+    let (ok, stdout, _) = capture_command(state, "/bin/bash", &["-c", "node --version"]).await?;
+    let version = if ok {
+        Some(stdout.trim().to_string())
     } else {
         None
     };
+    emit_progress(
+        app,
+        channel_id,
+        format!(
+            "✓ Node.js 安装成功: {}",
+            version.as_deref().unwrap_or("未知")
+        ),
+    );
 
     Ok(InstallResult {
         success: true,
@@ -223,14 +258,19 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
 
 /// Linux 平台安装 Node.js（提示用户手动安装）
 #[cfg(target_os = "linux")]
-pub fn install_nodejs() -> Result<InstallResult, String> {
+pub async fn install_nodejs(
+    app: &AppHandle,
+    _state: &SessionState,
+    channel_id: &str,
+) -> Result<InstallResult, String> {
+    let msg = "Linux 平台请使用包管理器手动安装 Node.js:\n\
+              - Ubuntu/Debian: sudo apt install nodejs npm\n\
+              - Fedora: sudo dnf install nodejs\n\
+              - Arch: sudo pacman -S nodejs npm";
+    emit_error_line(app, channel_id, msg);
     Ok(InstallResult {
         success: false,
-        message: "Linux 平台请使用包管理器手动安装 Node.js:\n\
-                  - Ubuntu/Debian: sudo apt install nodejs npm\n\
-                  - Fedora: sudo dnf install nodejs\n\
-                  - Arch: sudo pacman -S nodejs npm"
-            .to_string(),
+        message: msg.to_string(),
         installed_version: None,
         action: None,
         already_installed: None,
@@ -239,14 +279,19 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
     })
 }
 
-/// Windows 平台安装 Node.js（优先使用 winget，其次使用 Chocolatey）
+/// Windows 平台流式安装 Node.js（优先使用 winget，其次使用 Chocolatey）
 #[cfg(target_os = "windows")]
-pub fn install_nodejs() -> Result<InstallResult, String> {
-    let mut runner = SystemCommandRunner;
-    Ok(install_windows_package_with_runner(
-        &mut runner,
+pub async fn install_nodejs(
+    app: &AppHandle,
+    state: &SessionState,
+    channel_id: &str,
+) -> Result<InstallResult, String> {
+    install_windows_package_streaming(
+        app,
+        state,
+        channel_id,
         "Node.js",
-        &[build_windows_command_spec(&[
+        &[&[
             "winget",
             "install",
             "--id",
@@ -255,34 +300,45 @@ pub fn install_nodejs() -> Result<InstallResult, String> {
             "--accept-source-agreements",
             "--accept-package-agreements",
             "--disable-interactivity",
-        ])],
-        &[build_windows_command_spec(&["choco", "install", "nodejs-lts", "-y"])],
-        build_windows_verify_spec("node --version"),
+        ]],
+        &[&["choco", "install", "nodejs-lts", "-y"]],
+        &["cmd", "/C", "node --version"],
         "manual_node_install_required",
         "Windows 平台自动安装 Node.js 失败。请先确认已安装 winget 或 Chocolatey，并以管理员身份重试；或前往 https://nodejs.org 手动安装。",
-    ))
+    )
+    .await
 }
 
-/// 安装 Claude Code
+/// 流式安装 Claude Code（macOS/Linux）
 ///
 /// 执行官方安装脚本: `curl -fsSL https://claude.ai/install.sh | bash`
-///
-/// # Returns
-/// - `Ok(InstallResult)` - 安装结果
-/// - `Err(String)` - 安装失败
 #[cfg(not(target_os = "windows"))]
-pub fn install_claude_code() -> Result<InstallResult, String> {
-    let output = Command::new("/bin/bash")
-        .arg("-c")
-        .arg("curl -fsSL https://claude.ai/install.sh | bash")
-        .output()
-        .map_err(|e| format!("执行 Claude Code 安装脚本失败: {}", e))?;
+pub async fn install_claude_code(
+    app: &AppHandle,
+    state: &SessionState,
+    channel_id: &str,
+) -> Result<InstallResult, String> {
+    emit_progress(app, channel_id, "[1/2] 下载并执行 Claude Code 安装脚本...");
+    let outcome = stream_command(
+        app,
+        state,
+        channel_id,
+        "/bin/bash",
+        &["-c", "curl -fsSL https://claude.ai/install.sh | bash"],
+    )
+    .await?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if outcome.cancelled {
+        return Ok(cancelled_result("Claude Code 安装已取消"));
+    }
+    if !outcome.success {
+        emit_error_line(app, channel_id, "安装脚本执行失败");
         return Ok(InstallResult {
             success: false,
-            message: format!("安装 Claude Code 失败: {}", stderr),
+            message: format!(
+                "安装 Claude Code 失败 (exit_code={:?})。请查看上方日志。",
+                outcome.exit_code
+            ),
             installed_version: None,
             action: Some("install".to_string()),
             already_installed: Some(false),
@@ -291,19 +347,21 @@ pub fn install_claude_code() -> Result<InstallResult, String> {
         });
     }
 
-    // 验证安装结果
-    let version_output = Command::new("/bin/bash")
-        .arg("-c")
-        .arg("claude --version")
-        .output()
-        .map_err(|e| format!("验证 Claude Code 安装失败: {}", e))?;
-
-    let version = if version_output.status.success() {
-        let raw = String::from_utf8_lossy(&version_output.stdout);
-        Some(extract_version(&raw))
+    emit_progress(app, channel_id, "[2/2] 验证 claude --version...");
+    let (ok, stdout, _) = capture_command(state, "/bin/bash", &["-c", "claude --version"]).await?;
+    let version = if ok {
+        Some(extract_version(&stdout))
     } else {
         None
     };
+    emit_progress(
+        app,
+        channel_id,
+        format!(
+            "✓ Claude Code 安装成功: {}",
+            version.as_deref().unwrap_or("未知")
+        ),
+    );
 
     Ok(InstallResult {
         success: true,
@@ -316,30 +374,45 @@ pub fn install_claude_code() -> Result<InstallResult, String> {
     })
 }
 
-/// Windows 平台安装 Claude Code（优先使用 npm）
+/// Windows 平台流式安装 Claude Code（通过 npm）
 #[cfg(target_os = "windows")]
-pub fn install_claude_code() -> Result<InstallResult, String> {
-    let mut runner = SystemCommandRunner;
-    Ok(install_windows_package_with_runner(
-        &mut runner,
+pub async fn install_claude_code(
+    app: &AppHandle,
+    state: &SessionState,
+    channel_id: &str,
+) -> Result<InstallResult, String> {
+    install_windows_package_streaming(
+        app,
+        state,
+        channel_id,
         "Claude Code",
         &[
-            build_windows_command_spec(&[
-                "cmd",
-                "/C",
-                "npm install -g @anthropic-ai/claude-code",
-            ]),
-            build_windows_command_spec(&[
+            &["cmd", "/C", "npm install -g @anthropic-ai/claude-code"],
+            &[
                 "cmd",
                 "/C",
                 "npm install -g @anthropic-ai/claude-code@latest",
-            ]),
+            ],
         ],
         &[],
-        build_windows_verify_spec("claude --version"),
+        &["cmd", "/C", "claude --version"],
         "manual_claude_install_required",
         "Windows 平台自动安装 Claude Code 失败。请先确认 Node.js/npm 可用，并以管理员身份重试；或前往 https://claude.ai/download 手动安装。",
-    ))
+    )
+    .await
+}
+
+/// 取消时统一构造的 InstallResult
+fn cancelled_result(message: &str) -> InstallResult {
+    InstallResult {
+        success: false,
+        message: message.to_string(),
+        installed_version: None,
+        action: None,
+        already_installed: None,
+        verified: Some(false),
+        error_code: Some("cancelled".to_string()),
+    }
 }
 
 /// 从版本输出中提取纯版本号
@@ -350,6 +423,111 @@ fn extract_version(raw: &str) -> String {
     re.find(raw)
         .map(|m| m.as_str().to_string())
         .unwrap_or_else(|| raw.trim().to_string())
+}
+
+/// Windows 平台流式安装：依次尝试 primary → fallback 命令，每条命令都通过
+/// stream_command 把 stdout/stderr 实时推送给前端。第一条成功后即停止。
+#[cfg(target_os = "windows")]
+async fn install_windows_package_streaming(
+    app: &AppHandle,
+    state: &SessionState,
+    channel_id: &str,
+    display_name: &str,
+    primary_commands: &[&[&str]],
+    fallback_commands: &[&[&str]],
+    verify_command: &[&str],
+    failure_error_code: &str,
+    manual_message: &str,
+) -> Result<InstallResult, String> {
+    let mut executed: Option<String> = None;
+
+    for cmd in primary_commands.iter().chain(fallback_commands.iter()) {
+        let Some((program, args)) = cmd.split_first() else {
+            continue;
+        };
+        emit_progress(
+            app,
+            channel_id,
+            format!("尝试安装 {} via {}...", display_name, program),
+        );
+        let outcome = stream_command(app, state, channel_id, program, args).await?;
+        if outcome.cancelled {
+            return Ok(cancelled_result(&format!("{} 安装已取消", display_name)));
+        }
+        if outcome.success {
+            executed = Some(format!("{} {}", program, args.join(" ")));
+            break;
+        }
+    }
+
+    let Some(executed_command) = executed else {
+        emit_error_line(app, channel_id, manual_message);
+        return Ok(InstallResult {
+            success: false,
+            message: manual_message.to_string(),
+            installed_version: None,
+            action: None,
+            already_installed: Some(false),
+            verified: Some(false),
+            error_code: Some(failure_error_code.to_string()),
+        });
+    };
+
+    emit_progress(app, channel_id, format!("验证 {} 安装...", display_name));
+    let (program, args) = verify_command
+        .split_first()
+        .ok_or_else(|| "verify_command 不能为空".to_string())?;
+    let (ok, stdout, stderr) = capture_command(state, program, args).await?;
+    let raw = if stdout.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
+    let installed_version = if ok && !raw.trim().is_empty() {
+        Some(extract_version(&raw))
+    } else {
+        None
+    };
+
+    if installed_version.is_none() {
+        emit_error_line(
+            app,
+            channel_id,
+            format!("{} 安装命令已执行，但未检测到可用版本", display_name),
+        );
+        return Ok(InstallResult {
+            success: false,
+            message: format!(
+                "{} 安装命令已执行，但暂未检测到可用版本。请重新打开终端后重试。",
+                display_name
+            ),
+            installed_version: None,
+            action: Some("install".to_string()),
+            already_installed: Some(false),
+            verified: Some(false),
+            error_code: Some("install_verification_failed".to_string()),
+        });
+    }
+
+    emit_progress(
+        app,
+        channel_id,
+        format!(
+            "✓ {} 安装成功: {}",
+            display_name,
+            installed_version.as_deref().unwrap_or("未知")
+        ),
+    );
+
+    Ok(InstallResult {
+        success: true,
+        message: format!("{} 安装成功 ({})", display_name, executed_command),
+        installed_version,
+        action: Some("install".to_string()),
+        already_installed: Some(false),
+        verified: Some(true),
+        error_code: None,
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -483,8 +661,7 @@ fn install_windows_package_with_runner(
     for cmd in primary_commands {
         match runner.run(cmd) {
             Ok(result) if result.success => {
-                executed_command =
-                    Some(format!("{} {}", cmd.program, cmd.args.join(" ")));
+                executed_command = Some(format!("{} {}", cmd.program, cmd.args.join(" ")));
                 break;
             }
             _ => continue,
@@ -495,8 +672,7 @@ fn install_windows_package_with_runner(
         for cmd in fallback_commands {
             match runner.run(cmd) {
                 Ok(result) if result.success => {
-                    executed_command =
-                        Some(format!("{} {}", cmd.program, cmd.args.join(" ")));
+                    executed_command = Some(format!("{} {}", cmd.program, cmd.args.join(" ")));
                     break;
                 }
                 _ => continue,
@@ -619,7 +795,12 @@ mod tests {
             }
             let expected = &self.expectations[self.next_index];
             self.next_index += 1;
-            assert_eq!(spec, &expected.spec, "unexpected command spec at index {}", self.next_index - 1);
+            assert_eq!(
+                spec,
+                &expected.spec,
+                "unexpected command spec at index {}",
+                self.next_index - 1
+            );
             Ok(expected.result.clone())
         }
     }
@@ -727,7 +908,12 @@ mod tests {
                 "install",
                 "OpenJS.NodeJS.LTS",
             ])],
-            &[build_windows_command_spec(&["choco", "install", "nodejs-lts", "-y"])],
+            &[build_windows_command_spec(&[
+                "choco",
+                "install",
+                "nodejs-lts",
+                "-y",
+            ])],
             build_windows_verify_spec("node --version"),
             "manual_node_install_required",
             "manual fallback",

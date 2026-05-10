@@ -107,7 +107,7 @@ function buildPasswordPreservationKey(values: {
   return JSON.stringify({
     baseUrl: values.baseUrl ?? "",
     username: values.username ?? "",
-    remoteRoot: values.remoteRoot ?? "cc-switch-sync",
+    remoteRoot: values.remoteRoot ?? "cc-doctor-sync",
     profile: values.profile ?? "default",
   });
 }
@@ -191,7 +191,7 @@ export function WebdavSyncSection({
     baseUrl: config?.baseUrl ?? "",
     username: config?.username ?? "",
     password: config?.password ?? "",
-    remoteRoot: config?.remoteRoot ?? "cc-switch-sync",
+    remoteRoot: config?.remoteRoot ?? "cc-doctor-sync",
     profile: config?.profile ?? "default",
     autoSync: config?.autoSync ?? false,
   }));
@@ -226,7 +226,7 @@ export function WebdavSyncSection({
     setForm(() => {
       const nextBaseUrl = config.baseUrl ?? "";
       const nextUsername = config.username ?? "";
-      const nextRemoteRoot = config.remoteRoot ?? "cc-switch-sync";
+      const nextRemoteRoot = config.remoteRoot ?? "cc-doctor-sync";
       const nextProfile = config.profile ?? "default";
       const nextKey = buildPasswordPreservationKey({
         baseUrl: nextBaseUrl,
@@ -332,7 +332,7 @@ export function WebdavSyncSection({
       username: form.username.trim(),
       // 未重新触碰密码时，提交空值让后端沿用已保存密码，表单里的值仅用于 UI 显示
       password: passwordTouched ? form.password : "",
-      remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
+      remoteRoot: form.remoteRoot.trim() || "cc-doctor-sync",
       profile: form.profile.trim() || "default",
       autoSync: form.autoSync,
     };
@@ -534,7 +534,7 @@ export function WebdavSyncSection({
   const lastError = config?.status?.lastError?.trim();
   const showAutoSyncError =
     !!lastError && config?.status?.lastErrorSource === "auto";
-  const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${form.profile.trim() || "default"}`;
+  const currentRemotePath = `/${form.remoteRoot.trim() || "cc-doctor-sync"}/v2/db-v6/${form.profile.trim() || "default"}`;
   const remoteDbCompatDisplay = formatDbCompatVersion(
     remoteInfo?.dbCompatVersion,
   );
@@ -643,7 +643,7 @@ export function WebdavSyncSection({
             <Input
               value={form.remoteRoot}
               onChange={(e) => updateField("remoteRoot", e.target.value)}
-              placeholder="cc-switch-sync"
+              placeholder="cc-doctor-sync"
               className="text-xs flex-1"
               disabled={isLoading}
             />

@@ -1237,7 +1237,7 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
 /// Import all providers from OpenCode live config to database
 ///
 /// This imports existing providers from ~/.config/opencode/opencode.json
-/// into the CC Switch database. Each provider found will be added to the
+/// into the CC Doctor database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::opencode_config;
@@ -1294,7 +1294,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 /// Import all providers from OpenClaw live config to database
 ///
 /// This imports existing providers from ~/.openclaw/openclaw.json
-/// into the CC Switch database. Each provider found will be added to the
+/// into the CC Doctor database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::openclaw_config;
@@ -1363,7 +1363,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
 /// Import all providers from Hermes live config to database
 ///
 /// This imports existing providers from ~/.hermes/config.yaml
-/// into the CC Switch database. Each provider found will be added to the
+/// into the CC Doctor database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::hermes_config;

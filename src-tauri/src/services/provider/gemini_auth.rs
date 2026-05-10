@@ -121,7 +121,7 @@ pub(crate) fn is_google_official_gemini(provider: &Provider) -> bool {
 /// # OAuth authentication flow
 ///
 /// 1. User switches to Google Official provider
-/// 2. CC-Switch sets `selectedType = "oauth-personal"`
+/// 2. CC-Doctor sets `selectedType = "oauth-personal"`
 /// 3. User's first use of Gemini CLI will auto-open browser for OAuth login
 /// 4. After successful login, credentials saved in Gemini credential store
 /// 5. Subsequent requests auto-use saved credentials

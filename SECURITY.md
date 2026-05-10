@@ -2,9 +2,9 @@
 
 ## Supported Versions / 支持的版本
 
-Only the latest release of CC Switch receives security updates.
+Only the latest release of CC Doctor receives security updates.
 
-仅最新版本的 CC Switch 会收到安全更新。
+仅最新版本的 CC Doctor 会收到安全更新。
 
 | Version / 版本 | Supported / 是否支持 |
 |----------------|---------------------|
@@ -17,9 +17,9 @@ Only the latest release of CC Switch receives security updates.
 
 **请不要通过公开的 GitHub Issue 报告安全漏洞。**
 
-Instead, please report them through [GitHub Security Advisories](https://github.com/farion1231/cc-switch/security/advisories/new).
+Instead, please report them through [GitHub Security Advisories](https://github.com/diaojz/cc-doctor/security/advisories/new).
 
-请通过 [GitHub 安全公告](https://github.com/farion1231/cc-switch/security/advisories/new) 进行报告。
+请通过 [GitHub 安全公告](https://github.com/diaojz/cc-doctor/security/advisories/new) 进行报告。
 
 When reporting, please include:
 
@@ -53,6 +53,6 @@ Reporters will be credited in the release notes unless they prefer to remain ano
 
 ## Security Updates / 安全更新
 
-Security fixes are released as patch versions and announced via [GitHub Releases](https://github.com/farion1231/cc-switch/releases). We recommend always updating to the latest version.
+Security fixes are released as patch versions and announced via [GitHub Releases](https://github.com/diaojz/cc-doctor/releases). We recommend always updating to the latest version.
 
-安全修复通过补丁版本发布，并通过 [GitHub Releases](https://github.com/farion1231/cc-switch/releases) 通知。建议始终更新到最新版本。
+安全修复通过补丁版本发布，并通过 [GitHub Releases](https://github.com/diaojz/cc-doctor/releases) 通知。建议始终更新到最新版本。

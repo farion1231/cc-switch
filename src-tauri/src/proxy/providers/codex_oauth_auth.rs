@@ -55,7 +55,7 @@ const DEVICE_CODE_DEFAULT_EXPIRES_IN: u64 = 900;
 const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 
 /// User-Agent
-const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
+const CODEX_USER_AGENT: &str = "cc-doctor-codex-oauth";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]

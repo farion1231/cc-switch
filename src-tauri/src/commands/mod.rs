@@ -27,8 +27,8 @@ mod settings;
 pub mod skill;
 mod stream_check;
 mod subscription;
-mod uninstall;
 mod sync_support;
+mod uninstall;
 
 mod lightweight;
 mod usage;

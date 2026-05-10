@@ -1,4 +1,4 @@
-# CC Switch 环境诊断与修复功能验收测试报告
+# CC Doctor 环境诊断与修复功能验收测试报告
 
 ## 测试时间
 2026年5月5日
@@ -80,9 +80,9 @@
 3. 在完整的 Tauri 环境下，这些 API 调用将正常工作
 
 ### 截图记录
-- /tmp/cc-switch-about-page.png - 关于页面初始状态
-- /tmp/cc-switch-environment-check.png - 环境检查区域
-- /tmp/cc-switch-final-state.png - 完整页面截图
+- /tmp/cc-doctor-about-page.png - 关于页面初始状态
+- /tmp/cc-doctor-environment-check.png - 环境检查区域
+- /tmp/cc-doctor-final-state.png - 完整页面截图
 
 ## 三、功能完整性验证 ✅
 
@@ -173,7 +173,7 @@ Tauri 是跨平台桌面应用框架，但其核心是：
 ### 可选：完整端到端测试
 如果需要验证实际的安装和修复功能，可以：
 ```bash
-cd ~/Desktop/cc-switch
+cd ~/Desktop/cc-doctor
 pnpm tauri dev
 ```
 然后按照 `docs/manual-testing-guide.md` 进行手动测试。
@@ -181,7 +181,7 @@ pnpm tauri dev
 ### 合并到主分支
 所有开发和测试都已完成，可以创建 Pull Request：
 ```bash
-cd ~/Desktop/cc-switch
+cd ~/Desktop/cc-doctor
 git push origin feature/environment-doctor
 # 然后在 GitHub 上创建 PR
 ```

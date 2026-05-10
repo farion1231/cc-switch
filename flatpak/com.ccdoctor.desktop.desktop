@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=CC Switch
+Name=CC Doctor
 Comment=All-in-One Assistant for Claude Code, Codex & Gemini CLI
-Exec=cc-switch
-Icon=com.ccswitch.desktop
+Exec=cc-doctor
+Icon=com.ccdoctor.desktop
 Terminal=false
 Categories=Utility;Development;
 StartupNotify=true

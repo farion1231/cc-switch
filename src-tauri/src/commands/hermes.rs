@@ -92,7 +92,7 @@ pub fn set_hermes_memory_enabled(
 /// against `/api/status` returning **either 200 or 401** confirms the server
 /// is live. The session token lives only in the Hermes process memory and is
 /// injected into the returned HTML via `window.__HERMES_SESSION_TOKEN__`, so
-/// there is no need (and no way) for CC Switch to inject it — we just open
+/// there is no need (and no way) for CC Doctor to inject it — we just open
 /// the URL and let Hermes handle auth.
 #[tauri::command]
 pub async fn open_hermes_web_ui(app: AppHandle, path: Option<String>) -> Result<(), String> {

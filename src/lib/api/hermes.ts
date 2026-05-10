@@ -6,11 +6,11 @@ import type {
 } from "@/types";
 
 /**
- * Hermes Agent configuration API (CC Switch side).
+ * Hermes Agent configuration API (CC Doctor side).
  *
- * CC Switch intentionally keeps its Hermes surface minimal — deep configuration
+ * CC Doctor intentionally keeps its Hermes surface minimal — deep configuration
  * (model, agent behavior, env vars, skills, cron, logs, analytics) lives in
- * the Hermes Web UI at http://127.0.0.1:9119. CC Switch only reads the `model`
+ * the Hermes Web UI at http://127.0.0.1:9119. CC Doctor only reads the `model`
  * section to highlight the active provider and launches the Hermes Web UI for
  * everything else. Writes to `model` happen implicitly via
  * `apply_switch_defaults` when the user switches providers.

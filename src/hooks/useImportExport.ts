@@ -144,7 +144,7 @@ export function useImportExport(
     try {
       const now = new Date();
       const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
-      const defaultName = `cc-switch-export-${stamp}.sql`;
+      const defaultName = `cc-doctor-export-${stamp}.sql`;
       const destination = await settingsApi.saveFileDialog(defaultName);
       if (!destination) {
         toast.error(

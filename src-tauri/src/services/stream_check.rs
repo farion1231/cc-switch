@@ -839,7 +839,7 @@ impl StreamCheckService {
         timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         // 自定义认证头（如 Longcat 的 `apikey` 头）不走标准 Bearer，
-        // 具体头名由 OpenClaw 网关内部决定，cc-switch 无法准确构造，
+        // 具体头名由 OpenClaw 网关内部决定，cc-doctor 无法准确构造，
         // 因此直接返回友好错误而不是让用户看到一个误导性的 401。
         if Self::additive_app_uses_auth_header(provider) {
             return Err(AppError::localized(

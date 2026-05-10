@@ -94,7 +94,7 @@ function formatRelativeTime(
  *
  * 数据源由调用方 hook 注入，方便不同的额度后端复用同一套渲染逻辑：
  * - `SubscriptionQuotaFooter`（CLI 凭据路径，by appId）
- * - `CodexOauthQuotaFooter`（cc-switch 自管 OAuth 路径，by ChatGPT account）
+ * - `CodexOauthQuotaFooter`（cc-doctor 自管 OAuth 路径，by ChatGPT account）
  */
 export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   quota,

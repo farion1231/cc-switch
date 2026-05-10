@@ -65,7 +65,7 @@ pub struct TrayAppSection {
 
 /// Auto 菜单项后缀
 pub const AUTO_SUFFIX: &str = "auto";
-pub const TRAY_ID: &str = "cc-switch";
+pub const TRAY_ID: &str = "cc-doctor";
 
 pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
     TrayAppSection {
@@ -855,7 +855,7 @@ mod tests {
 
     #[test]
     fn tray_id_is_unique_to_app() {
-        assert_eq!(TRAY_ID, "cc-switch");
+        assert_eq!(TRAY_ID, "cc-doctor");
         assert_ne!(TRAY_ID, "main");
     }
 

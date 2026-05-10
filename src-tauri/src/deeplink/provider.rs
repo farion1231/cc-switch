@@ -1,6 +1,6 @@
 //! Provider import from deep link
 //!
-//! Handles importing provider configurations via ccswitch:// URLs.
+//! Handles importing provider configurations via ccdoctor:// URLs.
 
 use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
 use super::DeepLinkImportRequest;

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to CC Switch will be documented in this file.
+All notable changes to CC Doctor will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -29,12 +29,12 @@ Development since v3.14.0 focuses on Codex OAuth stability, tray usage visibilit
 
 ### Removed
 
-- **Hermes Config Health Scanner**: Removed the in-app Hermes config health scanner, warning banner, `scan_hermes_config_health` command, `HermesHealthWarning` type, and `HermesWriteOutcome.warnings` payload. CC Switch now keeps the Hermes surface focused on active provider display, provider switching defaults, memory editing, and launching the Hermes Web UI for deep configuration.
+- **Hermes Config Health Scanner**: Removed the in-app Hermes config health scanner, warning banner, `scan_hermes_config_health` command, `HermesHealthWarning` type, and `HermesWriteOutcome.warnings` payload. CC Doctor now keeps the Hermes surface focused on active provider display, provider switching defaults, memory editing, and launching the Hermes Web UI for deep configuration.
 
 ### Fixed
 
 - **Codex OAuth Cache Routing**: Stabilized ChatGPT Codex reverse-proxy cache identity by using client-provided session IDs for `prompt_cache_key` and Codex session headers, preserving explicit cache keys, and avoiding generated UUID cache churn (#2218).
-- **Codex OAuth Responses SSE Aggregation**: Non-streaming Anthropic clients now receive JSON even when the ChatGPT Codex upstream forces OpenAI Responses SSE; CC Switch aggregates the upstream SSE events before running the non-streaming transform (#2235).
+- **Codex OAuth Responses SSE Aggregation**: Non-streaming Anthropic clients now receive JSON even when the ChatGPT Codex upstream forces OpenAI Responses SSE; CC Doctor aggregates the upstream SSE events before running the non-streaming transform (#2235).
 - **Codex OAuth Stream Check Parity**: Stream checks now build Codex OAuth test requests with the same `store: false`, encrypted reasoning include, and provider FAST mode setting as production proxy requests (#2210).
 - **Codex Model Extraction**: Replaced first-line regex matching with TOML parsing when reading Codex config models, so multiline TOML is handled correctly (#2227).
 - **Model Quick-Set / One-Click Config**: Model quick-set updates now apply against the latest provider form config, preventing stale state from making one-click configuration fail (#2249).
@@ -52,7 +52,7 @@ Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class ma
 ### Added
 
 - **Hermes Agent Support (6th Managed App)**: Added Hermes Agent as a first-class managed app with database migration v9→v10, full Rust command surface, YAML-backed `~/.hermes/config.yaml` read/write with atomic backups, MCP sync, Skills sync, session manager with SQLite + JSONL support, and dedicated frontend panels. Supports four API protocols (`chat_completions`, `anthropic_messages`, `codex_responses`, `bedrock_converse`) aligned with Hermes Agent 0.10.0 schema. Read-only rendering for providers owned by the user-authored `providers:` dict, with deep configuration delegated to the Hermes Web UI.
-- **Hermes Memory Panel**: Added a Memory panel for editing `MEMORY.md` and `USER.md` directly from CC Switch, with an enable switch, character-count limits, and a live save flow. Replaces the Prompts entry for Hermes.
+- **Hermes Memory Panel**: Added a Memory panel for editing `MEMORY.md` and `USER.md` directly from CC Doctor, with an enable switch, character-count limits, and a live save flow. Replaces the Prompts entry for Hermes.
 - **Hermes Provider Presets**: Added ~50 Hermes provider presets spanning Nous Research, Shengsuanyun, OpenRouter, DeepSeek, Together AI, StepFun, Zhipu GLM, Bailian, Kimi, MiniMax, DouBao, BaiLing, ModelScope, KAT-Coder, PackyCode, Cubence, AIGoCode, RightCode, AICodeMirror, AICoding, CrazyRouter, SSSAiCode, Micu, CTok.ai, DDSHub, E-FlowCode, LionCCAPI, PIPELLM, Compshare, SiliconFlow, AiHubMix, DMXAPI, TheRouter, Novita, Nvidia, and Xiaomi MiMo.
 - **Claude Opus 4.7 Support**: Added Claude Opus 4.7 with adaptive thinking whitelisting, per-million pricing seed, and Bedrock SKU (`anthropic.claude-opus-4-7` / `global.anthropic.claude-opus-4-7`, dropping the legacy `-v1` suffix). Migrated all aggregator and Bedrock presets to Opus 4.7 as the default Opus model.
 - **Claude `max` Effort Tier**: Upgraded the Claude effort dropdown from `high` to `max` for extended reasoning capacity.
@@ -65,10 +65,10 @@ Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class ma
 - **Stream Check Error Classification**: Classified Stream Check errors and surfaced them as color-coded toasts; refreshed default probe models and added explicit detection for "model not found" responses.
 - **Block Official Provider Switching During Local Routing**: Blocks switching to official providers while Local Routing is active, since routing official API traffic through the local proxy carries account-suspension risk. A warning toast surfaces the block.
 - **Pricing Database Refresh (v8 → v9)**: Added ~50 new model pricing entries and corrected stale prices via a reseed-on-migration step, including Claude 4.7, Opus 4.7 Adaptive Thinking, Grok 4, Qwen 3.5/3.6, MiniMax M2.5/M2.7, Doubao Seed 2.0 series, and GLM-5/5.1. DeepSeek and Kimi K2.5 prices updated.
-- **Application-Level Window Controls**: Added an opt-in setting to render CC Switch's own minimize / toggle-maximize / close buttons instead of the system decorations, materially improving the experience on Linux Wayland where compositor-drawn buttons can become inert.
+- **Application-Level Window Controls**: Added an opt-in setting to render CC Doctor's own minimize / toggle-maximize / close buttons instead of the system decorations, materially improving the experience on Linux Wayland where compositor-drawn buttons can become inert.
 - **Hermes in Unified Skills Management**: Added Hermes to the unified Skills surface; skill install, enable, and filter now cover the Hermes app alongside Claude / Codex / Gemini / OpenCode / OpenClaw.
-- **OpenClaw Config Directory Override**: Added a settings option to point CC Switch at a custom `openclaw.json` location.
-- **Hermes Config Directory Override**: Added a settings option to point CC Switch at a custom `~/.hermes/config.yaml` location, backed by data-driven dispatch.
+- **OpenClaw Config Directory Override**: Added a settings option to point CC Doctor at a custom `openclaw.json` location.
+- **Hermes Config Directory Override**: Added a settings option to point CC Doctor at a custom `~/.hermes/config.yaml` location, backed by data-driven dispatch.
 - **StepFun Step Plan Preset**: Added StepFun Step Plan (EN/ZH) provider presets.
 - **New API Usage Script Template**: Added a User-Agent header to the New API usage script template for better upstream compatibility.
 - **Launch Hermes Dashboard from Toolbar**: When the Hermes Web UI probe fails, the toolbar entry now offers to run `hermes dashboard` in the user's preferred terminal via a temp bash/batch script. `hermes dashboard` opens the browser itself once ready, so no polling is required. Also corrects the stale `hermes web` hint in the offline toast (the real command is `hermes dashboard`) and reorders Linux terminal detection to try `which` before stat'ing `/usr/bin`, `/bin`, `/usr/local/bin`.
@@ -80,12 +80,12 @@ Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class ma
 - **"Local Proxy Takeover" → "Local Routing"**: Unified terminology across UI copy, README, and docs in all three locales. Functional behavior is unchanged.
 - **Hermes `Auto` api_mode Removed**: Users must now pick an explicit protocol; new deeplinks default to `chat_completions`. Eliminates URL-based heuristic surprises.
 - **Hermes Provider Form**: Added an API mode dropdown and per-provider model editor; bound per-provider models to the top-level `model:` when switching active providers.
-- **Hermes Deep Config Delegation**: Deep YAML knobs are now delegated to the Hermes Web UI via a direct launch action, rather than duplicated in the CC Switch form.
+- **Hermes Deep Config Delegation**: Deep YAML knobs are now delegated to the Hermes Web UI via a direct launch action, rather than duplicated in the CC Doctor form.
 - **`ANTHROPIC_REASONING_MODEL` Removed from Claude Quick-Set**: Decoupled the reasoning capability from model selection; the legacy field is no longer surfaced in the quick-set form.
 - **Per-Provider Proxy Config Removed**: Consolidated into global Local Routing; the provider-level proxy toggle and associated storage are gone.
 - **Unified Toolbar Icon Button Width**: Normalized icon-button widths across Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes panels for a consistent header look.
 - **Rust Toolchain Pinned to 1.95**: Adopted clippy 1.95 suggestions across the workspace and pinned the toolchain to prevent nightly drift.
-- **Tray Menu ID Constant**: The tray identifier moved from the hardcoded string `"main"` to a `TRAY_ID` constant (`"cc-switch"`) across all call sites.
+- **Tray Menu ID Constant**: The tray identifier moved from the hardcoded string `"main"` to a `TRAY_ID` constant (`"cc-doctor"`) across all call sites.
 - **Copilot Request Classification**: Refined request routing inside the Copilot optimizer to further reduce unnecessary premium interaction consumption.
 - **Usage Script Intranet Support**: Removed private-IP / suspicious-hostname blocking from usage scripts, unblocking enterprise intranet, Docker, and self-hosted API endpoints. Built-in templates still enforce HTTPS (except localhost) and same-origin checks; custom templates remain user-controlled with those request-URL checks skipped.
 - **Failover Queue Notes**: Provider notes now appear in failover queue selectors and queue rows for easier identification across multi-provider queues.
@@ -94,7 +94,7 @@ Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class ma
 ### Fixed
 
 - **Header Auto-Compact Latching After Maximize**: The toolbar no longer stays compacted after maximize/restore; compaction now reevaluates on size changes.
-- **Hermes YAML Pollution & OAuth MCP Auth Drop**: Round-tripping through CC Switch no longer drops OAuth MCP `auth` blocks or pollutes unrelated YAML keys; guard tests added via `tests/hermes_roundtrip.rs`.
+- **Hermes YAML Pollution & OAuth MCP Auth Drop**: Round-tripping through CC Doctor no longer drops OAuth MCP `auth` blocks or pollutes unrelated YAML keys; guard tests added via `tests/hermes_roundtrip.rs`.
 - **Hermes Active Provider Display**: Hermes UI now correctly surfaces the active provider and wires add / enable / remove actions.
 - **Hermes Provider Persistence**: Providers persist under `custom_providers:` so `api_mode` and `model` survive restarts and config reloads.
 - **Codex `cache_control` Preservation**: Preserve `cache_control` when merging system prompts during Codex format conversion (#1946).
@@ -145,10 +145,10 @@ Development since v3.12.3 focuses on quota visibility, provider workflow upgrade
 
 ### Added
 
-- **Lightweight Mode**: Added a tray-only mode that destroys the main window and keeps CC Switch running from the system tray, with the window recreated when users reopen it.
+- **Lightweight Mode**: Added a tray-only mode that destroys the main window and keeps CC Doctor running from the system tray, with the window recreated when users reopen it.
 - **Provider Model Auto-Fetch**: Added OpenAI-compatible `/v1/models` discovery for Claude, Codex, Gemini, OpenCode, and OpenClaw provider forms, including grouped dropdown selection and failure-specific error messages.
 - **Quota & Balance Visibility**: Added inline quota or balance display for official Claude / Codex / Gemini providers, GitHub Copilot premium interactions, Codex OAuth providers, Token Plan providers (Kimi / Zhipu GLM / MiniMax), and official balance queries for DeepSeek, StepFun, SiliconFlow, OpenRouter, and Novita AI. Copilot / ChatGPT OAuth and CLI subscription quota now only auto-poll for the currently active provider, preventing unnecessary API calls and misleading displays on non-current cards.
-- **Skills Discovery & Batch Updates**: Added SHA-256 based skill update detection, per-skill and batch update actions, a storage-location toggle between CC Switch and `~/.agents/skills`, and public `skills.sh` search integration.
+- **Skills Discovery & Batch Updates**: Added SHA-256 based skill update detection, per-skill and batch update actions, a storage-location toggle between CC Doctor and `~/.agents/skills`, and public `skills.sh` search integration.
 - **Session Workflow Upgrades**: Added batch delete in Session Manager, a directory picker before launching Claude terminal restore commands, usage import from Claude / Codex / Gemini session logs without requiring proxy interception, and per-app usage filtering for Claude / Codex / Gemini dashboards.
 - **Codex OAuth Reverse Proxy**: Added ChatGPT Plus / Pro based Codex OAuth reverse proxy support for Claude provider cards, including managed OAuth login and inline subscription quota display.
 - **OpenCode / OpenClaw Stream Check Coverage**: Added OpenCode npm package mapping plus support for OpenClaw `openai-completions` and the remaining OpenClaw protocol variants in Stream Check.
@@ -226,7 +226,7 @@ Major release adding GitHub Copilot reverse proxy support, macOS code signing & 
 - **Tool Search Toggle**: Added `ENABLE_TOOL_SEARCH` env var support for Claude 2.1.76+; exposed as a checkbox in the provider Common Config editor (#930)
 - **Reasoning Effort Mapping**: Two-tier `resolve_reasoning_effort()` for OpenAI o-series and GPT-5+ models — explicit `output_config.effort` takes priority, falling back to thinking `budget_tokens` thresholds (<4 000→low, 4 000–16 000→medium, ≥16 000→high); covers both Chat Completions and Responses API paths with 17 unit tests
 - **OpenCode SQLite Backend**: Added SQLite session storage support for OpenCode alongside existing JSON backend; dual-backend scan with SQLite priority on ID conflicts, atomic session deletion, and path validation (#1401)
-- **Skill Auto-Backup**: Skill files are automatically backed up to `~/.cc-switch/skill-backups/` before uninstall, with metadata preserved in `meta.json`; old backups pruned to keep at most 20
+- **Skill Auto-Backup**: Skill files are automatically backed up to `~/.cc-doctor/skill-backups/` before uninstall, with metadata preserved in `meta.json`; old backups pruned to keep at most 20
 - **Skill Backup Restore & Delete**: Added list/restore/delete commands for skill backups; restore copies files back to SSOT, saves the DB record, and syncs to the current app with rollback on failure
 - **macOS Code Signing & Notarization**: CI now imports an Apple Developer ID certificate, signs the universal binary, submits for Apple notarization, and staples the ticket to both `.app` and `.dmg`; a hard-fail verification step (`codesign --verify` + `spctl -a` + `stapler validate`) gates the release for both artifacts
 - **Codex 1M Context Window Toggle**: One-click checkbox in Codex config editor to set `model_context_window = 1000000` with auto-populated `model_auto_compact_token_limit = 900000`; unchecking removes both fields
@@ -510,7 +510,7 @@ This release introduces **OpenClaw** as the fifth supported application, a full 
 
 #### OpenClaw Support (New Application)
 
-- **OpenClaw Integration**: Full management support for OpenClaw as the fifth application in CC Switch, including provider switching, configuration panels (Env / Tools / Agents Defaults), Workspace file management (HEARTBEAT / BOOTSTRAP / BOOT), daily memory files, and additive overlay mode
+- **OpenClaw Integration**: Full management support for OpenClaw as the fifth application in CC Doctor, including provider switching, configuration panels (Env / Tools / Agents Defaults), Workspace file management (HEARTBEAT / BOOTSTRAP / BOOT), daily memory files, and additive overlay mode
 - **OpenClaw Provider Presets**: 13+ built-in provider presets with brand icon and complete i18n (zh/en/ja)
 - **OpenClaw Form Fields**: Dedicated provider form with providerKey input, model allowlist auto-registration, and default model button
 - **OpenClaw Config Panels**: Env editor, Tools editor, and Agents Defaults editor backed by JSON5 read/write (`openclaw_config.rs`)
@@ -827,7 +827,7 @@ This release focuses on stability improvements and crash prevention.
 
 ### Added
 
-- **Crash Logging** - Panic hook captures crash info to `~/.cc-switch/crash.log` with full stack traces (#562)
+- **Crash Logging** - Panic hook captures crash info to `~/.cc-doctor/crash.log` with full stack traces (#562)
 - **Release Logging** - Enable logging for release builds with automatic rotation (keeps 2 most recent files)
 - **AIGoCode Icon** - Added colored icon for AIGoCode provider preset
 
@@ -836,7 +836,7 @@ This release focuses on stability improvements and crash prevention.
 - **Proxy Panic Prevention** - Graceful degradation when HTTP client initialization fails due to invalid proxy settings; falls back to no_proxy mode (#560)
 - **UTF-8 Safety** - Fix potential panic when masking API keys or truncating logs containing multi-byte characters (Chinese, emoji, etc.) (#560)
 - **Default Proxy Port** - Change default port from 5000 to 15721 to avoid conflict with macOS AirPlay Receiver (#560)
-- **Windows Title** - Display "CC Switch" instead of default "Tauri app" in window title
+- **Windows Title** - Display "CC Doctor" instead of default "Tauri app" in window title
 - **Windows/Linux Spacing** - Remove extra 28px blank space below native titlebar introduced in v3.9.0
 - **Flatpak Tray Icon** - Bundle libayatana-appindicator for tray icon support on Flatpak (#556)
 - **Provider Preset** - Correct casing from "AiGoCode" to "AIGoCode" to match official branding
@@ -889,7 +889,7 @@ This stable release includes all changes from `3.9.0-1`, `3.9.0-2`, and `3.9.0-3
 - **WebView Compatibility** - Add fallback for crypto.randomUUID() on older WebViews
 - **macOS Autostart** - Use `.app` bundle path to prevent terminal window popups
 - **Database** - Add missing schema migrations; show an error dialog on initialization failure with a retry option
-- **Import/Export** - Restrict SQL import to CC Switch exported backups only; refresh providers immediately after import
+- **Import/Export** - Restrict SQL import to CC Doctor exported backups only; refresh providers immediately after import
 - **Prompts** - Allow saving prompts with empty content
 - **MCP Sync** - Skip sync when the target CLI app is not installed
 - **Common Config (Codex)** - Preserve MCP server `base_url` during extraction and remove provider-specific `model_providers` blocks
@@ -975,7 +975,7 @@ Second beta release focusing on proxy stability, import safety, and provider pre
 
 ### Fixed
 
-- **Import/Export** - Restrict SQL import to CC Switch exported backups only; refresh providers immediately after import
+- **Import/Export** - Restrict SQL import to CC Doctor exported backups only; refresh providers immediately after import
 - **Proxy** - Respect existing Claude token when syncing; add fallback recovery for orphaned takeover state; remove global auto-start flag
 - **Windows** - Add minimum window size to Windows platform config
 - **UI** - Improve About section UI (#419) and unify header toolbar styling
@@ -1131,7 +1131,7 @@ This beta release introduces the **Local API Proxy** feature, along with Skills 
 ### Added
 
 - **Gemini configuration directory support** (#255) - Added custom configuration directory option for Gemini in settings
-- **ArchLinux installation support** (#259) - Added AUR installation via `paru -S cc-switch-bin`
+- **ArchLinux installation support** (#259) - Added AUR installation via `paru -S cc-doctor-bin`
 
 ### Improved
 
@@ -1159,7 +1159,7 @@ This beta release introduces the **Local API Proxy** feature, along with Skills 
   - Google Official (OAuth authentication)
   - PackyCode (partner integration)
   - Custom endpoint support
-- **Deep link support** - Import Gemini providers via `ccswitch://` protocol
+- **Deep link support** - Import Gemini providers via `ccdoctor://` protocol
 - **System tray integration** - Quick-switch Gemini providers from tray menu
 - **Backend modules** - New `gemini_config.rs` (20KB) and `gemini_mcp.rs`
 
@@ -1220,9 +1220,9 @@ This beta release introduces the **Local API Proxy** feature, along with Skills 
   - usePromptActions: Business logic hook (152 lines)
 - **Full i18n support** - Complete Chinese/English translations (41+ keys)
 
-#### Deep Link Protocol (ccswitch://)
+#### Deep Link Protocol (ccdoctor://)
 
-- **Protocol registration** - `ccswitch://` URL scheme for one-click imports
+- **Protocol registration** - `ccdoctor://` URL scheme for one-click imports
 - **Provider import** - Import provider configurations from URLs or shared links
 - **Lifecycle integration** - Deep link handling integrated into app startup
 - **Cross-platform support** - Works on Windows, macOS, and Linux
@@ -1509,9 +1509,9 @@ v3.7.0 represents a major evolution from "Provider Switcher" to **"All-in-One AI
 - Refined UI/UX with better spacing, icons, and visual feedback
 - Enhanced tray menu functionality and responsiveness
 - **Standardized release artifact naming** - All platform releases now use consistent version-tagged filenames:
-  - macOS: `CC-Switch-v{version}-macOS.tar.gz` / `.zip`
-  - Windows: `CC-Switch-v{version}-Windows.msi` / `-Portable.zip`
-  - Linux: `CC-Switch-v{version}-Linux.AppImage` / `.deb`
+  - macOS: `CC-Doctor-v{version}-macOS.tar.gz` / `.zip`
+  - Windows: `CC-Doctor-v{version}-Windows.msi` / `-Portable.zip`
+  - Linux: `CC-Doctor-v{version}-Linux.AppImage` / `.deb`
 
 ### 🐛 Bug Fixes
 
@@ -1692,11 +1692,11 @@ For users upgrading from v2.x (Electron version):
 - The app will automatically migrate your existing provider configurations
 - Window position and size preferences have been reset to defaults
 
-#### Backup on v1→v2 Migration (cc-switch internal config)
+#### Backup on v1→v2 Migration (cc-doctor internal config)
 
-- When the app detects an old v1 config structure at `~/.cc-switch/config.json`, it now creates a timestamped backup before writing the new v2 structure.
-- Backup location: `~/.cc-switch/config.v1.backup.<timestamp>.json`
-- This only concerns cc-switch's own metadata file; your actual provider files under `~/.claude/` and `~/.codex/` are untouched.
+- When the app detects an old v1 config structure at `~/.cc-doctor/config.json`, it now creates a timestamped backup before writing the new v2 structure.
+- Backup location: `~/.cc-doctor/config.v1.backup.<timestamp>.json`
+- This only concerns cc-doctor's own metadata file; your actual provider files under `~/.claude/` and `~/.codex/` are untouched.
 
 ### 🛠️ Development
 

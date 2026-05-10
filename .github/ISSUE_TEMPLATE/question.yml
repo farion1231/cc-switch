@@ -10,12 +10,12 @@ body:
       label: Self Checks / 自检
       options:
         - label: |
-            I have read the [FAQ](https://github.com/farion1231/cc-switch#faq) section in README.
-            我已阅读 README 中的[常见问题](https://github.com/farion1231/cc-switch#常见问题)。
+            I have read the [FAQ](https://github.com/diaojz/cc-doctor#faq) section in README.
+            我已阅读 README 中的[常见问题](https://github.com/diaojz/cc-doctor#常见问题)。
           required: true
         - label: |
-            I have searched for [existing issues](https://github.com/farion1231/cc-switch/issues), including closed ones.
-            我已搜索过[已有的 Issue](https://github.com/farion1231/cc-switch/issues)，包括已关闭的。
+            I have searched for [existing issues](https://github.com/diaojz/cc-doctor/issues), including closed ones.
+            我已搜索过[已有的 Issue](https://github.com/diaojz/cc-doctor/issues)，包括已关闭的。
           required: true
 
   - type: dropdown
@@ -57,8 +57,8 @@ body:
     attributes:
       label: Environment / 环境信息
       description: |
-        OS, CC Switch version, and any relevant details.
-        操作系统、CC Switch 版本及其他相关信息。
-      placeholder: "e.g. macOS 15.4, CC Switch 3.11.1"
+        OS, CC Doctor version, and any relevant details.
+        操作系统、CC Doctor 版本及其他相关信息。
+      placeholder: "e.g. macOS 15.4, CC Doctor 3.11.1"
     validations:
       required: false

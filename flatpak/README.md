@@ -1,6 +1,6 @@
 # Flatpak Build Guide
 
-This directory contains the Flatpak manifest (`com.ccswitch.desktop`) for CC Switch, used to convert the generated `.deb` artifact into an installable `.flatpak` package via CI or local builds.
+This directory contains the Flatpak manifest (`com.ccdoctor.desktop`) for CC Doctor, used to convert the generated `.deb` artifact into an installable `.flatpak` package via CI or local builds.
 
 ## Dependencies
 
@@ -27,31 +27,31 @@ pnpm tauri build -- --bundles deb
 2) Copy the generated deb to this directory:
 
 ```bash
-cp "$(find src-tauri/target/release/bundle -name '*.deb' | head -n 1)" flatpak/cc-switch.deb
+cp "$(find src-tauri/target/release/bundle -name '*.deb' | head -n 1)" flatpak/cc-doctor.deb
 ```
 
 3) Build the local Flatpak repository and export the `.flatpak`:
 
 ```bash
-flatpak-builder --force-clean --user --disable-cache --repo flatpak-repo flatpak-build flatpak/com.ccswitch.desktop.yml
-flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo flatpak-repo CC-Switch-Linux.flatpak com.ccswitch.desktop
+flatpak-builder --force-clean --user --disable-cache --repo flatpak-repo flatpak-build flatpak/com.ccdoctor.desktop.yml
+flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo flatpak-repo CC-Doctor-Linux.flatpak com.ccdoctor.desktop
 ```
 
 4) Install and run:
 
 ```bash
-flatpak install --user ./CC-Switch-Linux.flatpak
-flatpak run com.ccswitch.desktop
+flatpak install --user ./CC-Doctor-Linux.flatpak
+flatpak run com.ccdoctor.desktop
 ```
 
 ## Permissions Note
 
 The current manifest uses `--filesystem=home` by default for "download and run" convenience, allowing the app to directly read/write CLI configuration files and app data on the host (and supporting the "directory override" feature).
 
-If you prefer minimal permissions (e.g., for Flathub submission or security concerns), you can replace `--filesystem=home` in `flatpak/com.ccswitch.desktop.yml` with more precise grants:
+If you prefer minimal permissions (e.g., for Flathub submission or security concerns), you can replace `--filesystem=home` in `flatpak/com.ccdoctor.desktop.yml` with more precise grants:
 
 ```yaml
-  - --filesystem=~/.cc-switch:create
+  - --filesystem=~/.cc-doctor:create
   - --filesystem=~/.claude:create
   - --filesystem=~/.claude.json
   - --filesystem=~/.codex:create
@@ -62,4 +62,4 @@ If you prefer minimal permissions (e.g., for Flathub submission or security conc
 
 Note: Flatpak's `:create` modifier only works with directories, not files. Therefore, `~/.claude.json` cannot use `:create`. If this file doesn't exist on the user's machine, the app may not be able to create it with restricted permissions. Users should either run Claude Code once to generate it, or manually create an empty JSON file (content: `{}`).
 
-If you plan to publish on Flathub or want stricter permission control, adjust the `finish-args` in `flatpak/com.ccswitch.desktop.yml` accordingly.
+If you plan to publish on Flathub or want stricter permission control, adjust the `finish-args` in `flatpak/com.ccdoctor.desktop.yml` accordingly.

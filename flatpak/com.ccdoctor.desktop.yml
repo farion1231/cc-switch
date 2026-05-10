@@ -1,10 +1,10 @@
-id: com.ccswitch.desktop
+id: com.ccdoctor.desktop
 
 runtime: org.gnome.Platform
 runtime-version: '46'
 sdk: org.gnome.Sdk
 
-command: cc-switch
+command: cc-doctor
 
 finish-args:
   - --share=ipc
@@ -16,7 +16,7 @@ finish-args:
   - --talk-name=org.kde.StatusNotifierWatcher
   - --filesystem=xdg-run/tray-icon:create
   # GitHub Releases scenario: Users download and install manually.
-  # For "download and run" convenience (needs read/write access to ~/.cc-switch, ~/.claude, ~/.claude.json, ~/.codex, ~/.gemini,
+  # For "download and run" convenience (needs read/write access to ~/.cc-doctor, ~/.claude, ~/.claude.json, ~/.codex, ~/.gemini,
   # and supports custom directory overrides), we grant full Home access by default.
   # If you plan to publish on Flathub or prefer minimal permissions, replace this with more precise directory grants (see flatpak/README.md).
   - --filesystem=home
@@ -75,16 +75,16 @@ modules:
         url: https://github.com/AyatanaIndicators/libayatana-appindicator.git
         tag: 0.5.93
 
-  - name: cc-switch
+  - name: cc-doctor
     buildsystem: simple
     sources:
       # Placed in flatpak/ directory by CI or local build script
       - type: file
-        path: cc-switch.deb
+        path: cc-doctor.deb
       - type: file
-        path: com.ccswitch.desktop.desktop
+        path: com.ccdoctor.desktop.desktop
       - type: file
-        path: com.ccswitch.desktop.metainfo.xml
+        path: com.ccdoctor.desktop.metainfo.xml
       - type: file
         path: ../src-tauri/icons/128x128.png
     build-commands:
@@ -93,6 +93,6 @@ modules:
       - cp -a usr/* /app/
       # Use our own desktop/metainfo/icon to align with Flatpak app id
       - rm -f /app/share/applications/*.desktop
-      - install -Dm644 com.ccswitch.desktop.desktop /app/share/applications/com.ccswitch.desktop.desktop
-      - install -Dm644 com.ccswitch.desktop.metainfo.xml /app/share/metainfo/com.ccswitch.desktop.metainfo.xml
-      - install -Dm644 128x128.png /app/share/icons/hicolor/128x128/apps/com.ccswitch.desktop.png
+      - install -Dm644 com.ccdoctor.desktop.desktop /app/share/applications/com.ccdoctor.desktop.desktop
+      - install -Dm644 com.ccdoctor.desktop.metainfo.xml /app/share/metainfo/com.ccdoctor.desktop.metainfo.xml
+      - install -Dm644 128x128.png /app/share/icons/hicolor/128x128/apps/com.ccdoctor.desktop.png

@@ -1,11 +1,11 @@
-# CC Switch ユーザーマニュアル
+# CC Doctor ユーザーマニュアル
 
 > Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw オールインワンアシスタント
 
 ## 目次構成
 
 ```
-CC Switch ユーザーマニュアル
+CC Doctor ユーザーマニュアル
 │
 ├── 1. はじめに
 │   ├── 1.1 ソフトウェア紹介
@@ -88,7 +88,7 @@ CC Switch ユーザーマニュアル
 
 | ファイル | 内容 |
 |------|------|
-| [5.1-config-files.md](./5-faq/5.1-config-files.md) | CC Switch のストレージ、CLI 設定ファイル形式 |
+| [5.1-config-files.md](./5-faq/5.1-config-files.md) | CC Doctor のストレージ、CLI 設定ファイル形式 |
 | [5.2-questions.md](./5-faq/5.2-questions.md) | よくある質問と回答 |
 | [5.3-deeplink.md](./5-faq/5.3-deeplink.md) | ディープリンクプロトコル、生成と使用方法 |
 | [5.4-env-conflict.md](./5-faq/5.4-env-conflict.md) | 環境変数の競合検出と対処 |
@@ -105,7 +105,7 @@ CC Switch ユーザーマニュアル
 
 - ドキュメントバージョン：v3.13.0
 - 最終更新：2026-04-08
-- CC Switch v3.13.0+ 対応
+- CC Doctor v3.13.0+ 対応
 
 ### v3.13.0 の注目機能
 
@@ -121,5 +121,5 @@ CC Switch ユーザーマニュアル
 
 Issue や PR でドキュメントの改善にご協力ください：
 
-- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
-- [GitHub Repository](https://github.com/farion1231/cc-switch)
+- [GitHub Issues](https://github.com/diaojz/cc-doctor/issues)
+- [GitHub Repository](https://github.com/diaojz/cc-doctor)

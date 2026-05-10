@@ -1,16 +1,16 @@
-# Contributing to CC Switch
+# Contributing to CC Doctor
 
 > [中文版本](#贡献指南)
 
-Thank you for your interest in contributing to CC Switch! Please read our [Code of Conduct](./CODE_OF_CONDUCT.md) before participating.
+Thank you for your interest in contributing to CC Doctor! Please read our [Code of Conduct](./CODE_OF_CONDUCT.md) before participating.
 
 ## How to Contribute
 
 There are many ways to contribute:
 
-- **Report bugs** — Found something broken? [Open a bug report](https://github.com/farion1231/cc-switch/issues/new?template=bug_report.yml).
-- **Suggest features** — Have an idea? [Submit a feature request](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml).
-- **Improve docs** — Spot a typo or missing info? [Report a doc issue](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml).
+- **Report bugs** — Found something broken? [Open a bug report](https://github.com/diaojz/cc-doctor/issues/new?template=bug_report.yml).
+- **Suggest features** — Have an idea? [Submit a feature request](https://github.com/diaojz/cc-doctor/issues/new?template=feature_request.yml).
+- **Improve docs** — Spot a typo or missing info? [Report a doc issue](https://github.com/diaojz/cc-doctor/issues/new?template=doc_issue.yml).
 - **Contribute code** — Fix bugs or implement features via pull requests.
 - **Translate** — Help us improve translations for English, Chinese, and Japanese.
 
@@ -110,7 +110,7 @@ By submitting a PR, you agree to the following:
 
 ## Internationalization (i18n)
 
-CC Switch supports three languages. When modifying user-facing text:
+CC Doctor supports three languages. When modifying user-facing text:
 
 1. Update **all three** locale files:
    - `src/locales/en/translation.json`
@@ -121,24 +121,24 @@ CC Switch supports three languages. When modifying user-facing text:
 
 ## Questions?
 
-- [Open a question](https://github.com/farion1231/cc-switch/issues/new?template=question.yml)
-- [GitHub Discussions](https://github.com/farion1231/cc-switch/discussions)
+- [Open a question](https://github.com/diaojz/cc-doctor/issues/new?template=question.yml)
+- [GitHub Discussions](https://github.com/diaojz/cc-doctor/discussions)
 
 ---
 
 # 贡献指南
 
-> [English Version](#contributing-to-cc-switch)
+> [English Version](#contributing-to-cc-doctor)
 
-感谢你对 CC Switch 的贡献兴趣！参与之前请阅读我们的[行为准则](./CODE_OF_CONDUCT.md)。
+感谢你对 CC Doctor 的贡献兴趣！参与之前请阅读我们的[行为准则](./CODE_OF_CONDUCT.md)。
 
 ## 如何贡献
 
 你可以通过多种方式参与贡献：
 
-- **报告 Bug** — 发现问题？[提交 Bug 报告](https://github.com/farion1231/cc-switch/issues/new?template=bug_report.yml)。
-- **建议功能** — 有想法？[提交功能请求](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml)。
-- **改进文档** — 发现错误或缺失？[报告文档问题](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml)。
+- **报告 Bug** — 发现问题？[提交 Bug 报告](https://github.com/diaojz/cc-doctor/issues/new?template=bug_report.yml)。
+- **建议功能** — 有想法？[提交功能请求](https://github.com/diaojz/cc-doctor/issues/new?template=feature_request.yml)。
+- **改进文档** — 发现错误或缺失？[报告文档问题](https://github.com/diaojz/cc-doctor/issues/new?template=doc_issue.yml)。
 - **贡献代码** — 通过 Pull Request 修复 Bug 或实现新功能。
 - **翻译** — 帮助改进英文、中文和日文的翻译。
 
@@ -238,7 +238,7 @@ chore(deps): update dependencies
 
 ## 国际化（i18n）
 
-CC Switch 支持三种语言。修改用户可见文本时：
+CC Doctor 支持三种语言。修改用户可见文本时：
 
 1. **同时更新三个**语言文件：
    - `src/locales/en/translation.json`
@@ -249,5 +249,5 @@ CC Switch 支持三种语言。修改用户可见文本时：
 
 ## 有疑问？
 
-- [提问](https://github.com/farion1231/cc-switch/issues/new?template=question.yml)
-- [GitHub 讨论区](https://github.com/farion1231/cc-switch/discussions)
+- [提问](https://github.com/diaojz/cc-doctor/issues/new?template=question.yml)
+- [GitHub 讨论区](https://github.com/diaojz/cc-doctor/discussions)

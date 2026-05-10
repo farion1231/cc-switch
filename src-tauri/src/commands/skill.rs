@@ -2,7 +2,7 @@
 //!
 //! v3.10.0+ 统一管理架构：
 //! - 支持三应用开关（Claude/Codex/Gemini）
-//! - SSOT 存储在 ~/.cc-switch/skills/
+//! - SSOT 存储在 ~/.cc-doctor/skills/
 
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
