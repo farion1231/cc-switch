@@ -887,6 +887,7 @@
     "apiFormatOpenAIChat": "OpenAI Chat Completions（ルーティングが必要）",
     "apiFormatOpenAIResponses": "OpenAI Responses API（ルーティングが必要）",
     "apiFormatGeminiNative": "Gemini Native generateContent（ルーティングが必要）",
+    "apiFormatDeepseekAnthropic": "DeepSeek（Anthropic 互換）",
     "authField": "認証フィールド",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（デフォルト）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",

@@ -30,10 +30,16 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
+pub struct DeepseekContext {
+    pub fake_model: String,
+    pub effective_thinking_enabled: bool,
+}
+
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
     pub claude_api_format: Option<String>,
+    pub deepseek_context: Option<DeepseekContext>,
 }
 
 pub struct ForwardError {
@@ -205,7 +211,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format)) => {
+                Ok((response, claude_api_format, deepseek_context)) => {
                     // 成功：记录成功并更新熔断器
                     let _ = self
                         .router
@@ -260,6 +266,7 @@ impl RequestForwarder {
                         response,
                         provider: provider.clone(),
                         claude_api_format,
+                        deepseek_context,
                     });
                 }
                 Err(e) => {
@@ -336,7 +343,7 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format)) => {
+                                    Ok((response, claude_api_format, deepseek_context)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         // 记录成功
                                         let _ = self
@@ -396,6 +403,7 @@ impl RequestForwarder {
                                             response,
                                             provider: provider.clone(),
                                             claude_api_format,
+                                            deepseek_context,
                                         });
                                     }
                                     Err(retry_err) => {
@@ -536,7 +544,7 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format)) => {
+                                Ok((response, claude_api_format, deepseek_context)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     let _ = self
                                         .router
@@ -589,6 +597,7 @@ impl RequestForwarder {
                                         response,
                                         provider: provider.clone(),
                                         claude_api_format,
+                                        deepseek_context,
                                     });
                                 }
                                 Err(retry_err) => {
@@ -774,7 +783,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
+    ) -> Result<(ProxyResponse, Option<String>, Option<DeepseekContext>), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -798,6 +807,18 @@ impl RequestForwarder {
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
+
+        // DeepSeek Anthropic 兼容代理：清洗请求体（移除 Claude 特有字段、修复 tool 顺序等）
+        let deepseek_sanitize_result = if matches!(
+            super::providers::get_claude_api_format(provider),
+            "deepseek_anthropic"
+        ) {
+            Some(crate::proxy::providers::deepseek_anthropic::sanitize_request(
+                &mut mapped_body,
+            ))
+        } else {
+            None
+        };
 
         // 确定有效端点
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
@@ -1232,6 +1253,16 @@ impl RequestForwarder {
         // ============================================================
         // 构建有序 HeaderMap — 内联替换，保持客户端原始顺序
         // ============================================================
+        const DEEPSEEK_HEADER_BLACKLIST: &[&str] = &[
+            "anthropic-beta",
+            "anthropic-dangerous-direct-browser-access",
+        ];
+
+        let is_deepseek = matches!(
+            super::providers::get_claude_api_format(provider),
+            "deepseek_anthropic"
+        );
+
         let mut ordered_headers = http::HeaderMap::new();
         let mut saw_auth = false;
         let mut saw_accept_encoding = false;
@@ -1240,6 +1271,15 @@ impl RequestForwarder {
 
         for (key, value) in headers {
             let key_str = key.as_str();
+            let name_lower = key_str.to_ascii_lowercase();
+
+            if is_deepseek
+                && DEEPSEEK_HEADER_BLACKLIST
+                    .iter()
+                    .any(|b| *b == name_lower)
+            {
+                continue;
+            }
 
             // --- host — 原位替换为上游 host（保持客户端原始位置） ---
             if key_str.eq_ignore_ascii_case("host") {
@@ -1365,7 +1405,8 @@ impl RequestForwarder {
         }
 
         // 如果原始请求中没有 anthropic-beta 且有值需要添加，追加
-        if !saw_anthropic_beta {
+        // DeepSeek 兼容代理：永不追加 anthropic-beta（已在黑名单中）
+        if !saw_anthropic_beta && !is_deepseek {
             if let Some(ref beta_val) = anthropic_beta_value {
                 if let Ok(hv) = http::HeaderValue::from_str(beta_val) {
                     ordered_headers.append("anthropic-beta", hv);
@@ -1500,7 +1541,11 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
-            Ok((response, resolved_claude_api_format))
+            let deepseek_ctx = deepseek_sanitize_result.map(|r| DeepseekContext {
+                fake_model: r.fake_model,
+                effective_thinking_enabled: r.effective_thinking_enabled,
+            });
+            Ok((response, resolved_claude_api_format, deepseek_ctx))
         } else {
             let status_code = status.as_u16();
             let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
