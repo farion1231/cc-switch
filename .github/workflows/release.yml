@@ -151,7 +151,7 @@ jobs:
           echo "✅ Tauri signing key prepared"
 
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -193,7 +193,7 @@ jobs:
           rm -f "$CERT_PATH"
 
       - name: Build Tauri App (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
         shell: bash
         timeout-minutes: 60
         env:
@@ -230,7 +230,7 @@ jobs:
         run: pnpm tauri build --bundles appimage,deb,rpm
 
       - name: Prepare macOS Assets
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
         shell: bash
         run: |
           set -euxo pipefail
@@ -305,7 +305,7 @@ jobs:
           echo "✅ Styled DMG created: $NEW_DMG"
 
       - name: Notarize macOS DMG
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
         shell: bash
         timeout-minutes: 30
         env:
@@ -347,7 +347,7 @@ jobs:
           done
 
       - name: Verify macOS code signing and notarization
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -476,6 +476,13 @@ jobs:
           else
             echo "No .rpm found (optional)"
           fi
+
+      - name: Prepare empty macOS assets
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE == ''
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          touch release-assets/.macos-skipped
 
       - name: List prepared assets
         shell: bash
