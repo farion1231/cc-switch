@@ -543,7 +543,7 @@ jobs:
           body: |
             ## CC Doctor ${{ github.ref_name }}
 
-            Claude Code 供应商切换工具
+            Claude Code、Codex、Gemini CLI、OpenCode 和 OpenClaw 的全方位管理工具
 
             ### 下载
 
