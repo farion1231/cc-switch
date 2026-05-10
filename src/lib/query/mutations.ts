@@ -125,21 +125,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       await providersApi.update(provider, appId, originalId);
       return provider;
     },
-    onSuccess: async (provider, variables) => {
-      queryClient.setQueryData<Record<string, Provider> | undefined>(
-        ["providers", appId],
-        (current) => {
-          if (!current) return current;
-
-          const next = { ...current };
-          const previousId = variables.originalId ?? provider.id;
-          if (previousId !== provider.id) {
-            delete next[previousId];
-          }
-          next[provider.id] = provider;
-          return next;
-        },
-      );
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
       if (appId === "openclaw") {
         await queryClient.invalidateQueries({

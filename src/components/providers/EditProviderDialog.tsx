@@ -8,7 +8,7 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
-import { openclawApi, type AppId } from "@/lib/api";
+import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -33,8 +33,7 @@ export function EditProviderDialog({
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
 
-  // 默认使用传入的 provider.settingsConfig。编辑保存也会写回同一个 SSOT，
-  // 避免当前 live 配置文件处于代理接管/备份状态时，用旧 live 内容覆盖刚保存的配置。
+  // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
   const [liveSettings, setLiveSettings] = useState<Record<
     string,
     unknown
@@ -67,10 +66,10 @@ export function EditProviderDialog({
         return;
       }
 
-      // Exclusive-mode apps (Claude/Codex/Gemini) use provider.settingsConfig
-      // as the edit source. Reading live here can be stale while proxy takeover
-      // is active, causing saved edits to appear reverted on the next open.
-      if (appId !== "openclaw") {
+      // OpenCode uses additive mode - each provider's config is stored independently in DB
+      // Reading live config would return the full opencode.json (with $schema, provider, mcp etc.)
+      // instead of just the provider fragment, causing incorrect nested structure on save
+      if (appId === "opencode") {
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);
@@ -98,9 +97,32 @@ export function EditProviderDialog({
         return;
       }
 
-      if (!cancelled) {
-        setLiveSettings(null);
-        setHasLoadedLive(true);
+      try {
+        const currentId = await providersApi.getCurrent(appId);
+        if (currentId && provider.id === currentId) {
+          try {
+            const live = (await vscodeApi.getLiveProviderSettings(
+              appId,
+            )) as Record<string, unknown>;
+            if (!cancelled && live && typeof live === "object") {
+              setLiveSettings(live);
+              setHasLoadedLive(true);
+            }
+          } catch {
+            // 读取实时配置失败则回退到 SSOT（不打断编辑流程）
+            if (!cancelled) {
+              setLiveSettings(null);
+              setHasLoadedLive(true);
+            }
+          }
+        } else {
+          if (!cancelled) {
+            setLiveSettings(null);
+            setHasLoadedLive(true);
+          }
+        }
+      } finally {
+        // no-op
       }
     };
     void load();
