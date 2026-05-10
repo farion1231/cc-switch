@@ -32,6 +32,9 @@ mod settings;
 mod store;
 
 mod tray;
+mod tray_icon;
+#[cfg(target_os = "macos")]
+mod tray_icon_assets;
 mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
@@ -60,8 +63,6 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use std::sync::Arc;
-#[cfg(target_os = "macos")]
-use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
@@ -174,6 +175,7 @@ async fn update_tray_menu(
             if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
                 tray.set_menu(Some(new_menu))
                     .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
+                crate::tray_icon::refresh_tray_icon(&app);
                 return Ok(true);
             }
             Ok(false)
@@ -181,19 +183,6 @@ async fn update_tray_menu(
         Err(err) => {
             log::error!("创建托盘菜单失败: {err}");
             Ok(false)
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_tray_icon() -> Option<Image<'static>> {
-    const ICON_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
-
-    match Image::from_bytes(ICON_BYTES) {
-        Ok(icon) => Some(icon),
-        Err(err) => {
-            log::warn!("Failed to load macOS tray icon: {err}");
-            None
         }
     }
 }
@@ -791,7 +780,7 @@ pub fn run() {
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
             #[cfg(target_os = "macos")]
             {
-                if let Some(icon) = macos_tray_icon() {
+                if let Some(icon) = crate::tray_icon::default_macos_tray_icon() {
                     tray_builder = tray_builder.icon(icon).icon_as_template(true);
                 } else if let Some(icon) = app.default_window_icon() {
                     log::warn!("Falling back to default window icon for tray");
@@ -817,6 +806,7 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            crate::tray_icon::refresh_tray_icon(app.handle());
 
             // 从数据库加载日志配置并应用
             {

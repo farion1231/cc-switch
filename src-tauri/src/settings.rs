@@ -202,6 +202,9 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    /// macOS 动态托盘图标：按可见 agent 水平展示当前 provider
+    #[serde(default)]
+    pub dynamic_tray_icon_enabled: bool,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -321,6 +324,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            dynamic_tray_icon_enabled: false,
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,

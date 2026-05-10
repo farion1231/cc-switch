@@ -540,6 +540,8 @@
     "autoLaunchFailed": "Failed to set auto-launch",
     "minimizeToTray": "Minimize to tray on close",
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
+    "dynamicTrayIcon": "Dynamic tray icon",
+    "dynamicTrayIconDescription": "When enabled, the macOS menu bar icon shows current providers for the apps visible on the homepage.",
     "useAppWindowControls": "Enable app-level window controls",
     "useAppWindowControlsDescription": "Use built-in minimize, maximize/restore, and close buttons in the app header.",
     "enableClaudePluginIntegration": "Apply to Claude Code extension",

@@ -395,6 +395,7 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
                 let _ = tray.set_menu(Some(new_menu));
             }
         }
+        crate::tray_icon::refresh_tray_icon(app);
 
         // 5) 发射事件到前端
         let event_data = serde_json::json!({
@@ -439,6 +440,7 @@ fn handle_provider_click(
                 let _ = tray.set_menu(Some(new_menu));
             }
         }
+        crate::tray_icon::refresh_tray_icon(app);
 
         // 发射事件到前端
         let event_data = serde_json::json!({
@@ -635,6 +637,7 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
                     log::error!("刷新托盘菜单失败: {e}");
                 }
             }
+            crate::tray_icon::refresh_tray_icon(app);
         }
     }
 }
