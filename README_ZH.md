@@ -17,7 +17,7 @@
 
 ## ❤️赞助商
 
-> [想出现在这里？](mailto:diaojz@gmail.com)
+> [想出现在这里？](mailto:diaojz@126.com)
 
 <details open>
 <summary>点击折叠</summary>

@@ -17,7 +17,7 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Changelog](CHANG
 
 ## ❤️Sponsor
 
-> [Want to appear here?](mailto:diaojz@gmail.com)
+> [Want to appear here?](mailto:diaojz@126.com)
 
 <details open>
 <summary>Click to collapse</summary>

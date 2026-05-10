@@ -17,7 +17,7 @@
 
 ## ❤️スポンサー
 
-> [ここに掲載しませんか？](mailto:diaojz@gmail.com)
+> [ここに掲載しませんか？](mailto:diaojz@126.com)
 
 <details open>
 <summary>クリックで折りたたむ</summary>
