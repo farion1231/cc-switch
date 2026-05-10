@@ -29,3 +29,7 @@ copilot-api
 .history
 CODEBUDDY.md
 .github
+
+# 本地 trace 与一次性修改报告产物
+.traces/
+docs/modification-test-report.md
