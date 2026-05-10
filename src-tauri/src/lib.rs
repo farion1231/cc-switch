@@ -1152,6 +1152,8 @@ pub fn run() {
             commands::diagnose_environment,
             commands::install_tool,
             commands::fix_environment,
+            // Claude Code uninstall
+            commands::uninstall_claude_code,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::get_skill_backups,

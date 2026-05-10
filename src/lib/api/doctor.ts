@@ -2,7 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 // ─── Types ────────────────────────────────────────────────────
 
-export type HealthStatus = "Healthy" | "NeedsInstall" | "NeedsRepair" | "PartiallyHealthy";
+export type HealthStatus =
+  | "Healthy"
+  | "NeedsInstall"
+  | "NeedsRepair"
+  | "PartiallyHealthy";
 
 export type IssueSeverity = "Critical" | "High" | "Medium" | "Low";
 
@@ -15,7 +19,13 @@ export type IssueCategory =
   | "NodeJsMissing";
 
 export interface FixAction {
-  type: "InstallTool" | "InstallNodeJs" | "RemoveEnvVar" | "RepairConfig" | "FixPermission" | "UpdateTool";
+  type:
+    | "InstallTool"
+    | "InstallNodeJs"
+    | "RemoveEnvVar"
+    | "RepairConfig"
+    | "FixPermission"
+    | "UpdateTool";
   tool?: string;
   var_name?: string;
   source?: string;
@@ -77,6 +87,23 @@ export interface FixResult {
   failed: FixError[];
 }
 
+// ─── 卸载类型 ───
+
+export type UninstallStepStatus = "Success" | "Skipped" | "Failed";
+export type UninstallOverallStatus = "Success" | "Partial" | "Failed";
+
+export interface UninstallStep {
+  name: string;
+  status: UninstallStepStatus;
+  message: string;
+}
+
+export interface UninstallReport {
+  backupPath: string;
+  steps: UninstallStep[];
+  overall: UninstallOverallStatus;
+}
+
 // ─── API ──────────────────────────────────────────────────────
 
 export const doctorApi = {
@@ -90,5 +117,9 @@ export const doctorApi = {
 
   async fixEnvironment(issues: DiagnosisIssue[]): Promise<FixResult> {
     return await invoke("fix_environment", { issues });
+  },
+
+  async uninstallClaudeCode(dryRun: boolean): Promise<UninstallReport> {
+    return await invoke("uninstall_claude_code", { dryRun });
   },
 };
