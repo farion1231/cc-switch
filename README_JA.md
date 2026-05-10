@@ -135,6 +135,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 CC Switch ユーザー限定特典： 専用リンクからご<a href="https://ddshub.short.gy/ccswitch">登録</a>いただくと、初回チャージ時に 10% の追加ボーナスクレジット をプレゼントいたします！（※チャージ完了後、グループ管理人へご連絡の上お受け取りください。）</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://claudecn.top"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
+<td>本プロジェクトのスポンサーである ClaudeCN に感謝いたします！ClaudeCN は、実体のある企業によって運営されるエンタープライズ向け AI ゲートウェイプラットフォームです。Claude、GPT、DeepSeek など主要モデルへの高可用な商用 API アクセスを提供し、企業の調達プロセスにも対応 — 法人振込や正式契約に対応し、コンプライアンス面でも安心してご利用いただけます。<a href="https://claudecn.top">こちら</a>からご登録ください！</td>
+</tr>
+
 </table>
 
 </details>
