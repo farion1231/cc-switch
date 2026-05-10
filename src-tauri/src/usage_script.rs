@@ -109,9 +109,20 @@ pub async fn execute_usage_script(
 
     // 6. 发送 HTTP 请求
     let response_data = send_http_request(&request, timeout_secs).await?;
-    let _content_type = response_data.content_type.as_deref();
 
-    // 7. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
+    // 7. 根据 Content-Type 判断响应格式
+    let is_html = response_data
+        .content_type
+        .as_deref()
+        .map(|ct| ct.to_lowercase().contains("text/html"))
+        .unwrap_or(false);
+    let is_json = response_data
+        .content_type
+        .as_deref()
+        .map(|ct| ct.to_lowercase().contains("application/json"))
+        .unwrap_or(true); // Content-Type 为空时默认按 JSON 处理（向后兼容）
+
+    // 8. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
     let result: Value = {
         let runtime = Runtime::new().map_err(|e| {
             AppError::localized(
@@ -147,15 +158,40 @@ pub async fn execute_usage_script(
                 )
             })?;
 
-            // 将响应数据转换为 JS 值
-            let response_js: rquickjs::Value =
+            // 根据响应格式准备 JS 参数
+            let response_js: rquickjs::Value = if is_html {
+                // HTML：直接作为字符串传入
+                rquickjs::String::from_str(ctx.clone(), &response_data.body)
+                    .map(|s| s.into_value())
+                    .map_err(|e| {
+                        AppError::localized(
+                            "usage_script.response_to_string_failed",
+                            format!("响应转 JS 字符串失败: {e}"),
+                            format!("Failed to convert response to JS string: {e}"),
+                        )
+                    })?
+            } else if is_json {
+                // JSON：解析为 JS 对象
                 ctx.json_parse(response_data.body.as_str()).map_err(|e| {
                     AppError::localized(
                         "usage_script.response_parse_failed",
                         format!("解析响应 JSON 失败: {e}"),
                         format!("Failed to parse response JSON: {e}"),
                     )
-                })?;
+                })?
+            } else {
+                return Err(AppError::localized(
+                    "usage_script.unsupported_content_type",
+                    format!(
+                        "不支持的响应格式: {}（仅支持 application/json 和 text/html）",
+                        response_data.content_type.as_deref().unwrap_or("unknown")
+                    ),
+                    format!(
+                        "Unsupported content type: {} (only application/json and text/html are supported)",
+                        response_data.content_type.as_deref().unwrap_or("unknown")
+                    ),
+                ));
+            };
 
             // 调用 extractor(response)
             let result_js: rquickjs::Value = extractor.call((response_js,)).map_err(|e| {
@@ -203,7 +239,7 @@ pub async fn execute_usage_script(
         })?
     }; // Runtime 和 Context 在这里被 drop
 
-    // 8. 验证返回值格式
+    // 9. 验证返回值格式
     validate_result(&result)?;
 
     Ok(result)
@@ -228,7 +264,10 @@ struct RequestConfig {
 }
 
 /// 发送 HTTP 请求
-async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<HttpResponse, AppError> {
+async fn send_http_request(
+    config: &RequestConfig,
+    timeout_secs: u64,
+) -> Result<HttpResponse, AppError> {
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
     // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
@@ -655,6 +694,58 @@ mod tests {
                     request_url
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_html_content_type_parsing() {
+        // 验证各种 HTML Content-Type 格式
+        let html_types = vec![
+            "text/html",
+            "text/html; charset=utf-8",
+            "text/html; charset=ISO-8859-1",
+            "TEXT/HTML", // 大小写不敏感
+        ];
+        for ct in html_types {
+            assert!(
+                ct.to_lowercase().contains("text/html"),
+                "{ct} should be recognized as HTML"
+            );
+        }
+
+        // 验证 JSON Content-Type 格式
+        let json_types = vec![
+            "application/json",
+            "application/json; charset=utf-8",
+            "APPLICATION/JSON",
+        ];
+        for ct in json_types {
+            assert!(
+                ct.to_lowercase().contains("application/json"),
+                "{ct} should be recognized as JSON"
+            );
+        }
+    }
+
+    #[test]
+    fn test_empty_content_type_defaults_to_json() {
+        // Content-Type 为空时，is_json 应为 true（向后兼容）
+        let content_type: Option<&str> = None;
+        let is_json = content_type
+            .map(|ct| ct.contains("application/json"))
+            .unwrap_or(true);
+        assert!(is_json, "Empty Content-Type should default to JSON");
+    }
+
+    #[test]
+    fn test_unsupported_content_type_detection() {
+        // 验证不支持的 Content-Type 不会被误判为 JSON 或 HTML
+        let unsupported_types = vec!["text/plain", "application/xml", "image/png"];
+        for ct in unsupported_types {
+            let is_html = ct.to_lowercase().contains("text/html");
+            let is_json = ct.to_lowercase().contains("application/json");
+            assert!(!is_html, "{ct} should not be HTML");
+            assert!(!is_json, "{ct} should not be JSON");
         }
     }
 }
