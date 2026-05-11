@@ -29,6 +29,9 @@ jobs:
           version: 10.12.3
           run_install: false
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Get pnpm store directory
         id: pnpm-store
         shell: bash
@@ -43,6 +46,29 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify Tauri dependency sync
+        run: pnpm dev:sync-tauri-plugins
+
+      - name: Check generated dependency files
+        run: |
+          if ! git diff --exit-code -- \
+            package.json \
+            pnpm-lock.yaml \
+            src-tauri/Cargo.toml \
+            src-tauri/Cargo.lock; then
+            echo ""
+            echo "Tauri dependency sync changed generated dependency files."
+            echo "Run this locally and commit the resulting changes:"
+            echo "  pnpm dev:sync-tauri-plugins"
+            echo ""
+            echo "Files to check:"
+            echo "  package.json"
+            echo "  pnpm-lock.yaml"
+            echo "  src-tauri/Cargo.toml"
+            echo "  src-tauri/Cargo.lock"
+            exit 1
+          fi
 
       - name: TypeScript type check
         run: pnpm typecheck
