@@ -10,7 +10,15 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-import type { ProviderCategory } from "@/types";
+import type { ProviderCategory, CodexApiFormat } from "@/types";
+import { FormLabel } from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface EndpointCandidate {
   url: string;
@@ -44,6 +52,10 @@ interface CodexFormFieldsProps {
   modelName?: string;
   onModelNameChange?: (model: string) => void;
 
+  // API Format (for providers that need Responses <-> Chat Completions transform)
+  apiFormat: CodexApiFormat | "";
+  onApiFormatChange: (format: CodexApiFormat | "") => void;
+
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 }
@@ -70,6 +82,8 @@ export function CodexFormFields({
   shouldShowModelField = true,
   modelName = "",
   onModelNameChange,
+  apiFormat,
+  onApiFormatChange,
   speedTestEndpoints,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
@@ -187,6 +201,43 @@ export function CodexFormFields({
               : t("providerForm.modelHint", {
                   defaultValue: "💡 留空将使用供应商的默认模型",
                 })}
+          </p>
+        </div>
+      )}
+
+      {/* API 格式选择 */}
+      {category !== "official" && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="codexApiFormat">
+            {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+          </FormLabel>
+          <Select
+            value={apiFormat || "responses"}
+            onValueChange={(v) =>
+              onApiFormatChange(v === "responses" ? "" : (v as CodexApiFormat))
+            }
+          >
+            <SelectTrigger id="codexApiFormat" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="responses">
+                {t("providerForm.codexApiFormatResponses", {
+                  defaultValue: "Responses API (原生，默认)",
+                })}
+              </SelectItem>
+              <SelectItem value="chat_completions">
+                {t("providerForm.codexApiFormatChatCompletions", {
+                  defaultValue: "Chat Completions (需转换，适用于 DeepSeek 等)",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.codexApiFormatHint", {
+              defaultValue:
+                "当上游不支持 /v1/responses 时选择 Chat Completions，代理层将自动转换格式",
+            })}
           </p>
         </div>
       )}

@@ -605,6 +605,674 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
 
     Ok(result)
 }
+/// Validate and fix the Chat Completions message sequence for DeepSeek compliance.
+///
+/// DeepSeek strictly requires every assistant message with tool_calls to be
+/// immediately followed by tool messages matching each tool_call_id — no other
+/// message types may appear between the assistant and its tool results.
+///
+/// This function:
+/// - Builds an index of all tool messages by tool_call_id.
+/// - For each assistant with tool_calls, collects matching tool messages and
+///   places them right after the assistant.
+/// - Strips orphan tool_calls that have no matching tool message anywhere.
+/// - Drops orphan tool messages that have no matching assistant tool_call.
+fn reorder_tool_messages(messages: Vec<Value>) -> Vec<Value> {
+    use std::collections::{HashMap, HashSet};
+
+    // Phase 0: Build index of tool messages by tool_call_id.
+    // Multi-map because a single tool_call_id may appear multiple times
+    // (e.g. across different conversation turns).
+    let mut tool_by_call_id: HashMap<String, Vec<Value>> = HashMap::new();
+    let mut tool_indices: Vec<usize> = Vec::new(); // positions of tool messages
+
+    for (idx, msg) in messages.iter().enumerate() {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("tool") {
+            if let Some(call_id) = msg.get("tool_call_id").and_then(|i| i.as_str()) {
+                tool_by_call_id
+                    .entry(call_id.to_string())
+                    .or_default()
+                    .push(msg.clone());
+            }
+            tool_indices.push(idx);
+        }
+    }
+
+    // Phase 1: Identify which tool_call_ids exist (have at least one tool message).
+    let existing_tool_ids: HashSet<&str> = tool_by_call_id.keys().map(|s| s.as_str()).collect();
+
+    // Phase 2: For each assistant, collect all tool_calls that have matching
+    // tool messages, and record their positions.
+    struct AssistantInfo {
+        idx: usize,
+        tool_call_ids: Vec<String>, // only those with matching tool messages
+    }
+    let mut assistant_infos: Vec<AssistantInfo> = Vec::new();
+
+    for (idx, msg) in messages.iter().enumerate() {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+            if let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) {
+                let matching_ids: Vec<String> = tool_calls
+                    .iter()
+                    .filter_map(|tc| {
+                        tc.get("id")
+                            .and_then(|id| id.as_str())
+                            .map(|id| id.to_string())
+                    })
+                    .filter(|id| existing_tool_ids.contains(&**id))
+                    .collect();
+
+                if !matching_ids.is_empty() {
+                    assistant_infos.push(AssistantInfo {
+                        idx,
+                        tool_call_ids: matching_ids,
+                    });
+                }
+            }
+        }
+    }
+
+    // Phase 3: Build output — copy messages, inserting tool messages after
+    // each assistant. Track which tool messages have been consumed.
+    let tool_indices_set: HashSet<usize> = tool_indices.into_iter().collect();
+    let mut consumed_tool_positions: HashSet<usize> = HashSet::new();
+    let mut result: Vec<Value> = Vec::new();
+
+    let mut assistant_iter = assistant_infos.iter().peekable();
+    let mut pending_orphan_tools: usize = 0;
+
+    for (idx, msg) in messages.iter().enumerate() {
+        let is_tool = tool_indices_set.contains(&idx);
+
+        if is_tool {
+            // Tool messages are handled when their matching assistant is processed
+            if !consumed_tool_positions.contains(&idx) {
+                consumed_tool_positions.insert(idx);
+                pending_orphan_tools += 1;
+            }
+            continue;
+        }
+
+        // Check if this is an assistant that needs tool messages inserted
+        if let Some(info) = assistant_iter.next_if(|a| a.idx == idx) {
+            // Clone and strip orphan tool_calls (no matching tool message)
+            let mut msg = msg.clone();
+            if let Some(tool_calls) = msg.get_mut("tool_calls").and_then(|t| t.as_array_mut()) {
+                let before = tool_calls.len();
+                tool_calls.retain(|tc| {
+                    tc.get("id")
+                        .and_then(|id| id.as_str())
+                        .map(|id| existing_tool_ids.contains(id))
+                        .unwrap_or(false)
+                });
+                let removed = before - tool_calls.len();
+                if removed > 0 {
+                    log::warn!(
+                        "[Codex] 移除了 {} 个孤儿 tool_calls（无对应 tool 消息）",
+                        removed
+                    );
+                }
+                if tool_calls.is_empty() {
+                    let content_is_null = msg.get("content").map_or(false, |c| c.is_null());
+                if let Some(obj) = msg.as_object_mut() {
+                    obj.remove("tool_calls");
+                    if content_is_null {
+                        obj.insert("content".to_string(), json!(""));
+                    }
+                }
+                }
+            }
+            result.push(msg);
+
+            // Insert matching tool messages immediately after
+            for call_id in &info.tool_call_ids {
+                if let Some(tool_msgs) = tool_by_call_id.get(call_id) {
+                    for t in tool_msgs {
+                        result.push(t.clone());
+                    }
+                }
+            }
+        } else {
+            // Regular message (user, system, assistant without tool_calls, etc.)
+            result.push(msg.clone());
+        }
+    }
+
+    if pending_orphan_tools > 0 {
+        log::warn!(
+            "[Codex] 丢弃 {} 个孤儿 tool 消息（无前置 assistant 的 tool_calls 匹配）",
+            pending_orphan_tools
+        );
+    }
+
+    if result.len() != messages.len() {
+        log::info!(
+            "[Codex] Tool 消息清理: {} → {} 条消息",
+            messages.len(),
+            result.len()
+        );
+    }
+
+    result
+}/// Recursively strip all image content blocks from a content value,
+/// replacing them with "[Image]" text placeholders. This is a safety net
+/// for text-only models (DeepSeek, etc.) that reject image_url blocks.
+fn sanitize_image_content(content: &Value) -> Value {
+    match content {
+        Value::Array(arr) => {
+            let sanitized: Vec<Value> = arr
+                .iter()
+                .map(|item| {
+                    if let Some(bt) = item.get("type").and_then(|t| t.as_str()) {
+                        match bt {
+                            // Chat Completions image format
+                            "image_url" => {
+                                json!({"type": "text", "text": "[Image]"})
+                            }
+                            // Responses API image format (should not appear here,
+                            // but handled defensively)
+                            "input_image" | "output_image" => {
+                                json!({"type": "text", "text": "[Image]"})
+                            }
+                            // Pass through non-image blocks unchanged
+                            _ => item.clone(),
+                        }
+                    } else {
+                        item.clone()
+                    }
+                })
+                .collect();
+            Value::Array(sanitized)
+        }
+        // String content is always safe
+        _ => content.clone(),
+    }
+}
+
+
+
+/// OpenAI Responses 请求 → Chat Completions 请求
+///
+/// 将 Codex CLI 发出的 Responses API 格式转换为 Chat Completions 格式，
+/// 用于连接不支持 Responses API 的上游（如 DeepSeek）。
+///
+/// 转换规则：
+/// - `instructions` → system message（插入 messages 数组首位）
+/// - `input[]` → `messages[]`
+///   - role=user + input_text → user message
+///   - role=assistant + output_text → assistant message
+///   - function_call item → assistant message with tool_calls
+///   - function_call_output item → tool message
+/// - `max_output_tokens` → `max_tokens`
+/// - `reasoning.effort` → `reasoning_effort` (DeepSeek 兼容)
+/// - `tools` → 透传（Responses API 的 function tool 格式与 Chat Completions 兼容）
+pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
+    // If the request is already in Chat Completions format (has "messages" not "input"),
+    // Codex may have sent it directly for providers it knows support Chat Completions.
+    // In that case, pass through without double-transforming.
+    if body.get("messages").is_some() && body.get("input").is_none() {
+        log::info!("[Codex] 请求已是 Chat Completions 格式，跳过转换，执行图片安全检查");
+        let mut body = body;
+        // Safety net: strip image content for text-only models (DeepSeek)
+        if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+            for msg in messages.iter_mut() {
+                if let Some(msg_content) = msg.get("content").cloned() {
+                    msg["content"] = sanitize_image_content(&msg_content);
+                }
+            }
+        }
+        return Ok(body);
+    }
+
+    let mut result = json!({});
+
+    // model
+    if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
+        result["model"] = json!(model);
+    }
+
+    // instructions → system message
+    let mut messages: Vec<Value> = Vec::new();
+    if let Some(instructions) = body.get("instructions").and_then(|i| i.as_str()) {
+        if !instructions.is_empty() {
+            messages.push(json!({
+                "role": "system",
+                "content": instructions
+            }));
+        }
+    }
+
+    // input[] → messages[]
+    // Accumulate reasoning text so it can be injected as `reasoning_content`
+    // in the next assistant message. DeepSeek requires this for multi-turn
+    // thinking mode — reasoning_content must be passed back to the API.
+    let mut pending_reasoning: Option<String> = None;
+
+    if let Some(input) = body.get("input").and_then(|i| i.as_array()) {
+        for item in input {
+            let item_type = item.get("type").and_then(|t| t.as_str());
+
+            match item_type {
+                // Reasoning items accumulate text for the next assistant message.
+                Some("reasoning") => {
+                    if let Some(summary) = item.get("summary").and_then(|s| s.as_array()) {
+                        let text: String = summary
+                            .iter()
+                            .filter_map(|s| {
+                                if s.get("type").and_then(|t| t.as_str()) == Some("summary_text") {
+                                    s.get("text").and_then(|t| t.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("");
+                        if !text.is_empty() {
+                            pending_reasoning = Some(text);
+                        }
+                    }
+                }
+
+                Some("message") => {
+                    let raw_role = item.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+                    // Map Responses API roles to Chat Completions roles.
+                    // DeepSeek does not support "developer" — convert to "system".
+                    let role = match raw_role {
+                        "developer" => "system",
+                        other => other,
+                    };
+                    if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
+                        let mut text_parts: Vec<String> = Vec::new();
+                                                for block in content {
+                            let bt = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                            match bt {
+                                "input_text" | "output_text" => {
+                                    if let Some(text) =
+                                        block.get("text").and_then(|t| t.as_str())
+                                    {
+                                        text_parts.push(text.to_string());
+                                    }
+                                }
+                                "input_image" => {
+                                    // DeepSeek and other text-only models don't support
+                                    // multimodal input. Replace image with a text
+                                    // placeholder so the request doesn't fail.
+                                    if let Some(img_url) = block.get("image_url") {
+                                        if let Some(url_str) = img_url.as_str() {
+                                            if url_str.len() <= 120 {
+                                                text_parts.push(format!("[Image: {}]", url_str));
+                                            } else {
+                                                // Truncate long data URIs to keep prompt size reasonable
+                                                text_parts.push(format!(
+                                                    "[Image: {}...]",
+                                                    &url_str[..117]
+                                                ));
+                                            }
+                                        } else {
+                                            text_parts.push("[Image]".to_string());
+                                        }
+                                    } else {
+                                        text_parts.push("[Image]".to_string());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        // Build content: always text-only (multimodal images
+                        // are converted to [Image] placeholders above for
+                        // text-only model compatibility)
+                        if text_parts.len() <= 1 {
+                            let text = text_parts.first().cloned().unwrap_or_default();
+                            messages.push(json!({
+                                "role": role,
+                                "content": text
+                            }));
+                        } else {
+                            let parts: Vec<Value> = text_parts
+                                .iter()
+                                .map(|t| json!({"type": "text", "text": t}))
+                                .collect();
+                            messages.push(json!({
+                                "role": role,
+                                "content": parts
+                            }));
+                        }
+                    } else if let Some(text) = item.get("content").and_then(|c| c.as_str()) {
+                        messages.push(json!({
+                            "role": role,
+                            "content": text
+                        }));
+                    } else {
+                        messages.push(json!({"role": role, "content": ""}));
+                    }
+
+                    // Inject accumulated reasoning_content into assistant messages.
+                    // DeepSeek requires reasoning_content to be passed back on subsequent turns.
+                    if role == "assistant" {
+                        if let Some(reasoning) = pending_reasoning.take() {
+                            if let Some(last) = messages.last_mut() {
+                                last["reasoning_content"] = json!(reasoning);
+                            }
+                        }
+                    }
+                }
+
+                Some("function_call") => {
+                    let call_id = item.get("call_id").and_then(|i| i.as_str()).unwrap_or("");
+                    let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let arguments =
+                        item.get("arguments").and_then(|a| a.as_str()).unwrap_or("{}");
+                    // Validate arguments is parseable JSON; if not, use as-is
+                    let args_str = if serde_json::from_str::<Value>(arguments).is_ok() {
+                        arguments.to_string()
+                    } else {
+                        serde_json::to_string(arguments).unwrap_or_else(|_| "{}".to_string())
+                    };
+
+                    let tc = json!({
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": args_str
+                        }
+                    });
+
+                    // Merge into the previous assistant message if one exists.
+                    // Responses API has function_call as a separate input item, but
+                    // Chat Completions requires tool_calls to be in the SAME assistant message.
+                    if let Some(last) = messages.last_mut() {
+                        if last.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+                            // Merge tool_calls into the existing assistant message
+                            if let Some(existing_tcs) = last.get_mut("tool_calls") {
+                                if let Some(arr) = existing_tcs.as_array_mut() {
+                                    arr.push(tc);
+                                }
+                            } else {
+                                last["tool_calls"] = json!([tc]);
+                                // If content was a string, keep it; null means no text was sent
+                                if last.get("content").is_none() {
+                                    last["content"] = json!(null);
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                    // No prior assistant message — create a new one
+                    let mut new_msg = json!({
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [tc]
+                    });
+                    if let Some(reasoning) = pending_reasoning.take() {
+                        new_msg["reasoning_content"] = json!(reasoning);
+                    }
+                    messages.push(new_msg);
+                }
+
+                Some("function_call_output") => {
+                    let call_id = item.get("call_id").and_then(|i| i.as_str()).unwrap_or("");
+                    // Output may be a string, object, or array — serialize non-string outputs
+                    let output = match item.get("output") {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(v) => serde_json::to_string(v).unwrap_or_default(),
+                        None => String::new(),
+                    };
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": output
+                    }));
+                }
+
+                _ => {
+                    // Unknown item type — determine proper role mapping.
+                    // Items with a call_id are tool outputs (e.g. web_search_call_output,
+                    // computer_call_output, etc.) and must be mapped to tool messages
+                    // so the Chat Completions tool_calls → tool sequence stays intact.
+                    if let Some(call_id) = item.get("call_id").and_then(|c| c.as_str()) {
+                        let output = item.get("output").and_then(|o| o.as_str()).unwrap_or("");
+                        messages.push(json!({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": output
+                        }));
+                    } else if let Some(role) = item.get("role").and_then(|r| r.as_str()) {
+                        let raw_content = item.get("content").cloned().unwrap_or(json!(""));
+                        let safe_content = sanitize_image_content(&raw_content);
+                        messages.push(json!({
+                            "role": role,
+                            "content": safe_content
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    // Final safety net: strip any image content from all messages.
+    // Text-only models (DeepSeek, etc.) reject image_url / input_image blocks.
+    for msg in &mut messages {
+        if let Some(msg_content) = msg.get("content").cloned() {
+            msg["content"] = sanitize_image_content(&msg_content);
+        }
+    }
+
+    // Reorder tool messages to satisfy DeepSeek's strict validation:
+    // Every assistant message with tool_calls must be immediately followed
+    // by ALL matching tool messages (one per tool_call_id), with no
+    // non-tool messages in between.
+    messages = reorder_tool_messages(messages);
+
+    result["messages"] = json!(messages);
+
+    // max_output_tokens → max_tokens
+    if let Some(v) = body.get("max_output_tokens") {
+        result["max_tokens"] = v.clone();
+    }
+
+    // temperature
+    if let Some(v) = body.get("temperature") {
+        result["temperature"] = v.clone();
+    }
+
+    // top_p
+    if let Some(v) = body.get("top_p") {
+        result["top_p"] = v.clone();
+    }
+
+    // stream — force false for now (SSE streaming conversion not yet implemented)
+    // When stream is false, DeepSeek returns a single JSON response that we can transform
+    result["stream"] = json!(false);
+
+    // reasoning.effort → reasoning_effort (DeepSeek)
+    if let Some(effort) = body.pointer("/reasoning/effort").and_then(|e| e.as_str()) {
+        result["reasoning_effort"] = json!(effort);
+    }
+
+    // tools — Responses format → Chat Completions format
+    // Responses: {"type":"function","name":"...","parameters":{...}}
+    // Chat Completions: {"type":"function","function":{"name":"...","parameters":{...}}}
+    if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
+        let cc_tools: Vec<Value> = tools
+            .iter()
+            .filter_map(|t| {
+                let name = t.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                // Skip tools with empty names (Chat Completions requirement)
+                if name.is_empty() {
+                    return None;
+                }
+                let desc_val = t.get("description").cloned().unwrap_or(json!(null));
+                // Ensure parameters is a valid JSON Schema object (Chat Completions requirement)
+                let params = match t.get("parameters") {
+                    Some(p) if p.is_object() && !p.as_object().map(|o| o.is_empty()).unwrap_or(true) => p.clone(),
+                    _ => json!({"type": "object", "properties": {}}),
+                };
+                let mut function_obj = json!({
+                    "name": name,
+                    "parameters": params,
+                });
+                // Only include description if it is a non-empty string
+                if let Some(d) = desc_val.as_str() {
+                    if !d.is_empty() {
+                        function_obj["description"] = json!(d);
+                    }
+                }
+                if let Some(req) = t.get("required") {
+                    if !req.is_null() {
+                        function_obj["required"] = req.clone();
+                    }
+                }
+                Some(json!({
+                    "type": "function",
+                    "function": function_obj
+                }))
+            })
+            .collect();
+        result["tools"] = json!(cc_tools);
+    }
+
+    // tool_choice
+    if let Some(v) = body.get("tool_choice") {
+        result["tool_choice"] = v.clone();
+    }
+
+    Ok(result)
+}
+
+/// Chat Completions 响应 → OpenAI Responses 响应
+///
+/// 将上游 Chat Completions API 的响应转换回 Responses API 格式，
+/// 使 Codex CLI 可以正常解析。
+pub fn chat_completions_to_responses(body: Value) -> Result<Value, ProxyError> {
+    let mut result = json!({
+        "object": "response"
+    });
+
+    // id
+    if let Some(id) = body.get("id").and_then(|i| i.as_str()) {
+        result["id"] = json!(id);
+    }
+
+    // model
+    if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
+        result["model"] = json!(model);
+    }
+
+    // status — derive from finish_reason
+    let mut status = "completed";
+    let mut output: Vec<Value> = Vec::new();
+
+    if let Some(choices) = body.get("choices").and_then(|c| c.as_array()) {
+        for choice in choices {
+            if let Some(msg) = choice.get("message") {
+                let mut content: Vec<Value> = Vec::new();
+                let mut tool_calls_out: Vec<Value> = Vec::new();
+
+                // text content
+                if let Some(text) = msg.get("content").and_then(|c| c.as_str()) {
+                    if !text.is_empty() {
+                        content.push(json!({
+                            "type": "output_text",
+                            "text": text
+                        }));
+                    }
+                }
+
+                // reasoning_content (DeepSeek R1)
+                if let Some(reasoning) = msg.get("reasoning_content").and_then(|r| r.as_str()) {
+                    if !reasoning.is_empty() {
+                        output.push(json!({
+                            "type": "reasoning",
+                            "summary": [{"type": "summary_text", "text": reasoning}]
+                        }));
+                    }
+                }
+
+                // tool_calls → function_call items
+                if let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) {
+                    for tc in tool_calls {
+                        let tc_id = tc.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                        if let Some(func) = tc.get("function") {
+                            let name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                            let args =
+                                func.get("arguments").and_then(|a| a.as_str()).unwrap_or("{}");
+                            tool_calls_out.push(json!({
+                                "type": "function_call",
+                                "call_id": tc_id,
+                                "name": name,
+                                "arguments": args
+                            }));
+                        }
+                    }
+                }
+
+                // Build message output item
+                if !content.is_empty() {
+                    output.push(json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": content
+                    }));
+                }
+
+                // Append function_call items after the message
+                output.extend(tool_calls_out);
+            }
+
+            // finish_reason → status
+            if let Some(reason) = choice.get("finish_reason").and_then(|r| r.as_str()) {
+                match reason {
+                    "tool_calls" => status = "completed", // will be mapped via has_tool_use
+                    "length" => status = "incomplete",
+                    "content_filter" => status = "incomplete",
+                    "stop" => status = "completed",
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Detect if we have tool calls for proper status
+    let has_tool_use = output.iter().any(|o| {
+        o.get("type")
+            .and_then(|t| t.as_str())
+            .map(|t| t == "function_call")
+            .unwrap_or(false)
+    });
+
+    // Override status when tool calls present
+    if has_tool_use && status == "completed" {
+        // status stays "completed" — Codex uses stop_reason for tool_use
+    }
+
+    result["status"] = json!(status);
+    result["output"] = json!(output);
+
+    // usage: Chat Completions → Responses
+    if let Some(usage) = body.get("usage") {
+        let input_tokens = usage
+            .get("prompt_tokens")
+            .or_else(|| usage.get("input_tokens"))
+            .cloned()
+            .unwrap_or(json!(0));
+        let output_tokens = usage
+            .get("completion_tokens")
+            .or_else(|| usage.get("output_tokens"))
+            .cloned()
+            .unwrap_or(json!(0));
+        let total_tokens = usage.get("total_tokens").cloned().unwrap_or_else(|| {
+            json!(input_tokens.as_u64().unwrap_or(0) + output_tokens.as_u64().unwrap_or(0))
+        });
+
+        result["usage"] = json!({
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens
+        });
+    }
+
+    Ok(result)
+}
 
 #[cfg(test)]
 mod tests {

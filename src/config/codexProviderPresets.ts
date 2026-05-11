@@ -489,4 +489,27 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
   },
+  {
+    name: "DeepSeek",
+    websiteUrl: "https://platform.deepseek.com",
+    apiKeyUrl: "https://platform.deepseek.com/api_keys",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "deepseek"
+model = "deepseek-v4-pro"
+model_reasoning_effort = "high"
+disable_response_storage = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 950000
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+api_format = "chat_completions"`,
+    category: "cn_official",
+    endpointCandidates: ["https://api.deepseek.com/v1"],
+    icon: "deepseek",
+    iconColor: "#4D6BFE",
+  },
 ];

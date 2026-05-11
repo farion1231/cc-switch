@@ -1,6 +1,14 @@
 //! Codex (OpenAI) Provider Adapter
 //!
-//! 仅透传模式，支持直连 OpenAI API
+//! 支持透传模式 (Responses API) 和 Chat Completions 转换模式。
+//!
+//! ## 透传模式（默认）
+//! 直连支持 Responses API 的上游（如 OpenAI 官方 API）
+//!
+//! ## Chat Completions 转换模式
+//! 当 provider 配置中设置了 `api_format = "chat_completions"` 时启用。
+//! 将 Responses API 请求转换为 Chat Completions 格式，
+//! 用于连接不支持 /v1/responses 的上游（如 DeepSeek）。
 //!
 //! ## 客户端检测
 //! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
@@ -9,6 +17,7 @@ use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use regex::Regex;
+use serde_json::{json, Value};
 use std::sync::LazyLock;
 
 /// 官方 Codex 客户端 User-Agent 正则
@@ -179,6 +188,101 @@ impl ProviderAdapter for CodexAdapter {
             http::HeaderName::from_static("authorization"),
             http::HeaderValue::from_str(&bearer).unwrap(),
         )]
+    }
+
+    /// Codex 适配器是否需要格式转换
+    ///
+    /// 当 provider 配置中设置了 `api_format = "chat_completions"` 时返回 true，
+    /// 表示上游不支持 Responses API，需要转换为 Chat Completions 格式。
+    fn needs_transform(&self, provider: &Provider) -> bool {
+        // 1. 检查 settings_config 顶层的 api_format
+        if let Some(fmt) = provider
+            .settings_config
+            .get("api_format")
+            .and_then(|v| v.as_str())
+        {
+            if fmt == "chat_completions" {
+                return true;
+            }
+        }
+
+        // 2. 检查 config TOML 字符串中的 api_format
+        if let Some(config) = provider.settings_config.get("config") {
+            if let Some(config_str) = config.as_str() {
+                for marker in &[
+                    "api_format = \"chat_completions\"",
+                    "api_format = 'chat_completions'",
+                ] {
+                    if config_str.contains(marker) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 3. 检查 meta.apiFormat（从 Codex 供应商表单的 API 格式下拉框设置）
+        if let Some(fmt) = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.api_format.as_deref())
+        {
+            if fmt == "chat_completions" {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// 转换请求：Responses API → Chat Completions，并重写 model 为上游支持的名称
+    fn transform_request(&self, body: Value, provider: &Provider) -> Result<Value, ProxyError> {
+        let mut body = body;
+
+        // 用 provider 配置中的 model 覆盖，确保上游模型名正确
+        if let Some(upstream_model) = CodexAdapter::extract_model(provider) {
+            log::info!("[Codex] 重写模型名: {} → {}", body.get("model").and_then(|m| m.as_str()).unwrap_or("?"), upstream_model);
+            body["model"] = json!(upstream_model);
+        }
+
+        super::transform_responses::responses_to_chat_completions(body)
+    }
+
+    /// 转换响应：Chat Completions → Responses API
+    fn transform_response(&self, body: Value) -> Result<Value, ProxyError> {
+        super::transform_responses::chat_completions_to_responses(body)
+    }
+}
+
+impl CodexAdapter {
+    /// 从 provider 配置中提取上游模型名
+    fn extract_model(provider: &Provider) -> Option<String> {
+        // 1. settings_config 顶层 model
+        if let Some(m) = provider.settings_config.get("model").and_then(|v| v.as_str()) {
+            return Some(m.to_string());
+        }
+        // 2. config TOML 字符串中的 model
+        if let Some(config) = provider.settings_config.get("config") {
+            if let Some(config_str) = config.as_str() {
+                if let Some(v) = Self::extract_toml_value(config_str, "model") {
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+
+    /// 从 TOML 字符串中提取指定 key 的值
+    fn extract_toml_value(toml_str: &str, key: &str) -> Option<String> {
+        for pattern in [format!("{key} = \""), format!("{key} = '")] {
+            if let Some(start) = toml_str.find(&pattern) {
+                let rest = &toml_str[start + pattern.len()..];
+                let end_char = if pattern.contains('"') { '"' } else { '\'' };
+                if let Some(end) = rest.find(end_char) {
+                    return Some(rest[..end].to_string());
+                }
+            }
+        }
+        None
     }
 }
 
