@@ -1,4 +1,6 @@
 pub mod balance;
+pub mod brew_migration;
+pub mod claude_installer;
 pub mod coding_plan;
 pub mod config;
 pub mod env_checker;
