@@ -109,6 +109,40 @@ impl RequestForwarder {
         }
     }
 
+    async fn record_success_result(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        used_half_open_permit: bool,
+    ) {
+        if used_half_open_permit {
+            if let Err(e) = self
+                .router
+                .record_result(provider_id, app_type, true, true, None)
+                .await
+            {
+                log::warn!(
+                    "[{app_type}] 记录 Provider 成功结果失败: provider_id={provider_id}, error={e}"
+                );
+            }
+            return;
+        }
+
+        let router = self.router.clone();
+        let provider_id = provider_id.to_string();
+        let app_type = app_type.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = router
+                .record_result(&provider_id, &app_type, false, true, None)
+                .await
+            {
+                log::warn!(
+                    "[{app_type}] 异步记录 Provider 成功结果失败: provider_id={provider_id}, error={e}"
+                );
+            }
+        });
+    }
+
     /// 转发请求（带故障转移）
     ///
     /// # Arguments
@@ -207,16 +241,9 @@ impl RequestForwarder {
                 .await
             {
                 Ok((response, claude_api_format)) => {
-                    // 成功：记录成功并更新熔断器
-                    let _ = self
-                        .router
-                        .record_result(
-                            &provider.id,
-                            app_type_str,
-                            used_half_open_permit,
-                            true,
-                            None,
-                        )
+                    // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
+                    // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
+                    self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
                         .await;
 
                     // 更新当前应用类型使用的 provider
@@ -339,17 +366,12 @@ impl RequestForwarder {
                                 {
                                     Ok((response, claude_api_format)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
-                                        // 记录成功
-                                        let _ = self
-                                            .router
-                                            .record_result(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                                true,
-                                                None,
-                                            )
-                                            .await;
+                                        self.record_success_result(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await;
 
                                         // 更新当前应用类型使用的 provider
                                         {
@@ -539,16 +561,12 @@ impl RequestForwarder {
                             {
                                 Ok((response, claude_api_format)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
-                                    let _ = self
-                                        .router
-                                        .record_result(
-                                            &provider.id,
-                                            app_type_str,
-                                            used_half_open_permit,
-                                            true,
-                                            None,
-                                        )
-                                        .await;
+                                    self.record_success_result(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
 
                                     {
                                         let mut current_providers =
@@ -1415,12 +1433,14 @@ impl RequestForwarder {
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
         log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
-        if let Ok(body_str) = serde_json::to_string(&filtered_body) {
-            log::debug!(
-                "[{tag}] >>> 请求体内容 ({}字节): {}",
-                body_str.len(),
-                body_str
-            );
+        if log::log_enabled!(log::Level::Debug) {
+            if let Ok(body_str) = serde_json::to_string(&filtered_body) {
+                log::debug!(
+                    "[{tag}] >>> 请求体内容 ({}字节): {}",
+                    body_str.len(),
+                    body_str
+                );
+            }
         }
 
         // 确定超时
