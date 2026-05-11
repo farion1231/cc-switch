@@ -16,28 +16,33 @@ pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
 
 use std::str::FromStr;
 
-fn invalid_json_format_error(error: serde_json::Error) -> String {
-    let lang = settings::get_settings()
+fn current_language() -> String {
+    settings::get_settings()
         .language
-        .unwrap_or_else(|| "zh".to_string());
+        .unwrap_or_else(|| "zh".to_string())
+        .to_lowercase()
+}
+
+fn invalid_json_format_error(error: serde_json::Error) -> String {
+    let lang = current_language();
 
     match lang.as_str() {
+        l if l.starts_with("zh") => format!("无效的 JSON 格式: {error}"),
+        l if l.starts_with("ja") => format!("JSON形式が無効です: {error}"),
+        l if l.starts_with("ru") => format!("Неверный формат JSON: {error}"),
         "en" => format!("Invalid JSON format: {error}"),
-        "ja" => format!("JSON形式が無効です: {error}"),
-        "ru" => format!("Неверный формат JSON: {error}"),
         _ => format!("Invalid JSON format: {error}"),
     }
 }
 
 fn invalid_toml_format_error(error: toml_edit::TomlError) -> String {
-    let lang = settings::get_settings()
-        .language
-        .unwrap_or_else(|| "zh".to_string());
+    let lang = current_language();
 
     match lang.as_str() {
+        l if l.starts_with("zh") => format!("无效的 TOML 格式: {error}"),
+        l if l.starts_with("ja") => format!("TOML形式が無効です: {error}"),
+        l if l.starts_with("ru") => format!("Неверный формат TOML: {error}"),
         "en" => format!("Invalid TOML format: {error}"),
-        "ja" => format!("TOML形式が無効です: {error}"),
-        "ru" => format!("Неверный формат TOML: {error}"),
         _ => format!("Invalid TOML format: {error}"),
     }
 }
