@@ -328,6 +328,17 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// 通过 chat_template_kwargs.enable_thinking=false 关闭模型 thinking 输出
+    /// 仅对 openai_chat 路径生效（vLLM/SGLang 等支持 chat_template_kwargs 的 backend）
+    #[serde(rename = "disableThinking", skip_serializing_if = "Option::is_none")]
+    pub disable_thinking: Option<bool>,
+    /// 在 openai_chat 路径中，将 assistant 消息的 reasoning_content 回传给上游
+    /// 用于 Qwen3.5 等需要 reasoning_content 才能正确执行 tool call 的模型
+    #[serde(
+        rename = "preserveReasoningContent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub preserve_reasoning_content: Option<bool>,
 }
 
 impl ProviderMeta {

@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -134,6 +135,10 @@ interface ClaudeFormFieldsProps {
   // Full URL mode
   isFullUrl: boolean;
   onFullUrlChange: (value: boolean) => void;
+
+  // Thinking mode (openai_chat only)
+  thinkingEnabled?: boolean;
+  onThinkingChange?: (enabled: boolean) => void;
 }
 
 export function ClaudeFormFields({
@@ -182,6 +187,8 @@ export function ClaudeFormFields({
   onApiKeyFieldChange,
   isFullUrl,
   onFullUrlChange,
+  thinkingEnabled,
+  onThinkingChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasAnyAdvancedValue = !!(
@@ -190,7 +197,8 @@ export function ClaudeFormFields({
     defaultSonnetModel ||
     defaultOpusModel ||
     apiFormat !== "anthropic" ||
-    apiKeyField !== "ANTHROPIC_AUTH_TOKEN"
+    apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
+    thinkingEnabled !== undefined
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
@@ -554,6 +562,34 @@ export function ClaudeFormFields({
                     defaultValue: "选择供应商 API 的输入格式",
                   })}
                 </p>
+              </div>
+            )}
+
+            {/* 思考模式（仅 openai_chat 格式显示） */}
+            {category !== "cloud_provider" && apiFormat === "openai_chat" && (
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <FormLabel>
+                    {t("providerForm.thinkingMode", {
+                      defaultValue: "思考模式",
+                    })}
+                  </FormLabel>
+                  <p className="text-xs text-muted-foreground">
+                    {thinkingEnabled
+                      ? t("providerForm.thinkingModeOnHint", {
+                          defaultValue:
+                            "模型生成思考链，自动修复 tool call 循环问题",
+                        })
+                      : t("providerForm.thinkingModeOffHint", {
+                          defaultValue:
+                            "禁用思考链（节省 token），适用于 vLLM / SGLang",
+                        })}
+                  </p>
+                </div>
+                <Switch
+                  checked={thinkingEnabled ?? false}
+                  onCheckedChange={onThinkingChange}
+                />
               </div>
             )}
 

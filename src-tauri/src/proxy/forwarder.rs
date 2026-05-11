@@ -1005,6 +1005,31 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // 注入 chat_template_kwargs.enable_thinking=false（仅 openai_chat 路径）
+        let mut request_body = request_body;
+        if provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.disable_thinking)
+            .unwrap_or(false)
+        {
+            let is_openai_chat = adapter.name() == "Claude"
+                && resolved_claude_api_format
+                    .as_deref()
+                    .unwrap_or_else(|| super::providers::get_claude_api_format(provider))
+                    == "openai_chat";
+            if is_openai_chat {
+                if let serde_json::Value::Object(obj) = &mut request_body {
+                    let kwargs = obj
+                        .entry("chat_template_kwargs".to_string())
+                        .or_insert_with(|| serde_json::json!({}));
+                    if let serde_json::Value::Object(k) = kwargs {
+                        k.insert("enable_thinking".to_string(), serde_json::json!(false));
+                    }
+                }
+            }
+        }
+
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
