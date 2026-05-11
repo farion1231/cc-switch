@@ -150,6 +150,41 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://www.qiniu.com",
+    apiKeyUrl: "https://portal.qiniu.com",
+    settingsConfig: {
+      baseUrl: "https://api.qnaigc.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-v3",
+          name: "DeepSeek V3",
+          contextWindow: 128000,
+          cost: { input: 0, output: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "qiniu/deepseek-v3",
+      },
+      modelCatalog: {
+        "qiniu/deepseek-v3": { alias: "DeepSeek V3" },
+      },
+    },
+  },
+  {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",

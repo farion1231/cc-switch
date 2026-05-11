@@ -845,6 +845,7 @@
       "shengsuanyun": "胜算云",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
+      "qiniu": "七牛云",
       "together": "Together AI"
     },
     "parameterConfig": "参数配置 - {{name}} *",

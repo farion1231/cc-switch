@@ -845,6 +845,7 @@
       "shengsuanyun": "Shengsuanyun",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
+      "qiniu": "Qiniu",
       "together": "Together AI"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
