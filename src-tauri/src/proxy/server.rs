@@ -419,10 +419,12 @@ async fn proxy_auth_middleware(
             .get("authorization")
             .and_then(|v| v.to_str().ok())
         {
-            let token = val
-                .strip_prefix("Bearer ")
-                .or_else(|| val.strip_prefix("bearer "))
-                .unwrap_or(val);
+            // Bearer scheme 大小写不敏感 (per RFC 6750)
+            let token = if val.len() > 7 && val[..7].eq_ignore_ascii_case("Bearer ") {
+                val[7..].trim_start()
+            } else {
+                val
+            };
             if token == password {
                 authorized = true;
             }

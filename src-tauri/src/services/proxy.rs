@@ -709,7 +709,7 @@ impl ProxyService {
                         let codex_is_local = live_config
                             .get("config")
                             .and_then(|v| v.as_str())
-                            .is_some_and(|c| c.contains("127.0.0.1"));
+                            .is_some_and(|c| c.contains("127.0.0.1") || c.contains("localhost") || c.contains("[::1]"));
 
                         if let Some(token) = live_config
                             .get("auth")
@@ -1567,8 +1567,7 @@ impl ProxyService {
         let base_url_is_local = config
             .get("config")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .contains("127.0.0.1");
+            .is_some_and(|c| c.contains("127.0.0.1") || c.contains("localhost") || c.contains("[::1]"));
         base_url_is_local
             && auth
                 .get("OPENAI_API_KEY")
