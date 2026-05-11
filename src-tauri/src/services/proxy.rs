@@ -1538,7 +1538,7 @@ impl ProxyService {
         let base_url_is_local = env
             .get("ANTHROPIC_BASE_URL")
             .and_then(|v| v.as_str())
-            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost"));
+            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost") || u.contains("[::1]"));
 
         for key in [
             "ANTHROPIC_AUTH_TOKEN",
@@ -1597,7 +1597,7 @@ impl ProxyService {
         let base_url_is_local = env
             .get("GOOGLE_GEMINI_BASE_URL")
             .and_then(|v| v.as_str())
-            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost"));
+            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost") || u.contains("[::1]"));
         base_url_is_local
             && env
                 .get("GEMINI_API_KEY")
