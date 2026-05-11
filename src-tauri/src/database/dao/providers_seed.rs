@@ -5,7 +5,7 @@
 //!
 //! 字段与前端预设保持一致，参见：
 //! - `src/config/claudeProviderPresets.ts`（"Claude Official"）
-//! - `src/config/codexProviderPresets.ts`（"OpenAI Official"）
+//! - `src/config/codexProviderPresets.ts`（"OpenAI Official (ChatGPT)"）
 //! - `src/config/geminiProviderPresets.ts`（"Google Official"）
 
 use crate::app_config::AppType;
@@ -51,7 +51,7 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
     OfficialProviderSeed {
         id: "codex-official",
         app_type: AppType::Codex,
-        name: "OpenAI Official",
+        name: "OpenAI Official (ChatGPT)",
         website_url: "https://chatgpt.com/codex",
         icon: "openai",
         icon_color: "#00A67E",

@@ -16,6 +16,7 @@ export interface CodexProviderPreset {
   isPartner?: boolean; // 标识是否为商业合作伙伴
   partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
   category?: ProviderCategory; // 新增：分类
+  codexAuthMode?: "chatgpt" | "apikey"; // Codex 本体认证模式
   isCustomTemplate?: boolean; // 标识是否为自定义模板
   // 新增：请求地址候选列表（用于地址管理/测速）
   endpointCandidates?: string[];
@@ -64,10 +65,11 @@ requires_openai_auth = true`;
 
 export const codexProviderPresets: CodexProviderPreset[] = [
   {
-    name: "OpenAI Official",
+    name: "OpenAI Official (ChatGPT)",
     websiteUrl: "https://chatgpt.com/codex",
     isOfficial: true,
     category: "official",
+    codexAuthMode: "chatgpt",
     auth: {},
     config: ``,
     theme: {
@@ -90,6 +92,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       "gpt-5.4",
     ),
     category: "aggregator",
+    codexAuthMode: "apikey",
     isPartner: true,
     partnerPromotionKey: "shengsuanyun",
     icon: "shengsuanyun",
@@ -100,6 +103,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
     category: "third_party",
     isOfficial: true,
+    codexAuthMode: "apikey",
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "azure"
 model = "gpt-5.4"
@@ -126,6 +130,7 @@ requires_openai_auth = true`,
     name: "AiHubMix",
     websiteUrl: "https://aihubmix.com",
     category: "aggregator",
+    codexAuthMode: "apikey",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "aihubmix",
@@ -141,6 +146,7 @@ requires_openai_auth = true`,
     name: "DMXAPI",
     websiteUrl: "https://www.dmxapi.cn",
     category: "aggregator",
+    codexAuthMode: "apikey",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "dmxapi",
@@ -156,6 +162,7 @@ requires_openai_auth = true`,
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
     category: "third_party",
+    codexAuthMode: "apikey",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "packycode",
@@ -187,6 +194,7 @@ requires_openai_auth = true`,
       "https://api-bwg.cubence.com/v1",
     ],
     category: "third_party",
+    codexAuthMode: "apikey",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "cubence", // 促销信息 i18n key
     icon: "cubence",
@@ -197,6 +205,7 @@ requires_openai_auth = true`,
     websiteUrl: "https://aigocode.com",
     apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
     category: "third_party",
+    codexAuthMode: "apikey",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "aigocode",
@@ -220,6 +229,7 @@ requires_openai_auth = true`,
       "gpt-5.4",
     ),
     category: "third_party",
+    codexAuthMode: "apikey",
     isPartner: true,
     partnerPromotionKey: "rightcode",
     icon: "rc",

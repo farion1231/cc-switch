@@ -5,6 +5,7 @@ mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
+mod codex_state;
 mod commands;
 mod config;
 mod database;
@@ -533,6 +534,14 @@ pub fn run() {
                 }
                 Ok(_) => {}
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
+            }
+
+            match app_state.db.migrate_codex_provider_auth_metadata() {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Migrated {count} Codex provider auth metadata entries");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("✗ Failed to migrate Codex provider auth metadata: {e}"),
             }
 
             // 老用户 / 已确认的路径由 `fresh_install_at_startup` 自行拦截，这里不做写入。
@@ -1155,6 +1164,8 @@ pub fn run() {
             commands::rename_db_backup,
             commands::delete_db_backup,
             commands::sync_current_providers_live,
+            commands::diagnose_codex_state,
+            commands::repair_codex_state,
             // Deep link import
             commands::parse_deeplink,
             commands::merge_deeplink_config,

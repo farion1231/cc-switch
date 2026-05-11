@@ -62,6 +62,20 @@ interface ProviderCardProps {
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+  if (appId === "codex") {
+    if (provider.meta?.codexAuthMode === "chatgpt") {
+      return true;
+    }
+    if (provider.meta?.codexAuthMode === "apikey") {
+      return false;
+    }
+
+    // 无 OPENAI_API_KEY → 使用 Codex CLI 内置 OAuth（官方）
+    const config = provider.settingsConfig as Record<string, any>;
+    const apiKey = config?.auth?.OPENAI_API_KEY;
+    return !apiKey || (typeof apiKey === "string" && apiKey.trim() === "");
+  }
+
   if (provider.category === "official") {
     return true;
   }
@@ -70,11 +84,6 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   if (appId === "claude") {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
     return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
-  }
-  if (appId === "codex") {
-    // 无 OPENAI_API_KEY → 使用 Codex CLI 内置 OAuth（官方）
-    const apiKey = config?.auth?.OPENAI_API_KEY;
-    return !apiKey || (typeof apiKey === "string" && apiKey.trim() === "");
   }
   if (appId === "gemini") {
     // 无 GEMINI_API_KEY 且无 GOOGLE_GEMINI_BASE_URL → Google OAuth 官方模式
@@ -191,6 +200,8 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  const codexAuthMode =
+    appId === "codex" ? provider.meta?.codexAuthMode : undefined;
 
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
@@ -331,6 +342,22 @@ export function ProviderCard({
                     })}
                   </span>
                 )}
+
+              {codexAuthMode === "chatgpt" && (
+                <span className="inline-flex items-center rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                  {t("provider.codexChatGptBadge", {
+                    defaultValue: "ChatGPT",
+                  })}
+                </span>
+              )}
+
+              {codexAuthMode === "apikey" && (
+                <span className="inline-flex items-center rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                  {t("provider.codexApiKeyBadge", {
+                    defaultValue: "API Key",
+                  })}
+                </span>
+              )}
 
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge

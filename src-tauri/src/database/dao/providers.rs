@@ -3,6 +3,7 @@ use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
 use rusqlite::params;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 type OmoProviderRow = (
@@ -15,6 +16,49 @@ type OmoProviderRow = (
     Option<String>,
     String,
 );
+
+fn codex_official_default_settings() -> Value {
+    json!({"auth": {}, "config": ""})
+}
+
+fn codex_auth_has_api_key(settings: &Value) -> bool {
+    settings
+        .get("auth")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("OPENAI_API_KEY"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+}
+
+fn should_reset_codex_official_settings(settings: &Value) -> bool {
+    let Some(obj) = settings.as_object() else {
+        return true;
+    };
+
+    if !obj.contains_key("auth") || !obj.contains_key("config") {
+        return true;
+    }
+
+    if codex_auth_has_api_key(settings) {
+        return true;
+    }
+
+    let config_text = obj
+        .get("config")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if config_text.trim().is_empty() {
+        return false;
+    }
+
+    if crate::codex_config::validate_config_toml(config_text).is_err() {
+        return true;
+    }
+
+    crate::codex_config::effective_codex_model_provider_id_from_config(config_text)
+        != crate::codex_config::CODEX_OFFICIAL_MODEL_PROVIDER_ID
+}
 
 impl Database {
     pub fn get_all_providers(
@@ -634,6 +678,12 @@ impl Database {
             provider.icon_color = Some(seed.icon_color.to_string());
             provider.sort_index = Some(next_sort_index);
             provider.created_at = Some(now_ms);
+            if seed.id == "codex-official" {
+                provider.meta = Some(ProviderMeta {
+                    codex_auth_mode: Some(crate::codex_config::CODEX_AUTH_MODE_CHATGPT.to_string()),
+                    ..ProviderMeta::default()
+                });
+            }
 
             self.save_provider(app_type_str, &provider)?;
             inserted += 1;
@@ -648,5 +698,167 @@ impl Database {
         self.set_setting("official_providers_seeded", "true")?;
 
         Ok(inserted)
+    }
+
+    /// Lightweight, idempotent migration for old Codex providers that used the
+    /// same display name for ChatGPT login and API-key providers.
+    pub fn migrate_codex_provider_auth_metadata(&self) -> Result<usize, AppError> {
+        let providers = self.get_all_providers(crate::app_config::AppType::Codex.as_str())?;
+        let mut changed_count = 0;
+
+        for (_, mut provider) in providers {
+            let mut changed = false;
+            let inferred_mode = if provider.id == "codex-official" {
+                crate::codex_config::CODEX_AUTH_MODE_CHATGPT
+            } else {
+                crate::codex_config::infer_codex_auth_mode_from_settings(&provider.settings_config)
+            };
+
+            let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
+            if meta.codex_auth_mode.as_deref() != Some(inferred_mode) {
+                meta.codex_auth_mode = Some(inferred_mode.to_string());
+                changed = true;
+            }
+
+            if provider.id == "codex-official" {
+                if provider.name != "OpenAI Official (ChatGPT)" {
+                    provider.name = "OpenAI Official (ChatGPT)".to_string();
+                    changed = true;
+                }
+                if provider.category.as_deref() != Some("official") {
+                    provider.category = Some("official".to_string());
+                    changed = true;
+                }
+                let official_settings = codex_official_default_settings();
+                if should_reset_codex_official_settings(&provider.settings_config)
+                    && provider.settings_config != official_settings
+                {
+                    provider.settings_config = official_settings;
+                    changed = true;
+                }
+            } else if provider.name.trim() == "OpenAI Official"
+                && inferred_mode == crate::codex_config::CODEX_AUTH_MODE_APIKEY
+            {
+                provider.name = "OpenAI API Key".to_string();
+                changed = true;
+                if provider.category.as_deref() == Some("official") {
+                    provider.category = Some("third_party".to_string());
+                    changed = true;
+                }
+            }
+
+            if changed {
+                self.save_provider(crate::app_config::AppType::Codex.as_str(), &provider)?;
+                changed_count += 1;
+            }
+        }
+
+        Ok(changed_count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_codex_provider_auth_metadata_splits_duplicate_official_names() {
+        let db = Database::memory().expect("memory db");
+
+        let mut chatgpt = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {"OPENAI_API_KEY": "stale-company-key"},
+                "config": "model_provider = \"bold_ai_api\"",
+            }),
+            None,
+        );
+        chatgpt.category = Some("official".to_string());
+        db.save_provider("codex", &chatgpt)
+            .expect("save chatgpt provider");
+
+        let mut api_key = Provider::with_id(
+            "openai-api-key".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {"OPENAI_API_KEY": "sk-test"},
+                "config": "model_provider = \"bold_ai_api\"",
+            }),
+            None,
+        );
+        api_key.category = Some("official".to_string());
+        db.save_provider("codex", &api_key)
+            .expect("save api key provider");
+
+        let changed = db
+            .migrate_codex_provider_auth_metadata()
+            .expect("migrate codex providers");
+        assert_eq!(changed, 2);
+
+        let chatgpt = db
+            .get_provider_by_id("codex-official", "codex")
+            .expect("load chatgpt")
+            .expect("chatgpt exists");
+        assert_eq!(chatgpt.name, "OpenAI Official (ChatGPT)");
+        assert_eq!(chatgpt.settings_config, json!({"auth": {}, "config": ""}));
+        assert_eq!(
+            chatgpt.meta.and_then(|meta| meta.codex_auth_mode),
+            Some(crate::codex_config::CODEX_AUTH_MODE_CHATGPT.to_string())
+        );
+
+        let api_key = db
+            .get_provider_by_id("openai-api-key", "codex")
+            .expect("load api key")
+            .expect("api key exists");
+        assert_eq!(api_key.name, "OpenAI API Key");
+        assert_eq!(api_key.category.as_deref(), Some("third_party"));
+        assert_eq!(
+            api_key.meta.and_then(|meta| meta.codex_auth_mode),
+            Some(crate::codex_config::CODEX_AUTH_MODE_APIKEY.to_string())
+        );
+    }
+
+    #[test]
+    fn migrate_codex_provider_auth_metadata_preserves_chatgpt_snapshot() {
+        let db = Database::memory().expect("memory db");
+        let snapshot = json!({
+            "auth": {
+                "tokens": {
+                    "access_token": "chatgpt-access-token",
+                    "refresh_token": "chatgpt-refresh-token"
+                }
+            },
+            "config": "model_provider = \"openai\"\nmodel = \"gpt-5\"\n",
+        });
+
+        let mut chatgpt = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI Official".to_string(),
+            snapshot.clone(),
+            None,
+        );
+        chatgpt.category = Some("official".to_string());
+        db.save_provider("codex", &chatgpt)
+            .expect("save chatgpt provider");
+
+        let changed = db
+            .migrate_codex_provider_auth_metadata()
+            .expect("migrate codex providers");
+        assert_eq!(changed, 1);
+
+        let chatgpt = db
+            .get_provider_by_id("codex-official", "codex")
+            .expect("load chatgpt")
+            .expect("chatgpt exists");
+        assert_eq!(chatgpt.name, "OpenAI Official (ChatGPT)");
+        assert_eq!(
+            chatgpt.settings_config, snapshot,
+            "migration should not discard a saved ChatGPT OAuth snapshot"
+        );
+        assert_eq!(
+            chatgpt.meta.and_then(|meta| meta.codex_auth_mode),
+            Some(crate::codex_config::CODEX_AUTH_MODE_CHATGPT.to_string())
+        );
     }
 }

@@ -31,7 +31,7 @@ pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config,
+    sync_current_provider_for_app_to_live, write_live_with_common_config, LiveSnapshot,
 };
 
 // Internal re-exports
@@ -1487,6 +1487,7 @@ impl ProviderService {
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
 
+        let previous_current_id = current_id.clone();
         if let Some(current_id) = current_id {
             if current_id != id {
                 // Additive mode apps - all providers coexist in the same file,
@@ -1516,17 +1517,50 @@ impl ProviderService {
             }
         }
 
-        // Additive mode apps skip setting is_current (no such concept)
-        if !app_type.is_additive_mode() {
-            // Update local settings (device-level, takes priority)
-            crate::settings::set_current_provider(&app_type, Some(id))?;
+        if matches!(app_type, AppType::Codex) {
+            let live_snapshot = LiveSnapshot::capture(&app_type)?;
+            write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
 
-            // Update database is_current (as default for new devices)
-            state.db.set_current_provider(app_type.as_str(), id)?;
+            if let Err(err) = (|| -> Result<(), AppError> {
+                crate::settings::set_current_provider(&app_type, Some(id))?;
+                state.db.set_current_provider(app_type.as_str(), id)?;
+                Ok(())
+            })() {
+                let settings_restore = crate::settings::set_current_provider(
+                    &app_type,
+                    previous_current_id.as_deref(),
+                );
+                let live_restore = live_snapshot.restore();
+                return match (live_restore, settings_restore) {
+                    (Ok(()), Ok(())) => Err(AppError::Message(format!(
+                        "Failed to persist Codex provider switch; live config was rolled back: {err}"
+                    ))),
+                    (live_result, settings_result) => Err(AppError::Message(format!(
+                        "Failed to persist Codex provider switch: {err}; live rollback: {}; settings rollback: {}",
+                        live_result
+                            .err()
+                            .map(|e| e.to_string())
+                            .unwrap_or_else(|| "ok".to_string()),
+                        settings_result
+                            .err()
+                            .map(|e| e.to_string())
+                            .unwrap_or_else(|| "ok".to_string())
+                    ))),
+                };
+            }
+        } else {
+            // Additive mode apps skip setting is_current (no such concept)
+            if !app_type.is_additive_mode() {
+                // Update local settings (device-level, takes priority)
+                crate::settings::set_current_provider(&app_type, Some(id))?;
+
+                // Update database is_current (as default for new devices)
+                state.db.set_current_provider(app_type.as_str(), id)?;
+            }
+
+            // Sync to live (write_gemini_live handles security flag internally for Gemini)
+            write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
         }
-
-        // Sync to live (write_gemini_live handles security flag internally for Gemini)
-        write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this
