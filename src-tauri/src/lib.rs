@@ -1164,6 +1164,15 @@ pub fn run() {
             commands::fix_environment,
             // Claude Code uninstall
             commands::uninstall_claude_code,
+            // Claude Code install / update / brew migration（macOS 专属）
+            #[cfg(target_os = "macos")]
+            commands::install_claude_code,
+            #[cfg(target_os = "macos")]
+            commands::check_claude_update,
+            #[cfg(target_os = "macos")]
+            commands::preview_brew_migration,
+            #[cfg(target_os = "macos")]
+            commands::migrate_brew_to_native,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::get_skill_backups,

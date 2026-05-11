@@ -1,5 +1,14 @@
 use tauri::{AppHandle, State};
 
+#[cfg(target_os = "macos")]
+use crate::services::brew_migration::{
+    build_migration_preview, execute_migration, MigrationOverallStatus, MigrationPreview,
+    MigrationResult,
+};
+#[cfg(target_os = "macos")]
+use crate::services::claude_installer::{
+    detect_claude, run_claude_update, run_install_sh, InstallMethod,
+};
 use crate::services::env_doctor::{DiagnosisIssue, DiagnosisResult, FixResult};
 use crate::services::installer::{self, InstallResult};
 use crate::services::stream_command::{emit_done, emit_error_line, emit_progress, ProcessRegistry};
@@ -323,4 +332,146 @@ pub async fn cancel_install(
     channel_id: String,
 ) -> Result<bool, String> {
     Ok(registry.cancel(&channel_id).await)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// macOS 专属：基于官方 install.sh / binary auto-updater 的安装与升级命令
+//
+// 设计原则（参见 services/claude_installer.rs 模块文档）：
+// - 安装：直接跑官方 install.sh，不再要求 Node / brew 前置（macOS 上
+//   Claude Code 是 native binary，与 Node/npm 无关）
+// - 升级：调 binary 自带 `update` 子命令，让 Anthropic 自己决定升不升
+// - Brew 装的不允许走 native updater（会无效或冲突），需要先迁移到 native
+// ─────────────────────────────────────────────────────────────────────────
+
+/// 一键安装 Claude Code（macOS）。
+///
+/// 直接跑官方 `curl -fsSL https://claude.ai/install.sh | bash`。安装脚本本身
+/// 只依赖 bash + curl + 系统工具，无需 Node / brew 前置。
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn install_claude_code(
+    app: AppHandle,
+    registry: State<'_, ProcessRegistry>,
+    channel_id: String,
+) -> Result<InstallResult, String> {
+    let cid = channel_id.as_str();
+    let state = registry.begin_session(cid).await;
+    emit_progress(&app, cid, "===== 开始安装 Claude Code =====");
+
+    let result = run_install_sh(&app, &state, cid).await;
+
+    registry.end_session(cid).await;
+    emit_install_done(&app, cid, &result);
+    result
+}
+
+/// 检查并升级 Claude Code（已装情况下用，仅 native 安装可用）。
+///
+/// 调用 binary 自带 `update` 子命令；brew 安装不走这条（应先迁移）。
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn check_claude_update(
+    app: AppHandle,
+    registry: State<'_, ProcessRegistry>,
+    channel_id: String,
+) -> Result<InstallResult, String> {
+    let cid = channel_id.as_str();
+    let state = registry.begin_session(cid).await;
+    emit_progress(&app, cid, "===== 检查 Claude Code 更新 =====");
+
+    let result: Result<InstallResult, String> = match detect_claude() {
+        None => {
+            emit_error_line(&app, cid, "未检测到已安装的 Claude Code");
+            Ok(InstallResult {
+                success: false,
+                message: "未检测到已安装的 Claude Code，请先「一键安装」。".to_string(),
+                installed_version: None,
+                action: None,
+                already_installed: Some(false),
+                verified: Some(false),
+                error_code: Some("not_installed".to_string()),
+            })
+        }
+        Some(d) if matches!(d.install_method, InstallMethod::Brew { .. }) => {
+            // brew 装的不能走 native updater —— binary 的 `update` 子命令会
+            // 试图覆盖 brew 管理的文件，要么权限拒绝要么造成 brew 状态不一致。
+            // 引导用户走迁移流程或手动 brew upgrade。
+            emit_error_line(
+                &app,
+                cid,
+                "当前为 Homebrew 安装，请通过「迁移到官方版」按钮切换，或手动执行 brew upgrade。",
+            );
+            Ok(InstallResult {
+                success: false,
+                message: "当前 Claude Code 通过 Homebrew 安装，无法用 native updater 升级。\
+                          请使用「迁移到官方版」按钮，或手动执行 \
+                          `brew upgrade --cask claude-code`。"
+                    .to_string(),
+                installed_version: None,
+                action: None,
+                already_installed: Some(true),
+                verified: Some(true),
+                error_code: Some("brew_installed".to_string()),
+            })
+        }
+        Some(d) => run_claude_update(&app, &state, cid, &d).await,
+    };
+
+    registry.end_session(cid).await;
+    emit_install_done(&app, cid, &result);
+    result
+}
+
+/// 预览 brew → native 迁移（dry-run，不动磁盘）。返回会做的步骤、备份目标、
+/// 当前 brew cask 名等，供前端弹"确认迁移"对话框。
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn preview_brew_migration() -> Result<MigrationPreview, String> {
+    build_migration_preview()
+}
+
+/// 执行 brew → native 迁移。备份 → brew uninstall → install.sh → 验证；
+/// 任意步骤失败自动 brew install 回滚，备份目录始终保留。
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn migrate_brew_to_native(
+    app: AppHandle,
+    registry: State<'_, ProcessRegistry>,
+    channel_id: String,
+) -> Result<MigrationResult, String> {
+    let cid = channel_id.as_str();
+    let state = registry.begin_session(cid).await;
+    emit_progress(
+        &app,
+        cid,
+        "===== 开始迁移 Claude Code: Homebrew → 官方 native =====",
+    );
+
+    let result = execute_migration(&app, &state, cid).await;
+
+    registry.end_session(cid).await;
+    let success = matches!(
+        result.as_ref().map(|r| r.overall),
+        Ok(MigrationOverallStatus::Success)
+    );
+    // 迁移流程内部不区分用户取消和系统失败 —— 都体现为 RolledBack/Failed。
+    // emit_done 的 cancelled 字段统一传 false，前端按 result.overall 区分。
+    emit_done(&app, cid, success, None, false);
+    result
+}
+
+/// 内部 helper：把 install/update 类命令的尾声 emit_done 收敛到一处。
+/// `error_code == "cancelled"` 才把 cancelled 标记为 true（让前端日志面板
+/// 区分"用户取消"与"执行失败"两种 UX）。
+#[cfg(target_os = "macos")]
+fn emit_install_done(app: &AppHandle, cid: &str, result: &Result<InstallResult, String>) {
+    let cancelled = result
+        .as_ref()
+        .ok()
+        .and_then(|r| r.error_code.as_deref())
+        .map(|c| c == "cancelled")
+        .unwrap_or(false);
+    let success = result.as_ref().map(|r| r.success).unwrap_or(false);
+    emit_done(app, cid, success, None, cancelled);
 }
