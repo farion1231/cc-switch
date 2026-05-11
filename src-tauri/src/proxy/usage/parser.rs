@@ -353,10 +353,23 @@ impl TokenUsage {
         let prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_u64())?;
         let completion_tokens = usage.get("completion_tokens").and_then(|v| v.as_u64())?;
 
-        // 获取 cached_tokens (可能在 prompt_tokens_details 中)
-        let cached_tokens = usage
+        // 获取缓存读取 tokens，优先使用 OpenAI 原生字段。
+        // 部分兼容服务会在 cache_read_input_tokens 中混入缓存创建 tokens，
+        // 因此直接字段只作为没有原生明细时的回退。
+        let cache_read = usage
             .get("prompt_tokens_details")
             .and_then(|d| d.get("cached_tokens"))
+            .and_then(|v| v.as_u64())
+            .or_else(|| {
+                usage
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_u64())
+            })
+            .unwrap_or(0) as u32;
+
+        // 获取缓存创建 tokens（部分代理服务器添加的字段，OpenAI 原生 API 不返回）
+        let cache_creation = usage
+            .get("cache_creation_input_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
 
@@ -369,8 +382,8 @@ impl TokenUsage {
         Some(Self {
             input_tokens: prompt_tokens as u32,
             output_tokens: completion_tokens as u32,
-            cache_read_tokens: cached_tokens,
-            cache_creation_tokens: 0,
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
             model,
             message_id: None,
         })
@@ -744,6 +757,27 @@ mod tests {
         assert_eq!(usage.input_tokens, 800);
         assert_eq!(usage.output_tokens, 500);
         assert_eq!(usage.cache_read_tokens, 200);
+    }
+
+    #[test]
+    fn test_openai_response_prefers_native_cached_tokens() {
+        let response = json!({
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+                "cache_read_input_tokens": 600,
+                "cache_creation_input_tokens": 400,
+                "prompt_tokens_details": {
+                    "cached_tokens": 200
+                }
+            }
+        });
+
+        let usage = TokenUsage::from_openai_response(&response).unwrap();
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.cache_read_tokens, 200);
+        assert_eq!(usage.cache_creation_tokens, 400);
     }
 
     #[test]
