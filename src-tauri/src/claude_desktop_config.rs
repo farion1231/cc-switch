@@ -289,6 +289,30 @@ fn inference_model_json(spec: &InferenceModelSpec) -> Value {
     }
 }
 
+fn has_one_m_context_suffix(model: &str) -> bool {
+    model.trim().to_ascii_lowercase().ends_with("[1m]")
+}
+
+fn desktop_model_id(model_id: &str, supports_1m: bool) -> String {
+    let normalized = strip_one_m_context_suffix(model_id);
+    if supports_1m {
+        format!("{normalized}{ONE_M_CONTEXT_SUFFIX}")
+    } else {
+        normalized
+    }
+}
+
+fn upstream_model_id(model_id: &str, supports_1m: bool) -> String {
+    let normalized = strip_one_m_context_suffix(model_id);
+    // Only append [1M] for Claude-series upstream models
+    let is_claude_upstream = normalized.starts_with("claude-")
+        || normalized.starts_with("anthropic/");
+    if supports_1m && is_claude_upstream {
+        format!("{normalized}{ONE_M_CONTEXT_SUFFIX}")
+    } else {
+        normalized
+    }
+}
 pub fn get_or_create_gateway_token(db: &Database) -> Result<String, AppError> {
     if let Some(token) = db.get_setting(GATEWAY_TOKEN_SETTING_KEY)? {
         let trimmed = token.trim();
@@ -1392,8 +1416,8 @@ mod tests {
             json!({"model": "claude-opus-4-7", "messages": []}),
             &provider,
         )
-        .expect("map repaired route");
-        assert_eq!(mapped["model"], json!("deepseek-v4-pro"));
+        .expect("base name should fallback-match the [1M] route");
+        assert_eq!(mapped["model"], json!("kimi-k2"));
     }
 
     #[test]
