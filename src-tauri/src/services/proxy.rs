@@ -594,6 +594,8 @@ impl ProxyService {
         app_type: &AppType,
         live_config: &Value,
     ) -> Result<(), String> {
+        // 获取实际代理 URL，精确判断 Live 配置中的 base_url 是否指向本代理
+        let proxy_urls = self.build_proxy_urls().await.ok();
         match app_type {
             AppType::Claude => {
                 let provider_id =
@@ -605,11 +607,12 @@ impl ProxyService {
                         self.db.get_provider_by_id(&provider_id, "claude")
                     {
                         if let Some(env) = live_config.get("env").and_then(|v| v.as_object()) {
-                            // 如果 base_url 指向本地代理，token 是代理认证凭据，不同步回 provider
-                            let base_url_is_local = env
-                                .get("ANTHROPIC_BASE_URL")
-                                .and_then(|v| v.as_str())
-                                .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost"));
+                            // 检查 base_url 是否精确指向本代理的 URL
+                            let base_url_is_local = proxy_urls.as_ref().is_some_and(|(proxy_url, _)| {
+                                env.get("ANTHROPIC_BASE_URL")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|u| u == proxy_url || u.starts_with(&format!("{proxy_url}/")))
+                            });
 
                             let token_pair = [
                                 "ANTHROPIC_AUTH_TOKEN",
@@ -705,11 +708,13 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "codex")
                     {
-                        // 如果 config 指向本地代理，token 是代理认证凭据，不同步回 provider
-                        let codex_is_local = live_config
-                            .get("config")
-                            .and_then(|v| v.as_str())
-                            .is_some_and(|c| c.contains("127.0.0.1") || c.contains("localhost") || c.contains("[::1]"));
+                        // 检查 config TOML 是否包含本代理的 Codex base URL
+                        let codex_is_local = proxy_urls.as_ref().is_some_and(|(_, codex_url)| {
+                            live_config
+                                .get("config")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|c| c.contains(codex_url.as_str()))
+                        });
 
                         if let Some(token) = live_config
                             .get("auth")
@@ -763,12 +768,14 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "gemini")
                     {
-                        // 如果 base_url 指向本地代理，token 是代理认证凭据，不同步回 provider
-                        let gemini_is_local = live_config
-                            .get("env")
-                            .and_then(|v| v.get("GOOGLE_GEMINI_BASE_URL"))
-                            .and_then(|v| v.as_str())
-                            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost"));
+                        // 检查 base_url 是否精确指向本代理
+                        let gemini_is_local = proxy_urls.as_ref().is_some_and(|(proxy_url, _)| {
+                            live_config
+                                .get("env")
+                                .and_then(|v| v.get("GOOGLE_GEMINI_BASE_URL"))
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|u| u == proxy_url || u.starts_with(&format!("{proxy_url}/")))
+                        });
 
                         if let Some(token) = live_config
                             .get("env")
