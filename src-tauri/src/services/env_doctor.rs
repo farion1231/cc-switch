@@ -4,8 +4,12 @@ use std::fs;
 use std::path::PathBuf;
 
 /// 诊断结果
+///
+/// 字段必须 snake_case 序列化：前端 (`EnvironmentDoctorPanel.tsx` /
+/// `doctor.ts`) 按 `overall_status` / `tools_status` 读，相邻命令返回
+/// 类型 (`InstallResult`、`FixAction`) 也都是 snake_case。给本 struct
+/// 加 `rename_all = "camelCase"` 会让前端字段全部读到 undefined。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct DiagnosisResult {
     /// 整体健康状态
     pub overall_status: HealthStatus,
@@ -30,8 +34,9 @@ pub enum HealthStatus {
 }
 
 /// 诊断问题
+///
+/// 序列化为 snake_case，跟 `DiagnosisResult` 保持一致（详见该 struct 注释）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct DiagnosisIssue {
     /// 问题唯一标识
     pub id: String,
@@ -113,8 +118,9 @@ pub enum FixAction {
 }
 
 /// 工具状态
+///
+/// 序列化为 snake_case，跟 `DiagnosisResult` 保持一致（详见该 struct 注释）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ToolStatus {
     /// 是否已安装
     pub installed: bool,
