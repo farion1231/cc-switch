@@ -603,7 +603,7 @@
     "releaseNotes": "更新日志",
     "viewReleaseNotes": "查看该版本更新日志",
     "viewCurrentReleaseNotes": "查看当前版本更新日志",
-    "oneClickInstall": "一键安装",
+    "oneClickInstall": "一键安装 Claude Code",
     "oneClickInstallHint": "自动检测 Claude Code 是否已安装，并根据状态执行安装或升级。",
     "localEnvCheck": "本地环境检查",
     "installNow": "立即安装",
@@ -665,7 +665,7 @@
   },
   "doctor": {
     "environmentStatus": "环境状态",
-    "oneClickInstall": "一键安装",
+    "oneClickInstall": "一键安装 Claude Code",
     "oneClickFix": "一键修复",
     "installing": "安装中...",
     "verifying": "验证中...",

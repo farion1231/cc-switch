@@ -603,7 +603,7 @@
     "releaseNotes": "Release Notes",
     "viewReleaseNotes": "View release notes for this version",
     "viewCurrentReleaseNotes": "View current version release notes",
-    "oneClickInstall": "One-click Install",
+    "oneClickInstall": "Install Claude Code",
     "oneClickInstallHint": "Automatically detect whether Claude Code is installed, then install or upgrade based on its status.",
     "localEnvCheck": "Local environment check",
     "installNow": "Install Now",
@@ -665,7 +665,7 @@
   },
   "doctor": {
     "environmentStatus": "Environment Status",
-    "oneClickInstall": "One-Click Install",
+    "oneClickInstall": "Install Claude Code",
     "oneClickFix": "One-Click Fix",
     "installing": "Installing...",
     "verifying": "Verifying...",
