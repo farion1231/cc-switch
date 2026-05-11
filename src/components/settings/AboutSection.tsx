@@ -27,6 +27,7 @@ import { relaunchApp } from "@/lib/updater";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
+import { DangerZoneCard } from "./DangerZoneCard";
 import { EnvironmentDoctorPanel } from "./EnvironmentDoctorPanel";
 import { doctorApi, type DiagnosisResult } from "@/lib/api/doctor";
 
@@ -755,6 +756,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             </pre>
           </div>
         </motion.div>
+
+        {/* 危险操作放在最末尾，跟高频环境检查/安装区域明确分离，避免误触 */}
+        <DangerZoneCard />
     </motion.section>
   );
 }
