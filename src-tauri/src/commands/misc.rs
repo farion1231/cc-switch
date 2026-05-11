@@ -1485,6 +1485,9 @@ fn default_provider_terminal_command(app_type: &AppType) -> &'static str {
         AppType::OpenCode => "opencode",
         AppType::OpenClaw => "openclaw",
         AppType::Hermes => "hermes",
+        // Claude Desktop is a GUI app, not a CLI. Opening a terminal for it
+        // just exports the env vars and leaves the user at a prompt.
+        AppType::ClaudeDesktop => "",
     }
 }
 
@@ -1521,7 +1524,10 @@ fn build_windows_set_commands(env_vars: &[(String, String)]) -> String {
     env_vars
         .iter()
         .filter(|(key, _)| is_valid_env_var_name(key))
-        .map(|(key, value)| format!("set \"{key}={}\"\r\n", escape_windows_batch_value(value)))
+        // Use the unquoted `set K=V` form: there is no reliable escape for `"`
+        // inside `set "K=V"`, and escape_windows_batch_value already handles
+        // the metacharacters that matter (`& | < > ( ) % ^`).
+        .map(|(key, value)| format!("set {key}={}\r\n", escape_windows_batch_value(value)))
         .collect()
 }
 
@@ -2064,6 +2070,10 @@ mod tests {
             default_provider_terminal_command(&AppType::OpenCode),
             "opencode"
         );
+        assert_eq!(
+            default_provider_terminal_command(&AppType::ClaudeDesktop),
+            ""
+        );
     }
 
     #[test]
@@ -2072,7 +2082,18 @@ mod tests {
 
         let command = build_windows_set_commands(&env_vars);
 
-        assert_eq!(command, "set \"ANTHROPIC_AUTH_TOKEN=a%%^&b\"\r\n");
+        assert_eq!(command, "set ANTHROPIC_AUTH_TOKEN=a%%^&b\r\n");
+    }
+
+    #[test]
+    fn build_windows_set_commands_preserves_double_quotes_in_value() {
+        let env_vars = vec![("FOO".to_string(), "a\"b".to_string())];
+
+        let command = build_windows_set_commands(&env_vars);
+
+        // Unquoted `set K=V` keeps `"` as a literal character; the previous
+        // `set "K=V"` form would have broken on this input.
+        assert_eq!(command, "set FOO=a\"b\r\n");
     }
 
     #[test]
@@ -2084,7 +2105,7 @@ mod tests {
 
         let command = build_windows_set_commands(&env_vars);
 
-        assert_eq!(command, "set \"SAFE_NAME=ok\"\r\n");
+        assert_eq!(command, "set SAFE_NAME=ok\r\n");
     }
 
     #[test]
