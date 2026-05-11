@@ -1566,7 +1566,15 @@ fn build_windows_cwd_command(cwd: Option<&Path>) -> String {
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn escape_windows_batch_value(value: &str) -> String {
-    value
+    // Strip CR/LF first: there is no caret escape that survives a literal
+    // newline inside a batch file, so any embedded `\r` or `\n` would end
+    // the current line and let the remainder execute as its own command.
+    let sanitized: String = value
+        .chars()
+        .filter(|ch| *ch != '\r' && *ch != '\n')
+        .collect();
+
+    sanitized
         .replace('^', "^^")
         .replace('%', "%%")
         .replace('&', "^&")
@@ -2083,6 +2091,27 @@ mod tests {
         let command = build_windows_set_commands(&env_vars);
 
         assert_eq!(command, "set ANTHROPIC_AUTH_TOKEN=a%%^&b\r\n");
+    }
+
+    #[test]
+    fn escape_windows_batch_value_strips_crlf() {
+        // CR/LF in any input that flows into a .bat file would break out of
+        // the current line and execute the remainder. They must be removed
+        // before the caret-escape pass.
+        assert_eq!(escape_windows_batch_value("foo\r\ncalc.exe"), "foocalc.exe");
+        assert_eq!(escape_windows_batch_value("a\nb"), "ab");
+        assert_eq!(escape_windows_batch_value("a\rb"), "ab");
+    }
+
+    #[test]
+    fn build_windows_set_commands_strips_crlf_in_value() {
+        let env_vars = vec![("FOO".to_string(), "safe\r\ncalc.exe".to_string())];
+
+        let command = build_windows_set_commands(&env_vars);
+
+        // The injected newline + secondary command must not survive into the
+        // emitted batch line; only the original line terminator remains.
+        assert_eq!(command, "set FOO=safecalc.exe\r\n");
     }
 
     #[test]
