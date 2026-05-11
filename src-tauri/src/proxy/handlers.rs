@@ -277,6 +277,7 @@ async fn handle_claude_transform(
             let model = ctx.request_model.clone();
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
+            let session_id = ctx.session_id.clone();
 
             SseUsageCollector::new(start_time, move |events, first_token_ms| {
                 if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
@@ -284,6 +285,7 @@ async fn handle_claude_transform(
                     let state = state.clone();
                     let provider_id = provider_id.clone();
                     let model = model.clone();
+                    let session_id = session_id.clone();
 
                     tokio::spawn(async move {
                         log_usage(
@@ -297,6 +299,7 @@ async fn handle_claude_transform(
                             first_token_ms,
                             true,
                             status_code,
+                            Some(session_id),
                         )
                         .await;
                     });
@@ -383,6 +386,7 @@ async fn handle_claude_transform(
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let model = model.to_string();
+            let session_id = ctx.session_id.clone();
             async move {
                 log_usage(
                     &state,
@@ -395,6 +399,7 @@ async fn handle_claude_transform(
                     None,
                     false,
                     status.as_u16(),
+                    Some(session_id),
                 )
                 .await;
             }
@@ -789,6 +794,7 @@ async fn log_usage(
     first_token_ms: Option<u64>,
     is_streaming: bool,
     status_code: u16,
+    session_id: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -816,7 +822,7 @@ async fn log_usage(
         latency_ms,
         first_token_ms,
         status_code,
-        None,
+        session_id,
         None, // provider_type
         is_streaming,
     ) {
