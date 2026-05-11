@@ -45,6 +45,9 @@ export interface UseSettingsResult {
   resetDirectory: (app: AppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
   resetClaudeWslDirectory: () => Promise<void>;
+  updateWslDirectory: (app: AppId, value?: string) => void;
+  browseWslDirectory: (app: AppId) => Promise<void>;
+  resetWslDirectory: (app: AppId) => Promise<void>;
   saveSettings: (
     overrides?: Partial<SettingsFormState>,
     options?: { silent?: boolean },
@@ -104,6 +107,9 @@ export function useSettings(): UseSettingsResult {
     resetDirectory,
     resetAppConfigDir,
     resetClaudeWslDirectory,
+    updateWslDirectory,
+    browseWslDirectory,
+    resetWslDirectory,
     resetAllDirectories,
   } = useDirectorySettings({
     settings,
@@ -206,9 +212,21 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.claudeConfigDirWsl,
         );
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
+        const sanitizedCodexDirWsl = sanitizeDir(
+          mergedSettings.codexConfigDirWsl,
+        );
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
+        const sanitizedGeminiDirWsl = sanitizeDir(
+          mergedSettings.geminiConfigDirWsl,
+        );
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
+        );
+        const sanitizedOpencodeDirWsl = sanitizeDir(
+          mergedSettings.opencodeConfigDirWsl,
+        );
+        const sanitizedOpenclawDirWsl = sanitizeDir(
+          mergedSettings.openclawConfigDirWsl,
         );
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
@@ -221,9 +239,13 @@ export function useSettings(): UseSettingsResult {
           claudeConfigDir: sanitizedClaudeDir,
           claudeConfigDirWsl: sanitizedClaudeDirWsl,
           codexConfigDir: sanitizedCodexDir,
+          codexConfigDirWsl: sanitizedCodexDirWsl,
           geminiConfigDir: sanitizedGeminiDir,
+          geminiConfigDirWsl: sanitizedGeminiDirWsl,
           opencodeConfigDir: sanitizedOpencodeDir,
+          opencodeConfigDirWsl: sanitizedOpencodeDirWsl,
           openclawConfigDir: sanitizedOpenclawDir,
+          openclawConfigDirWsl: sanitizedOpenclawDirWsl,
           language: mergedSettings.language,
         };
 
@@ -338,9 +360,21 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.claudeConfigDirWsl,
         );
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
+        const sanitizedCodexDirWsl = sanitizeDir(
+          mergedSettings.codexConfigDirWsl,
+        );
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
+        const sanitizedGeminiDirWsl = sanitizeDir(
+          mergedSettings.geminiConfigDirWsl,
+        );
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
+        );
+        const sanitizedOpencodeDirWsl = sanitizeDir(
+          mergedSettings.opencodeConfigDirWsl,
+        );
+        const sanitizedOpenclawDirWsl = sanitizeDir(
+          mergedSettings.openclawConfigDirWsl,
         );
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
@@ -359,9 +393,13 @@ export function useSettings(): UseSettingsResult {
           claudeConfigDir: sanitizedClaudeDir,
           claudeConfigDirWsl: sanitizedClaudeDirWsl,
           codexConfigDir: sanitizedCodexDir,
+          codexConfigDirWsl: sanitizedCodexDirWsl,
           geminiConfigDir: sanitizedGeminiDir,
+          geminiConfigDirWsl: sanitizedGeminiDirWsl,
           opencodeConfigDir: sanitizedOpencodeDir,
+          opencodeConfigDirWsl: sanitizedOpencodeDirWsl,
           openclawConfigDir: sanitizedOpenclawDir,
+          openclawConfigDirWsl: sanitizedOpenclawDirWsl,
           language: mergedSettings.language,
         };
 
@@ -530,6 +568,9 @@ export function useSettings(): UseSettingsResult {
     resetDirectory,
     resetAppConfigDir,
     resetClaudeWslDirectory,
+    updateWslDirectory,
+    browseWslDirectory,
+    resetWslDirectory,
     saveSettings,
     autoSaveSettings,
     resetSettings,

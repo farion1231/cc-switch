@@ -92,6 +92,10 @@ export function useSettingsForm(): UseSettingsFormResult {
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       openclawConfigDir: sanitizeDir(data.openclawConfigDir),
+      codexConfigDirWsl: sanitizeDir(data.codexConfigDirWsl),
+      geminiConfigDirWsl: sanitizeDir(data.geminiConfigDirWsl),
+      opencodeConfigDirWsl: sanitizeDir(data.opencodeConfigDirWsl),
+      openclawConfigDirWsl: sanitizeDir(data.openclawConfigDirWsl),
       language: normalizedLanguage,
     };
 
@@ -154,6 +158,10 @@ export function useSettingsForm(): UseSettingsFormResult {
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
         openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),
+        codexConfigDirWsl: sanitizeDir(serverData.codexConfigDirWsl),
+        geminiConfigDirWsl: sanitizeDir(serverData.geminiConfigDirWsl),
+        opencodeConfigDirWsl: sanitizeDir(serverData.opencodeConfigDirWsl),
+        openclawConfigDirWsl: sanitizeDir(serverData.openclawConfigDirWsl),
         language: normalizedLanguage,
       };
 

@@ -20,6 +20,10 @@ export const settingsSchema = z.object({
   // 设备级目录覆盖
   claudeConfigDir: directorySchema.nullable().optional(),
   claudeConfigDirWsl: directorySchema.nullable().optional(),
+  codexConfigDirWsl: directorySchema.nullable().optional(),
+  geminiConfigDirWsl: directorySchema.nullable().optional(),
+  opencodeConfigDirWsl: directorySchema.nullable().optional(),
+  openclawConfigDirWsl: directorySchema.nullable().optional(),
   codexConfigDir: directorySchema.nullable().optional(),
   geminiConfigDir: directorySchema.nullable().optional(),
   opencodeConfigDir: directorySchema.nullable().optional(),
