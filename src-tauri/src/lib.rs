@@ -8,6 +8,7 @@ mod commands;
 mod config;
 mod database;
 mod deeplink;
+mod env_path;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
@@ -201,6 +202,11 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-doctor/crash.log）
     panic_hook::setup_panic_hook();
+
+    // 修复 GUI 启动时 PATH 不继承用户登录 shell 的问题。必须在 builder
+    // 构建前完成（此刻还是单线程），让所有后续 Command::new 子进程都
+    // 继承到用户的真实 PATH，能找到 brew/claude/node 等用户态工具。
+    env_path::fix_path_from_login_shell();
 
     let mut builder = tauri::Builder::default();
 
