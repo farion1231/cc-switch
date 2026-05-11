@@ -757,6 +757,7 @@ impl RequestForwarder {
                                     // 使用同一供应商重试（不计入熔断器）
                                     match self
                                         .forward(
+                                            app_type,
                                             provider,
                                             endpoint,
                                             &provider_body,
@@ -1761,17 +1762,15 @@ impl RequestForwarder {
                 return Ok((response, resolved_claude_api_format));
             }
 
-            let headers = response.headers().clone();
+            let mut headers = response.headers().clone();
             let mut body_bytes = response.bytes().await?;
 
-            // 解压 content-encoding（hyper 不自动解压）
-            if let Some(encoding) = super::response_processor::get_content_encoding(&headers) {
-                if let Ok(decompressed) =
-                    super::response_processor::decompress_body(&encoding, &body_bytes)
-                {
-                    body_bytes = bytes::Bytes::from(decompressed);
-                }
-            }
+            // 解压 + 同步剥离 stale Content-Encoding 头（hyper 不自动解压）。
+            // 不变量与 why 详见 response_processor::decompress_and_strip_encoding。
+            let _ = super::response_processor::decompress_and_strip_encoding(
+                &mut headers,
+                &mut body_bytes,
+            );
 
             if is_valid_response_body(&body_bytes) {
                 let response = ProxyResponse::Buffered {
