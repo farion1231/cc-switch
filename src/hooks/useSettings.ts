@@ -35,11 +35,14 @@ export interface UseSettingsResult {
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
   updateDirectory: (app: AppId, value?: string) => void;
+  updateClaudeWslDirectory: (value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: AppId) => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
+  browseClaudeWslDirectory: () => Promise<void>;
   resetDirectory: (app: AppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
+  resetClaudeWslDirectory: () => Promise<void>;
   saveSettings: (
     overrides?: Partial<SettingsFormState>,
     options?: { silent?: boolean },
@@ -90,11 +93,14 @@ export function useSettings(): UseSettingsResult {
     isLoading: isDirectoryLoading,
     initialAppConfigDir,
     updateDirectory,
+    updateClaudeWslDirectory,
     updateAppConfigDir,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
     resetAllDirectories,
   } = useDirectorySettings({
     settings,
@@ -139,6 +145,9 @@ export function useSettings(): UseSettingsResult {
 
       try {
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
+        const sanitizedClaudeDirWsl = sanitizeDir(
+          mergedSettings.claudeConfigDirWsl,
+        );
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
         const sanitizedOpencodeDir = sanitizeDir(
@@ -150,6 +159,7 @@ export function useSettings(): UseSettingsResult {
         const payload: Settings = {
           ...restSettings,
           claudeConfigDir: sanitizedClaudeDir,
+          claudeConfigDirWsl: sanitizedClaudeDirWsl,
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
@@ -252,6 +262,9 @@ export function useSettings(): UseSettingsResult {
       try {
         const sanitizedAppDir = sanitizeDir(appConfigDir);
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
+        const sanitizedClaudeDirWsl = sanitizeDir(
+          mergedSettings.claudeConfigDirWsl,
+        );
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
         const sanitizedOpencodeDir = sanitizeDir(
@@ -268,6 +281,7 @@ export function useSettings(): UseSettingsResult {
         const payload: Settings = {
           ...restSettings,
           claudeConfigDir: sanitizedClaudeDir,
+          claudeConfigDirWsl: sanitizedClaudeDirWsl,
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
@@ -439,11 +453,14 @@ export function useSettings(): UseSettingsResult {
     requiresRestart,
     updateSettings,
     updateDirectory,
+    updateClaudeWslDirectory,
     updateAppConfigDir,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
     saveSettings,
     autoSaveSettings,
     resetSettings,

@@ -20,12 +20,16 @@ interface DirectorySettingsProps {
   onBrowseAppConfig: () => Promise<void>;
   onResetAppConfig: () => Promise<void>;
   claudeDir?: string;
+  claudeWslDir?: string;
   codexDir?: string;
   geminiDir?: string;
   opencodeDir?: string;
   onDirectoryChange: (app: AppId, value?: string) => void;
+  onClaudeWslDirectoryChange: (value?: string) => void;
   onBrowseDirectory: (app: AppId) => Promise<void>;
+  onBrowseClaudeWslDirectory: () => Promise<void>;
   onResetDirectory: (app: AppId) => Promise<void>;
+  onResetClaudeWslDirectory: () => Promise<void>;
 }
 
 export function DirectorySettings({
@@ -37,12 +41,16 @@ export function DirectorySettings({
   onBrowseAppConfig,
   onResetAppConfig,
   claudeDir,
+  claudeWslDir,
   codexDir,
   geminiDir,
   opencodeDir,
   onDirectoryChange,
+  onClaudeWslDirectoryChange,
   onBrowseDirectory,
+  onBrowseClaudeWslDirectory,
   onResetDirectory,
+  onResetClaudeWslDirectory,
 }: DirectorySettingsProps) {
   const { t } = useTranslation();
 
@@ -112,6 +120,19 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("claude", val)}
           onBrowse={() => onBrowseDirectory("claude")}
           onReset={() => onResetDirectory("claude")}
+        />
+
+        <DirectoryInput
+          app="claude"
+          label={t("settings.claudeConfigDirWsl")}
+          description={t("settings.claudeConfigDirWslDescription")}
+          value={claudeWslDir}
+          resolvedValue=""
+          detection={cliDetections.claude}
+          placeholder={t("settings.browsePlaceholderClaudeWsl")}
+          onChange={(val) => onClaudeWslDirectoryChange(val)}
+          onBrowse={onBrowseClaudeWslDirectory}
+          onReset={onResetClaudeWslDirectory}
         />
 
         <DirectoryInput
