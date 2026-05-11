@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { providersApi, settingsApi } from "@/lib/api";
+import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
 import type { Settings } from "@/types";
@@ -36,12 +36,15 @@ export interface UseSettingsResult {
   };
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
-  updateDirectory: (app: DirectoryAppId, value?: string) => void;
+  updateDirectory: (app: AppId, value?: string) => void;
+  updateClaudeWslDirectory: (value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: DirectoryAppId) => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
-  resetDirectory: (app: DirectoryAppId) => Promise<void>;
+  browseClaudeWslDirectory: () => Promise<void>;
+  resetDirectory: (app: AppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
+  resetClaudeWslDirectory: () => Promise<void>;
   saveSettings: (
     overrides?: Partial<SettingsFormState>,
     options?: { silent?: boolean },
@@ -93,11 +96,14 @@ export function useSettings(): UseSettingsResult {
     isLoading: isDirectoryLoading,
     initialAppConfigDir,
     updateDirectory,
+    updateClaudeWslDirectory,
     updateAppConfigDir,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
     resetAllDirectories,
   } = useDirectorySettings({
     settings,
@@ -196,6 +202,9 @@ export function useSettings(): UseSettingsResult {
 
       try {
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
+        const sanitizedClaudeDirWsl = sanitizeDir(
+          mergedSettings.claudeConfigDirWsl,
+        );
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
         const sanitizedOpencodeDir = sanitizeDir(
@@ -210,6 +219,7 @@ export function useSettings(): UseSettingsResult {
         const payload: Settings = {
           ...restSettings,
           claudeConfigDir: sanitizedClaudeDir,
+          claudeConfigDirWsl: sanitizedClaudeDirWsl,
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
@@ -324,6 +334,9 @@ export function useSettings(): UseSettingsResult {
       try {
         const sanitizedAppDir = sanitizeDir(appConfigDir);
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
+        const sanitizedClaudeDirWsl = sanitizeDir(
+          mergedSettings.claudeConfigDirWsl,
+        );
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
         const sanitizedOpencodeDir = sanitizeDir(
@@ -344,6 +357,7 @@ export function useSettings(): UseSettingsResult {
         const payload: Settings = {
           ...restSettings,
           claudeConfigDir: sanitizedClaudeDir,
+          claudeConfigDirWsl: sanitizedClaudeDirWsl,
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
@@ -508,11 +522,14 @@ export function useSettings(): UseSettingsResult {
     requiresRestart,
     updateSettings,
     updateDirectory,
+    updateClaudeWslDirectory,
     updateAppConfigDir,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
     saveSettings,
     autoSaveSettings,
     resetSettings,

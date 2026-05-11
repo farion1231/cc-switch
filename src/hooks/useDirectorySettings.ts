@@ -13,7 +13,7 @@ type AppDirectoryKey =
   | "opencode"
   | "openclaw"
   | "hermes";
-type DirectoryKey = "appConfig" | AppDirectoryKey;
+type DirectoryKey = "appConfig" | AppDirectoryKey | "claudeWsl";
 
 export interface ResolvedDirectories {
   appConfig: string;
@@ -131,8 +131,11 @@ export interface UseDirectorySettingsResult {
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: DirectoryAppId) => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
-  resetDirectory: (app: DirectoryAppId) => Promise<void>;
+  browseClaudeWslDirectory: () => Promise<void>;
+  updateClaudeWslDirectory: (value?: string) => void;
+  resetDirectory: (app: AppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
+  resetClaudeWslDirectory: () => Promise<void>;
   resetAllDirectories: (overrides?: ResolvedAppDirectoryOverrides) => void;
 }
 
@@ -323,10 +326,16 @@ export function useDirectorySettings({
       const sanitized = sanitizeDir(value);
       if (key === "appConfig") {
         setAppConfigDir(sanitized);
+      } else if (key === "claudeWsl") {
+        onUpdateSettings({ claudeConfigDirWsl: sanitized });
       } else {
         onUpdateSettings({
           [DIRECTORY_KEY_TO_SETTINGS_FIELD[key]]: sanitized,
         });
+      }
+
+      if (key === "claudeWsl") {
+        return;
       }
 
       setResolvedDirs((prev) => {
@@ -378,6 +387,23 @@ export function useDirectorySettings({
     [settings, resolvedDirs, t, updateDirectoryState],
   );
 
+  const browseClaudeWslDirectory = useCallback(async () => {
+    const currentValue = settings?.claudeConfigDirWsl ?? undefined;
+    try {
+      const picked = await settingsApi.selectConfigDirectory(currentValue);
+      const sanitized = sanitizeDir(picked ?? undefined);
+      if (!sanitized) return;
+      updateDirectoryState("claudeWsl", sanitized);
+    } catch (error) {
+      console.error("[useDirectorySettings] Failed to pick WSL directory", error);
+      toast.error(
+        t("settings.selectFileFailed", {
+          defaultValue: "选择目录失败",
+        }),
+      );
+    }
+  }, [settings, t, updateDirectoryState]);
+
   const browseAppConfigDir = useCallback(async () => {
     const currentValue = appConfigDir ?? resolvedDirs.appConfig;
     try {
@@ -428,6 +454,17 @@ export function useDirectorySettings({
     updateDirectoryState("appConfig", undefined);
   }, [updateDirectoryState]);
 
+  const updateClaudeWslDirectory = useCallback(
+    (value?: string) => {
+      updateDirectoryState("claudeWsl", value);
+    },
+    [updateDirectoryState],
+  );
+
+  const resetClaudeWslDirectory = useCallback(async () => {
+    updateDirectoryState("claudeWsl", undefined);
+  }, [updateDirectoryState]);
+
   const resetAllDirectories = useCallback(
     (overrides?: ResolvedAppDirectoryOverrides) => {
       setAppConfigDir(initialAppConfigDirRef.current);
@@ -454,10 +491,13 @@ export function useDirectorySettings({
     initialAppConfigDir: initialAppConfigDirRef.current,
     updateDirectory,
     updateAppConfigDir,
+    updateClaudeWslDirectory,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
     resetAllDirectories,
   };
 }

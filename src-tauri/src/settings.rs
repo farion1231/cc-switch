@@ -236,6 +236,9 @@ pub struct AppSettings {
     // ===== 设备级目录覆盖 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_dir: Option<String>,
+    /// 可选：Claude Code 在 Windows 之外的 WSL 配置目录
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_config_dir_wsl: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -332,6 +335,7 @@ impl Default for AppSettings {
             language: None,
             visible_apps: None,
             claude_config_dir: None,
+            claude_config_dir_wsl: None,
             codex_config_dir: None,
             gemini_config_dir: None,
             opencode_config_dir: None,
@@ -368,6 +372,13 @@ impl AppSettings {
     fn normalize_paths(&mut self) {
         self.claude_config_dir = self
             .claude_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.claude_config_dir_wsl = self
+            .claude_config_dir_wsl
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -572,6 +583,14 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .claude_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_claude_wsl_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .claude_config_dir_wsl
         .as_ref()
         .map(|p| resolve_override_path(p))
 }

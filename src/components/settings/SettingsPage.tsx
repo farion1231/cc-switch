@@ -75,11 +75,14 @@ export function SettingsPage({
     cliDetectionMeta,
     updateSettings,
     updateDirectory,
+    updateClaudeWslDirectory,
     updateAppConfigDir,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
     saveSettings,
     autoSaveSettings,
     requiresRestart,
@@ -317,14 +320,18 @@ export function SettingsPage({
                             onBrowseAppConfig={browseAppConfigDir}
                             onResetAppConfig={resetAppConfigDir}
                             claudeDir={settings.claudeConfigDir}
+                            claudeWslDir={settings.claudeConfigDirWsl}
                             codexDir={settings.codexConfigDir}
                             geminiDir={settings.geminiConfigDir}
                             opencodeDir={settings.opencodeConfigDir}
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
                             onDirectoryChange={updateDirectory}
+                            onClaudeWslDirectoryChange={updateClaudeWslDirectory}
                             onBrowseDirectory={browseDirectory}
+                            onBrowseClaudeWslDirectory={browseClaudeWslDirectory}
                             onResetDirectory={resetDirectory}
+                            onResetClaudeWslDirectory={resetClaudeWslDirectory}
                           />
                         </AccordionContent>
                       </AccordionItem>
