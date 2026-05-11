@@ -112,8 +112,8 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
 }
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
-pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
-    anthropic_to_openai_with_reasoning_content(body, false)
+pub fn anthropic_to_openai(body: Value, stream_include_usage: bool) -> Result<Value, ProxyError> {
+    anthropic_to_openai_with_options(body, false, stream_include_usage)
 }
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
@@ -124,6 +124,15 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
 pub fn anthropic_to_openai_with_reasoning_content(
     body: Value,
     preserve_reasoning_content: bool,
+    stream_include_usage: bool,
+) -> Result<Value, ProxyError> {
+    anthropic_to_openai_with_options(body, preserve_reasoning_content, stream_include_usage)
+}
+
+fn anthropic_to_openai_with_options(
+    body: Value,
+    preserve_reasoning_content: bool,
+    stream_include_usage: bool,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
@@ -192,6 +201,9 @@ pub fn anthropic_to_openai_with_reasoning_content(
     }
     if let Some(v) = body.get("stream") {
         result["stream"] = v.clone();
+        if stream_include_usage && v.as_bool() == Some(true) {
+            result["stream_options"] = json!({"include_usage": true});
+        }
     }
 
     // Map Anthropic thinking → OpenAI reasoning_effort
@@ -666,7 +678,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["model"], "claude-3-opus");
         assert_eq!(result["max_tokens"], 1024);
         assert_eq!(result["messages"][0]["role"], "user");
@@ -682,7 +694,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
@@ -700,7 +712,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
@@ -721,7 +733,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(result["messages"][0]["content"], "Stable prompt");
         assert_eq!(result["messages"][1]["role"], "user");
@@ -739,7 +751,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
@@ -757,7 +769,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
@@ -778,7 +790,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
     }
@@ -795,7 +807,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["messages"].as_array().unwrap().len(), 2);
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
@@ -818,7 +830,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
@@ -839,7 +851,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["messages"][0]["role"], "system");
         assert_eq!(
             result["messages"][0]["content"],
@@ -862,7 +874,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert!(msg.get("tool_calls").is_some());
@@ -884,7 +896,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let result = anthropic_to_openai_with_reasoning_content(input, true, false).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
@@ -905,7 +917,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let result = anthropic_to_openai_with_reasoning_content(input, true, false).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert_eq!(msg["reasoning_content"], "tool call");
@@ -927,7 +939,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert!(msg.get("tool_calls").is_some());
@@ -947,7 +959,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["messages"].as_array().unwrap().len(), 0);
     }
 
@@ -964,7 +976,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "tool");
         assert_eq!(msg["tool_call_id"], "call_123");
@@ -1117,7 +1129,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["model"], "gpt-4o");
     }
 
@@ -1129,7 +1141,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert!(result.get("prompt_cache_key").is_none());
     }
 
@@ -1155,7 +1167,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         // System message cache_control preserved
         assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
         // Text block cache_control preserved
@@ -1409,7 +1421,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert!(result.get("reasoning_effort").is_none());
     }
 
@@ -1422,7 +1434,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["reasoning_effort"], "medium");
     }
 
@@ -1435,7 +1447,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["reasoning_effort"], "xhigh");
     }
 
@@ -1448,7 +1460,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["reasoning_effort"], "low");
     }
 
@@ -1461,7 +1473,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["reasoning_effort"], "xhigh");
     }
 
@@ -1473,7 +1485,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert!(result.get("reasoning_effort").is_none());
     }
 
@@ -1486,7 +1498,7 @@ mod tests {
                 "messages": [{"role": "user", "content": "Hello"}]
             });
 
-            let result = anthropic_to_openai(input).unwrap();
+            let result = anthropic_to_openai(input, false).unwrap();
             assert!(
                 result.get("max_tokens").is_none(),
                 "{model} should not have max_tokens"
@@ -1506,8 +1518,53 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_openai(input).unwrap();
+        let result = anthropic_to_openai(input, false).unwrap();
         assert_eq!(result["max_tokens"], 1024);
         assert!(result.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn anthropic_to_openai_injects_stream_options_when_enabled() {
+        let input = json!({
+            "model": "gpt-4",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": true
+        });
+
+        let result = anthropic_to_openai(input, true).unwrap();
+
+        assert_eq!(result["stream"], true);
+        assert_eq!(result["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn anthropic_to_openai_does_not_inject_stream_options_when_disabled() {
+        let input = json!({
+            "model": "gpt-4",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": true
+        });
+
+        let result = anthropic_to_openai(input, false).unwrap();
+
+        assert_eq!(result["stream"], true);
+        assert!(result.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn anthropic_to_openai_does_not_inject_stream_options_when_stream_is_false() {
+        let input = json!({
+            "model": "gpt-4",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": false
+        });
+
+        let result = anthropic_to_openai(input, true).unwrap();
+
+        assert_eq!(result["stream"], false);
+        assert!(result.get("stream_options").is_none());
     }
 }
