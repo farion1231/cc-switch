@@ -239,7 +239,15 @@ fn desktop_model_id(model_id: &str, supports_1m: bool) -> String {
 }
 
 fn upstream_model_id(model_id: &str, supports_1m: bool) -> String {
-    desktop_model_id(model_id, supports_1m)
+    let normalized = strip_one_m_context_suffix(model_id);
+    // Only append [1M] for Claude-series upstream models
+    let is_claude_upstream = normalized.starts_with("claude-")
+        || normalized.starts_with("anthropic/");
+    if supports_1m && is_claude_upstream {
+        format!("{normalized}{ONE_M_CONTEXT_SUFFIX}")
+    } else {
+        normalized
+    }
 }
 
 pub fn get_or_create_gateway_token(db: &Database) -> Result<String, AppError> {
@@ -1181,7 +1189,7 @@ mod tests {
             &provider,
         )
         .expect("map route");
-        assert_eq!(mapped["model"], json!("kimi-k2 [1M]"));
+        assert_eq!(mapped["model"], json!("kimi-k2"));
 
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6 [1M]"));
@@ -1200,7 +1208,7 @@ mod tests {
             &provider,
         )
         .expect("base name should fallback-match the [1M] route");
-        assert_eq!(mapped["model"], json!("kimi-k2 [1M]"));
+        assert_eq!(mapped["model"], json!("kimi-k2"));
     }
 
     #[test]
