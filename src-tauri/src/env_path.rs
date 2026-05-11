@@ -36,8 +36,13 @@ const PATH_PROBE_SCRIPT: &str = r#"printf '%s' "$PATH""#;
 
 /// 从用户登录 shell 拉真实 PATH 并写入当前进程环境。
 ///
-/// 失败时不 panic、不 return Err，仅记录日志并保留原 PATH——最差情况
-/// 跟"完全没修"一样，不会让 cc-doctor 启动失败。
+/// 失败时不 panic、不 return Err，仅向 stderr 打一行说明并保留原 PATH——
+/// 最差情况跟"完全没修"一样，不会让 cc-doctor 启动失败。
+///
+/// 输出走 `eprintln!` 而非 `log` crate：本函数在 Tauri builder 之前调用，
+/// 此时 `tauri-plugin-log` 还未 init，调 `log::info!` 会被静默丢弃。`eprintln!`
+/// 直接写 stderr，开发期 dev console 能看到，生产期 GUI 应用 stderr 默认
+/// 走 macOS 系统日志（Console.app 可查），跨阶段都可见。
 #[cfg(target_os = "macos")]
 pub fn fix_path_from_login_shell() {
     let original = std::env::var("PATH").unwrap_or_default();
@@ -50,7 +55,7 @@ pub fn fix_path_from_login_shell() {
     let shell = if raw_shell.ends_with("/zsh") || raw_shell.ends_with("/bash") {
         raw_shell.clone()
     } else {
-        log::info!(
+        eprintln!(
             "fix_path: SHELL={:?} 非 zsh/bash，回退到 /bin/zsh 探测 PATH",
             raw_shell
         );
@@ -66,7 +71,7 @@ pub fn fix_path_from_login_shell() {
             String::from_utf8_lossy(&out.stdout).trim().to_string()
         }
         Ok(out) => {
-            log::warn!(
+            eprintln!(
                 "fix_path: {} 退出码非 0 ({:?})，保留原 PATH",
                 shell,
                 out.status.code()
@@ -74,7 +79,7 @@ pub fn fix_path_from_login_shell() {
             return;
         }
         Err(e) => {
-            log::warn!("fix_path: 启动 {} 失败 ({})，保留原 PATH", shell, e);
+            eprintln!("fix_path: 启动 {} 失败 ({})，保留原 PATH", shell, e);
             return;
         }
     };
@@ -83,7 +88,7 @@ pub fn fix_path_from_login_shell() {
     // 防止 shell 因为 .zshrc 里有 syntax error / exit 1 等情况返回了
     // 半截结果或空字符串。
     if new_path.is_empty() || !new_path.contains(':') {
-        log::warn!(
+        eprintln!(
             "fix_path: 拿到的 PATH 不像样 (len={}, has_colon={})，保留原 PATH",
             new_path.len(),
             new_path.contains(':')
@@ -92,11 +97,11 @@ pub fn fix_path_from_login_shell() {
     }
 
     if new_path == original {
-        log::info!("fix_path: 用户 PATH 与进程 PATH 已一致，跳过");
+        eprintln!("fix_path: 用户 PATH 与进程 PATH 已一致，跳过");
         return;
     }
 
-    log::info!(
+    eprintln!(
         "fix_path: 已用 {} 的 PATH 替换进程 PATH（{} → {} chars）",
         shell,
         original.len(),
