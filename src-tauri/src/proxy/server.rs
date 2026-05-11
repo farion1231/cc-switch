@@ -308,11 +308,19 @@ impl ProxyServer {
                 "/codex/v1/chat/completions",
                 post(handlers::handle_chat_completions),
             )
+            .route(
+                "/codex/provider/:provider_app/:provider_id/v1/chat/completions",
+                post(handlers::handle_chat_completions_scoped),
+            )
             // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
             .route("/responses", post(handlers::handle_responses))
             .route("/v1/responses", post(handlers::handle_responses))
             .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
+            .route(
+                "/codex/provider/:provider_app/:provider_id/v1/responses",
+                post(handlers::handle_responses_scoped),
+            )
             // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
             .route(
                 "/responses/compact",
@@ -329,6 +337,10 @@ impl ProxyServer {
             .route(
                 "/codex/v1/responses/compact",
                 post(handlers::handle_responses_compact),
+            )
+            .route(
+                "/codex/provider/:provider_app/:provider_id/v1/responses/compact",
+                post(handlers::handle_responses_compact_scoped),
             )
             // Gemini API (支持带前缀和不带前缀)
             .route("/v1beta/*path", post(handlers::handle_gemini))
