@@ -27,6 +27,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Radar,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -89,6 +90,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { ModelVerifyPage } from "@/components/model-verify/ModelVerifyPage";
 
 type View =
   | "providers"
@@ -104,7 +106,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "modelVerify";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -150,6 +153,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "modelVerify",
 ];
 
 const getInitialView = (): View => {
@@ -916,6 +920,8 @@ function App() {
           );
         case "hermesMemory":
           return <HermesMemoryPanel />;
+        case "modelVerify":
+          return <ModelVerifyPage />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1179,6 +1185,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "modelVerify" && t("modelVerify.title")}
                 </h1>
               </div>
             ) : (
@@ -1232,6 +1239,15 @@ function App() {
                     <BarChart2 className="w-4 h-4" />
                   </Button>
                 )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCurrentView("modelVerify")}
+                  title={t("modelVerify.title")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Radar className="w-4 h-4" />
+                </Button>
               </div>
             )}
           </div>

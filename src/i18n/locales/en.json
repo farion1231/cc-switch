@@ -2568,6 +2568,87 @@
     "suggestedDefaults": "Apply Suggested Defaults",
     "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
   },
+  "modelVerify": {
+    "title": "Model Authenticity",
+    "secretNotice": "The API key is used only for this detection request and is not saved to providers, settings, or local storage. The result is weak fingerprint evidence, not definitive proof of backend model identity.",
+    "protocol": "Protocol",
+    "protocols": {
+      "openAiChat": "OpenAI Chat Completions",
+      "anthropicMessages": "Anthropic Messages",
+      "geminiGenerateContent": "Gemini generateContent"
+    },
+    "baseUrl": "Base URL",
+    "apiKey": "API Key",
+    "model": "Model",
+    "remark": "Notes",
+    "fetchModels": "Fetch Models",
+    "organization": "Organization ID",
+    "apiVersion": "API Version",
+    "timeout": "Timeout (sec)",
+    "run": "Run Detection",
+    "runFailed": "Detection failed",
+    "waiting": "Waiting",
+    "showApiKey": "Show",
+    "hideApiKey": "Hide",
+    "copyApiKey": "Copy",
+    "validation": {
+      "required": "Enter Base URL, API key, and model"
+    },
+    "confidence": "Confidence",
+    "mismatchRisk": "Mismatch Risk",
+    "dilutionRisk": "Suspected Dilution Risk",
+    "totalLatency": "Latency",
+    "tokensPerSecond": "tokens/sec",
+    "evidence": "Evidence",
+    "inputTokens": "Input tokens",
+    "outputTokens": "Output tokens",
+    "cachedInputTokens": "Cached read tokens",
+    "probeCount": "Probes",
+    "evidenceLevel": {
+      "weak": "Weak Evidence",
+      "medium": "Medium Evidence",
+      "strong": "Stronger Evidence"
+    },
+    "groupDescriptions": {
+      "knowledgeQa": "Uses small verifiable questions to check basic knowledge and simple reasoning.",
+      "modelFeatures": "Uses behavior probes such as structured output, code, and instruction following to estimate capability tier.",
+      "protocolConsistency": "Checks key fields, status, and compatibility for the selected protocol.",
+      "responseStructure": "Checks response shape, model field, and usage/token fields."
+    },
+    "diagnostics": {
+      "title": "Diagnostics",
+      "description": "These items do not affect the main score. Error shape and self-declared identity are often changed by relay gateways or model policy, so they are shown only as troubleshooting clues."
+    },
+    "history": {
+      "title": "Recent Detection History",
+      "open": "Recent Detection History ({{count}})",
+      "empty": "No detection history yet",
+      "time": "Time",
+      "model": "Model",
+      "protocol": "Interface",
+      "remark": "Notes",
+      "score": "Score",
+      "status": "Status",
+      "baseUrl": "Base URL",
+      "clear": "Clear Cache",
+      "cleared": "Detection history cleared",
+      "prev": "Previous",
+      "next": "Next",
+      "page": "Page {{current}} / {{total}}",
+      "count": "{{count}} records",
+      "copied": "API key copied",
+      "noApiKey": "No API key to copy"
+    },
+    "json": {
+      "collapse": "Collapse",
+      "expand": "Expand"
+    },
+    "status": {
+      "passed": "Passed",
+      "warning": "Warning",
+      "failed": "Failed"
+    }
+  },
   "subscription": {
     "title": "Subscription Quota",
     "fiveHour": "5-Hour",

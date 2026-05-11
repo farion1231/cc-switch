@@ -2568,6 +2568,87 @@
     "suggestedDefaults": "应用建议默认配置",
     "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
   },
+  "modelVerify": {
+    "title": "模型真实性检测",
+    "secretNotice": "API Key 只会用于本次检测请求，不会保存到供应商、设置或本地存储。检测结果是弱指纹推断，不是后端模型身份的确定证明。",
+    "protocol": "接口格式",
+    "protocols": {
+      "openAiChat": "OpenAI Chat Completions",
+      "anthropicMessages": "Anthropic Messages",
+      "geminiGenerateContent": "Gemini generateContent"
+    },
+    "baseUrl": "Base URL",
+    "apiKey": "API Key",
+    "model": "模型名称",
+    "remark": "备注",
+    "fetchModels": "获取模型列表",
+    "organization": "组织 ID",
+    "apiVersion": "API 版本",
+    "timeout": "超时（秒）",
+    "run": "开始检测",
+    "runFailed": "检测失败",
+    "waiting": "等待中",
+    "showApiKey": "显示",
+    "hideApiKey": "隐藏",
+    "copyApiKey": "复制",
+    "validation": {
+      "required": "请填写 Base URL、API Key 和模型名称"
+    },
+    "confidence": "可信度",
+    "mismatchRisk": "不匹配风险",
+    "dilutionRisk": "疑似掺水风险",
+    "totalLatency": "延迟",
+    "tokensPerSecond": "tokens/秒",
+    "evidence": "证据等级",
+    "inputTokens": "输入 tokens",
+    "outputTokens": "输出 tokens",
+    "cachedInputTokens": "缓存读取 tokens",
+    "probeCount": "探针数",
+    "evidenceLevel": {
+      "weak": "弱证据",
+      "medium": "中等证据",
+      "strong": "较强证据"
+    },
+    "groupDescriptions": {
+      "knowledgeQa": "用答案可校验的小题检查基础知识与简单推理。",
+      "modelFeatures": "用结构化输出、代码和指令遵守等行为特征判断能力档位。",
+      "protocolConsistency": "检查所选协议的关键字段、状态和兼容性。",
+      "responseStructure": "检查响应结构、模型字段、usage/token 字段等。"
+    },
+    "diagnostics": {
+      "title": "诊断信息",
+      "description": "这些项目不参与主评分。错误形态和身份自述容易被中转网关包装或模型策略影响，只作为排查线索。"
+    },
+    "history": {
+      "title": "最近检测历史",
+      "open": "最近检测历史（{{count}}）",
+      "empty": "暂无检测历史",
+      "time": "时间",
+      "model": "模型",
+      "protocol": "接口",
+      "remark": "备注",
+      "score": "评分",
+      "status": "状态",
+      "baseUrl": "Base URL",
+      "clear": "清除缓存",
+      "cleared": "检测历史已清除",
+      "prev": "上一页",
+      "next": "下一页",
+      "page": "第 {{current}} / {{total}} 页",
+      "count": "共 {{count}} 条记录",
+      "copied": "API Key 已复制",
+      "noApiKey": "没有可复制的 API Key"
+    },
+    "json": {
+      "collapse": "收起",
+      "expand": "展开"
+    },
+    "status": {
+      "passed": "通过",
+      "warning": "警告",
+      "failed": "失败"
+    }
+  },
   "subscription": {
     "title": "订阅额度",
     "fiveHour": "5小时",

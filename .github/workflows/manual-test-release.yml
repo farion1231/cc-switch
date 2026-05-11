@@ -1,0 +1,195 @@
+name: Manual Test Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v3.14.1-model-verify.2"
+        required: true
+        default: "v3.14.1-model-verify.2"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: manual-test-release-${{ inputs.tag }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-2022
+          - name: Linux
+            os: ubuntu-22.04
+          - name: macOS
+            os: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file \
+            patchelf \
+            libssl-dev \
+            rpm \
+            xdg-utils \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
+          sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
+            || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Disable updater artifacts for unsigned test builds
+        shell: bash
+        run: |
+          cat > tauri.test-release.conf.json <<'JSON'
+          {
+            "bundle": {
+              "createUpdaterArtifacts": false
+            }
+          }
+          JSON
+
+      - name: Build Tauri app on Windows
+        if: runner.os == 'Windows'
+        run: pnpm tauri build --no-bundle --config tauri.test-release.conf.json
+
+      - name: Build Tauri app on Linux
+        if: runner.os == 'Linux'
+        run: pnpm tauri build --bundles appimage,deb,rpm --config tauri.test-release.conf.json
+
+      - name: Build Tauri app on macOS
+        if: runner.os == 'macOS'
+        run: pnpm tauri build --bundles app --config tauri.test-release.conf.json
+
+      - name: Prepare Windows assets
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $tag = "${{ inputs.tag }}"
+          $exe = Get-ChildItem -Path 'src-tauri/target/release' -Filter '*.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $exe) {
+            throw 'No Windows executable found'
+          }
+          $portableDir = 'release-assets/CC-Switch-Portable'
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item $exe.FullName $portableDir
+          'portable=true' | Set-Content -Path (Join-Path $portableDir 'portable.ini') -Encoding UTF8
+          Compress-Archive -Path "$portableDir/*" -DestinationPath "release-assets/CC-Switch-$tag-Windows-Portable.zip" -Force
+
+      - name: Prepare Linux assets
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          TAG="${{ inputs.tag }}"
+          find src-tauri/target/release/bundle -name "*.AppImage" -type f -exec cp {} "release-assets/CC-Switch-${TAG}-Linux-x86_64.AppImage" \; -quit
+          find src-tauri/target/release/bundle -name "*.deb" -type f -exec cp {} "release-assets/CC-Switch-${TAG}-Linux-x86_64.deb" \; -quit
+          find src-tauri/target/release/bundle -name "*.rpm" -type f -exec cp {} "release-assets/CC-Switch-${TAG}-Linux-x86_64.rpm" \; -quit
+          test -n "$(find release-assets -type f -maxdepth 1)"
+
+      - name: Prepare macOS assets
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          TAG="${{ inputs.tag }}"
+          APP_PATH=$(find src-tauri/target/release/bundle -name "*.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No macOS .app found" >&2
+            exit 1
+          fi
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/CC-Switch-${TAG}-macOS-Adhoc-Signed.zip"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-${{ matrix.name }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish prerelease
+    runs-on: ubuntu-22.04
+    needs: build
+    if: always()
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+          if-no-files-found: error
+
+      - name: List assets
+        shell: bash
+        run: ls -la release-assets
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: CC Switch ${{ inputs.tag }} Test Release
+          prerelease: true
+          make_latest: false
+          body: |
+            Test release built from this fork.
+
+            These artifacts are test builds. macOS uses ad-hoc signing and is not notarized, so Gatekeeper may show security warnings.
+
+            Downloads:
+            - Windows: Portable zip
+            - Linux: AppImage / deb / rpm
+            - macOS: ad-hoc signed app zip
+
+            macOS test build:
+            1. Unzip the macOS file.
+            2. If macOS says the app is damaged, run:
+               `xattr -dr com.apple.quarantine "/Applications/CC Switch.app"`
+            3. Then open it again.
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
