@@ -11,6 +11,35 @@
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
+pub(crate) fn sanitize_anthropic_tool_use_input(name: &str, input: Value) -> Value {
+    if name != "Read" {
+        return input;
+    }
+
+    match input {
+        Value::Object(mut object) => {
+            if matches!(object.get("pages"), Some(Value::String(value)) if value.is_empty()) {
+                object.remove("pages");
+            }
+            Value::Object(object)
+        }
+        other => other,
+    }
+}
+
+pub(crate) fn sanitize_anthropic_tool_use_input_json(name: &str, raw: &str) -> String {
+    if name != "Read" || raw.is_empty() {
+        return raw.to_string();
+    }
+
+    let Ok(input) = serde_json::from_str::<Value>(raw) else {
+        return raw.to_string();
+    };
+
+    serde_json::to_string(&sanitize_anthropic_tool_use_input(name, input))
+        .unwrap_or_else(|_| raw.to_string())
+}
+
 /// Anthropic 请求 → OpenAI Responses 请求
 ///
 /// `cache_key`: optional prompt_cache_key to inject for improved cache routing
@@ -514,6 +543,7 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
                     .and_then(|a| a.as_str())
                     .unwrap_or("{}");
                 let input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                let input = sanitize_anthropic_tool_use_input(name, input);
 
                 content.push(json!({
                     "type": "tool_use",
@@ -903,6 +933,56 @@ mod tests {
         assert_eq!(result["content"][0]["name"], "get_weather");
         assert_eq!(result["content"][0]["input"]["location"], "Tokyo");
         assert_eq!(result["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_read_drops_empty_pages() {
+        let input = json!({
+            "id": "resp_read",
+            "object": "response",
+            "status": "completed",
+            "model": "gpt-5.5",
+            "output": [{
+                "type": "function_call",
+                "id": "fc_read",
+                "call_id": "call_read",
+                "name": "Read",
+                "arguments": "{\"file_path\":\"/tmp/demo.py\",\"limit\":2000,\"offset\":0,\"pages\":\"\"}",
+                "status": "completed"
+            }]
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        let tool_input = &result["content"][0]["input"];
+
+        assert_eq!(result["content"][0]["type"], "tool_use");
+        assert_eq!(result["content"][0]["name"], "Read");
+        assert_eq!(tool_input["file_path"], "/tmp/demo.py");
+        assert_eq!(tool_input["limit"], 2000);
+        assert_eq!(tool_input["offset"], 0);
+        assert!(tool_input.get("pages").is_none());
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_preserves_empty_strings_for_other_tools() {
+        let input = json!({
+            "id": "resp_other",
+            "object": "response",
+            "status": "completed",
+            "model": "gpt-5.5",
+            "output": [{
+                "type": "function_call",
+                "id": "fc_other",
+                "call_id": "call_other",
+                "name": "search",
+                "arguments": "{\"query\":\"\"}",
+                "status": "completed"
+            }]
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+
+        assert_eq!(result["content"][0]["input"]["query"], "");
     }
 
     #[test]
