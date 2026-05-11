@@ -871,26 +871,32 @@ fn launch_terminal_with_env(
     // 创建并写入配置文件
     write_claude_config(&config_file, &env_vars)?;
 
-    let custom_args = custom_args
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("");
+    let parsed_custom_args = match custom_args.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(s) => match shlex::split(s) {
+            Some(args) => args,
+            None => {
+                log::warn!("无法解析 custom_cli_args，因为存在未闭合的引号，将忽略: {}", s);
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
 
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd, custom_args)?;
+        launch_macos_terminal(&config_file, cwd, &parsed_custom_args)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd, custom_args)?;
+        launch_linux_terminal(&config_file, cwd, &parsed_custom_args)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd, custom_args)?;
+        launch_windows_terminal(&temp_dir, &config_file, cwd, &parsed_custom_args)?;
         return Ok(());
     }
 
@@ -920,7 +926,7 @@ fn write_claude_config(
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>, custom_args: &str) -> Result<(), String> {
+fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>, parsed_custom_args: &[String]) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -930,6 +936,7 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>, cust
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let escaped_custom_args = shlex::try_join(parsed_custom_args.iter().map(|s| s.as_str())).unwrap_or_default();
 
     // Write the shell script to a temp file
     let script_content = format!(
@@ -944,7 +951,7 @@ exec bash --norc --noprofile
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
-        custom_args = custom_args,
+        custom_args = escaped_custom_args,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1158,7 +1165,7 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>, custom_args: &str) -> Result<(), String> {
+fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>, parsed_custom_args: &[String]) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -1181,6 +1188,7 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>, cust
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let escaped_custom_args = shlex::try_join(parsed_custom_args.iter().map(|s| s.as_str())).unwrap_or_default();
 
     let script_content = format!(
         r#"#!/bin/bash
@@ -1194,7 +1202,7 @@ exec bash --norc --noprofile
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
-        custom_args = custom_args,
+        custom_args = escaped_custom_args,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1274,7 +1282,7 @@ fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
     cwd: Option<&Path>,
-    custom_args: &str,
+    parsed_custom_args: &[String],
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
@@ -1282,6 +1290,12 @@ fn launch_windows_terminal(
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
+
+    let escaped_custom_args = parsed_custom_args
+        .iter()
+        .map(|s| escape_windows_batch_arg(s))
+        .collect::<Vec<_>>()
+        .join(" ");
 
     let content = format!(
         "@echo off
@@ -1294,7 +1308,7 @@ del \"%~f0\" >nul 2>&1
 ",
         config_path_for_batch,
         config_path_for_batch,
-        custom_args,
+        escaped_custom_args,
         config_path_for_batch,
         cwd_command = cwd_command,
     );
@@ -1376,6 +1390,22 @@ fn escape_windows_batch_value(value: &str) -> String {
         .replace('(', "^(")
         .replace(')', "^)")
 }
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn escape_windows_batch_arg(arg: &str) -> String {
+    // 1. Escape % as %% for batch file to prevent variable expansion
+    let mut s = arg.replace('%', "%%");
+    // 2. Escape internal double quotes for CommandLineToArgvW compatibility inside double quotes
+    s = s.replace('"', "\"\"");
+    
+    // 3. Trailing backslashes must be doubled so they aren't parsed as escaping the closing quote
+    let trailing_slashes = s.chars().rev().take_while(|&c| c == '\\').count();
+    s.push_str(&"\\".repeat(trailing_slashes));
+
+    // 4. Wrap the entire argument in double quotes so cmd metacharacters are ignored
+    format!("\"{}\"", s)
+}
+
 /// Windows: Run a start command with common error handling
 #[cfg(target_os = "windows")]
 fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
