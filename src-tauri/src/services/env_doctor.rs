@@ -84,6 +84,10 @@ pub enum IssueCategory {
     VersionOutdated,
     /// Node.js 缺失或版本过低
     NodeJsMissing,
+    /// 安装方式相关的"持续提醒"型问题（如 Brew 装的可建议迁移到 native）。
+    /// 这类 issue 不阻塞使用，`determine_overall_status` 会把它们排除在严重性
+    /// 判断外，以免在用户能正常用 Claude Code 的情况下把整体状态错误地拉低。
+    InstallationMethod,
 }
 
 /// 修复动作
@@ -115,6 +119,9 @@ pub enum FixAction {
         current: String,
         latest: String,
     },
+    /// 把 Homebrew 安装的 Claude Code 迁移到官方 native install.sh 安装。
+    /// 由 `migrate_brew_to_native` 命令处理（带备份与回滚）。
+    MigrateBrewToNative,
 }
 
 /// 工具状态
@@ -196,9 +203,34 @@ async fn diagnose_tools(
             }),
         });
         tool_issues.push(issue_id);
-    } else if let Some(err) = error {
-        // 工具已安装但有错误
-        tool_issues.push(format!("检测错误: {}", err));
+    } else {
+        if let Some(err) = error {
+            // 工具已安装但有错误
+            tool_issues.push(format!("检测错误: {}", err));
+        }
+
+        // 已装情况下追加探测安装来源：Brew 装的给一条"建议迁移"持续提醒。
+        // 走 claude_installer::detect_claude 而非 check_tool_version —— 它
+        // 能区分 native / brew / other，是判断"是否需要迁移"的唯一依据。
+        if let Some(detected) = crate::services::claude_installer::detect_claude() {
+            if let crate::services::claude_installer::InstallMethod::Brew { cask } =
+                detected.install_method
+            {
+                issues.push(DiagnosisIssue {
+                    id: "claude_installed_via_brew".to_string(),
+                    severity: IssueSeverity::Low,
+                    category: IssueCategory::InstallationMethod,
+                    title: "通过 Homebrew 安装".to_string(),
+                    description: format!(
+                        "当前 Claude Code 是通过 Homebrew cask `{cask}` 安装的，brew 版本\
+                         不会随官方 release 自动更新。可一键迁移到 native 安装以启用后台\
+                         自动更新；保留当前安装也完全可用。"
+                    ),
+                    auto_fixable: true,
+                    fix_action: Some(FixAction::MigrateBrewToNative),
+                });
+            }
+        }
     }
 
     tools_status.insert(
@@ -364,11 +396,19 @@ fn determine_overall_status(
     issues: &[DiagnosisIssue],
     tools_status: &HashMap<String, ToolStatus>,
 ) -> HealthStatus {
-    if issues.is_empty() {
+    // `InstallationMethod` 类是"持续提醒"——用户能正常用 Claude Code，只是有
+    // 可选优化（比如建议从 brew 迁到 native）。这类 issue 不能拉低整体健康
+    // 状态，否则用户在能正常工作的情况下也会被告知"环境异常"。
+    let actionable: Vec<&DiagnosisIssue> = issues
+        .iter()
+        .filter(|i| i.category != IssueCategory::InstallationMethod)
+        .collect();
+
+    if actionable.is_empty() {
         return HealthStatus::Healthy;
     }
 
-    let has_install_issues = issues.iter().any(|issue| {
+    let has_install_issues = actionable.iter().any(|issue| {
         issue.severity == IssueSeverity::Critical
             && matches!(
                 issue.category,
@@ -381,7 +421,7 @@ fn determine_overall_status(
     }
 
     // 检查是否有 Critical 或 High 级别的问题
-    let has_critical_or_high = issues.iter().any(|issue| {
+    let has_critical_or_high = actionable.iter().any(|issue| {
         matches!(
             issue.severity,
             IssueSeverity::Critical | IssueSeverity::High
@@ -574,10 +614,13 @@ pub async fn fix_environment(issues: Vec<DiagnosisIssue>) -> Result<FixResult, S
             } => fix_env_conflict(var_name, source, var_value).await,
             FixAction::RepairConfig { path } => repair_config_file(path).await,
             FixAction::FixPermission { path } => fix_permission(path).await,
-            // 安装和更新操作不在此处理，需要用户明确触发
+            // 安装、更新、Brew 迁移这类有副作用的动作不走通用 fix_environment
+            // —— 它们各自有独立命令（install_tool / migrate_brew_to_native 等）
+            // 由用户在 UI 上明确触发。
             FixAction::InstallTool { .. }
             | FixAction::InstallNodeJs
-            | FixAction::UpdateTool { .. } => {
+            | FixAction::UpdateTool { .. }
+            | FixAction::MigrateBrewToNative => {
                 continue;
             }
         };
@@ -785,6 +828,57 @@ mod tests {
             auto_fixable: true,
             fix_action: None,
         }];
+        let tools_status = HashMap::new();
+        assert_eq!(
+            determine_overall_status(&issues, &tools_status),
+            HealthStatus::NeedsInstall
+        );
+    }
+
+    #[test]
+    fn installation_method_issue_alone_keeps_status_healthy() {
+        // 只有"通过 Brew 安装"提示性 issue 时，整体状态应保持 Healthy ——
+        // 用户能正常用 Claude Code，不该被告知"环境异常"。
+        let issues = vec![DiagnosisIssue {
+            id: "claude_installed_via_brew".into(),
+            severity: IssueSeverity::Low,
+            category: IssueCategory::InstallationMethod,
+            title: "通过 Homebrew 安装".into(),
+            description: "可选迁移建议".into(),
+            auto_fixable: true,
+            fix_action: Some(FixAction::MigrateBrewToNative),
+        }];
+        let tools_status = HashMap::new();
+        assert_eq!(
+            determine_overall_status(&issues, &tools_status),
+            HealthStatus::Healthy
+        );
+    }
+
+    #[test]
+    fn installation_method_issue_does_not_mask_real_problems() {
+        // Brew 提示和 Critical 未安装并存时，仍应判 NeedsInstall（不能被
+        // 提示性 issue "稀释"成 Healthy）。
+        let issues = vec![
+            DiagnosisIssue {
+                id: "claude_installed_via_brew".into(),
+                severity: IssueSeverity::Low,
+                category: IssueCategory::InstallationMethod,
+                title: "Brew 提示".into(),
+                description: "...".into(),
+                auto_fixable: true,
+                fix_action: Some(FixAction::MigrateBrewToNative),
+            },
+            DiagnosisIssue {
+                id: "nodejs_missing".into(),
+                severity: IssueSeverity::Critical,
+                category: IssueCategory::NodeJsMissing,
+                title: "Node.js 缺失".into(),
+                description: "...".into(),
+                auto_fixable: false,
+                fix_action: Some(FixAction::InstallNodeJs),
+            },
+        ];
         let tools_status = HashMap::new();
         assert_eq!(
             determine_overall_status(&issues, &tools_status),
