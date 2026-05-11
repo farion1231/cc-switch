@@ -104,6 +104,7 @@ interface ClaudeFormFieldsProps {
   onCustomEndpointsChange?: (endpoints: string[]) => void;
   autoSelect: boolean;
   onAutoSelectChange: (checked: boolean) => void;
+  showEndpointTools?: boolean;
 
   // Model Selector
   shouldShowModelSelector: boolean;
@@ -172,6 +173,7 @@ export function ClaudeFormFields({
   onCustomEndpointsChange,
   autoSelect,
   onAutoSelectChange,
+  showEndpointTools = true,
   shouldShowModelSelector,
   claudeModel,
   defaultHaikuModel,
@@ -475,15 +477,18 @@ export function ClaudeFormFields({
               ? t("providerForm.fullUrlHintGeminiNative")
               : undefined
           }
-          onManageClick={() => onEndpointModalToggle(true)}
-          showFullUrlToggle={true}
+          showManageButton={showEndpointTools}
+          onManageClick={
+            showEndpointTools ? () => onEndpointModalToggle(true) : undefined
+          }
+          showFullUrlToggle={showEndpointTools}
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
         />
       )}
 
       {/* 端点测速弹窗 */}
-      {shouldShowSpeedTest && isEndpointModalOpen && (
+      {shouldShowSpeedTest && showEndpointTools && isEndpointModalOpen && (
         <EndpointSpeedTest
           appId="claude"
           providerId={providerId}

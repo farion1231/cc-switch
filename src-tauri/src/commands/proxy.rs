@@ -15,6 +15,24 @@ pub async fn start_proxy_server(
     state.proxy_service.start().await
 }
 
+/// 停止代理服务器（仅停止服务，不恢复/清理 Live 接管状态）
+#[tauri::command]
+pub async fn stop_proxy_server(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let takeover = state.proxy_service.get_takeover_status().await?;
+    if takeover.claude
+        || takeover.codex
+        || takeover.gemini
+        || takeover.opencode
+        || takeover.openclaw
+    {
+        return Err(
+            "仍有应用处于代理接管状态，请先在设置中关闭对应应用接管后再停止本地路由。".to_string(),
+        );
+    }
+
+    state.proxy_service.stop().await
+}
+
 /// 停止代理服务器（恢复 Live 配置）
 #[tauri::command]
 pub async fn stop_proxy_with_restore(state: tauri::State<'_, AppState>) -> Result<(), String> {

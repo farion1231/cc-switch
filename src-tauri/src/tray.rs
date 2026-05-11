@@ -429,13 +429,9 @@ fn handle_provider_click(
             .db
             .set_proxy_flags_sync(app_type_str, proxy_enabled, false)?;
 
-        // 切换供应商
-        crate::commands::switch_provider(
-            app_state.clone(),
-            app_type_str.to_string(),
-            provider_id.to_string(),
-        )
-        .map_err(AppError::Message)?;
+        // 切换供应商。需要本地路由的供应商也不在这里自动启动代理，
+        // 由用户在页面/设置中手动开启。
+        crate::services::ProviderService::switch(app_state.inner(), app_type.clone(), provider_id)?;
 
         // 更新托盘菜单
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {

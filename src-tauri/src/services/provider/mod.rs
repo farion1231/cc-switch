@@ -24,7 +24,8 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings, sync_current_to_live,
+    import_opencode_providers_from_live, read_live_settings,
+    should_import_default_config_on_startup, sync_current_to_live,
 };
 
 // Internal re-exports (pub(crate))
@@ -2358,6 +2359,10 @@ impl ProviderService {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
+        if matches!(app_type, AppType::ClaudeDesktop) {
+            return Self::switch_normal(state, app_type, id, &providers);
+        }
+
         // Check if proxy takeover mode is active AND proxy server is actually running
         // Both conditions must be true to use hot-switch mode
         // Use blocking wait since this is a sync function
@@ -2754,6 +2759,7 @@ impl ProviderService {
 
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
+            AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
@@ -2769,6 +2775,7 @@ impl ProviderService {
     ) -> Result<String, AppError> {
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(settings_config),
+            AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
@@ -2958,6 +2965,13 @@ impl ProviderService {
         import_default_config(state, app_type)
     }
 
+    pub fn should_import_default_config_on_startup(
+        state: &AppState,
+        app_type: &AppType,
+    ) -> Result<bool, AppError> {
+        should_import_default_config_on_startup(state, app_type)
+    }
+
     /// Read current live settings (re-export)
     pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         read_live_settings(app_type)
@@ -3073,6 +3087,9 @@ impl ProviderService {
                     ));
                 }
                 Self::validate_claude_switch_plan(provider)?;
+            }
+            AppType::ClaudeDesktop => {
+                crate::claude_desktop_config::validate_provider(provider)?;
             }
             AppType::Codex => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {
@@ -3207,6 +3224,11 @@ impl ProviderService {
                     .to_string();
 
                 Ok((api_key, base_url))
+            }
+            AppType::ClaudeDesktop => {
+                let credentials =
+                    crate::claude_desktop_config::direct_gateway_credentials(provider)?;
+                Ok((credentials.api_key, credentials.base_url))
             }
             AppType::Codex => {
                 let auth = provider

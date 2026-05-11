@@ -215,7 +215,11 @@ impl StreamCheckService {
             return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
 
-        let adapter = get_adapter(app_type);
+        let adapter: Box<dyn ProviderAdapter> = if matches!(app_type, AppType::ClaudeDesktop) {
+            Box::new(ClaudeAdapter::new())
+        } else {
+            get_adapter(app_type)
+        };
 
         let base_url = match base_url_override {
             Some(base_url) => base_url,
@@ -236,7 +240,7 @@ impl StreamCheckService {
         let test_prompt = &config.test_prompt;
 
         let result = match app_type {
-            AppType::Claude => {
+            AppType::Claude | AppType::ClaudeDesktop => {
                 Self::check_claude_stream(
                     &client,
                     &base_url,
@@ -1361,8 +1365,10 @@ impl StreamCheckService {
         config: &StreamCheckConfig,
     ) -> String {
         match app_type {
-            AppType::Claude => Self::extract_env_model(provider, "ANTHROPIC_MODEL")
-                .unwrap_or_else(|| config.claude_model.clone()),
+            AppType::Claude | AppType::ClaudeDesktop => {
+                Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                    .unwrap_or_else(|| config.claude_model.clone())
+            }
             AppType::Codex => {
                 Self::extract_codex_model(provider).unwrap_or_else(|| config.codex_model.clone())
             }
