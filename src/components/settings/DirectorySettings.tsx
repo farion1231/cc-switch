@@ -22,14 +22,21 @@ interface DirectorySettingsProps {
   claudeDir?: string;
   claudeWslDir?: string;
   codexDir?: string;
+  codexWslDir?: string;
   geminiDir?: string;
+  geminiWslDir?: string;
   opencodeDir?: string;
+  opencodeWslDir?: string;
+  openclawWslDir?: string;
   onDirectoryChange: (app: AppId, value?: string) => void;
   onClaudeWslDirectoryChange: (value?: string) => void;
   onBrowseDirectory: (app: AppId) => Promise<void>;
   onBrowseClaudeWslDirectory: () => Promise<void>;
   onResetDirectory: (app: AppId) => Promise<void>;
   onResetClaudeWslDirectory: () => Promise<void>;
+  onWslDirectoryChange: (app: AppId, value?: string) => void;
+  onBrowseWslDirectory: (app: AppId) => Promise<void>;
+  onResetWslDirectory: (app: AppId) => Promise<void>;
 }
 
 export function DirectorySettings({
@@ -43,14 +50,21 @@ export function DirectorySettings({
   claudeDir,
   claudeWslDir,
   codexDir,
+  codexWslDir,
   geminiDir,
+  geminiWslDir,
   opencodeDir,
+  opencodeWslDir,
+  openclawWslDir,
   onDirectoryChange,
   onClaudeWslDirectoryChange,
   onBrowseDirectory,
   onBrowseClaudeWslDirectory,
   onResetDirectory,
   onResetClaudeWslDirectory,
+  onWslDirectoryChange,
+  onBrowseWslDirectory,
+  onResetWslDirectory,
 }: DirectorySettingsProps) {
   const { t } = useTranslation();
 
@@ -149,6 +163,19 @@ export function DirectorySettings({
         />
 
         <DirectoryInput
+          app="codex"
+          label={t("settings.codexConfigDirWsl")}
+          description={t("settings.codexConfigDirWslDescription")}
+          value={codexWslDir}
+          resolvedValue=""
+          detection={cliDetections.codex}
+          placeholder={t("settings.browsePlaceholderCodexWsl")}
+          onChange={(val) => onWslDirectoryChange("codex", val)}
+          onBrowse={() => onBrowseWslDirectory("codex")}
+          onReset={() => onResetWslDirectory("codex")}
+        />
+
+        <DirectoryInput
           app="gemini"
           label={t("settings.geminiConfigDir")}
           description={undefined}
@@ -162,6 +189,19 @@ export function DirectorySettings({
         />
 
         <DirectoryInput
+          app="gemini"
+          label={t("settings.geminiConfigDirWsl")}
+          description={t("settings.geminiConfigDirWslDescription")}
+          value={geminiWslDir}
+          resolvedValue=""
+          detection={cliDetections.gemini}
+          placeholder={t("settings.browsePlaceholderGeminiWsl")}
+          onChange={(val) => onWslDirectoryChange("gemini", val)}
+          onBrowse={() => onBrowseWslDirectory("gemini")}
+          onReset={() => onResetWslDirectory("gemini")}
+        />
+
+        <DirectoryInput
           app="opencode"
           label={t("settings.opencodeConfigDir")}
           description={undefined}
@@ -172,6 +212,31 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("opencode", val)}
           onBrowse={() => onBrowseDirectory("opencode")}
           onReset={() => onResetDirectory("opencode")}
+        />
+
+        <DirectoryInput
+          app="opencode"
+          label={t("settings.opencodeConfigDirWsl")}
+          description={t("settings.opencodeConfigDirWslDescription")}
+          value={opencodeWslDir}
+          resolvedValue=""
+          detection={cliDetections.opencode}
+          placeholder={t("settings.browsePlaceholderOpencodeWsl")}
+          onChange={(val) => onWslDirectoryChange("opencode", val)}
+          onBrowse={() => onBrowseWslDirectory("opencode")}
+          onReset={() => onResetWslDirectory("opencode")}
+        />
+
+        <DirectoryInput
+          app="openclaw"
+          label={t("settings.openclawConfigDirWsl")}
+          description={t("settings.openclawConfigDirWslDescription")}
+          value={openclawWslDir}
+          resolvedValue=""
+          placeholder={t("settings.browsePlaceholderOpenclawWsl")}
+          onChange={(val) => onWslDirectoryChange("openclaw", val)}
+          onBrowse={() => onBrowseWslDirectory("openclaw")}
+          onReset={() => onResetWslDirectory("openclaw")}
         />
       </section>
     </div>

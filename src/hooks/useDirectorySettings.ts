@@ -10,8 +10,12 @@ type DirectoryKey =
   | "claude"
   | "claudeWsl"
   | "codex"
+  | "codexWsl"
   | "gemini"
-  | "opencode";
+  | "geminiWsl"
+  | "opencode"
+  | "opencodeWsl"
+  | "openclawWsl";
 
 export interface ResolvedDirectories {
   appConfig: string;
@@ -121,6 +125,9 @@ export interface UseDirectorySettingsResult {
     geminiDir?: string,
     opencodeDir?: string,
   ) => void;
+  updateWslDirectory: (app: AppId, value?: string) => void;
+  browseWslDirectory: (app: AppId) => Promise<void>;
+  resetWslDirectory: (app: AppId) => Promise<void>;
 }
 
 /**
@@ -292,6 +299,14 @@ export function useDirectorySettings({
         setAppConfigDir(sanitized);
       } else if (key === "claudeWsl") {
         onUpdateSettings({ claudeConfigDirWsl: sanitized });
+      } else if (key === "codexWsl") {
+        onUpdateSettings({ codexConfigDirWsl: sanitized });
+      } else if (key === "geminiWsl") {
+        onUpdateSettings({ geminiConfigDirWsl: sanitized });
+      } else if (key === "opencodeWsl") {
+        onUpdateSettings({ opencodeConfigDirWsl: sanitized });
+      } else if (key === "openclawWsl") {
+        onUpdateSettings({ openclawConfigDirWsl: sanitized });
       } else {
         onUpdateSettings(
           key === "claude"
@@ -300,11 +315,19 @@ export function useDirectorySettings({
               ? { codexConfigDir: sanitized }
               : key === "gemini"
                 ? { geminiConfigDir: sanitized }
-                : { opencodeConfigDir: sanitized },
+                : key === "opencode"
+                  ? { opencodeConfigDir: sanitized }
+                  : { openclawConfigDir: sanitized },
         );
       }
 
-      if (key === "claudeWsl") {
+      if (
+        key === "claudeWsl" ||
+        key === "codexWsl" ||
+        key === "geminiWsl" ||
+        key === "opencodeWsl" ||
+        key === "openclawWsl"
+      ) {
         return;
       }
 
@@ -460,6 +483,68 @@ export function useDirectorySettings({
     updateDirectoryState("claudeWsl", undefined);
   }, [updateDirectoryState]);
 
+  const wslKeyForApp = useCallback((app: AppId): DirectoryKey => {
+    switch (app) {
+      case "codex":
+        return "codexWsl";
+      case "gemini":
+        return "geminiWsl";
+      case "opencode":
+        return "opencodeWsl";
+      case "openclaw":
+        return "openclawWsl";
+      default:
+        return "codexWsl";
+    }
+  }, []);
+
+  const updateWslDirectory = useCallback(
+    (app: AppId, value?: string) => {
+      updateDirectoryState(wslKeyForApp(app), value);
+    },
+    [updateDirectoryState, wslKeyForApp],
+  );
+
+  const browseWslDirectory = useCallback(
+    async (app: AppId) => {
+      const settingsKeyMap: Record<AppId, keyof SettingsFormState | undefined> = {
+        claude: "claudeConfigDirWsl",
+        codex: "codexConfigDirWsl",
+        gemini: "geminiConfigDirWsl",
+        opencode: "opencodeConfigDirWsl",
+        openclaw: "openclawConfigDirWsl",
+      };
+      const settingsKey = settingsKeyMap[app];
+      const currentValue = settingsKey
+        ? (settings?.[settingsKey] as string | undefined)
+        : undefined;
+      try {
+        const picked = await settingsApi.selectConfigDirectory(currentValue);
+        const sanitized = sanitizeDir(picked ?? undefined);
+        if (!sanitized) return;
+        updateWslDirectory(app, sanitized);
+      } catch (error) {
+        console.error(
+          "[useDirectorySettings] Failed to pick WSL directory",
+          error,
+        );
+        toast.error(
+          t("settings.selectFileFailed", {
+            defaultValue: "选择目录失败",
+          }),
+        );
+      }
+    },
+    [settings, t, updateWslDirectory],
+  );
+
+  const resetWslDirectory = useCallback(
+    async (app: AppId) => {
+      updateWslDirectory(app, undefined);
+    },
+    [updateWslDirectory],
+  );
+
   const resetAllDirectories = useCallback(
     (
       claudeDir?: string,
@@ -496,6 +581,9 @@ export function useDirectorySettings({
     resetDirectory,
     resetAppConfigDir,
     resetClaudeWslDirectory,
+    updateWslDirectory,
+    browseWslDirectory,
+    resetWslDirectory,
     resetAllDirectories,
   };
 }

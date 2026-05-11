@@ -226,6 +226,18 @@ pub struct AppSettings {
     pub opencode_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openclaw_config_dir: Option<String>,
+    /// 可选：Codex 在 Windows 之外的 WSL 配置目录
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_config_dir_wsl: Option<String>,
+    /// 可选：Gemini 在 Windows 之外的 WSL 配置目录
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini_config_dir_wsl: Option<String>,
+    /// 可选：OpenCode 在 Windows 之外的 WSL 配置目录
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode_config_dir_wsl: Option<String>,
+    /// 可选：OpenClaw 在 Windows 之外的 WSL 配置目录
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openclaw_config_dir_wsl: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -305,6 +317,10 @@ impl Default for AppSettings {
             gemini_config_dir: None,
             opencode_config_dir: None,
             openclaw_config_dir: None,
+            codex_config_dir_wsl: None,
+            gemini_config_dir_wsl: None,
+            opencode_config_dir_wsl: None,
+            openclaw_config_dir_wsl: None,
             current_provider_claude: None,
             current_provider_codex: None,
             current_provider_gemini: None,
@@ -368,6 +384,34 @@ impl AppSettings {
 
         self.openclaw_config_dir = self
             .openclaw_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.codex_config_dir_wsl = self
+            .codex_config_dir_wsl
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.gemini_config_dir_wsl = self
+            .gemini_config_dir_wsl
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.opencode_config_dir_wsl = self
+            .opencode_config_dir_wsl
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.openclaw_config_dir_wsl = self
+            .openclaw_config_dir_wsl
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -545,6 +589,38 @@ pub fn get_claude_wsl_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .claude_config_dir_wsl
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_codex_wsl_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .codex_config_dir_wsl
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_gemini_wsl_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .gemini_config_dir_wsl
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_opencode_wsl_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .opencode_config_dir_wsl
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn get_openclaw_wsl_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .openclaw_config_dir_wsl
         .as_ref()
         .map(|p| resolve_override_path(p))
 }
