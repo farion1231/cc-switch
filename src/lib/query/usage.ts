@@ -276,6 +276,17 @@ export function useUpdateModelPricing() {
   });
 }
 
+export function useBackfillMissingUsageCosts() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: usageApi.backfillMissingUsageCosts,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: usageKeys.all });
+    },
+  });
+}
+
 export function useDeleteModelPricing() {
   const queryClient = useQueryClient();
 

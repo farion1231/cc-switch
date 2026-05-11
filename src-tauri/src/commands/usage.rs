@@ -1,5 +1,6 @@
 //! 使用统计相关命令
 
+use crate::database::Database;
 use crate::error::AppError;
 use crate::services::usage_stats::*;
 use crate::store::AppState;
@@ -186,6 +187,23 @@ pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Res
     Ok(())
 }
 
+/// 手动回填历史记录中缺失的成本
+#[tauri::command]
+pub fn backfill_missing_usage_costs(
+    state: State<'_, AppState>,
+) -> Result<BackfillUsageCostsResult, AppError> {
+    backfill_missing_usage_costs_for_db(state.db.as_ref())
+}
+
+fn backfill_missing_usage_costs_for_db(
+    db: &Database,
+) -> Result<BackfillUsageCostsResult, AppError> {
+    let backfilled_cost_rows = db.backfill_missing_usage_costs()?;
+    Ok(BackfillUsageCostsResult {
+        backfilled_cost_rows,
+    })
+}
+
 /// 手动触发会话日志同步
 #[tauri::command]
 pub fn sync_session_usage(
@@ -241,4 +259,160 @@ pub struct ModelPricingInfo {
     pub output_cost_per_million: String,
     pub cache_read_cost_per_million: String,
     pub cache_creation_cost_per_million: String,
+}
+
+/// 历史成本回填结果
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackfillUsageCostsResult {
+    pub backfilled_cost_rows: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::{lock_conn, Database};
+    use rusqlite::params;
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_usage_log(
+        db: &Database,
+        request_id: &str,
+        model: &str,
+        input_tokens: i64,
+        output_tokens: i64,
+        cache_read_tokens: i64,
+        cache_creation_tokens: i64,
+        total_cost_usd: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                total_cost_usd, latency_ms, status_code, created_at, data_source
+            ) VALUES (?1, '_codex_session', 'codex', ?2, ?2, ?3, ?4, ?5, ?6,
+                      '0', '0', '0', '0', ?7, 100, 200, 1000, 'codex_session')",
+            params![
+                request_id,
+                model,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                total_cost_usd
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn insert_model_pricing(
+        db: &Database,
+        model_id: &str,
+        input_cost: &str,
+        output_cost: &str,
+        cache_read_cost: &str,
+        cache_creation_cost: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing (
+                model_id, display_name, input_cost_per_million,
+                output_cost_per_million, cache_read_cost_per_million,
+                cache_creation_cost_per_million
+            ) VALUES (?1, ?1, ?2, ?3, ?4, ?5)",
+            params![
+                model_id,
+                input_cost,
+                output_cost,
+                cache_read_cost,
+                cache_creation_cost
+            ],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_missing_usage_costs_for_db_reprices_all_known_zero_cost_models(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        insert_model_pricing(&db, "priced-model-a", "5", "30", "0.5", "5")?;
+        insert_model_pricing(&db, "priced-model-b", "2", "10", "0", "0")?;
+
+        insert_usage_log(
+            &db,
+            "priced-model-a-zero-cost",
+            "priced-model-a",
+            1_000_000,
+            100_000,
+            200_000,
+            50_000,
+            "0",
+        )?;
+        insert_usage_log(
+            &db,
+            "priced-model-a-existing-cost",
+            "priced-model-a",
+            1_000_000,
+            100_000,
+            200_000,
+            50_000,
+            "123.000000",
+        )?;
+        insert_usage_log(
+            &db,
+            "priced-model-b-zero-cost",
+            "priced-model-b",
+            2_000_000,
+            0,
+            0,
+            0,
+            "0",
+        )?;
+        insert_usage_log(
+            &db,
+            "unknown-model-zero-cost",
+            "unknown-new-model",
+            1_000_000,
+            100_000,
+            200_000,
+            50_000,
+            "0",
+        )?;
+
+        let result = backfill_missing_usage_costs_for_db(&db)?;
+
+        assert_eq!(result.backfilled_cost_rows, 2);
+
+        let conn = lock_conn!(db.conn);
+        let priced_model_a_cost: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'priced-model-a-zero-cost'",
+            [],
+            |row| row.get(0),
+        )?;
+        let existing_cost: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'priced-model-a-existing-cost'",
+            [],
+            |row| row.get(0),
+        )?;
+        let priced_model_b_cost: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'priced-model-b-zero-cost'",
+            [],
+            |row| row.get(0),
+        )?;
+        let other_model_cost: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'unknown-model-zero-cost'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(priced_model_a_cost, "7.350000");
+        assert_eq!(priced_model_b_cost, "4.000000");
+        assert_eq!(existing_cost, "123.000000");
+        assert_eq!(other_model_cost, "0");
+
+        Ok(())
+    }
 }

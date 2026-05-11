@@ -1253,6 +1253,10 @@
     "editPricing": "価格設定を編集",
     "pricingAdded": "価格設定が追加されました",
     "pricingUpdated": "価格設定が更新されました",
+    "backfillMissingCosts": "履歴コストを補完",
+    "backfillMissingCostsDone": "{{count}} 件の履歴コストを補完しました",
+    "backfillMissingCostsNone": "補完が必要な履歴コストはありません",
+    "backfillMissingCostsFailed": "履歴コストの補完に失敗しました: {{error}}",
     "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
     "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）"
   },
