@@ -1355,4 +1355,43 @@ mod tests {
         );
         assert!(!is_compatible_direct_provider(&missing_bearer));
     }
+
+    #[test]
+    fn claude_desktop_upstream_model_id_skips_one_m_for_non_claude() {
+        // Non-Claude upstream + supports_1m=true → no [1M] suffix
+        assert_eq!(
+            upstream_model_id("deepseek-v4-pro", true),
+            "deepseek-v4-pro"
+        );
+
+        // Claude upstream + supports_1m=true → append [1M]
+        assert_eq!(
+            upstream_model_id("claude-sonnet-4-6", true),
+            "claude-sonnet-4-6 [1M]"
+        );
+
+        // Claude upstream + supports_1m=false → no suffix
+        assert_eq!(
+            upstream_model_id("claude-sonnet-4-6", false),
+            "claude-sonnet-4-6"
+        );
+
+        // Non-Claude upstream + supports_1m=false → no suffix
+        assert_eq!(
+            upstream_model_id("deepseek-v4-pro", false),
+            "deepseek-v4-pro"
+        );
+
+        // anthropic/ prefix + supports_1m=true → append [1M]
+        assert_eq!(
+            upstream_model_id("anthropic/claude-sonnet-4.6", true),
+            "anthropic/claude-sonnet-4.6 [1M]"
+        );
+
+        // [1m]-suffixed non-Claude upstream → strip suffix, no re-append
+        assert_eq!(
+            upstream_model_id("deepseek-v4-pro [1m]", true),
+            "deepseek-v4-pro"
+        );
+    }
 }
