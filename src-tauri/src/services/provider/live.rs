@@ -2,7 +2,11 @@
 //!
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -11,7 +15,10 @@ use crate::app_config::AppType;
 use crate::codex_config::{
     get_codex_auth_path, get_codex_config_path, write_codex_live_atomic_with_stable_provider,
 };
-use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{
+    delete_file, get_claude_config_dir, get_claude_mcp_path, get_claude_settings_path,
+    read_json_file, write_json_file,
+};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -22,6 +29,114 @@ use super::gemini_auth::{
     detect_gemini_auth_type, ensure_google_oauth_security_flag, GeminiAuthType,
 };
 use super::normalize_claude_models_in_value;
+
+const CLAUDE_OFFICIAL_CACHE_FIELDS: &[&str] = &[
+    "cachedGrowthBookFeatures",
+    "cachedExperimentFeatures",
+    "closedIssuesLastChecked",
+    "claudeAiMcpEverConnected",
+    "clientDataCache",
+    "additionalModelOptionsCache",
+    "additionalModelCostsCache",
+    "penguinModeOrgEnabled",
+];
+
+fn is_third_party_claude_settings(settings: &Value) -> bool {
+    let Some(base_url) = settings
+        .get("env")
+        .and_then(Value::as_object)
+        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+
+    let host = claude_base_url_host(base_url);
+    !host.is_empty() && host != "anthropic.com" && !host.ends_with(".anthropic.com")
+}
+
+fn claude_base_url_host(base_url: &str) -> String {
+    let normalized = base_url.trim().to_ascii_lowercase();
+    let without_scheme = normalized
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(normalized.as_str());
+    let authority = without_scheme.split('/').next().unwrap_or_default();
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    host_port
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .trim_matches('.')
+        .to_string()
+}
+
+fn remove_claude_official_cache_fields(state: &mut Value) -> Vec<&'static str> {
+    let Some(obj) = state.as_object_mut() else {
+        return Vec::new();
+    };
+
+    let mut removed = Vec::new();
+    for field in CLAUDE_OFFICIAL_CACHE_FIELDS {
+        if obj.remove(*field).is_some() {
+            removed.push(*field);
+        }
+    }
+    removed
+}
+
+fn backup_claude_state_file() -> Result<(), AppError> {
+    let state_path = get_claude_mcp_path();
+    let backup_dir = get_claude_config_dir().join("backups");
+    fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let state_file_name = state_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("claude-state.json");
+    let backup_path = backup_dir.join(format!(
+        "{state_file_name}.before-official-cache-clean.{stamp}"
+    ));
+
+    fs::copy(&state_path, &backup_path).map_err(|e| AppError::IoContext {
+        context: format!(
+            "Failed to back up Claude state file ({} -> {})",
+            state_path.display(),
+            backup_path.display()
+        ),
+        source: e,
+    })?;
+    Ok(())
+}
+
+fn clean_claude_official_cache_after_third_party_switch(settings: &Value) -> Result<(), AppError> {
+    if !is_third_party_claude_settings(settings) {
+        return Ok(());
+    }
+
+    let state_path = get_claude_mcp_path();
+    if !state_path.exists() {
+        return Ok(());
+    }
+
+    let mut state: Value = read_json_file(&state_path)?;
+    let removed = remove_claude_official_cache_fields(&mut state);
+    if removed.is_empty() {
+        return Ok(());
+    }
+
+    backup_claude_state_file()?;
+    write_json_file(&state_path, &state)?;
+    log::info!(
+        "Removed official Claude cache fields after switching to third-party Claude provider: {}",
+        removed.join(", ")
+    );
+    Ok(())
+}
 
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     let mut v = settings.clone();
@@ -712,6 +827,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let path = get_claude_settings_path();
             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
             write_json_file(&path, &settings)?;
+            if let Err(err) = clean_claude_official_cache_after_third_party_switch(&settings) {
+                log::warn!(
+                    "Failed to clean official Claude cache fields after provider switch: {err}"
+                );
+            }
         }
         AppType::ClaudeDesktop => {
             return Err(AppError::localized(
@@ -1501,6 +1621,66 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn detects_third_party_claude_base_url() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic"
+            }
+        });
+
+        assert!(is_third_party_claude_settings(&settings));
+    }
+
+    #[test]
+    fn does_not_detect_official_anthropic_base_url() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+            }
+        });
+
+        assert!(!is_third_party_claude_settings(&settings));
+    }
+
+    #[test]
+    fn treats_lookalike_anthropic_domain_as_third_party() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://fakeanthropic.com/anthropic"
+            }
+        });
+
+        assert!(is_third_party_claude_settings(&settings));
+    }
+
+    #[test]
+    fn removes_only_official_claude_cache_fields() {
+        let mut state = json!({
+            "cachedGrowthBookFeatures": {"feature": true},
+            "cachedExperimentFeatures": {"experiment": true},
+            "clientDataCache": {"models": []},
+            "mcpServers": {"keep": {"command": "echo"}},
+            "hasCompletedOnboarding": true
+        });
+
+        let removed = remove_claude_official_cache_fields(&mut state);
+
+        assert_eq!(
+            removed,
+            vec![
+                "cachedGrowthBookFeatures",
+                "cachedExperimentFeatures",
+                "clientDataCache"
+            ]
+        );
+        assert!(state.get("cachedGrowthBookFeatures").is_none());
+        assert!(state.get("cachedExperimentFeatures").is_none());
+        assert!(state.get("clientDataCache").is_none());
+        assert_eq!(state["mcpServers"]["keep"]["command"], "echo");
+        assert_eq!(state["hasCompletedOnboarding"], true);
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
