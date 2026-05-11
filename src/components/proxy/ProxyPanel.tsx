@@ -185,7 +185,7 @@ export function ProxyPanel({
         ...globalConfig,
         listenAddress: addressTrimmed,
         listenPort: port,
-        proxyPassword: proxyPassword || undefined,
+        proxyPassword: proxyPassword?.trim() || undefined,
       });
       toast.success(
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),

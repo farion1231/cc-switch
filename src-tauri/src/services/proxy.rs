@@ -595,7 +595,14 @@ impl ProxyService {
         live_config: &Value,
     ) -> Result<(), String> {
         // 获取实际代理 URL，精确判断 Live 配置中的 base_url 是否指向本代理
-        let proxy_urls = self.build_proxy_urls().await.ok();
+        // fail-closed: 无法确认时拒绝同步，避免误写 provider 凭据
+        let proxy_urls = match self.build_proxy_urls().await {
+            Ok(urls) => Some(urls),
+            Err(e) => {
+                log::warn!("无法获取代理 URL，跳过 Live->Provider 同步: {e}");
+                return Ok(());
+            }
+        };
         match app_type {
             AppType::Claude => {
                 let provider_id =
@@ -1400,23 +1407,30 @@ impl ProxyService {
             return Ok(());
         };
 
+        let base_url_is_local = env
+            .get("ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(Self::is_local_proxy_url)
+            .unwrap_or(false);
+
         for key in [
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_API_KEY",
             "OPENROUTER_API_KEY",
             "OPENAI_API_KEY",
         ] {
-            if env.get(key).and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            let should_remove = match env.get(key).and_then(|v| v.as_str()) {
+                Some(PROXY_TOKEN_PLACEHOLDER) => true,
+                // 密码模式：base_url 指向本地代理且 token 非空，也是接管残留
+                Some(t) if base_url_is_local && !t.is_empty() => true,
+                _ => false,
+            };
+            if should_remove {
                 env.remove(key);
             }
         }
 
-        if env
-            .get("ANTHROPIC_BASE_URL")
-            .and_then(|v| v.as_str())
-            .map(Self::is_local_proxy_url)
-            .unwrap_or(false)
-        {
+        if base_url_is_local {
             env.remove("ANTHROPIC_BASE_URL");
         }
 
@@ -1427,16 +1441,30 @@ impl ProxyService {
     fn cleanup_codex_takeover_placeholders_in_live(&self) -> Result<(), String> {
         let mut config = self.read_codex_live()?;
 
+        let config_is_local = config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .map_or(false, |c| {
+                c.contains("127.0.0.1") || c.contains("localhost") || c.contains("[::1]")
+            });
+
         if let Some(auth) = config.get_mut("auth").and_then(|v| v.as_object_mut()) {
-            if auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
-            {
+            let token = auth.get("OPENAI_API_KEY").and_then(|v| v.as_str());
+            let should_remove = match token {
+                Some(PROXY_TOKEN_PLACEHOLDER) => true,
+                Some(t) if config_is_local && !t.is_empty() => true,
+                _ => false,
+            };
+            if should_remove {
                 auth.remove("OPENAI_API_KEY");
             }
         }
 
-        if let Some(cfg_str) = config.get("config").and_then(|v| v.as_str()) {
-            let updated = Self::remove_local_toml_base_url(cfg_str);
-            config["config"] = json!(updated);
+        if config_is_local {
+            if let Some(cfg_str) = config.get("config").and_then(|v| v.as_str()) {
+                let updated = Self::remove_local_toml_base_url(cfg_str);
+                config["config"] = json!(updated);
+            }
         }
 
         self.write_codex_live(&config)?;
@@ -1455,16 +1483,23 @@ impl ProxyService {
             return Ok(());
         };
 
-        if env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
-            env.remove("GEMINI_API_KEY");
-        }
-
-        if env
+        let base_url_is_local = env
             .get("GOOGLE_GEMINI_BASE_URL")
             .and_then(|v| v.as_str())
             .map(Self::is_local_proxy_url)
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+
+        let token = env.get("GEMINI_API_KEY").and_then(|v| v.as_str());
+        let should_remove_gemini_key = match token {
+            Some(PROXY_TOKEN_PLACEHOLDER) => true,
+            Some(t) if base_url_is_local && !t.is_empty() => true,
+            _ => false,
+        };
+        if should_remove_gemini_key {
+            env.remove("GEMINI_API_KEY");
+        }
+
+        if base_url_is_local {
             env.remove("GOOGLE_GEMINI_BASE_URL");
         }
 

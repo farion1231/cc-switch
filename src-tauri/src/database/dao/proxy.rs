@@ -423,9 +423,18 @@ impl Database {
 
     /// 获取代理配置（兼容旧接口，返回 claude 行的配置）
     pub async fn get_proxy_config(&self) -> Result<ProxyConfig, AppError> {
-        // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
         let result = {
             let conn = lock_conn!(self.conn);
+            // 先查密码，避免在 query_row 闭包中嵌套查询同一个 conn
+            let pwd: Option<String> = match conn.query_row(
+                "SELECT value FROM settings WHERE key = 'proxy_password'",
+                [],
+                |r| r.get::<_, Option<String>>(0),
+            ) {
+                Ok(val) => val,
+                Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                Err(e) => return Err(AppError::Database(e.to_string())),
+            };
             conn.query_row(
                 "SELECT listen_address, listen_port, max_retries,
                         enable_logging,
@@ -433,16 +442,6 @@ impl Database {
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
                 |row| {
-                    let pwd: Option<String> = match conn.query_row(
-                        "SELECT value FROM settings WHERE key = 'proxy_password'",
-                        [],
-                        |r| r.get::<_, Option<String>>(0),
-                    ) {
-                        Ok(val) => val,
-                        Err(rusqlite::Error::QueryReturnedNoRows) => None,
-                        Err(e) => return Err(e),
-                    };
-
                     Ok(ProxyConfig {
                         listen_address: row.get(0)?,
                         listen_port: row.get::<_, i32>(1)? as u16,
