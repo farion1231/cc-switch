@@ -1,4 +1,5 @@
 pub mod balance;
+#[cfg(target_os = "macos")]
 pub mod brew_migration;
 pub mod claude_installer;
 pub mod coding_plan;
