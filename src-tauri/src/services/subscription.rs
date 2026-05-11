@@ -1,7 +1,7 @@
 //! 官方订阅额度查询服务
 //!
 //! 读取 CLI 工具的已有 OAuth 凭据，查询官方订阅额度。
-//! 第一层：仅读取凭据，不实现登录/刷新。
+//! 第一层：读取 CLI 已有凭据，不实现交互式登录。
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,7 +13,7 @@ use crate::config;
 // ── 数据类型 ──────────────────────────────────────────────
 
 /// 凭据状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialStatus {
     Valid,
@@ -438,33 +438,76 @@ struct CodexAuthJson {
 #[derive(Deserialize)]
 struct CodexTokens {
     access_token: Option<String>,
+    refresh_token: Option<String>,
     account_id: Option<String>,
 }
 
-/// (access_token, account_id, status, message)
-type CodexCredentials = (
-    Option<String>,
-    Option<String>,
-    CredentialStatus,
-    Option<String>,
-);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexCredentialSource {
+    File,
+    Provider,
+    #[cfg(target_os = "macos")]
+    Keychain,
+}
+
+#[derive(Debug, Clone)]
+struct CodexCredentials {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    account_id: Option<String>,
+    status: CredentialStatus,
+    message: Option<String>,
+    source: CodexCredentialSource,
+}
+
+impl CodexCredentials {
+    fn new(
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        account_id: Option<String>,
+        status: CredentialStatus,
+        message: Option<String>,
+        source: CodexCredentialSource,
+    ) -> Self {
+        Self {
+            access_token,
+            refresh_token,
+            account_id,
+            status,
+            message,
+            source,
+        }
+    }
+}
 
 /// 读取 Codex OAuth 凭据
 ///
 /// 按优先级尝试以下来源：
-/// 1. macOS Keychain (service: "Codex Auth")
-/// 2. 凭据文件 ~/.codex/auth.json
+/// 1. 凭据文件 ~/.codex/auth.json（Codex CLI 会在刷新后更新这里）
+/// 2. macOS Keychain (service: "Codex Auth")
 ///
 /// 仅 auth_mode == "chatgpt" (OAuth) 时有效，API key 模式不支持用量查询。
 fn read_codex_credentials() -> CodexCredentials {
+    let file_credentials = read_codex_credentials_from_file();
+    if file_credentials.status == CredentialStatus::Valid
+        || (file_credentials.status == CredentialStatus::Expired
+            && file_credentials.refresh_token.is_some())
+    {
+        return file_credentials;
+    }
+
     #[cfg(target_os = "macos")]
     {
         if let Some(result) = read_codex_credentials_from_keychain() {
-            return result;
+            if result.status == CredentialStatus::Valid
+                || result.status == CredentialStatus::Expired
+            {
+                return result;
+            }
         }
     }
 
-    read_codex_credentials_from_file()
+    file_credentials
 }
 
 /// 从 macOS Keychain 读取 Codex 凭据
@@ -485,7 +528,10 @@ fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
         return None;
     }
 
-    Some(parse_codex_credentials_json(json_str))
+    Some(parse_codex_credentials_json(
+        json_str,
+        CodexCredentialSource::Keychain,
+    ))
 }
 
 /// 从文件读取 Codex 凭据
@@ -493,56 +539,74 @@ fn read_codex_credentials_from_file() -> CodexCredentials {
     let auth_path = crate::codex_config::get_codex_auth_path();
 
     if !auth_path.exists() {
-        return (None, None, CredentialStatus::NotFound, None);
+        return CodexCredentials::new(
+            None,
+            None,
+            None,
+            CredentialStatus::NotFound,
+            None,
+            CodexCredentialSource::File,
+        );
     }
 
     let content = match std::fs::read_to_string(&auth_path) {
         Ok(c) => c,
         Err(e) => {
-            return (
+            return CodexCredentials::new(
+                None,
                 None,
                 None,
                 CredentialStatus::ParseError,
                 Some(format!("Failed to read Codex auth file: {e}")),
+                CodexCredentialSource::File,
             );
         }
     };
 
-    parse_codex_credentials_json(&content)
+    parse_codex_credentials_json(&content, CodexCredentialSource::File)
 }
 
 /// 解析 Codex 凭据 JSON（Keychain 和文件共用）
-fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
+fn parse_codex_credentials_json(
+    content: &str,
+    source: CodexCredentialSource,
+) -> CodexCredentials {
     let auth: CodexAuthJson = match serde_json::from_str(content) {
         Ok(a) => a,
         Err(e) => {
-            return (
+            return CodexCredentials::new(
+                None,
                 None,
                 None,
                 CredentialStatus::ParseError,
                 Some(format!("Failed to parse Codex auth JSON: {e}")),
+                source,
             );
         }
     };
 
     // 仅 OAuth 模式有用量数据
     if auth.auth_mode.as_deref() != Some("chatgpt") {
-        return (
+        return CodexCredentials::new(
+            None,
             None,
             None,
             CredentialStatus::NotFound,
             Some("Codex not using OAuth mode".to_string()),
+            source,
         );
     }
 
     let tokens = match auth.tokens {
         Some(t) => t,
         None => {
-            return (
+            return CodexCredentials::new(
+                None,
                 None,
                 None,
                 CredentialStatus::ParseError,
                 Some("No tokens in Codex auth".to_string()),
+                source,
             );
         }
     };
@@ -550,33 +614,57 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
     let access_token = match tokens.access_token {
         Some(t) if !t.is_empty() => t,
         _ => {
-            return (
+            return CodexCredentials::new(
                 None,
                 None,
+                tokens.account_id,
                 CredentialStatus::ParseError,
                 Some("access_token is empty or missing".to_string()),
+                source,
             );
         }
     };
+    let refresh_token = tokens.refresh_token.filter(|t| !t.is_empty());
 
     // 检查 token 是否可能过期（距上次刷新 > 8 天）
     if let Some(ref last_refresh) = auth.last_refresh {
         if is_codex_token_stale(last_refresh) {
-            return (
+            return CodexCredentials::new(
                 Some(access_token),
+                refresh_token,
                 tokens.account_id,
                 CredentialStatus::Expired,
                 Some("Codex token may be stale (>8 days since last refresh)".to_string()),
+                source,
             );
         }
     }
 
-    (
+    CodexCredentials::new(
         Some(access_token),
+        refresh_token,
         tokens.account_id,
         CredentialStatus::Valid,
         None,
+        source,
     )
+}
+
+fn parse_codex_credentials_value(
+    auth: &serde_json::Value,
+    source: CodexCredentialSource,
+) -> CodexCredentials {
+    match serde_json::to_string(auth) {
+        Ok(content) => parse_codex_credentials_json(&content, source),
+        Err(e) => CodexCredentials::new(
+            None,
+            None,
+            None,
+            CredentialStatus::ParseError,
+            Some(format!("Failed to serialize Codex auth JSON: {e}")),
+            source,
+        ),
+    }
 }
 
 /// 判断 Codex token 是否可能过期（Codex CLI 在 >8 天时自动刷新）
@@ -591,6 +679,386 @@ fn is_codex_token_stale(last_refresh: &str) -> bool {
         age_secs > 8 * 24 * 3600
     } else {
         false
+    }
+}
+
+const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const CODEX_OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
+
+#[derive(Deserialize)]
+struct CodexRefreshResponse {
+    access_token: String,
+    refresh_token: Option<String>,
+    #[serde(default)]
+    id_token: Option<String>,
+}
+
+async fn refresh_codex_access_token(credentials: &CodexCredentials) -> Option<String> {
+    // Avoid consuming a rotating refresh token from Keychain unless we can also
+    // persist the replacement. The file path can be updated atomically below.
+    if credentials.source != CodexCredentialSource::File {
+        return None;
+    }
+
+    let refresh_token = credentials.refresh_token.as_deref()?;
+    let refreshed = request_codex_token_refresh(refresh_token).await?;
+
+    if let Err(e) =
+        persist_refreshed_codex_file_token(&refreshed, credentials.account_id.as_deref())
+    {
+        log::warn!("[CodexQuota] failed to persist refreshed Codex auth token: {e}");
+    }
+
+    Some(refreshed.access_token)
+}
+
+async fn request_codex_token_refresh(refresh_token: &str) -> Option<CodexRefreshResponse> {
+    let client = crate::proxy::http_client::get();
+    let response = client
+        .post(CODEX_OAUTH_TOKEN_URL)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("User-Agent", "codex-cli")
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", CODEX_CLIENT_ID),
+            ("scope", "openid profile email"),
+        ])
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        log::warn!("[CodexQuota] refresh token failed: HTTP {status}: {body}");
+        return None;
+    }
+
+    let refreshed: CodexRefreshResponse = match response.json().await {
+        Ok(tokens) => tokens,
+        Err(e) => {
+            log::warn!("[CodexQuota] failed to parse refresh response: {e}");
+            return None;
+        }
+    };
+    if refreshed.access_token.trim().is_empty() {
+        log::warn!("[CodexQuota] refresh response returned an empty access_token");
+        return None;
+    }
+
+    Some(refreshed)
+}
+
+fn persist_refreshed_codex_file_token(
+    refreshed: &CodexRefreshResponse,
+    fallback_account_id: Option<&str>,
+) -> Result<(), String> {
+    let auth_path = crate::codex_config::get_codex_auth_path();
+    let content = std::fs::read_to_string(&auth_path)
+        .map_err(|e| format!("Failed to read Codex auth file: {e}"))?;
+    let mut auth: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse Codex auth JSON: {e}"))?;
+
+    let auth_obj = auth
+        .as_object_mut()
+        .ok_or_else(|| "Codex auth JSON root must be an object".to_string())?;
+    apply_refreshed_codex_auth_token(auth_obj, refreshed, fallback_account_id)?;
+
+    config::write_json_file(&auth_path, &auth).map_err(|e| e.to_string())
+}
+
+fn apply_refreshed_codex_auth_token(
+    auth_obj: &mut serde_json::Map<String, serde_json::Value>,
+    refreshed: &CodexRefreshResponse,
+    fallback_account_id: Option<&str>,
+) -> Result<(), String> {
+    let tokens = auth_obj
+        .entry("tokens")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "Codex auth tokens must be an object".to_string())?;
+
+    tokens.insert(
+        "access_token".to_string(),
+        serde_json::Value::String(refreshed.access_token.clone()),
+    );
+    if let Some(refresh_token) = refreshed.refresh_token.as_ref() {
+        tokens.insert(
+            "refresh_token".to_string(),
+            serde_json::Value::String(refresh_token.clone()),
+        );
+    }
+    if let Some(id_token) = refreshed.id_token.as_ref() {
+        tokens.insert(
+            "id_token".to_string(),
+            serde_json::Value::String(id_token.clone()),
+        );
+    }
+    if !tokens.contains_key("account_id") {
+        if let Some(account_id) = fallback_account_id {
+            tokens.insert(
+                "account_id".to_string(),
+                serde_json::Value::String(account_id.to_string()),
+            );
+        }
+    }
+    auth_obj.insert(
+        "last_refresh".to_string(),
+        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+    );
+
+    Ok(())
+}
+
+async fn query_codex_quota_with_account_fallback(
+    token: &str,
+    account_id: Option<&str>,
+    tool_label: &str,
+    expired_message: &str,
+) -> SubscriptionQuota {
+    let result = query_codex_quota(token, account_id, tool_label, expired_message).await;
+    if result.credential_status == CredentialStatus::Expired && account_id.is_some() {
+        let fallback = query_codex_quota(token, None, tool_label, expired_message).await;
+        if fallback.success {
+            return fallback;
+        }
+    }
+    result
+}
+
+async fn query_codex_quota_with_refresh(
+    credentials: &CodexCredentials,
+    tool_label: &str,
+    expired_message: &str,
+) -> SubscriptionQuota {
+    if credentials.status == CredentialStatus::Expired {
+        if let Some(token) = refresh_codex_access_token(credentials).await {
+            let result = query_codex_quota_with_account_fallback(
+                &token,
+                credentials.account_id.as_deref(),
+                tool_label,
+                expired_message,
+            )
+            .await;
+            if result.success {
+                return result;
+            }
+        }
+    }
+
+    let Some(token) = credentials.access_token.as_deref() else {
+        return SubscriptionQuota::error(
+            tool_label,
+            CredentialStatus::ParseError,
+            "access_token is empty or missing".to_string(),
+        );
+    };
+
+    let result = query_codex_quota_with_account_fallback(
+        token,
+        credentials.account_id.as_deref(),
+        tool_label,
+        expired_message,
+    )
+    .await;
+
+    if result.credential_status == CredentialStatus::Expired {
+        if let Some(token) = refresh_codex_access_token(credentials).await {
+            return query_codex_quota_with_account_fallback(
+                &token,
+                credentials.account_id.as_deref(),
+                tool_label,
+                expired_message,
+            )
+            .await;
+        }
+    }
+
+    result
+}
+
+async fn query_refreshed_codex_provider_quota(
+    settings_config: &mut serde_json::Value,
+    credentials: &CodexCredentials,
+    tool_label: &str,
+    expired_message: &str,
+) -> Option<SubscriptionQuota> {
+    let refresh_token = credentials.refresh_token.as_deref()?;
+    let refreshed = request_codex_token_refresh(refresh_token).await?;
+
+    let auth = settings_config.get_mut("auth")?.as_object_mut()?;
+    if let Err(e) =
+        apply_refreshed_codex_auth_token(auth, &refreshed, credentials.account_id.as_deref())
+    {
+        log::warn!("[CodexQuota] failed to apply refreshed provider auth token: {e}");
+    }
+
+    Some(
+        query_codex_quota_with_account_fallback(
+            &refreshed.access_token,
+            credentials.account_id.as_deref(),
+            tool_label,
+            expired_message,
+        )
+        .await,
+    )
+}
+
+async fn query_codex_provider_quota_with_refresh(
+    settings_config: &mut serde_json::Value,
+    credentials: &CodexCredentials,
+    tool_label: &str,
+    expired_message: &str,
+) -> SubscriptionQuota {
+    if credentials.status == CredentialStatus::Expired {
+        if let Some(result) = query_refreshed_codex_provider_quota(
+            settings_config,
+            credentials,
+            tool_label,
+            expired_message,
+        )
+        .await
+        {
+            if result.success {
+                return result;
+            }
+        }
+    }
+
+    let Some(token) = credentials.access_token.as_deref() else {
+        return SubscriptionQuota::error(
+            tool_label,
+            CredentialStatus::ParseError,
+            "access_token is empty or missing".to_string(),
+        );
+    };
+
+    let result = query_codex_quota_with_account_fallback(
+        token,
+        credentials.account_id.as_deref(),
+        tool_label,
+        expired_message,
+    )
+    .await;
+
+    if result.credential_status == CredentialStatus::Expired {
+        if let Some(refreshed_result) = query_refreshed_codex_provider_quota(
+            settings_config,
+            credentials,
+            tool_label,
+            expired_message,
+        )
+        .await
+        {
+            return refreshed_result;
+        }
+    }
+
+    result
+}
+
+pub async fn get_codex_provider_subscription_quota(
+    settings_config: &mut serde_json::Value,
+) -> Result<SubscriptionQuota, String> {
+    let Some(auth) = settings_config.get("auth") else {
+        return Ok(SubscriptionQuota::not_found("codex"));
+    };
+    let credentials = parse_codex_credentials_value(auth, CodexCredentialSource::Provider);
+
+    match credentials.status {
+        CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found("codex")),
+        CredentialStatus::ParseError => Ok(SubscriptionQuota::error(
+            "codex",
+            CredentialStatus::ParseError,
+            credentials
+                .message
+                .unwrap_or_else(|| "Failed to parse credentials".to_string()),
+        )),
+        CredentialStatus::Expired => {
+            let result = query_codex_provider_quota_with_refresh(
+                settings_config,
+                &credentials,
+                "codex",
+                "Authentication failed. Please re-login with Codex CLI.",
+            )
+            .await;
+            if result.success || result.credential_status != CredentialStatus::Expired {
+                Ok(result)
+            } else {
+                Ok(SubscriptionQuota::error(
+                    "codex",
+                    CredentialStatus::Expired,
+                    credentials
+                        .message
+                        .unwrap_or_else(|| "Codex OAuth token may be stale".to_string()),
+                ))
+            }
+        }
+        CredentialStatus::Valid => {
+            Ok(query_codex_provider_quota_with_refresh(
+                settings_config,
+                &credentials,
+                "codex",
+                "Authentication failed. Please re-login with Codex CLI.",
+            )
+            .await)
+        }
+    }
+}
+
+#[cfg(test)]
+mod codex_subscription_tests {
+    use super::*;
+
+    #[test]
+    fn parse_codex_credentials_keeps_refresh_token() {
+        let credentials = parse_codex_credentials_json(
+            r#"{
+              "auth_mode": "chatgpt",
+              "tokens": {
+                "access_token": "access-1",
+                "refresh_token": "refresh-1",
+                "account_id": "account-1"
+              }
+            }"#,
+            CodexCredentialSource::File,
+        );
+
+        assert_eq!(credentials.status, CredentialStatus::Valid);
+        assert_eq!(credentials.access_token.as_deref(), Some("access-1"));
+        assert_eq!(credentials.refresh_token.as_deref(), Some("refresh-1"));
+        assert_eq!(credentials.account_id.as_deref(), Some("account-1"));
+        assert_eq!(credentials.source, CodexCredentialSource::File);
+    }
+
+    #[test]
+    fn parse_stale_codex_credentials_can_still_refresh() {
+        let credentials = parse_codex_credentials_json(
+            r#"{
+              "auth_mode": "chatgpt",
+              "last_refresh": "2000-01-01T00:00:00Z",
+              "tokens": {
+                "access_token": "access-1",
+                "refresh_token": "refresh-1",
+                "account_id": "account-1"
+              }
+            }"#,
+            CodexCredentialSource::File,
+        );
+
+        assert_eq!(credentials.status, CredentialStatus::Expired);
+        assert_eq!(credentials.access_token.as_deref(), Some("access-1"));
+        assert_eq!(credentials.refresh_token.as_deref(), Some("refresh-1"));
+    }
+
+    #[test]
+    fn codex_usage_percent_uses_api_value_directly() {
+        assert_eq!(clamp_percent(51.0), 51.0);
+        assert_eq!(clamp_percent(9.0), 9.0);
+        assert_eq!(clamp_percent(150.0), 100.0);
+        assert_eq!(clamp_percent(-20.0), 0.0);
     }
 }
 
@@ -612,6 +1080,10 @@ struct CodexRateLimit {
 #[derive(Deserialize)]
 struct CodexUsageResponse {
     rate_limit: Option<CodexRateLimit>,
+}
+
+fn clamp_percent(percent: f64) -> f64 {
+    percent.clamp(0.0, 100.0)
 }
 
 /// 根据窗口秒数映射到 tier 名称（与 Claude 的命名兼容以复用前端 i18n）
@@ -712,7 +1184,7 @@ pub(crate) async fn query_codex_quota(
                         .limit_window_seconds
                         .map(window_seconds_to_tier_name)
                         .unwrap_or_else(|| "unknown".to_string()),
-                    utilization: used,
+                    utilization: clamp_percent(used),
                     resets_at: window.reset_at.and_then(unix_ts_to_iso),
                 });
             }
@@ -1232,40 +1704,39 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
             }
         }
         "codex" => {
-            let (token, account_id, status, message) = read_codex_credentials();
+            let credentials = read_codex_credentials();
 
-            match status {
+            match credentials.status {
                 CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found("codex")),
                 CredentialStatus::ParseError => Ok(SubscriptionQuota::error(
                     "codex",
                     CredentialStatus::ParseError,
-                    message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
+                    credentials
+                        .message
+                        .unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
                 CredentialStatus::Expired => {
-                    // 即使可能过期也尝试调用 API
-                    if let Some(token) = token {
-                        let result = query_codex_quota(
-                            &token,
-                            account_id.as_deref(),
-                            "codex",
-                            "Authentication failed. Please re-login with Codex CLI.",
-                        )
-                        .await;
-                        if result.success {
-                            return Ok(result);
-                        }
-                    }
-                    Ok(SubscriptionQuota::error(
+                    let result = query_codex_quota_with_refresh(
+                        &credentials,
                         "codex",
-                        CredentialStatus::Expired,
-                        message.unwrap_or_else(|| "Codex OAuth token may be stale".to_string()),
-                    ))
+                        "Authentication failed. Please re-login with Codex CLI.",
+                    )
+                    .await;
+                    if result.success || result.credential_status != CredentialStatus::Expired {
+                        Ok(result)
+                    } else {
+                        Ok(SubscriptionQuota::error(
+                            "codex",
+                            CredentialStatus::Expired,
+                            credentials
+                                .message
+                                .unwrap_or_else(|| "Codex OAuth token may be stale".to_string()),
+                        ))
+                    }
                 }
                 CredentialStatus::Valid => {
-                    let token = token.expect("token must be Some when status is Valid");
-                    Ok(query_codex_quota(
-                        &token,
-                        account_id.as_deref(),
+                    Ok(query_codex_quota_with_refresh(
+                        &credentials,
                         "codex",
                         "Authentication failed. Please re-login with Codex CLI.",
                     )
