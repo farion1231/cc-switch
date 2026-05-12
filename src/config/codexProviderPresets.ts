@@ -79,6 +79,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     iconColor: "#00A67E",
   },
   {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "shengsuanyun",
+      "https://router.shengsuanyun.com/api/v1",
+      "gpt-5.4",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
@@ -301,6 +317,25 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
+    name: "Compshare Coding Plan",
+    nameKey: "providerForm.presets.ucloudCoding",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "compshare_coding",
+      "https://cp.compshare.cn/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://cp.compshare.cn/v1"],
+    category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "ucloud", // 促销信息 i18n key（复用）
+    icon: "ucloud",
+    iconColor: "#000000",
+  },
+  {
     name: "Micu",
     websiteUrl: "https://www.openclaudecode.cn",
     apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
@@ -315,23 +350,6 @@ requires_openai_auth = true`,
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "micu", // 促销信息 i18n key
     icon: "micu",
-    iconColor: "#000000",
-  },
-  {
-    name: "X-Code API",
-    websiteUrl: "https://x-code.cc",
-    apiKeyUrl: "https://x-code.cc",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "x-code",
-      "https://x-code.cc/v1",
-      "gpt-5.4",
-    ),
-    endpointCandidates: ["https://x-code.cc/v1"],
-    category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "x-code", // 促销信息 i18n key
-    icon: "x-code",
     iconColor: "#000000",
   },
   {
@@ -352,6 +370,99 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
+    name: "LionCCAPI",
+    websiteUrl: "https://vibecodingapi.ai",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "lionccapi",
+      "https://vibecodingapi.ai/v1",
+      "gpt-5.4",
+    ),
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lionccapi",
+    icon: "lioncc",
+  },
+  {
+    name: "DDSHub",
+    websiteUrl: "https://www.ddshub.cc",
+    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ddshub",
+      "https://www.ddshub.cc",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://www.ddshub.cc"],
+    isPartner: true,
+    partnerPromotionKey: "ddshub",
+    icon: "dds",
+    iconColor: "#000000",
+  },
+  {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    auth: {
+      OPENAI_API_KEY: "",
+    },
+    config: `model_provider = "e-flowcode"
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+disable_response_storage = true
+personality = "pragmatic"
+
+[model_providers.e-flowcode]
+name = "e-flowcode"
+base_url = "https://e-flowcode.cc/v1"
+wire_api = "responses"
+requires_openai_auth = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 9000000`,
+    category: "third_party",
+    endpointCandidates: ["https://e-flowcode.cc/v1"],
+    icon: "eflowcode",
+    iconColor: "#000000",
+  },
+  {
+    name: "LemonData",
+    websiteUrl: "https://lemondata.cc",
+    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "lemondata",
+      "https://api.lemondata.cc/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://api.lemondata.cc/v1"],
+    isPartner: true,
+    partnerPromotionKey: "lemondata",
+    icon: "lemondata",
+  },
+  {
+    name: "PIPELLM",
+    websiteUrl: "https://code.pipellm.ai",
+    apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
+    auth: {
+      OPENAI_API_KEY: "",
+    },
+    config: `model_provider = "custom"
+model = "gpt-5.4"
+model_reasoning_effort = "medium"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://cc-api.pipellm.ai/v1"`,
+    category: "aggregator",
+    endpointCandidates: ["https://cc-api.pipellm.ai/v1"],
+    icon: "pipellm",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
@@ -364,5 +475,18 @@ requires_openai_auth = true`,
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
+  },
+  {
+    name: "TheRouter",
+    websiteUrl: "https://therouter.ai",
+    apiKeyUrl: "https://dashboard.therouter.ai",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "therouter",
+      "https://api.therouter.ai/v1",
+      "openai/gpt-5.3-codex",
+    ),
+    endpointCandidates: ["https://api.therouter.ai/v1"],
+    category: "aggregator",
   },
 ];

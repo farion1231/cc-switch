@@ -202,5 +202,6 @@ pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, S
     total += McpService::import_from_codex(&state).unwrap_or(0);
     total += McpService::import_from_gemini(&state).unwrap_or(0);
     total += McpService::import_from_opencode(&state).unwrap_or(0);
+    total += McpService::import_from_hermes(&state).unwrap_or(0);
     Ok(total)
 }

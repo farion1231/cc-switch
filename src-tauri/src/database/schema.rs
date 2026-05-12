@@ -65,7 +65,8 @@ impl Database {
             id TEXT PRIMARY KEY, name TEXT NOT NULL, server_config TEXT NOT NULL,
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
-            enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -93,7 +94,10 @@ impl Database {
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            installed_at INTEGER NOT NULL DEFAULT 0
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT,
+            updated_at INTEGER NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -187,7 +191,8 @@ impl Database {
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
             duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
-            cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL
+            cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL,
+            data_source TEXT NOT NULL DEFAULT 'proxy'
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON proxy_request_logs(provider_id, app_type)", [])
@@ -209,6 +214,7 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::create_request_logs_usage_indexes_if_supported(conn)?;
 
         // 11. Model Pricing 表
         conn.execute(
@@ -264,6 +270,18 @@ impl Database {
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (date, app_type, provider_id, model)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 18. Session Log Sync 表 (会话日志同步状态)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL
             )",
             [],
         )
@@ -392,6 +410,26 @@ impl Database {
                         log::info!("迁移数据库从 v5 到 v6（使用量聚合表 + Copilot 模板类型统一）");
                         Self::migrate_v5_to_v6(conn)?;
                         Self::set_user_version(conn, 6)?;
+                    }
+                    6 => {
+                        log::info!("迁移数据库从 v6 到 v7（Skills 更新检测支持）");
+                        Self::migrate_v6_to_v7(conn)?;
+                        Self::set_user_version(conn, 7)?;
+                    }
+                    7 => {
+                        log::info!("迁移数据库从 v7 到 v8（会话日志使用追踪 + 修正模型定价）");
+                        Self::migrate_v7_to_v8(conn)?;
+                        Self::set_user_version(conn, 8)?;
+                    }
+                    8 => {
+                        log::info!("迁移数据库从 v8 到 v9（全面补充模型定价）");
+                        Self::migrate_v8_to_v9(conn)?;
+                        Self::set_user_version(conn, 9)?;
+                    }
+                    9 => {
+                        log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
+                        Self::migrate_v9_to_v10(conn)?;
+                        Self::set_user_version(conn, 10)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1045,11 +1083,137 @@ impl Database {
         Ok(())
     }
 
+    /// v6 -> v7: Skills 更新检测支持（content_hash + updated_at）
+    fn migrate_v6_to_v7(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "content_hash", "TEXT")?;
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "updated_at",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        log::info!("v6 -> v7 迁移完成：已添加 content_hash 和 updated_at 列");
+        Ok(())
+    }
+
+    /// v7 -> v8: 会话日志使用追踪（无代理模式统计支持）
+    fn migrate_v7_to_v8(conn: &Connection) -> Result<(), AppError> {
+        // 1. 为 proxy_request_logs 添加 data_source 列，区分数据来源
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "data_source",
+                "TEXT NOT NULL DEFAULT 'proxy'",
+            )?;
+            Self::create_request_logs_usage_indexes_if_supported(conn)?;
+        }
+
+        // 2. 创建会话日志同步状态表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 session_log_sync 表失败: {e}")))?;
+
+        // 3. 修正国产模型定价：之前误将 CNY 值存为 USD 字段，统一转换为 USD
+        if Self::table_exists(conn, "model_pricing")? {
+            let pricing_fixes: &[(&str, &str, &str, &str, &str)] = &[
+                ("deepseek-v3.2", "0.28", "0.42", "0.028", "0"),
+                ("deepseek-v3.1", "0.55", "1.67", "0.055", "0"),
+                ("deepseek-v3", "0.28", "1.11", "0.028", "0"),
+                ("doubao-seed-code", "0.17", "1.11", "0.02", "0"),
+                ("kimi-k2-thinking", "0.55", "2.20", "0.10", "0"),
+                ("kimi-k2-0905", "0.55", "2.20", "0.10", "0"),
+                ("kimi-k2-turbo", "1.11", "8.06", "0.14", "0"),
+                ("minimax-m2.1", "0.27", "0.95", "0.03", "0"),
+                ("minimax-m2.1-lightning", "0.27", "2.33", "0.03", "0"),
+                ("minimax-m2", "0.27", "0.95", "0.03", "0"),
+                ("glm-4.7", "0.39", "1.75", "0.04", "0"),
+                ("glm-4.6", "0.28", "1.11", "0.03", "0"),
+                ("mimo-v2-flash", "0.09", "0.29", "0.009", "0"),
+            ];
+            for (model_id, input, output, cache_read, cache_creation) in pricing_fixes {
+                conn.execute(
+                    "UPDATE model_pricing SET
+                        input_cost_per_million = ?2,
+                        output_cost_per_million = ?3,
+                        cache_read_cost_per_million = ?4,
+                        cache_creation_cost_per_million = ?5
+                     WHERE model_id = ?1",
+                    rusqlite::params![model_id, input, output, cache_read, cache_creation],
+                )
+                .map_err(|e| AppError::Database(format!("更新模型 {model_id} 定价失败: {e}")))?;
+            }
+        }
+
+        log::info!("v7 -> v8 迁移完成：data_source 列、session_log_sync 表、修正 13 个模型定价");
+        Ok(())
+    }
+
+    /// v8 → v9: 全面补充模型定价（清空 + 重新 seed）
+    fn migrate_v8_to_v9(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_pricing (
+                model_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+                input_cost_per_million TEXT NOT NULL, output_cost_per_million TEXT NOT NULL,
+                cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
+                cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0'
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 model_pricing 表失败: {e}")))?;
+        conn.execute("DELETE FROM model_pricing", [])
+            .map_err(|e| AppError::Database(format!("清空模型定价失败: {e}")))?;
+        Self::seed_model_pricing(conn)?;
+        log::info!("v8 -> v9 迁移完成：已刷新全部模型定价数据");
+        Ok(())
+    }
+
+    /// v9 -> v10 迁移：添加 Hermes Agent 支持
+    fn migrate_v9_to_v10(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_hermes",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        // skills table may not exist in databases migrated from very old versions
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_hermes",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_data = [
+            // Claude 4.7 系列
+            (
+                "claude-opus-4-7",
+                "Claude Opus 4.7",
+                "5",
+                "25",
+                "0.50",
+                "6.25",
+            ),
             // Claude 4.6 系列
             (
                 "claude-opus-4-6-20260206",
@@ -1134,6 +1298,17 @@ impl Database {
                 "0.30",
                 "3.75",
             ),
+            // GPT-5.5 系列
+            ("gpt-5.5", "GPT-5.5", "5", "30", "0.50", "0"),
+            ("gpt-5.5-low", "GPT-5.5", "5", "30", "0.50", "0"),
+            ("gpt-5.5-medium", "GPT-5.5", "5", "30", "0.50", "0"),
+            ("gpt-5.5-high", "GPT-5.5", "5", "30", "0.50", "0"),
+            ("gpt-5.5-xhigh", "GPT-5.5", "5", "30", "0.50", "0"),
+            ("gpt-5.5-minimal", "GPT-5.5", "5", "30", "0.50", "0"),
+            // GPT-5.4 系列
+            ("gpt-5.4", "GPT-5.4", "2.50", "15", "0.25", "0"),
+            ("gpt-5.4-mini", "GPT-5.4 Mini", "0.75", "4.50", "0.075", "0"),
+            ("gpt-5.4-nano", "GPT-5.4 Nano", "0.20", "1.25", "0.02", "0"),
             // GPT-5.2 系列
             ("gpt-5.2", "GPT-5.2", "1.75", "14", "0.175", "0"),
             ("gpt-5.2-low", "GPT-5.2", "1.75", "14", "0.175", "0"),
@@ -1294,6 +1469,30 @@ impl Database {
                 "0.125",
                 "0",
             ),
+            // OpenAI Reasoning 系列
+            ("o3", "OpenAI o3", "2", "8", "0.50", "0"),
+            ("o4-mini", "OpenAI o4-mini", "1.10", "4.40", "0.275", "0"),
+            // GPT-4.1 系列
+            ("gpt-4.1", "GPT-4.1", "2", "8", "0.50", "0"),
+            ("gpt-4.1-mini", "GPT-4.1 Mini", "0.40", "1.60", "0.10", "0"),
+            ("gpt-4.1-nano", "GPT-4.1 Nano", "0.10", "0.40", "0.025", "0"),
+            // Gemini 3.1 系列
+            (
+                "gemini-3.1-pro-preview",
+                "Gemini 3.1 Pro Preview",
+                "2",
+                "12",
+                "0.20",
+                "0",
+            ),
+            (
+                "gemini-3.1-flash-lite-preview",
+                "Gemini 3.1 Flash Lite Preview",
+                "0.25",
+                "1.50",
+                "0.025",
+                "0",
+            ),
             // Gemini 3 系列
             (
                 "gemini-3-pro-preview",
@@ -1328,6 +1527,23 @@ impl Database {
                 "0.03",
                 "0",
             ),
+            (
+                "gemini-2.5-flash-lite",
+                "Gemini 2.5 Flash Lite",
+                "0.10",
+                "0.40",
+                "0.01",
+                "0",
+            ),
+            // Gemini 2.0 系列
+            (
+                "gemini-2.0-flash",
+                "Gemini 2.0 Flash",
+                "0.10",
+                "0.40",
+                "0.025",
+                "0",
+            ),
             // StepFun 系列
             (
                 "step-3.5-flash",
@@ -1337,85 +1553,335 @@ impl Database {
                 "0.02",
                 "0",
             ),
-            // ====== 国产模型 (CNY/1M tokens) ======
+            // ====== 国产模型 (USD/1M tokens) ======
             // Doubao (字节跳动)
             (
                 "doubao-seed-code",
                 "Doubao Seed Code",
-                "1.20",
-                "8.00",
-                "0.24",
+                "0.17",
+                "1.11",
+                "0.02",
+                "0",
+            ),
+            (
+                "doubao-seed-2-0-pro",
+                "Doubao Seed 2.0 Pro",
+                "0.47",
+                "2.37",
+                "0",
+                "0",
+            ),
+            (
+                "doubao-seed-2-0-code",
+                "Doubao Seed 2.0 Code",
+                "0.47",
+                "2.37",
+                "0",
+                "0",
+            ),
+            (
+                "doubao-seed-2-0-lite",
+                "Doubao Seed 2.0 Lite",
+                "0.25",
+                "2",
+                "0",
+                "0",
+            ),
+            (
+                "doubao-seed-2-0-mini",
+                "Doubao Seed 2.0 Mini",
+                "0.03",
+                "0.31",
+                "0",
                 "0",
             ),
             // DeepSeek 系列
             (
                 "deepseek-v3.2",
                 "DeepSeek V3.2",
-                "2.00",
-                "3.00",
-                "0.40",
+                "0.28",
+                "0.42",
+                "0.028",
                 "0",
             ),
             (
                 "deepseek-v3.1",
                 "DeepSeek V3.1",
-                "4.00",
-                "12.00",
-                "0.80",
+                "0.55",
+                "1.67",
+                "0.055",
                 "0",
             ),
-            ("deepseek-v3", "DeepSeek V3", "2.00", "8.00", "0.40", "0"),
+            ("deepseek-v3", "DeepSeek V3", "0.28", "1.11", "0.028", "0"),
+            (
+                "deepseek-chat",
+                "DeepSeek Chat",
+                "0.27",
+                "1.10",
+                "0.07",
+                "0",
+            ),
+            (
+                "deepseek-reasoner",
+                "DeepSeek Reasoner",
+                "0.55",
+                "2.19",
+                "0.14",
+                "0",
+            ),
+            // DeepSeek V4 系列（官方 CNY 按 1 USD ≈ 7.14 折算）
+            (
+                "deepseek-v4-flash",
+                "DeepSeek V4 Flash",
+                "0.14",
+                "0.28",
+                "0.028",
+                "0",
+            ),
+            (
+                "deepseek-v4-pro",
+                "DeepSeek V4 Pro",
+                "1.68",
+                "3.36",
+                "0.14",
+                "0",
+            ),
             // Kimi (月之暗面)
             (
                 "kimi-k2-thinking",
                 "Kimi K2 Thinking",
-                "4.00",
-                "16.00",
-                "1.00",
+                "0.55",
+                "2.20",
+                "0.10",
                 "0",
             ),
-            ("kimi-k2-0905", "Kimi K2", "4.00", "16.00", "1.00", "0"),
+            ("kimi-k2-0905", "Kimi K2", "0.55", "2.20", "0.10", "0"),
             (
                 "kimi-k2-turbo",
                 "Kimi K2 Turbo",
-                "8.00",
-                "58.00",
-                "1.00",
+                "1.11",
+                "8.06",
+                "0.14",
                 "0",
             ),
+            ("kimi-k2.5", "Kimi K2.5", "0.60", "2.50", "0.10", "0"),
+            ("kimi-k2.6", "Kimi K2.6", "0.95", "4.00", "0.16", "0"),
             // MiniMax 系列
-            ("minimax-m2.1", "MiniMax M2.1", "2.10", "8.40", "0.21", "0"),
+            ("minimax-m2.1", "MiniMax M2.1", "0.27", "0.95", "0.03", "0"),
             (
                 "minimax-m2.1-lightning",
                 "MiniMax M2.1 Lightning",
-                "2.10",
-                "16.80",
-                "0.21",
+                "0.27",
+                "2.33",
+                "0.03",
                 "0",
             ),
-            ("minimax-m2", "MiniMax M2", "2.10", "8.40", "0.21", "0"),
+            ("minimax-m2", "MiniMax M2", "0.27", "0.95", "0.03", "0"),
+            ("minimax-m2.5", "MiniMax M2.5", "0.12", "0.95", "0.03", "0"),
+            (
+                "minimax-m2.5-lightning",
+                "MiniMax M2.5 Lightning",
+                "0.30",
+                "2.40",
+                "0.03",
+                "0",
+            ),
+            (
+                "minimax-m2.7",
+                "MiniMax M2.7",
+                "0.30",
+                "1.20",
+                "0.06",
+                "0.375",
+            ),
+            (
+                "minimax-m2.7-highspeed",
+                "MiniMax M2.7 Highspeed",
+                "0.60",
+                "2.40",
+                "0.06",
+                "0.375",
+            ),
             // GLM (智谱)
-            ("glm-4.7", "GLM-4.7", "2.00", "8.00", "0.40", "0"),
-            ("glm-4.6", "GLM-4.6", "2.00", "8.00", "0.40", "0"),
-            // Mimo (小米)
-            ("mimo-v2-flash", "Mimo V2 Flash", "0", "0", "0", "0"),
+            ("glm-4.7", "GLM-4.7", "0.39", "1.75", "0.04", "0"),
+            ("glm-4.6", "GLM-4.6", "0.28", "1.11", "0.03", "0"),
+            ("glm-5", "GLM-5", "0.72", "2.30", "0", "0"),
+            ("glm-5.1", "GLM-5.1", "0.95", "3.15", "0", "0"),
+            // MiMo (小米)
+            (
+                "mimo-v2-flash",
+                "MiMo V2 Flash",
+                "0.09",
+                "0.29",
+                "0.009",
+                "0",
+            ),
+            ("mimo-v2-pro", "MiMo V2 Pro", "1", "3", "0", "0"),
+            // Qwen 系列 (阿里巴巴)
+            ("qwen3.6-plus", "Qwen3.6 Plus", "0.325", "1.95", "0", "0"),
+            ("qwen3.5-plus", "Qwen3.5 Plus", "0.26", "1.56", "0", "0"),
+            ("qwen3-max", "Qwen3 Max", "0.78", "3.90", "0", "0"),
+            (
+                "qwen3-235b-a22b",
+                "Qwen3 235B-A22B",
+                "0.70",
+                "8.40",
+                "0",
+                "0",
+            ),
+            (
+                "qwen3-coder-plus",
+                "Qwen3 Coder Plus",
+                "0.65",
+                "3.25",
+                "0",
+                "0",
+            ),
+            (
+                "qwen3-coder-flash",
+                "Qwen3 Coder Flash",
+                "0.195",
+                "0.975",
+                "0",
+                "0",
+            ),
+            (
+                "qwen3-coder-next",
+                "Qwen3 Coder Next",
+                "0.12",
+                "0.75",
+                "0",
+                "0",
+            ),
+            ("qwq-plus", "QwQ Plus", "0.80", "2.40", "0", "0"),
+            ("qwq-32b", "QwQ 32B", "0.20", "0.60", "0", "0"),
+            ("qwen3-32b", "Qwen3 32B", "0.16", "0.64", "0", "0"),
+            // Grok 系列 (xAI)
+            (
+                "grok-4.20-0309-reasoning",
+                "Grok 4.20 Reasoning",
+                "2",
+                "6",
+                "0.20",
+                "0",
+            ),
+            (
+                "grok-4.20-0309-non-reasoning",
+                "Grok 4.20",
+                "2",
+                "6",
+                "0.20",
+                "0",
+            ),
+            (
+                "grok-4-1-fast-reasoning",
+                "Grok 4.1 Fast Reasoning",
+                "0.20",
+                "0.50",
+                "0.05",
+                "0",
+            ),
+            (
+                "grok-4-1-fast-non-reasoning",
+                "Grok 4.1 Fast",
+                "0.20",
+                "0.50",
+                "0.05",
+                "0",
+            ),
+            ("grok-4", "Grok 4", "3", "15", "0.75", "0"),
+            (
+                "grok-code-fast-1",
+                "Grok Code Fast",
+                "0.20",
+                "1.50",
+                "0.02",
+                "0",
+            ),
+            ("grok-3", "Grok 3", "3", "15", "0.75", "0"),
+            ("grok-3-mini", "Grok 3 Mini", "0.25", "0.50", "0.075", "0"),
+            // Mistral 系列
+            ("codestral-2508", "Codestral", "0.30", "0.90", "0.03", "0"),
+            (
+                "devstral-small-1.1",
+                "Devstral Small 1.1",
+                "0.07",
+                "0.28",
+                "0.01",
+                "0",
+            ),
+            ("devstral-2-2512", "Devstral 2", "0.40", "0.90", "0.04", "0"),
+            (
+                "devstral-medium",
+                "Devstral Medium",
+                "0.40",
+                "2",
+                "0.04",
+                "0",
+            ),
+            (
+                "mistral-large-3-2512",
+                "Mistral Large 3",
+                "0.50",
+                "1.50",
+                "0.05",
+                "0",
+            ),
+            (
+                "mistral-medium-3.1",
+                "Mistral Medium 3.1",
+                "0.40",
+                "2",
+                "0.04",
+                "0",
+            ),
+            (
+                "mistral-small-3.2-24b",
+                "Mistral Small 3.2",
+                "0.075",
+                "0.20",
+                "0.01",
+                "0",
+            ),
+            ("magistral-medium", "Magistral Medium", "2", "5", "0", "0"),
+            // Cohere 系列
+            ("command-a", "Cohere Command A", "2.50", "10", "0", "0"),
+            (
+                "command-r-plus",
+                "Cohere Command R+",
+                "2.50",
+                "10",
+                "0",
+                "0",
+            ),
+            ("command-r", "Cohere Command R", "0.15", "0.60", "0", "0"),
+            // OpenAI 补充
+            ("o3-pro", "OpenAI o3-pro", "20", "80", "0", "0"),
+            ("o3-mini", "OpenAI o3-mini", "0.55", "2.20", "0.55", "0"),
+            ("o1", "OpenAI o1", "15", "60", "7.50", "0"),
+            ("o1-mini", "OpenAI o1-mini", "0.55", "2.20", "0.55", "0"),
+            ("codex-mini", "Codex Mini", "0.75", "3", "0.025", "0"),
+            ("gpt-5-mini", "GPT-5 Mini", "0.25", "2", "0.025", "0"),
+            ("gpt-5-nano", "GPT-5 Nano", "0.05", "0.40", "0.005", "0"),
         ];
 
-        for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data {
-            conn.execute(
+        let mut stmt = conn
+            .prepare(
                 "INSERT OR IGNORE INTO model_pricing (
                     model_id, display_name, input_cost_per_million, output_cost_per_million,
                     cache_read_cost_per_million, cache_creation_cost_per_million
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![
-                    model_id,
-                    display_name,
-                    input,
-                    output,
-                    cache_read,
-                    cache_creation
-                ],
             )
+            .map_err(|e| AppError::Database(format!("准备模型定价语句失败: {e}")))?;
+        for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data {
+            stmt.execute(rusqlite::params![
+                model_id,
+                display_name,
+                input,
+                output,
+                cache_read,
+                cache_creation
+            ])
             .map_err(|e| AppError::Database(format!("插入模型定价失败: {e}")))?;
         }
 
@@ -1448,6 +1914,54 @@ impl Database {
         let sql = format!("PRAGMA user_version = {version};");
         conn.execute(&sql, [])
             .map_err(|e| AppError::Database(format!("写入 user_version 失败: {e}")))?;
+        Ok(())
+    }
+
+    fn create_request_logs_usage_indexes_if_supported(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_request_logs")? {
+            return Ok(());
+        }
+
+        let has_app_type = Self::has_column(conn, "proxy_request_logs", "app_type")?;
+        let has_created_at = Self::has_column(conn, "proxy_request_logs", "created_at")?;
+        if has_app_type && has_created_at {
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_request_logs_app_created_at
+                 ON proxy_request_logs(app_type, created_at DESC)",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("创建使用量应用时间索引失败: {e}")))?;
+        }
+
+        let required_columns = [
+            "app_type",
+            "data_source",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "created_at",
+            "cache_creation_tokens",
+        ];
+        for column in required_columns {
+            if !Self::has_column(conn, "proxy_request_logs", column)? {
+                return Ok(());
+            }
+        }
+
+        conn.execute("DROP INDEX IF EXISTS idx_request_logs_dedup_lookup", [])
+            .map_err(|e| AppError::Database(format!("删除旧使用量去重索引失败: {e}")))?;
+
+        // 查询层为了兼容历史 NULL data_source 行，会使用
+        // COALESCE(data_source, 'proxy')。普通 data_source 索引无法匹配该表达式，
+        // 会让跨源去重子查询退化成大量扫描；表达式索引让 SQLite 能按同一表达式查找。
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_request_logs_dedup_lookup_expr
+             ON proxy_request_logs(app_type, COALESCE(data_source, 'proxy'), input_tokens,
+                                   output_tokens, cache_read_tokens, created_at,
+                                   cache_creation_tokens)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建使用量去重表达式索引失败: {e}")))?;
         Ok(())
     }
 

@@ -34,6 +34,22 @@ pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> 
     Ok(true)
 }
 
+#[tauri::command]
+pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
+    // Use spawn_blocking to avoid blocking the async runtime
+    // Clipboard access can block on some platforms and may have thread/loop constraints
+    tokio::task::spawn_blocking(move || {
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| format!("访问系统剪贴板失败: {e}"))?;
+        clipboard
+            .set_text(text)
+            .map_err(|e| format!("写入系统剪贴板失败: {e}"))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
+}
+
 /// 检查更新
 #[tauri::command]
 pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
@@ -284,8 +300,13 @@ fn try_get_version(tool: &str) -> (Option<String>, Option<String>) {
 
     #[cfg(not(target_os = "windows"))]
     let output = {
-        Command::new("sh")
-            .arg("-c")
+        let shell = std::env::var("SHELL")
+            .ok()
+            .filter(|s| is_valid_shell(s))
+            .unwrap_or_else(|| "sh".to_string());
+        let flag = default_flag_for_shell(&shell);
+        Command::new(shell)
+            .arg(flag)
             .arg(format!("{tool} --version"))
             .output()
     };
@@ -329,7 +350,6 @@ fn is_valid_wsl_distro_name(name: &str) -> bool {
 }
 
 /// Validate that the given shell name is one of the allowed shells.
-#[cfg(target_os = "windows")]
 fn is_valid_shell(shell: &str) -> bool {
     matches!(
         shell.rsplit('/').next().unwrap_or(shell),
@@ -344,7 +364,6 @@ fn is_valid_shell_flag(flag: &str) -> bool {
 }
 
 /// Return the default invocation flag for the given shell.
-#[cfg(target_os = "windows")]
 fn default_flag_for_shell(shell: &str) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
@@ -765,7 +784,7 @@ fn extract_env_vars_from_config(
 
         // 处理 base_url: 根据应用类型添加对应的环境变量
         let base_url_key = match app_type {
-            AppType::Claude => Some("ANTHROPIC_BASE_URL"),
+            AppType::Claude | AppType::ClaudeDesktop => Some("ANTHROPIC_BASE_URL"),
             AppType::Gemini => Some("GOOGLE_GEMINI_BASE_URL"),
             _ => None,
         };
@@ -928,10 +947,12 @@ exec bash --norc --noprofile
     // Note: Kitty doesn't need the -e flag, others do
     let result = match terminal {
         "iterm2" => launch_macos_iterm2(&script_file),
+        "warp" => launch_macos_warp(&script_file),
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
         "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
+        "kaku" => launch_macos_open_app("Kaku", &script_file, true),
         _ => launch_macos_terminal_app(&script_file), // "terminal" or default
     };
 
@@ -981,21 +1002,46 @@ end tell"#,
 
 /// macOS: iTerm2
 #[cfg(target_os = "macos")]
-fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-
-    let applescript = format!(
-        r#"tell application "iTerm"
-    activate
-    tell current window
-        create tab with default profile
-        tell current session
-            write text "bash '{}'"
-        end tell
+fn build_macos_iterm2_applescript(script_file: &std::path::Path) -> String {
+    format!(
+        r#"set launcher_script to "bash '{}'"
+set was_running to application "iTerm" is running
+tell application "iTerm"
+    if was_running then
+        activate
+        if (count of windows) = 0 then
+            create window with default profile
+        else
+            tell current window
+                create tab with default profile
+            end tell
+        end if
+    else
+        activate
+        set waited to 0
+        repeat while (count of windows) = 0
+            delay 0.1
+            set waited to waited + 1
+            if waited >= 30 then exit repeat
+        end repeat
+        if (count of windows) = 0 then
+            create window with default profile
+        end if
+    end if
+    tell current session of current window
+        write text launcher_script
     end tell
 end tell"#,
         script_file.display()
-    );
+    )
+}
+
+/// macOS: iTerm2
+#[cfg(target_os = "macos")]
+fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let applescript = build_macos_iterm2_applescript(script_file);
 
     let output = Command::new("osascript")
         .arg("-e")
@@ -1041,6 +1087,57 @@ fn launch_macos_open_app(
         return Err(format!(
             "{} 启动失败 (exit code: {:?}): {}",
             app_name,
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let mut cmd = Command::new("open");
+    cmd.arg("-a").arg("Warp");
+
+    // Warp URI scheme cannot work well with script_file, because:
+    //
+    // 1. script_file's name ends up with .sh, so Warp would open the file rather than execute it
+    // 2. script_file has no execution permission, so we need to add one more indirection
+    let mut second_script_file = tempfile::Builder::new()
+        .disable_cleanup(true)
+        .permissions(std::fs::Permissions::from_mode(0o755))
+        .tempfile()
+        .map_err(|e| format!("Failed to create temporary script file: {e}"))?;
+
+    writeln!(
+        &mut second_script_file,
+        r#"#!/usr/bin/env sh
+
+        rm -- "$0"
+
+        exec bash {}
+        "#,
+        script_file.display(),
+    )
+    .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
+
+    let mut warp_url = url::Url::parse("warp://action/new_tab").unwrap();
+    warp_url
+        .query_pairs_mut()
+        .append_pair("path", &second_script_file.path().to_string_lossy());
+    let warp_url = warp_url.to_string();
+    cmd.arg(warp_url);
+
+    let output = cmd.output().map_err(|e| format!("启动 Warp 失败: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Warp 启动失败 (exit code: {:?}): {}",
             output.status.code(),
             stderr
         ));
@@ -1100,21 +1197,21 @@ exec bash --norc --noprofile
         let pref_args = default_terminals
             .iter()
             .find(|(name, _)| *name == pref.as_str())
-            .map(|(_, args)| args.iter().map(|s| *s).collect::<Vec<&str>>())
+            .map(|(_, args)| args.to_vec())
             .unwrap_or_else(|| vec!["-e"]); // Default args for unknown terminals
 
         let mut list = vec![(pref.as_str(), pref_args)];
         // Add remaining terminals as fallbacks
         for (name, args) in &default_terminals {
             if *name != pref.as_str() {
-                list.push((*name, args.iter().map(|s| *s).collect()));
+                list.push((*name, args.to_vec()));
             }
         }
         list
     } else {
         default_terminals
             .iter()
-            .map(|(name, args)| (*name, args.iter().map(|s| *s).collect()))
+            .map(|(name, args)| (*name, args.to_vec()))
             .collect()
     };
 
@@ -1293,6 +1390,189 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
     Ok(())
 }
 
+/// 打开用户首选终端并在其中执行一条命令行。脚本尾部 `read -n 1` / `pause`
+/// 是刻意设计的——让命令退出后窗口不要瞬间关闭，用户才看得到 `command
+/// not found` / `ModuleNotFoundError` 这类诊断信息。
+///
+/// **Security**：`command_line` 会被原样拼进 shell/batch 脚本，调用方必须
+/// 保证它是可信字符串（当前只由后端硬编码调用）。
+pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result<(), String> {
+    let temp_dir = std::env::temp_dir();
+    let pid = std::process::id();
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let (script_file, script_content) = {
+        let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
+        let content = format!(
+            r#"#!/bin/bash
+trap 'rm -f "{script_path}"' EXIT
+echo "[cc-switch] Starting: {cmd}"
+echo ""
+{cmd}
+echo ""
+echo "[cc-switch] Command exited. Press any key to close."
+read -n 1 -s
+"#,
+            script_path = file.display(),
+            cmd = command_line,
+        );
+        (file, content)
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::write(&script_file, &script_content)
+            .map_err(|e| format!("写入启动脚本失败: {e}"))?;
+        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+
+        let preferred = crate::settings::get_preferred_terminal();
+        let terminal = preferred.as_deref().unwrap_or("terminal");
+
+        let result = match terminal {
+            "iterm2" => launch_macos_iterm2(&script_file),
+            "warp" => launch_macos_warp(&script_file),
+            "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
+            "kitty" => launch_macos_open_app("kitty", &script_file, false),
+            "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
+            "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
+            "kaku" => launch_macos_open_app("Kaku", &script_file, true),
+            _ => launch_macos_terminal_app(&script_file),
+        };
+
+        if result.is_err() && terminal != "terminal" {
+            log::warn!(
+                "首选终端 {} 启动失败，回退到 Terminal.app: {:?}",
+                terminal,
+                result.as_ref().err()
+            );
+            return launch_macos_terminal_app(&script_file);
+        }
+        result
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        std::fs::write(&script_file, &script_content)
+            .map_err(|e| format!("写入启动脚本失败: {e}"))?;
+        std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+
+        let preferred = crate::settings::get_preferred_terminal();
+        let default_terminals = [
+            ("gnome-terminal", vec!["--"]),
+            ("konsole", vec!["-e"]),
+            ("xfce4-terminal", vec!["-e"]),
+            ("mate-terminal", vec!["--"]),
+            ("lxterminal", vec!["-e"]),
+            ("alacritty", vec!["-e"]),
+            ("kitty", vec!["-e"]),
+            ("ghostty", vec!["-e"]),
+        ];
+
+        let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
+            let pref_args = default_terminals
+                .iter()
+                .find(|(name, _)| *name == pref.as_str())
+                .map(|(_, args)| args.to_vec())
+                .unwrap_or_else(|| vec!["-e"]);
+            let mut list = vec![(pref.as_str(), pref_args)];
+            for (name, args) in &default_terminals {
+                if *name != pref.as_str() {
+                    list.push((*name, args.to_vec()));
+                }
+            }
+            list
+        } else {
+            default_terminals
+                .iter()
+                .map(|(name, args)| (*name, args.to_vec()))
+                .collect()
+        };
+
+        let mut last_error = String::from("未找到可用的终端");
+
+        for (terminal, args) in terminals_to_try {
+            let terminal_exists = which_command(terminal)
+                || ["/usr/bin", "/bin", "/usr/local/bin"]
+                    .iter()
+                    .any(|dir| std::path::Path::new(&format!("{}/{}", dir, terminal)).exists());
+
+            if terminal_exists {
+                let spawn_result = Command::new(terminal)
+                    .args(&args)
+                    .arg("bash")
+                    .arg(script_file.to_string_lossy().as_ref())
+                    .spawn();
+                match spawn_result {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        last_error = format!("执行 {} 失败: {}", terminal, e);
+                    }
+                }
+            }
+        }
+
+        let _ = std::fs::remove_file(&script_file);
+        Err(last_error)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let preferred = crate::settings::get_preferred_terminal();
+        let terminal = preferred.as_deref().unwrap_or("cmd");
+
+        let bat_file = temp_dir.join(format!("cc_switch_{}_{}.bat", label, pid));
+        let content = format!(
+            "@echo off\r\necho [cc-switch] Starting: {cmd}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
+            cmd = command_line,
+        );
+        std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+
+        let bat_path = bat_file.to_string_lossy();
+        let ps_cmd = format!("& '{}'", bat_path);
+
+        let result = match terminal {
+            "powershell" => run_windows_start_command(
+                &["powershell", "-NoExit", "-Command", &ps_cmd],
+                "PowerShell",
+            ),
+            "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+            _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
+        };
+
+        let final_result = if result.is_err() && terminal != "cmd" {
+            log::warn!(
+                "首选终端 {} 启动失败，回退到 cmd: {:?}",
+                terminal,
+                result.as_ref().err()
+            );
+            run_windows_start_command(&["cmd", "/K", &bat_path], "cmd")
+        } else {
+            result
+        };
+
+        // The .bat self-deletes (`del "%~f0"`) after it runs, but that only
+        // fires if *some* terminal actually launched it. If every attempt
+        // failed, sweep the temp file ourselves to avoid pollution.
+        if final_result.is_err() {
+            let _ = std::fs::remove_file(&bat_file);
+        }
+        final_result
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (temp_dir, pid, command_line, label);
+        Err("不支持的操作系统".to_string())
+    }
+}
+
 /// 设置窗口主题（Windows/macOS 标题栏颜色）
 /// theme: "dark" | "light" | "system"
 #[tauri::command]
@@ -1311,7 +1591,7 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn test_extract_version() {
@@ -1399,7 +1679,7 @@ mod tests {
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/same/path"))
+            .filter(|path| path.as_path() == Path::new("/same/path"))
             .count();
         assert_eq!(count, 1);
     }
@@ -1411,7 +1691,7 @@ mod tests {
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/home/tester/.bun/bin"))
+            .filter(|path| path.as_path() == Path::new("/home/tester/.bun/bin"))
             .count();
         assert_eq!(count, 1);
     }
@@ -1470,6 +1750,43 @@ mod tests {
         let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
 
         assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn iterm2_applescript_cold_start_avoids_current_window_before_one_exists() {
+        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        let cold_start_branch = script
+            .split("else\n        activate")
+            .nth(1)
+            .expect("cold start branch should be present")
+            .split("    end if\n    tell current session")
+            .next()
+            .expect("cold start branch should end before writing command");
+
+        assert!(cold_start_branch.contains("repeat while (count of windows) = 0"));
+        assert!(cold_start_branch.contains("create window with default profile"));
+        assert!(!cold_start_branch.contains("tell current window"));
+        assert!(!cold_start_branch.contains("create tab with default profile"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn iterm2_applescript_keeps_new_tab_behavior_for_existing_windows() {
+        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        let running_branch = script
+            .split("if was_running then")
+            .nth(1)
+            .expect("already-running branch should be present")
+            .split("else\n        activate")
+            .next()
+            .expect("already-running branch should end before cold start branch");
+
+        assert!(running_branch.contains("if (count of windows) = 0 then"));
+        assert!(running_branch.contains("create window with default profile"));
+        assert!(running_branch.contains("create tab with default profile"));
     }
 
     #[test]

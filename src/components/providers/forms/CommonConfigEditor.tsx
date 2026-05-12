@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Save, Download, Loader2 } from "lucide-react";
+import { Save, Download, Loader2, Package } from "lucide-react";
 import JsonEditor from "@/components/JsonEditor";
 
 interface CommonConfigEditorProps {
@@ -81,7 +81,7 @@ export function CommonConfigEditor({
         enableToolSearch:
           config?.env?.ENABLE_TOOL_SEARCH === "true" ||
           config?.env?.ENABLE_TOOL_SEARCH === "1",
-        effortHigh: config?.effortLevel === "high",
+        effortMax: config?.env?.CLAUDE_CODE_EFFORT_LEVEL === "max",
         disableAutoUpgrade:
           config?.env?.DISABLE_AUTOUPDATER === "1" ||
           config?.env?.DISABLE_AUTOUPDATER === 1,
@@ -91,7 +91,7 @@ export function CommonConfigEditor({
         hideAttribution: false,
         teammates: false,
         enableToolSearch: false,
-        effortHigh: false,
+        effortMax: false,
         disableAutoUpgrade: false,
       };
     }
@@ -128,11 +128,13 @@ export function CommonConfigEditor({
               if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
-          case "effortHigh":
+          case "effortMax":
+            if (!config.env) config.env = {};
             if (checked) {
-              config.effortLevel = "high";
+              config.env.CLAUDE_CODE_EFFORT_LEVEL = "max";
             } else {
-              delete config.effortLevel;
+              delete config.env.CLAUDE_CODE_EFFORT_LEVEL;
+              if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
           case "disableAutoUpgrade":
@@ -227,11 +229,11 @@ export function CommonConfigEditor({
           <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <input
               type="checkbox"
-              checked={toggleStates.effortHigh}
-              onChange={(e) => handleToggle("effortHigh", e.target.checked)}
+              checked={toggleStates.effortMax}
+              onChange={(e) => handleToggle("effortMax", e.target.checked)}
               className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
             />
-            <span>{t("claudeConfig.effortHigh")}</span>
+            <span>{t("claudeConfig.effortMax")}</span>
           </label>
           <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <input
@@ -298,11 +300,34 @@ export function CommonConfigEditor({
         }
       >
         <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            {t("claudeConfig.commonConfigHint", {
-              defaultValue: "通用配置片段将合并到所有启用它的供应商配置中",
-            })}
-          </p>
+          <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/30 p-3 space-y-1.5">
+            <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+              {t("commonConfig.guideTitle")}
+            </p>
+            <p className="text-xs text-blue-700/80 dark:text-blue-400/80">
+              {t("commonConfig.guidePurpose")}
+            </p>
+            <p className="text-xs text-blue-700/80 dark:text-blue-400/80">
+              {t("commonConfig.guideUsage")}
+            </p>
+            <p className="text-xs text-blue-700/80 dark:text-blue-400/80">
+              {t("commonConfig.guideReExtract")}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t("commonConfig.guideReassurance")}
+            </p>
+          </div>
+          {(!commonConfigSnippet ||
+            commonConfigSnippet.trim() === "" ||
+            commonConfigSnippet.trim() === "{}") && (
+            <div className="flex flex-col items-center justify-center py-6 text-center text-muted-foreground">
+              <Package className="h-8 w-8 mb-2 opacity-40" />
+              <p className="text-sm font-medium">
+                {t("commonConfig.emptyTitle")}
+              </p>
+              <p className="text-xs mt-1">{t("commonConfig.emptyHint")}</p>
+            </div>
+          )}
           <JsonEditor
             value={commonConfigSnippet}
             onChange={onCommonConfigSnippetChange}

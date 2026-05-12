@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ManagedAuthProvider = "github_copilot";
+export type ManagedAuthProvider = "github_copilot" | "codex_oauth";
 
 export interface ManagedAuthAccount {
   id: string;
@@ -9,6 +9,7 @@ export interface ManagedAuthAccount {
   avatar_url: string | null;
   authenticated_at: number;
   is_default: boolean;
+  github_domain: string;
 }
 
 export interface ManagedAuthStatus {
@@ -30,19 +31,23 @@ export interface ManagedAuthDeviceCodeResponse {
 
 export async function authStartLogin(
   authProvider: ManagedAuthProvider,
+  githubDomain?: string,
 ): Promise<ManagedAuthDeviceCodeResponse> {
   return invoke<ManagedAuthDeviceCodeResponse>("auth_start_login", {
     authProvider,
+    githubDomain: githubDomain || null,
   });
 }
 
 export async function authPollForAccount(
   authProvider: ManagedAuthProvider,
   deviceCode: string,
+  githubDomain?: string,
 ): Promise<ManagedAuthAccount | null> {
   return invoke<ManagedAuthAccount | null>("auth_poll_for_account", {
     authProvider,
     deviceCode,
+    githubDomain: githubDomain || null,
   });
 }
 

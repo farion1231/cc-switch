@@ -6,6 +6,7 @@
 //! - **anthropic** (默认): Anthropic Messages API 格式，直接透传
 //! - **openai_chat**: OpenAI Chat Completions 格式，需要 Anthropic ↔ OpenAI 转换
 //! - **openai_responses**: OpenAI Responses API 格式，需要 Anthropic ↔ Responses 转换
+//! - **gemini_native**: Google Gemini Native generateContent 格式，需要 Anthropic ↔ Gemini 转换
 //!
 //! ## 认证模式
 //! - **Claude**: Anthropic 官方 API (x-api-key + anthropic-version)
@@ -22,12 +23,20 @@ use crate::proxy::error::ProxyError;
 /// 供 handler/forwarder 外部使用的公开函数。
 /// 优先级：meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
 pub fn get_claude_api_format(provider: &Provider) -> &'static str {
+    // 0) Codex OAuth 强制使用 openai_responses（不可被覆盖）
+    if let Some(meta) = provider.meta.as_ref() {
+        if meta.provider_type.as_deref() == Some("codex_oauth") {
+            return "openai_responses";
+        }
+    }
+
     // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
     if let Some(meta) = provider.meta.as_ref() {
         if let Some(api_format) = meta.api_format.as_deref() {
             return match api_format {
                 "openai_chat" => "openai_chat",
                 "openai_responses" => "openai_responses",
+                "gemini_native" => "gemini_native",
                 _ => "anthropic",
             };
         }
@@ -42,6 +51,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         return match api_format {
             "openai_chat" => "openai_chat",
             "openai_responses" => "openai_responses",
+            "gemini_native" => "gemini_native",
             _ => "anthropic",
         };
     }
@@ -66,25 +76,142 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 }
 
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
-    matches!(api_format, "openai_chat" | "openai_responses")
+    matches!(
+        api_format,
+        "openai_chat" | "openai_responses" | "gemini_native"
+    )
+}
+
+fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains("moonshot") || value.contains("kimi") || value.contains("deepseek")
+}
+
+fn should_preserve_reasoning_content_for_openai_chat(
+    provider: &Provider,
+    body: &serde_json::Value,
+) -> bool {
+    if body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .is_some_and(is_reasoning_content_compatible_identifier)
+    {
+        return true;
+    }
+
+    let settings = &provider.settings_config;
+    let base_urls = [
+        settings
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str()),
+        settings.get("base_url").and_then(|v| v.as_str()),
+        settings.get("baseURL").and_then(|v| v.as_str()),
+        settings.get("apiEndpoint").and_then(|v| v.as_str()),
+    ];
+
+    base_urls
+        .into_iter()
+        .flatten()
+        .any(is_reasoning_content_compatible_identifier)
 }
 
 pub fn transform_claude_request_for_api_format(
     body: serde_json::Value,
     provider: &Provider,
     api_format: &str,
+    session_id: Option<&str>,
+    shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
 ) -> Result<serde_json::Value, ProxyError> {
-    let cache_key = provider
+    let is_codex_oauth = provider.is_codex_oauth();
+
+    // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
+    // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
+    // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
+    let is_copilot = provider
         .meta
         .as_ref()
-        .and_then(|m| m.prompt_cache_key.as_deref())
-        .unwrap_or(&provider.id);
+        .and_then(|m| m.provider_type.as_deref())
+        == Some("github_copilot")
+        || provider
+            .settings_config
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .is_some_and(|u| u.contains("githubcopilot.com"));
+    let session_cache_key: Option<String> = if is_copilot {
+        let metadata = body.get("metadata");
+        // Session 提取优先级（与 forwarder 和 session.rs 统一）：
+        //   1. metadata.user_id 中的 _session_ 后缀
+        //   2. metadata.session_id（直接字段）
+        metadata
+            .and_then(|m| m.get("user_id"))
+            .and_then(|v| v.as_str())
+            .and_then(super::super::session::parse_session_from_user_id)
+            .or_else(|| {
+                metadata
+                    .and_then(|m| m.get("session_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+            })
+    } else {
+        session_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+    };
 
+    let explicit_cache_key = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.prompt_cache_key.as_deref());
+    let (cache_key, cache_key_source) = if let Some(key) = explicit_cache_key {
+        (Some(key), "explicit")
+    } else if let Some(key) = session_cache_key.as_deref() {
+        (Some(key), "session")
+    } else {
+        (None, "none")
+    };
     match api_format {
         "openai_responses" => {
-            super::transform_responses::anthropic_to_responses(body, Some(cache_key))
+            log::debug!(
+                "[Cache] OpenAI Responses prompt_cache_key source={cache_key_source}, provider={}, codex_oauth={is_codex_oauth}, has_key={}",
+                provider.id,
+                cache_key.is_some()
+            );
+            // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
+            // + include: ["reasoning.encrypted_content"]，由 transform 层统一处理。
+            let codex_fast_mode = provider.codex_fast_mode_enabled();
+            super::transform_responses::anthropic_to_responses(
+                body,
+                cache_key,
+                is_codex_oauth,
+                codex_fast_mode,
+            )
         }
-        "openai_chat" => super::transform::anthropic_to_openai(body, Some(cache_key)),
+        "openai_chat" => {
+            let preserve_reasoning_content =
+                should_preserve_reasoning_content_for_openai_chat(provider, &body);
+            let mut result = super::transform::anthropic_to_openai_with_reasoning_content(
+                body,
+                preserve_reasoning_content,
+            )?;
+            // Inject prompt_cache_key only if explicitly configured in meta
+            if let Some(key) = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.prompt_cache_key.as_deref())
+            {
+                result["prompt_cache_key"] = serde_json::json!(key);
+            }
+            Ok(result)
+        }
+        "gemini_native" => super::transform_gemini::anthropic_to_gemini_with_shadow(
+            body,
+            shadow_store,
+            Some(&provider.id),
+            session_id,
+        ),
         _ => Ok(body),
     }
 }
@@ -101,10 +228,26 @@ impl ClaudeAdapter {
     ///
     /// 根据 base_url 和 auth_mode 检测具体的供应商类型：
     /// - GitHubCopilot: meta.provider_type 为 github_copilot 或 base_url 包含 githubcopilot.com
+    /// - CodexOAuth: meta.provider_type 为 codex_oauth
     /// - OpenRouter: base_url 包含 openrouter.ai
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
+        // 检测 Gemini Native 格式
+        if self.get_api_format(provider) == "gemini_native" {
+            return match self.extract_key(provider) {
+                Some(key) if key.starts_with("ya29.") || key.starts_with('{') => {
+                    ProviderType::GeminiCli
+                }
+                _ => ProviderType::Gemini,
+            };
+        }
+
+        // 检测 Codex OAuth (ChatGPT Plus/Pro)
+        if self.is_codex_oauth(provider) {
+            return ProviderType::CodexOAuth;
+        }
+
         // 检测 GitHub Copilot
         if self.is_github_copilot(provider) {
             return ProviderType::GitHubCopilot;
@@ -121,6 +264,16 @@ impl ClaudeAdapter {
         }
 
         ProviderType::Claude
+    }
+
+    /// 检测是否为 Codex OAuth 供应商（ChatGPT Plus/Pro 反代）
+    fn is_codex_oauth(&self, provider: &Provider) -> bool {
+        if let Some(meta) = provider.meta.as_ref() {
+            if meta.provider_type.as_deref() == Some("codex_oauth") {
+                return true;
+            }
+        }
+        false
     }
 
     /// 检测是否为 GitHub Copilot 供应商
@@ -192,6 +345,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("ANTHROPIC_AUTH_TOKEN")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 log::debug!("[Claude] 使用 ANTHROPIC_AUTH_TOKEN");
@@ -200,6 +354,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("ANTHROPIC_API_KEY")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 log::debug!("[Claude] 使用 ANTHROPIC_API_KEY");
@@ -209,6 +364,7 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("OPENROUTER_API_KEY")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 log::debug!("[Claude] 使用 OPENROUTER_API_KEY");
@@ -218,9 +374,20 @@ impl ClaudeAdapter {
             if let Some(key) = env
                 .get("OPENAI_API_KEY")
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 log::debug!("[Claude] 使用 OPENAI_API_KEY");
+                return Some(key.to_string());
+            }
+            // Gemini Native key
+            if let Some(key) = env
+                .get("GEMINI_API_KEY")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                log::debug!("[Claude] 使用 GEMINI_API_KEY");
                 return Some(key.to_string());
             }
         }
@@ -231,6 +398,7 @@ impl ClaudeAdapter {
             .get("apiKey")
             .or_else(|| provider.settings_config.get("api_key"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
             .filter(|s| !s.is_empty())
         {
             log::debug!("[Claude] 使用 apiKey/api_key");
@@ -238,6 +406,33 @@ impl ClaudeAdapter {
         }
 
         log::warn!("[Claude] 未找到有效的 API Key");
+        None
+    }
+
+    /// 根据 env 中填写的变量名推断 Anthropic 默认走哪种鉴权策略。
+    ///
+    /// 与 Anthropic SDK 原生语义保持一致：
+    /// - `ANTHROPIC_AUTH_TOKEN` → `ClaudeAuth`（发送 `Authorization: Bearer`）
+    /// - `ANTHROPIC_API_KEY`    → `Anthropic` （发送 `x-api-key`）
+    ///
+    /// 优先级与 [`extract_key`] 一致；两者都缺时返回 `None` 由调用方决定 fallback。
+    fn infer_anthropic_auth_strategy(&self, provider: &Provider) -> Option<AuthStrategy> {
+        let env = provider.settings_config.get("env")?;
+
+        let has_value = |key: &str| -> bool {
+            env.get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .is_some()
+        };
+
+        if has_value("ANTHROPIC_AUTH_TOKEN") {
+            return Some(AuthStrategy::ClaudeAuth);
+        }
+        if has_value("ANTHROPIC_API_KEY") {
+            return Some(AuthStrategy::Anthropic);
+        }
         None
     }
 }
@@ -254,6 +449,11 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        // Codex OAuth: 强制使用 ChatGPT 后端 API 端点（忽略用户配置的 base_url）
+        if self.is_codex_oauth(provider) {
+            return Ok("https://chatgpt.com/backend-api/codex".to_string());
+        }
+
         // 1. 从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
             if let Some(url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
@@ -304,17 +504,70 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
-        let strategy = match provider_type {
-            ProviderType::OpenRouter => AuthStrategy::Bearer,
-            ProviderType::ClaudeAuth => AuthStrategy::ClaudeAuth,
-            _ => AuthStrategy::Anthropic,
-        };
+        // Codex OAuth (ChatGPT Plus/Pro) 同样使用占位符
+        // 实际的 access_token 由 CodexOAuthManager 动态提供
+        if provider_type == ProviderType::CodexOAuth {
+            return Some(AuthInfo::new(
+                "codex_oauth_placeholder".to_string(),
+                AuthStrategy::CodexOAuth,
+            ));
+        }
 
-        self.extract_key(provider)
-            .map(|key| AuthInfo::new(key, strategy))
+        let key = self.extract_key(provider)?;
+
+        match provider_type {
+            ProviderType::GeminiCli => {
+                // Parse stored OAuth JSON and only attach access_token when
+                // it's actually usable. `parse_oauth_credentials` accepts
+                // refresh-token-only JSON (which is legitimate before the
+                // first refresh) and also surfaces `{"access_token": "", ...}`
+                // for expired credentials. In both cases we would otherwise
+                // send `Authorization: Bearer ` to upstream and get a 401.
+                //
+                // CC Switch does not currently exchange the refresh_token for
+                // a fresh access_token. Until that path exists, degrade to
+                // plain GoogleOAuth strategy (which still sends the raw key
+                // as a fallback) and log loudly so users know to refresh
+                // their `~/.gemini/oauth_creds.json`.
+                match super::gemini::GeminiAdapter::new().parse_oauth_credentials(&key) {
+                    Some(creds) if !creds.access_token.is_empty() => {
+                        Some(AuthInfo::with_access_token(key, creds.access_token))
+                    }
+                    Some(_) => {
+                        log::warn!(
+                            "[Gemini OAuth] access_token missing or empty for provider `{}`; \
+                             bearer auth will likely fail with 401. Refresh \
+                             ~/.gemini/oauth_creds.json via the gemini CLI to obtain a new token.",
+                            provider.id
+                        );
+                        Some(AuthInfo::new(key, AuthStrategy::GoogleOAuth))
+                    }
+                    None => Some(AuthInfo::new(key, AuthStrategy::GoogleOAuth)),
+                }
+            }
+            ProviderType::Gemini => Some(AuthInfo::new(key, AuthStrategy::Google)),
+            ProviderType::OpenRouter => Some(AuthInfo::new(key, AuthStrategy::Bearer)),
+            ProviderType::ClaudeAuth => Some(AuthInfo::new(key, AuthStrategy::ClaudeAuth)),
+            _ => {
+                // 按 env 中的变量名推断鉴权策略，对齐 Anthropic SDK 语义：
+                // ANTHROPIC_AUTH_TOKEN → Authorization: Bearer
+                // ANTHROPIC_API_KEY    → x-api-key
+                // 其他来源（apiKey 直填等）默认走 x-api-key（Anthropic 官方协议）。
+                let strategy = self
+                    .infer_anthropic_auth_strategy(provider)
+                    .unwrap_or(AuthStrategy::Anthropic);
+                Some(AuthInfo::new(key, strategy))
+            }
+        }
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
+        // Codex OAuth: 所有请求统一走 /responses 端点
+        if base_url == "https://chatgpt.com/backend-api/codex" {
+            let _ = endpoint; // 忽略原始 endpoint
+            return "https://chatgpt.com/backend-api/codex/responses".to_string();
+        }
+
         // NOTE:
         // 过去 OpenRouter 只有 OpenAI Chat Completions 兼容接口，需要把 Claude 的 `/v1/messages`
         // 映射到 `/v1/chat/completions`，并做 Anthropic ↔ OpenAI 的格式转换。
@@ -341,13 +594,52 @@ impl ProviderAdapter for ClaudeAdapter {
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
         let bearer = format!("Bearer {}", auth.api_key);
         match auth.strategy {
-            AuthStrategy::Anthropic | AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
+            AuthStrategy::Anthropic => {
+                vec![(
+                    HeaderName::from_static("x-api-key"),
+                    HeaderValue::from_str(&auth.api_key).unwrap(),
+                )]
+            }
+            AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
                 vec![(
                     HeaderName::from_static("authorization"),
                     HeaderValue::from_str(&bearer).unwrap(),
                 )]
             }
+            AuthStrategy::Google => vec![(
+                HeaderName::from_static("x-goog-api-key"),
+                HeaderValue::from_str(&auth.api_key).unwrap(),
+            )],
+            AuthStrategy::GoogleOAuth => {
+                let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
+                vec![
+                    (
+                        HeaderName::from_static("authorization"),
+                        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("x-goog-api-client"),
+                        HeaderValue::from_static("GeminiCLI/1.0"),
+                    ),
+                ]
+            }
+            AuthStrategy::CodexOAuth => {
+                // 注意：bearer token 由 forwarder 动态注入到 auth.api_key
+                // ChatGPT-Account-Id 由 forwarder 注入额外 header
+                vec![
+                    (
+                        HeaderName::from_static("authorization"),
+                        HeaderValue::from_str(&bearer).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("originator"),
+                        HeaderValue::from_static("cc-switch"),
+                    ),
+                ]
+            }
             AuthStrategy::GitHubCopilot => {
+                // 生成请求追踪 ID
+                let request_id = uuid::Uuid::new_v4().to_string();
                 vec![
                     (
                         HeaderName::from_static("authorization"),
@@ -373,13 +665,34 @@ impl ProviderAdapter for ClaudeAdapter {
                         HeaderName::from_static("x-github-api-version"),
                         HeaderValue::from_static(super::copilot_auth::COPILOT_API_VERSION),
                     ),
+                    // 26-04-01新增的copilot关键 headers
                     (
                         HeaderName::from_static("openai-intent"),
-                        HeaderValue::from_static("conversation-panel"),
+                        HeaderValue::from_static("conversation-agent"),
+                    ),
+                    (
+                        HeaderName::from_static("x-initiator"),
+                        HeaderValue::from_static("user"),
+                    ),
+                    (
+                        HeaderName::from_static("x-interaction-type"),
+                        HeaderValue::from_static("conversation-agent"),
+                    ),
+                    // x-interaction-id 由 forwarder 按需注入（仅在有 session 时）
+                    (
+                        HeaderName::from_static("x-vscode-user-agent-library-version"),
+                        HeaderValue::from_static("electron-fetch"),
+                    ),
+                    (
+                        HeaderName::from_static("x-request-id"),
+                        HeaderValue::from_str(&request_id).unwrap(),
+                    ),
+                    (
+                        HeaderName::from_static("x-agent-task-id"),
+                        HeaderValue::from_str(&request_id).unwrap(),
                     ),
                 ]
             }
-            _ => vec![],
         }
     }
 
@@ -389,13 +702,18 @@ impl ProviderAdapter for ClaudeAdapter {
             return true;
         }
 
+        // Codex OAuth 总是需要格式转换 (Anthropic → OpenAI Responses API)
+        if self.is_codex_oauth(provider) {
+            return true;
+        }
+
         // 根据 api_format 配置决定是否需要格式转换
         // - "anthropic" (默认): 直接透传，无需转换
         // - "openai_chat": 需要 Anthropic ↔ OpenAI Chat Completions 格式转换
         // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
         matches!(
             self.get_api_format(provider),
-            "openai_chat" | "openai_responses"
+            "openai_chat" | "openai_responses" | "gemini_native"
         )
     }
 
@@ -404,7 +722,13 @@ impl ProviderAdapter for ClaudeAdapter {
         body: serde_json::Value,
         provider: &Provider,
     ) -> Result<serde_json::Value, ProxyError> {
-        transform_claude_request_for_api_format(body, provider, self.get_api_format(provider))
+        transform_claude_request_for_api_format(
+            body,
+            provider,
+            self.get_api_format(provider),
+            None,
+            None,
+        )
     }
 
     fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
@@ -413,7 +737,9 @@ impl ProviderAdapter for ClaudeAdapter {
         // config, so we can't check api_format here. Instead we rely on the fact that
         // Responses API always returns "output" while Chat Completions returns "choices".
         // This is safe because the two formats are structurally disjoint.
-        if body.get("output").is_some() {
+        if body.get("candidates").is_some() || body.get("promptFeedback").is_some() {
+            super::transform_gemini::gemini_to_anthropic(body)
+        } else if body.get("output").is_some() {
             super::transform_responses::responses_to_anthropic(body)
         } else {
             super::transform::openai_to_anthropic(body)
@@ -475,7 +801,9 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_auth_anthropic() {
+    fn test_extract_auth_anthropic_auth_token_uses_claude_auth_strategy() {
+        // ANTHROPIC_AUTH_TOKEN 在 Anthropic SDK 里语义就是 Authorization: Bearer，
+        // 因此走 ClaudeAuth strategy 而不是 Anthropic（x-api-key）。
         let adapter = ClaudeAdapter::new();
         let provider = create_provider(json!({
             "env": {
@@ -486,7 +814,7 @@ mod tests {
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-ant-test-key");
-        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
     }
 
     #[test]
@@ -505,6 +833,73 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_auth_both_env_vars_prefer_auth_token() {
+        // 两个变量都填时，extract_key 选 AUTH_TOKEN，strategy 推断也必须保持一致。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-from-auth-token",
+                "ANTHROPIC_API_KEY": "sk-from-api-key"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-from-auth-token");
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
+    }
+
+    #[test]
+    fn test_extract_auth_apikey_field_fallback_uses_anthropic_strategy() {
+        // 当用户没填任一 ANTHROPIC_* env，而是直接使用 apiKey 字段时，
+        // 视为没有显式语义偏好，默认走 Anthropic 官方协议（x-api-key）。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiKey": "sk-direct",
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-direct");
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
+    fn test_get_auth_headers_anthropic_emits_x_api_key() {
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new("sk-ant-test".to_string(), AuthStrategy::Anthropic);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "x-api-key");
+        assert_eq!(headers[0].1.to_str().unwrap(), "sk-ant-test");
+    }
+
+    #[test]
+    fn test_get_auth_headers_claude_auth_emits_authorization_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new("sk-relay-test".to_string(), AuthStrategy::ClaudeAuth);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "authorization");
+        assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-relay-test");
+    }
+
+    #[test]
+    fn test_get_auth_headers_bearer_emits_authorization_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new("sk-or-test".to_string(), AuthStrategy::Bearer);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "authorization");
+        assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-or-test");
+    }
+
+    #[test]
     fn test_extract_auth_openrouter() {
         let adapter = ClaudeAdapter::new();
         let provider = create_provider(json!({
@@ -517,6 +912,27 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-or-test-key");
         assert_eq!(auth.strategy, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_extract_auth_gemini_api_key() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",
+                    "GEMINI_API_KEY": "gemini-test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "gemini-test-key");
+        assert_eq!(auth.strategy, AuthStrategy::Google);
     }
 
     #[test]
@@ -549,6 +965,146 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-proxy-key");
         assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
+    }
+
+    /// Regression: a Gemini OAuth credential JSON that carries only a
+    /// refresh_token (no active access_token) must not be surfaced as an
+    /// `AuthInfo` whose bearer would be empty. Without the guard, downstream
+    /// header injection produces `Authorization: Bearer ` and a deterministic
+    /// 401 from upstream.
+    #[test]
+    fn test_extract_auth_gemini_cli_refresh_only_json_does_not_expose_empty_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let refresh_only_json =
+            r#"{"refresh_token":"rt-abc","client_id":"cid","client_secret":"cs"}"#;
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": refresh_only_json
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        // access_token must not be surfaced as `Some("")` — the OAuth header
+        // builder uses `access_token.as_ref().unwrap_or(&api_key)`, so a
+        // `Some("")` would win over the raw key and emit `Bearer `.
+        assert!(
+            auth.access_token.as_deref().is_none_or(|t| !t.is_empty()),
+            "empty access_token leaked into AuthInfo"
+        );
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+    }
+
+    /// Companion case: a JSON credential with an empty-string `access_token`
+    /// field (the shape an expired credential can take after partial writes)
+    /// must degrade the same way.
+    #[test]
+    fn test_extract_auth_gemini_cli_empty_access_token_degrades_to_raw_key() {
+        let adapter = ClaudeAdapter::new();
+        let expired_json = r#"{"access_token":"","refresh_token":"rt-abc","client_id":"cid","client_secret":"cs"}"#;
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": expired_json
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert!(
+            auth.access_token.as_deref().is_none_or(|t| !t.is_empty()),
+            "empty access_token leaked into AuthInfo"
+        );
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+    }
+
+    /// Counter-case: a well-formed JSON credential with a non-empty
+    /// access_token must still flow through the OAuth path unchanged.
+    #[test]
+    fn test_extract_auth_gemini_cli_valid_json_keeps_access_token() {
+        let adapter = ClaudeAdapter::new();
+        let valid_json = r#"{"access_token":"ya29.valid","refresh_token":"rt"}"#;
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": valid_json
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.access_token.as_deref(), Some("ya29.valid"));
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+    }
+
+    /// 回归:从 oauth_creds.json 复制时常带前导换行/空格。未 trim 时
+    /// `starts_with('{')` 会落空,导致误分类为 `ProviderType::Gemini`,再
+    /// 以 raw JSON 当 `x-goog-api-key` 发出去触发 401。trim 应在 provider
+    /// 类型判定和 OAuth 解析前统一生效。
+    #[test]
+    fn test_extract_auth_gemini_cli_json_with_leading_whitespace_classifies_correctly() {
+        let adapter = ClaudeAdapter::new();
+        let valid_json = r#"{"access_token":"ya29.valid","refresh_token":"rt"}"#;
+        let key_with_whitespace = format!("\n  {valid_json}\n");
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": key_with_whitespace
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.access_token.as_deref(), Some("ya29.valid"));
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
+    }
+
+    /// 回归:裸 `ya29.` access_token 若带前导换行,也应被 trim 后识别为
+    /// Gemini CLI OAuth,避免前导空白把 `starts_with("ya29.")` 检查顶穿。
+    #[test]
+    fn test_extract_auth_gemini_cli_access_token_with_leading_newline_classifies_correctly() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": "\nya29.raw-token-value\n"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.access_token.as_deref(), Some("ya29.raw-token-value"));
+        assert_eq!(auth.strategy, AuthStrategy::GoogleOAuth);
     }
 
     #[test]
@@ -717,6 +1273,24 @@ mod tests {
         );
         assert!(adapter.needs_transform(&openai_responses_provider));
 
+        let gemini_native_provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(adapter.needs_transform(&gemini_native_provider));
+        assert_eq!(
+            adapter.provider_type(&gemini_native_provider),
+            ProviderType::Gemini
+        );
+
         // meta takes precedence over legacy settings_config fields
         let meta_precedence_over_settings = create_provider_with_meta(
             json!({
@@ -824,11 +1398,407 @@ mod tests {
             "max_tokens": 128
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_responses").unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(transformed["model"], "gpt-5.4");
         assert!(transformed.get("input").is_some());
         assert!(transformed.get("max_output_tokens").is_some());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_codex_oauth_uses_session_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            Some("session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "session-123");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_codex_oauth_without_session_omits_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(transformed.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_responses_uses_session_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.example.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            Some("claude-session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "claude-session-123");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_responses_without_session_omits_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.example.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(transformed.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_codex_oauth_keeps_explicit_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                prompt_cache_key: Some("explicit-cache-key".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            Some("session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "explicit-cache-key");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_codex_oauth_fast_mode_off() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("codex_oauth".to_string()),
+                codex_fast_mode: Some(false),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["store"], json!(false));
+        assert!(transformed.get("service_tier").is_none());
+        assert_eq!(
+            transformed["include"],
+            json!(["reasoning.encrypted_content"])
+        );
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_gemini_native() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gemini-2.5-pro",
+            "system": "You are helpful.",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "gemini_native", None, None)
+                .unwrap();
+
+        assert!(transformed.get("contents").is_some());
+        assert_eq!(
+            transformed["systemInstruction"]["parts"][0]["text"],
+            "You are helpful."
+        );
+        assert_eq!(transformed["generationConfig"]["maxOutputTokens"], 64);
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_openai_chat_skips_prompt_cache_key_by_default()
+    {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert!(transformed.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_openai_chat_keeps_explicit_prompt_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                prompt_cache_key: Some("claude-cache-route".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "claude-cache-route");
+    }
+
+    #[test]
+    fn test_transform_openai_chat_skips_reasoning_content_for_generic_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert!(msg.get("tool_calls").is_some());
+        assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_preserves_reasoning_content_for_kimi_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "kimi-k2.6",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_preserves_reasoning_content_for_deepseek_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
     }
 }

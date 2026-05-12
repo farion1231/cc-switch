@@ -20,7 +20,7 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     expect(variants.length).toBeGreaterThan(0);
 
     const opusModel = variants.find((v) =>
-      v.id.includes("anthropic.claude-opus-4-6"),
+      v.id.includes("anthropic.claude-opus-4-7"),
     );
     expect(opusModel).toBeDefined();
   });

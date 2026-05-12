@@ -37,9 +37,9 @@ pub fn get_opencode_dir() -> PathBuf {
         return override_dir;
     }
 
-    dirs::home_dir()
-        .map(|h| h.join(".config").join("opencode"))
-        .unwrap_or_else(|| PathBuf::from(".config").join("opencode"))
+    crate::config::get_home_dir()
+        .join(".config")
+        .join("opencode")
 }
 
 pub fn get_opencode_config_path() -> PathBuf {
@@ -61,7 +61,12 @@ pub fn read_opencode_config() -> Result<Value, AppError> {
     }
 
     let content = std::fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
-    serde_json::from_str(&content).map_err(|e| AppError::json(&path, e))
+    json5::from_str(&content).map_err(|e| {
+        AppError::Config(format!(
+            "Failed to parse OpenCode config: {}: {e}",
+            path.display()
+        ))
+    })
 }
 
 pub fn write_opencode_config(config: &Value) -> Result<(), AppError> {

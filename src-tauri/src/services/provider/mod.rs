@@ -21,8 +21,9 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings, sync_current_to_live,
+    import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
+    import_opencode_providers_from_live, read_live_settings,
+    should_import_default_config_on_startup, sync_current_to_live,
 };
 
 // Internal re-exports (pub(crate))
@@ -35,7 +36,8 @@ pub(crate) use live::{
 
 // Internal re-exports
 use live::{
-    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
+    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
+    remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -70,6 +72,7 @@ mod tests {
         dir: TempDir,
         original_home: Option<String>,
         original_userprofile: Option<String>,
+        original_test_home: Option<String>,
     }
 
     impl TempHome {
@@ -77,14 +80,17 @@ mod tests {
             let dir = TempDir::new().expect("failed to create temp home");
             let original_home = env::var("HOME").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
 
             env::set_var("HOME", dir.path());
             env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
 
             Self {
                 dir,
                 original_home,
                 original_userprofile,
+                original_test_home,
             }
         }
     }
@@ -99,6 +105,11 @@ mod tests {
             match &self.original_userprofile {
                 Some(value) => env::set_var("USERPROFILE", value),
                 None => env::remove_var("USERPROFILE"),
+            }
+
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
     }
@@ -312,7 +323,8 @@ base_url = "http://localhost:8080"
 
     #[tokio::test]
     #[serial]
-    async fn update_current_claude_provider_syncs_live_when_proxy_takeover_detected_without_backup() {
+    async fn update_current_claude_provider_syncs_live_when_proxy_takeover_detected_without_backup()
+    {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
@@ -369,7 +381,11 @@ base_url = "http://localhost:8080"
         )
         .expect("seed taken-over live file");
 
-        state.proxy_service.start().await.expect("start proxy service");
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
 
         let updated = Provider::with_id(
             "p1".into(),
@@ -430,6 +446,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn rename_rejects_missing_original_provider() {
         with_test_home(|state, _| {
             let original = openclaw_provider("deepseek");
@@ -463,6 +480,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn db_only_additive_update_survives_live_config_parse_errors() {
         with_test_home(|state, home| {
             let provider = openclaw_provider("deepseek");
@@ -505,6 +523,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_skips_db_only_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("db-only-opencode");
@@ -524,6 +543,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_skips_db_only_openclaw_provider() {
         with_test_home(|state, _| {
             let provider = openclaw_provider("db-only-openclaw");
@@ -543,6 +563,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_preserves_legacy_live_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("legacy-opencode");
@@ -577,6 +598,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_restores_legacy_opencode_provider_after_live_reset() {
         with_test_home(|state, _| {
             let provider = opencode_provider("legacy-opencode-reset");
@@ -598,6 +620,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn sync_current_provider_for_app_restores_legacy_openclaw_provider_after_live_reset() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("legacy-openclaw-reset");
@@ -625,6 +648,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn import_opencode_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let provider = opencode_provider("imported-opencode");
@@ -652,6 +676,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn import_openclaw_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("imported-openclaw");
@@ -685,6 +710,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn legacy_additive_provider_still_errors_on_live_config_parse_failure() {
         with_test_home(|state, home| {
             let provider = openclaw_provider("legacy-provider");
@@ -711,6 +737,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn update_persists_non_current_omo_variants_in_database() {
         with_test_home(|state, _| {
             for category in ["omo", "omo-slim"] {
@@ -745,6 +772,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn update_current_omo_variant_rewrites_config_from_saved_provider() {
         with_test_home(|state, home| {
             for category in ["omo", "omo-slim"] {
@@ -795,6 +823,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn update_current_omo_variant_does_not_persist_database_when_file_write_fails() {
         with_test_home(|state, home| {
             let provider = opencode_omo_provider("omo-current", "omo");
@@ -836,6 +865,7 @@ base_url = "http://localhost:8080"
     }
 
     #[test]
+    #[serial]
     fn update_current_omo_variant_rolls_back_file_when_plugin_sync_fails() {
         with_test_home(|state, home| {
             let provider = opencode_omo_provider("omo-current", "omo");
@@ -1181,8 +1211,7 @@ impl ProviderService {
             let live_taken_over = state
                 .proxy_service
                 .detect_takeover_in_live_config_for_app(&app_type);
-            let should_sync_via_proxy =
-                is_proxy_running && (has_live_backup || live_taken_over);
+            let should_sync_via_proxy = is_proxy_running && (has_live_backup || live_taken_over);
 
             if should_sync_via_proxy {
                 futures::executor::block_on(
@@ -1255,6 +1284,7 @@ impl ProviderService {
                 match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
+                    AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     _ => {}
                 }
             }
@@ -1317,6 +1347,9 @@ impl ProviderService {
             AppType::OpenClaw => {
                 remove_openclaw_provider_from_live(id)?;
             }
+            AppType::Hermes => {
+                remove_hermes_provider_from_live(id)?;
+            }
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -1364,6 +1397,10 @@ impl ProviderService {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
+        if matches!(app_type, AppType::ClaudeDesktop) {
+            return Self::switch_normal(state, app_type, id, &providers);
+        }
+
         // Check if proxy takeover mode is active AND proxy server is actually running
         // Both conditions must be true to use hot-switch mode
         // Use blocking wait since this is a sync function
@@ -1379,6 +1416,16 @@ impl ProviderService {
 
         // Hot-switch only when BOTH: this app is taken over AND proxy server is actually running
         let should_hot_switch = (is_app_taken_over || live_taken_over) && is_proxy_running;
+
+        // Block switching to official providers when proxy takeover is active.
+        // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
+        if should_hot_switch && _provider.category.as_deref() == Some("official") {
+            return Err(AppError::localized(
+                "switch.official_blocked_by_proxy",
+                "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁。请先关闭代理接管，或选择第三方供应商。",
+                "Cannot switch to official provider while proxy takeover is active. Using proxy with official APIs may cause account bans.",
+            ));
+        }
 
         if should_hot_switch {
             // Proxy takeover mode: hot-switch only, don't write Live config
@@ -1481,6 +1528,25 @@ impl ProviderService {
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
         write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
 
+        // Hermes is additive, so "switching" doesn't overwrite a live config file
+        // — we instead update the top-level `model:` section to point at this
+        // provider's first declared model. Without this, clicking "switch" would
+        // only shuffle entries in custom_providers[] while Hermes keeps using
+        // whatever `model.provider` was set before.
+        if matches!(app_type, AppType::Hermes) {
+            if let Err(e) =
+                crate::hermes_config::apply_switch_defaults(&provider.id, &provider.settings_config)
+            {
+                log::warn!(
+                    "Failed to update Hermes model defaults after switching to '{}': {e}",
+                    provider.id
+                );
+                result
+                    .warnings
+                    .push(format!("hermes_model_defaults_failed:{}", provider.id));
+            }
+        }
+
         // For additive-mode providers that were DB-only (live_config_managed == Some(false)),
         // flip the flag to true now that the provider has been successfully written to the live
         // file. This ensures sync_all_providers_to_live() will include it on future syncs.
@@ -1495,6 +1561,7 @@ impl ProviderService {
                 let rollback_result = match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
+                    AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -1667,10 +1734,12 @@ impl ProviderService {
 
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
+            AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
+            AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
     }
 
@@ -1681,10 +1750,12 @@ impl ProviderService {
     ) -> Result<String, AppError> {
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(settings_config),
+            AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
+            AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
     }
 
@@ -1697,9 +1768,9 @@ impl ProviderService {
             // Auth
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
-            // Models (5 fields)
+            // Models (4 fields + 1 legacy)
             "ANTHROPIC_MODEL",
-            "ANTHROPIC_REASONING_MODEL",
+            "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -1869,6 +1940,13 @@ impl ProviderService {
         import_default_config(state, app_type)
     }
 
+    pub fn should_import_default_config_on_startup(
+        state: &AppState,
+        app_type: &AppType,
+    ) -> Result<bool, AppError> {
+        should_import_default_config_on_startup(state, app_type)
+    }
+
     /// Read current live settings (re-export)
     pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         read_live_settings(app_type)
@@ -1984,6 +2062,9 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::ClaudeDesktop => {
+                crate::claude_desktop_config::validate_provider(provider)?;
+            }
             AppType::Codex => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {
                     AppError::localized(
@@ -2050,6 +2131,16 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Hermes => {
+                // Hermes: accept any JSON object for now
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.hermes.settings.not_object",
+                        "Hermes 配置必须是 JSON 对象",
+                        "Hermes configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -2107,6 +2198,11 @@ impl ProviderService {
                     .to_string();
 
                 Ok((api_key, base_url))
+            }
+            AppType::ClaudeDesktop => {
+                let credentials =
+                    crate::claude_desktop_config::direct_gateway_credentials(provider)?;
+                Ok((credentials.api_key, credentials.base_url))
             }
             AppType::Codex => {
                 let auth = provider
@@ -2221,8 +2317,8 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw => {
-                // OpenClaw uses apiKey and baseUrl directly on the object
+            AppType::OpenClaw | AppType::Hermes => {
+                // OpenClaw/Hermes use apiKey and baseUrl directly on the object
                 let api_key = provider
                     .settings_config
                     .get("apiKey")

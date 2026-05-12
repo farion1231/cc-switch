@@ -121,6 +121,9 @@ impl ConfigService {
         match app_type {
             AppType::Codex => Self::sync_codex_live(config, &current_id, &provider)?,
             AppType::Claude => Self::sync_claude_live(config, &current_id, &provider)?,
+            AppType::ClaudeDesktop => {
+                // Claude Desktop 3P profiles are managed by claude_desktop_config.
+            }
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
             AppType::OpenCode => {
                 // OpenCode uses additive mode, no live sync needed
@@ -129,6 +132,9 @@ impl ConfigService {
             AppType::OpenClaw => {
                 // OpenClaw uses additive mode, no live sync needed
                 // OpenClaw providers are managed directly in the config file
+            }
+            AppType::Hermes => {
+                // Hermes uses additive mode, no live sync needed
             }
         }
 
@@ -153,7 +159,7 @@ impl ConfigService {
         }
         let cfg_text = settings.get("config").and_then(Value::as_str);
 
-        crate::codex_config::write_codex_live_atomic(auth, cfg_text)?;
+        crate::codex_config::write_codex_live_atomic_with_stable_provider(auth, cfg_text)?;
         // 注意：MCP 同步在 v3.7.0 中已通过 McpService 进行，不再在此调用
         // sync_enabled_to_codex 使用旧的 config.mcp.codex 结构，在新架构中为空
         // MCP 的启用/禁用应通过 McpService::toggle_app 进行

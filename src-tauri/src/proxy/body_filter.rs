@@ -6,6 +6,8 @@
 //! - 以 `_` 开头的字段被视为私有参数，会被递归过滤
 //! - 支持白名单机制，允许透传特定的 `_` 前缀字段
 //! - 支持嵌套对象和数组的深度过滤
+//! - JSON Schema 的 properties / patternProperties / definitions / $defs 名称
+//!   是用户定义的字段名，不按私有参数过滤
 //!
 //! ## 使用场景
 //! - `_internal_id`: 内部追踪 ID
@@ -65,29 +67,35 @@ pub fn filter_private_params(body: Value) -> Value {
 /// ```
 pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -> Value {
     let whitelist_set: HashSet<&str> = whitelist.iter().map(|s| s.as_str()).collect();
-    filter_recursive_with_whitelist(body, &mut Vec::new(), &whitelist_set)
+    filter_recursive_with_whitelist(body, &mut Vec::new(), &mut Vec::new(), &whitelist_set)
 }
 
 /// 递归过滤实现（支持白名单）
 fn filter_recursive_with_whitelist(
     value: Value,
+    path: &mut Vec<String>,
     removed_keys: &mut Vec<String>,
     whitelist: &HashSet<&str>,
 ) -> Value {
     match value {
         Value::Object(map) => {
+            let is_schema_name_map = path.last().is_some_and(|key| matches_schema_name_map(key));
             let filtered: serde_json::Map<String, Value> = map
                 .into_iter()
                 .filter_map(|(key, val)| {
                     // 以 _ 开头且不在白名单中的字段被过滤
-                    if key.starts_with('_') && !whitelist.contains(key.as_str()) {
+                    if key.starts_with('_')
+                        && !whitelist.contains(key.as_str())
+                        && !is_schema_name_map
+                    {
                         removed_keys.push(key);
                         None
                     } else {
-                        Some((
-                            key,
-                            filter_recursive_with_whitelist(val, removed_keys, whitelist),
-                        ))
+                        path.push(key.clone());
+                        let filtered_value =
+                            filter_recursive_with_whitelist(val, path, removed_keys, whitelist);
+                        path.pop();
+                        Some((key, filtered_value))
                     }
                 })
                 .collect();
@@ -102,11 +110,18 @@ fn filter_recursive_with_whitelist(
         }
         Value::Array(arr) => Value::Array(
             arr.into_iter()
-                .map(|v| filter_recursive_with_whitelist(v, removed_keys, whitelist))
+                .map(|v| filter_recursive_with_whitelist(v, path, removed_keys, whitelist))
                 .collect(),
         ),
         other => other,
     }
+}
+
+fn matches_schema_name_map(key: &str) -> bool {
+    matches!(
+        key,
+        "properties" | "patternProperties" | "definitions" | "$defs"
+    )
 }
 
 #[cfg(test)]
@@ -280,6 +295,33 @@ mod tests {
         assert!(data.get("_allowed").is_some());
         assert!(data.get("_forbidden").is_none());
         assert!(data.get("normal").is_some());
+    }
+
+    #[test]
+    fn test_preserves_json_schema_property_names_with_underscore() {
+        let input = json!({
+            "tools": [
+                {
+                    "name": "lookup",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "_id": {"type": "string", "_internal_note": "remove"},
+                            "_meta": {"type": "object"}
+                        },
+                        "_private_schema_note": "remove"
+                    }
+                }
+            ]
+        });
+
+        let output = filter_private_params(input);
+        let schema = &output["tools"][0]["input_schema"];
+
+        assert!(schema["properties"].get("_id").is_some());
+        assert!(schema["properties"].get("_meta").is_some());
+        assert!(schema["properties"]["_id"].get("_internal_note").is_none());
+        assert!(schema.get("_private_schema_note").is_none());
     }
 
     #[test]

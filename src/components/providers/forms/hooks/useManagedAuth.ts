@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { authApi, settingsApi } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import type {
   ManagedAuthProvider,
   ManagedAuthStatus,
@@ -9,7 +10,10 @@ import type {
 
 type PollingState = "idle" | "polling" | "success" | "error";
 
-export function useManagedAuth(authProvider: ManagedAuthProvider) {
+export function useManagedAuth(
+  authProvider: ManagedAuthProvider,
+  githubDomain?: string,
+) {
   const queryClient = useQueryClient();
   const queryKey = ["managed-auth-status", authProvider];
 
@@ -51,14 +55,14 @@ export function useManagedAuth(authProvider: ManagedAuthProvider) {
   }, [stopPolling]);
 
   const startLoginMutation = useMutation({
-    mutationFn: () => authApi.authStartLogin(authProvider),
+    mutationFn: () => authApi.authStartLogin(authProvider, githubDomain),
     onSuccess: async (response) => {
       setDeviceCode(response);
       setPollingState("polling");
       setError(null);
 
       try {
-        await navigator.clipboard.writeText(response.user_code);
+        await copyText(response.user_code);
       } catch (e) {
         console.debug("[ManagedAuth] Failed to copy user code:", e);
       }
@@ -86,6 +90,7 @@ export function useManagedAuth(authProvider: ManagedAuthProvider) {
           const newAccount = await authApi.authPollForAccount(
             authProvider,
             response.device_code,
+            githubDomain,
           );
           if (newAccount) {
             stopPolling();

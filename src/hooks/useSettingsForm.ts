@@ -81,6 +81,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       ...data,
       showInTray: data.showInTray ?? true,
       minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
+      useAppWindowControls: data.useAppWindowControls ?? false,
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
       silentStartup: data.silentStartup ?? false,
@@ -94,6 +95,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       geminiConfigDirWsl: sanitizeDir(data.geminiConfigDirWsl),
       opencodeConfigDirWsl: sanitizeDir(data.opencodeConfigDirWsl),
       openclawConfigDirWsl: sanitizeDir(data.openclawConfigDirWsl),
+      openclawConfigDir: sanitizeDir(data.openclawConfigDir),
       language: normalizedLanguage,
     };
 
@@ -110,6 +112,7 @@ export function useSettingsForm(): UseSettingsFormResult {
           ({
             showInTray: true,
             minimizeToTrayOnClose: true,
+            useAppWindowControls: false,
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
             language: readPersistedLanguage(),
@@ -144,6 +147,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         ...serverData,
         showInTray: serverData.showInTray ?? true,
         minimizeToTrayOnClose: serverData.minimizeToTrayOnClose ?? true,
+        useAppWindowControls: serverData.useAppWindowControls ?? false,
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
         silentStartup: serverData.silentStartup ?? false,
@@ -157,6 +161,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         geminiConfigDirWsl: sanitizeDir(serverData.geminiConfigDirWsl),
         opencodeConfigDirWsl: sanitizeDir(serverData.opencodeConfigDirWsl),
         openclawConfigDirWsl: sanitizeDir(serverData.openclawConfigDirWsl),
+        openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),
         language: normalizedLanguage,
       };
 

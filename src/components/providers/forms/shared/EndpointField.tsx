@@ -11,6 +11,7 @@ interface EndpointFieldProps {
   onChange: (value: string) => void;
   placeholder: string;
   hint?: string;
+  fullUrlHint?: string;
   showManageButton?: boolean;
   onManageClick?: () => void;
   manageButtonLabel?: string;
@@ -26,6 +27,7 @@ export function EndpointField({
   onChange,
   placeholder,
   hint,
+  fullUrlHint,
   showManageButton = true,
   onManageClick,
   manageButtonLabel,
@@ -40,7 +42,8 @@ export function EndpointField({
   });
   const effectiveHint =
     showFullUrlToggle && isFullUrl
-      ? t("providerForm.fullUrlHint", {
+      ? fullUrlHint ||
+        t("providerForm.fullUrlHint", {
           defaultValue:
             "💡 请填写完整请求 URL，并且必须开启代理后使用；代理将直接使用此 URL，不拼接路径",
         })
