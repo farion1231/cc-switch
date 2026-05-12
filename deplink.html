@@ -423,7 +423,7 @@
                         <span class="version-badge">v3.10+</span>
                     </h3>
                     <p class="description">
-                        通过 <code>extraEnv</code> 参数一键导入 Teammates 模式、Tool Search、最大强度思考等环境变量，自动勾选对应 UI 开关。
+                        通过 <code>extraEnv</code> 参数一键导入额外环境变量。当前适用于带 <code>env</code> 配置的 provider deeplink（现阶段为 Claude / Gemini）。其中本示例面向 Claude：导入后会自动勾选对应 UI 开关；Gemini 仅写入 <code>env</code>，不会显示这些 Claude 专属开关。
                     </p>
                     <div class="param-list">
                         <span class="param-tag">必需</span> resource=provider, app=claude, name, endpoint, apiKey<br>
@@ -455,6 +455,10 @@
                     <div
                         style="margin-top: 12px; padding: 10px; background: #d4edda; border-left: 4px solid #28a745; border-radius: 4px; font-size: 13px;">
                         <strong>自动勾选的 UI 开关:</strong> Teammates 模式、启用 Tool Search、最大强度思考
+                    </div>
+                    <div
+                        style="margin-top: 12px; padding: 10px; background: #eef6ff; border-left: 4px solid #4a90e2; border-radius: 4px; font-size: 13px;">
+                        <strong>值规则:</strong> 鉴权/基础 URL 等关键字段只接受非空字符串；其他字段里的布尔/数字会自动转成字符串；<code>null</code>、数组、对象会被跳过。Gemini 的 key 还必须满足 <code>[A-Za-z0-9_]+</code>。其他 provider app 使用 <code>extraEnv</code> 会直接报错。
                     </div>
                 </div>
 

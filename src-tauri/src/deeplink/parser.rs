@@ -133,11 +133,17 @@ fn parse_provider_deeplink(
     let usage_enabled = params
         .get("usageEnabled")
         .and_then(|v| v.parse::<bool>().ok());
-    let usage_script = params.get("usageScript").cloned();
-    let usage_api_key = params.get("usageApiKey").cloned();
-    let usage_base_url = params.get("usageBaseUrl").cloned();
-    let usage_access_token = params.get("usageAccessToken").cloned();
-    let usage_user_id = params.get("usageUserId").cloned();
+    let usage_script = params.get("usageScript").cloned().filter(|v| !v.is_empty());
+    let usage_api_key = params.get("usageApiKey").cloned().filter(|v| !v.is_empty());
+    let usage_base_url = params
+        .get("usageBaseUrl")
+        .cloned()
+        .filter(|v| !v.is_empty());
+    let usage_access_token = params
+        .get("usageAccessToken")
+        .cloned()
+        .filter(|v| !v.is_empty());
+    let usage_user_id = params.get("usageUserId").cloned().filter(|v| !v.is_empty());
     let usage_auto_interval = params
         .get("usageAutoInterval")
         .and_then(|v| v.parse::<u64>().ok());

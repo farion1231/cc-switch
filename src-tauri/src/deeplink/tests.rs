@@ -467,23 +467,41 @@ fn test_infer_homepage_from_endpoint_without_homepage() {
 // Extra Env Tests (v3.10+)
 // =============================================================================
 
-fn claude_request_fixture(extra_env: Option<String>) -> DeepLinkImportRequest {
+fn provider_request_fixture(
+    app: &str,
+    name: &str,
+    api_key: &str,
+    extra_env: Option<String>,
+) -> DeepLinkImportRequest {
     DeepLinkImportRequest {
         version: "v1".to_string(),
         resource: "provider".to_string(),
-        app: Some("claude".to_string()),
-        name: Some("Test".to_string()),
+        app: Some(app.to_string()),
+        name: Some(name.to_string()),
         homepage: Some("https://example.com".to_string()),
         endpoint: Some("https://api.example.com".to_string()),
-        api_key: Some("sk-test".to_string()),
+        api_key: Some(api_key.to_string()),
         extra_env,
         ..Default::default()
     }
 }
 
+fn claude_request_fixture(extra_env: Option<String>) -> DeepLinkImportRequest {
+    provider_request_fixture("claude", "Test", "sk-test", extra_env)
+}
+
+fn gemini_request_fixture(extra_env: Option<String>) -> DeepLinkImportRequest {
+    provider_request_fixture("gemini", "Test Gemini", "test-api-key", extra_env)
+}
+
+fn usage_script_fixture_b64() -> String {
+    BASE64_STANDARD.encode("async function main() { return []; }".as_bytes())
+}
+
 #[test]
 fn test_parse_provider_with_extra_env() {
-    let extra_env_json = r#"{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1","ENABLE_TOOL_SEARCH":"true"}"#;
+    let extra_env_json =
+        r#"{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1","ENABLE_TOOL_SEARCH":"true"}"#;
     // Use URL-safe base64 (no + or /) to avoid URL-encoding issues in test string
     let extra_env_b64 = BASE64_URL_SAFE_NO_PAD.encode(extra_env_json.as_bytes());
     let url = format!(
@@ -518,8 +536,7 @@ fn test_build_claude_settings_with_extra_env() {
 
     // Extra env fields merged in
     assert_eq!(
-        env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"],
-        "1",
+        env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"], "1",
         "extra_env should merge CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
     );
     assert_eq!(
@@ -533,11 +550,247 @@ fn test_build_claude_settings_with_extra_env() {
 }
 
 #[test]
+fn test_claude_usage_script_defaults_follow_extra_env_overrides() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{
+        "ANTHROPIC_AUTH_TOKEN":"sk-usage-override",
+        "ANTHROPIC_BASE_URL":"https://usage.example.com"
+    }"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let mut request = claude_request_fixture(Some(extra_env_b64));
+    request.usage_script = Some(usage_script_fixture_b64());
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let usage_script = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.usage_script.as_ref())
+        .expect("usage script metadata");
+
+    assert_eq!(usage_script.api_key.as_deref(), Some("sk-usage-override"));
+    assert_eq!(
+        usage_script.base_url.as_deref(),
+        Some("https://usage.example.com"),
+    );
+}
+
+#[test]
+fn test_claude_alternative_auth_key_replaces_default_auth_token() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{
+        "ANTHROPIC_API_KEY":"sk-api-key-override",
+        "ANTHROPIC_BASE_URL":"https://api.example.com"
+    }"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let provider = build_provider_from_request(
+        &AppType::Claude,
+        &claude_request_fixture(Some(extra_env_b64)),
+    )
+    .unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    assert!(env.get("ANTHROPIC_AUTH_TOKEN").is_none());
+    assert_eq!(env["ANTHROPIC_API_KEY"], "sk-api-key-override");
+}
+
+#[test]
+fn test_claude_openrouter_key_replaces_default_auth_token() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{
+        "OPENROUTER_API_KEY":"sk-openrouter-override",
+        "ANTHROPIC_BASE_URL":"https://openrouter.ai/api"
+    }"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let provider = build_provider_from_request(
+        &AppType::Claude,
+        &claude_request_fixture(Some(extra_env_b64)),
+    )
+    .unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    assert!(env.get("ANTHROPIC_AUTH_TOKEN").is_none());
+    assert_eq!(env["OPENROUTER_API_KEY"], "sk-openrouter-override");
+}
+
+#[test]
+fn test_invalid_claude_alternative_auth_does_not_remove_default_auth_token() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{
+        "ANTHROPIC_API_KEY":"",
+        "ANTHROPIC_BASE_URL":"https://api.example.com"
+    }"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let provider = build_provider_from_request(
+        &AppType::Claude,
+        &claude_request_fixture(Some(extra_env_b64)),
+    )
+    .unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-test");
+    assert!(env.get("ANTHROPIC_API_KEY").is_none());
+}
+
+#[test]
+fn test_extra_env_stringifies_scalars_and_skips_invalid_values() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{
+        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": 1,
+        "ENABLE_TOOL_SEARCH": true,
+        "ANTHROPIC_AUTH_TOKEN": "",
+        "ANTHROPIC_BASE_URL": 1,
+        "OPENROUTER_API_KEY": false,
+        "CLAUDE_CODE_EFFORT_LEVEL": "max",
+        "IGNORED_ARRAY": ["bad"]
+    }"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let provider = build_provider_from_request(
+        &AppType::Claude,
+        &claude_request_fixture(Some(extra_env_b64)),
+    )
+    .unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    assert_eq!(env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"], "1");
+    assert_eq!(env["ENABLE_TOOL_SEARCH"], "true");
+    assert_eq!(env["CLAUDE_CODE_EFFORT_LEVEL"], "max");
+    assert_eq!(
+        env["ANTHROPIC_AUTH_TOKEN"], "sk-test",
+        "empty-string override should preserve the required auth token"
+    );
+    assert_eq!(
+        env["ANTHROPIC_BASE_URL"], "https://api.example.com",
+        "numeric override should preserve the required base URL"
+    );
+    assert!(env.get("OPENROUTER_API_KEY").is_none());
+    assert!(env.get("IGNORED_ARRAY").is_none());
+}
+
+#[test]
+fn test_build_gemini_settings_with_extra_env() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{
+        "GEMINI_API_KEY":"override-key",
+        "GOOGLE_GEMINI_BASE_URL":"https://override.example.com",
+        "GEMINI_MODEL":"gemini-2.5-pro",
+        "TRACE_SAMPLE_RATE":0.5,
+        "feature.flag":"1"
+    }"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let provider = build_provider_from_request(
+        &AppType::Gemini,
+        &gemini_request_fixture(Some(extra_env_b64)),
+    )
+    .unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    assert_eq!(env["GEMINI_API_KEY"], "override-key");
+    assert_eq!(
+        env["GOOGLE_GEMINI_BASE_URL"],
+        "https://override.example.com"
+    );
+    assert_eq!(env["GEMINI_MODEL"], "gemini-2.5-pro");
+    assert_eq!(env["TRACE_SAMPLE_RATE"], "0.5");
+    assert!(env.get("feature.flag").is_none());
+}
+
+#[test]
+fn test_gemini_usage_script_defaults_follow_extra_env_overrides() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{
+        "GEMINI_API_KEY":"gemini-usage-override",
+        "GOOGLE_GEMINI_BASE_URL":"https://gemini-usage.example.com"
+    }"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let mut request = gemini_request_fixture(Some(extra_env_b64));
+    request.usage_script = Some(usage_script_fixture_b64());
+
+    let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
+    let usage_script = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.usage_script.as_ref())
+        .expect("usage script metadata");
+
+    assert_eq!(
+        usage_script.api_key.as_deref(),
+        Some("gemini-usage-override"),
+    );
+    assert_eq!(
+        usage_script.base_url.as_deref(),
+        Some("https://gemini-usage.example.com"),
+    );
+}
+
+#[test]
+fn test_gemini_empty_usage_api_key_falls_back_to_final_provider_key() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{
+        "GEMINI_API_KEY":"gemini-usage-override",
+        "GOOGLE_GEMINI_BASE_URL":"https://gemini-usage.example.com"
+    }"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let mut request = gemini_request_fixture(Some(extra_env_b64));
+    request.usage_script = Some(usage_script_fixture_b64());
+    request.usage_api_key = Some(String::new());
+
+    let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
+    let usage_script = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.usage_script.as_ref())
+        .expect("usage script metadata");
+
+    assert_eq!(
+        usage_script.api_key.as_deref(),
+        Some("gemini-usage-override"),
+    );
+}
+
+#[test]
+fn test_gemini_extra_env_preserves_protected_fields_on_invalid_scalar_override() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{
+        "GEMINI_API_KEY": true,
+        "GOOGLE_GEMINI_BASE_URL": 1,
+        "TRACE_SAMPLE_RATE":0.5
+    }"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+
+    let provider = build_provider_from_request(
+        &AppType::Gemini,
+        &gemini_request_fixture(Some(extra_env_b64)),
+    )
+    .unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    assert_eq!(env["GEMINI_API_KEY"], "test-api-key");
+    assert_eq!(env["GOOGLE_GEMINI_BASE_URL"], "https://api.example.com");
+    assert_eq!(env["TRACE_SAMPLE_RATE"], "0.5");
+}
+
+#[test]
 fn test_extra_env_does_not_break_without_value() {
     use super::provider::build_provider_from_request;
 
     let request = claude_request_fixture(None);
-
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
     let env = provider.settings_config["env"].as_object().unwrap();
 
@@ -557,4 +810,45 @@ fn test_extra_env_ignores_invalid_base64() {
     let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
     let env = provider.settings_config["env"].as_object().unwrap();
     assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-test");
+}
+
+#[test]
+fn test_extra_env_ignores_valid_base64_non_json_object() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_b64 = BASE64_STANDARD.encode(br#"["not","an","object"]"#);
+    let request = claude_request_fixture(Some(extra_env_b64));
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-test");
+    assert!(env.get("not").is_none());
+}
+
+#[test]
+fn test_extra_env_rejects_unsupported_provider_app() {
+    use super::provider::build_provider_from_request;
+
+    let extra_env_json = r#"{"OPENAI_API_KEY":"override-key"}"#;
+    let extra_env_b64 = BASE64_STANDARD.encode(extra_env_json.as_bytes());
+    let cases = [
+        (AppType::Codex, "codex", "sk-codex"),
+        (AppType::OpenCode, "opencode", "sk-opencode"),
+        (AppType::OpenClaw, "openclaw", "sk-openclaw"),
+        (AppType::Hermes, "hermes", "sk-hermes"),
+    ];
+
+    for (app_type, app_name, api_key) in cases {
+        let request = provider_request_fixture(
+            app_name,
+            &format!("Test {app_name}"),
+            api_key,
+            Some(extra_env_b64.clone()),
+        );
+
+        let err = build_provider_from_request(&app_type, &request).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("extraEnv is currently only supported for Claude, ClaudeDesktop and Gemini"));
+    }
 }

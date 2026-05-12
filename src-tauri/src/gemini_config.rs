@@ -23,6 +23,10 @@ pub fn get_gemini_env_path() -> PathBuf {
 ///
 /// 此函数宽松地解析 .env 文件，跳过无效行。
 /// 对于需要严格验证的场景，请使用 `parse_env_file_strict`。
+pub fn is_valid_env_key(key: &str) -> bool {
+    !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
 pub fn parse_env_file(content: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
 
@@ -40,7 +44,7 @@ pub fn parse_env_file(content: &str) -> HashMap<String, String> {
             let value = value.trim().to_string();
 
             // 验证 key 是否有效（不为空，只包含字母、数字和下划线）
-            if !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            if is_valid_env_key(&key) {
                 map.insert(key, value);
             }
         }
@@ -107,7 +111,7 @@ pub fn parse_env_file_strict(content: &str) -> Result<HashMap<String, String>, A
             }
 
             // 验证 key 只包含字母、数字和下划线
-            if !key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            if !is_valid_env_key(key) {
                 return Err(AppError::localized(
                     "gemini.env.parse_error.invalid_key",
                     format!("Gemini .env 文件格式错误（第 {line_number} 行）：环境变量名只能包含字母、数字和下划线\n变量名: {key}"),

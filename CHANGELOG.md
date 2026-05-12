@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Deep Link Extra Environment Variables (`extraEnv`)**: Provider deep links now support an `extraEnv` parameter (Base64-encoded JSON object) for merging arbitrary environment variables into the provider's `settings_config.env`. This enables one-click import of UI-toggled configurations such as `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, `ENABLE_TOOL_SEARCH`, and `CLAUDE_CODE_EFFORT_LEVEL`, which are automatically recognized by the Common Config Editor's checkbox toggles. Invalid Base64 or non-JSON values are logged and skipped without breaking the import.
+- **Deep Link Extra Environment Variables (`extraEnv`)**: Claude and Gemini provider deep links now support an `extraEnv` parameter (Base64-encoded JSON object) for merging extra variables into `settings_config.env`. Protected auth/base-URL fields only accept non-empty strings; other boolean/number scalars are stringified, and null/object/array values are skipped. Gemini keys must match `.env` naming rules, and other provider deeplinks reject `extraEnv` explicitly instead of silently ignoring it.
 
 ### Fixed
 

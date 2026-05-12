@@ -88,6 +88,8 @@ fn extract_api_key_from_provider(provider: &crate::provider::Provider) -> Option
         env.get("ANTHROPIC_AUTH_TOKEN")
             .or_else(|| env.get("ANTHROPIC_API_KEY"))
             .or_else(|| env.get("OPENROUTER_API_KEY"))
+            .or_else(|| env.get("OPENAI_API_KEY"))
+            .or_else(|| env.get("GEMINI_API_KEY"))
             .or_else(|| env.get("GOOGLE_API_KEY"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
@@ -225,4 +227,49 @@ pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_api_key_from_provider;
+    use crate::provider::Provider;
+    use serde_json::json;
+
+    #[test]
+    fn extract_api_key_from_provider_supports_gemini_api_key() {
+        let provider = Provider::with_id(
+            "gemini".to_string(),
+            "Gemini".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key"
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(
+            extract_api_key_from_provider(&provider).as_deref(),
+            Some("gemini-key"),
+        );
+    }
+
+    #[test]
+    fn extract_api_key_from_provider_supports_openai_api_key_fallback() {
+        let provider = Provider::with_id(
+            "claude-openai".to_string(),
+            "Claude OpenAI".to_string(),
+            json!({
+                "env": {
+                    "OPENAI_API_KEY": "openai-key"
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(
+            extract_api_key_from_provider(&provider).as_deref(),
+            Some("openai-key"),
+        );
+    }
 }
