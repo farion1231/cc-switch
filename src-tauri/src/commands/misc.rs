@@ -1492,11 +1492,27 @@ fn default_provider_terminal_command(app_type: &AppType) -> &'static str {
 }
 
 fn render_command_template(template: &str, replacements: &[(&str, String)]) -> String {
-    replacements
-        .iter()
-        .fold(template.to_string(), |acc, (key, value)| {
-            acc.replace(&format!("{{{key}}}"), value)
-        })
+    // Single-pass scan so substituted values can't be re-expanded by a later
+    // placeholder (e.g. a path containing literal `{cwd}` getting rewritten).
+    let mut out = String::with_capacity(template.len());
+    let bytes = template.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            if let Some(end) = template[i + 1..].find('}') {
+                let key = &template[i + 1..i + 1 + end];
+                if let Some((_, value)) = replacements.iter().find(|(k, _)| *k == key) {
+                    out.push_str(value);
+                    i += 1 + end + 1;
+                    continue;
+                }
+            }
+        }
+        let ch = template[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 fn build_provider_terminal_session_name(provider_id: &str) -> String {
@@ -2061,6 +2077,24 @@ mod tests {
         );
 
         assert_eq!(command, "zellij attach --create 'ccswitch-my-provider-api'");
+    }
+
+    #[test]
+    fn render_command_template_does_not_cascade_replacements() {
+        // A substituted value that itself contains placeholder-like text must
+        // not be re-expanded by a later replacement pass.
+        let rendered = render_command_template(
+            "a={a} b={b}",
+            &[("a", "{b}".to_string()), ("b", "SECOND".to_string())],
+        );
+        assert_eq!(rendered, "a={b} b=SECOND");
+    }
+
+    #[test]
+    fn render_command_template_leaves_unknown_placeholders_intact() {
+        let rendered =
+            render_command_template("hello {name} {missing}", &[("name", "world".to_string())]);
+        assert_eq!(rendered, "hello world {missing}");
     }
 
     #[test]
