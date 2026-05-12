@@ -3,6 +3,14 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
+import { FormLabel } from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import {
@@ -10,7 +18,7 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-import type { ProviderCategory } from "@/types";
+import type { ProviderCategory, ClaudeApiFormat } from "@/types";
 
 interface EndpointCandidate {
   url: string;
@@ -44,6 +52,10 @@ interface CodexFormFieldsProps {
   modelName?: string;
   onModelNameChange?: (model: string) => void;
 
+  // API Format
+  apiFormat?: ClaudeApiFormat;
+  onApiFormatChange?: (format: ClaudeApiFormat) => void;
+
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 }
@@ -70,6 +82,8 @@ export function CodexFormFields({
   shouldShowModelField = true,
   modelName = "",
   onModelNameChange,
+  apiFormat = "openai_chat",
+  onApiFormatChange,
   speedTestEndpoints,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
@@ -187,6 +201,47 @@ export function CodexFormFields({
               : t("providerForm.modelHint", {
                   defaultValue: "💡 留空将使用供应商的默认模型",
                 })}
+          </p>
+        </div>
+      )}
+
+      {/* API 格式选择（实验性，仅非官方供应商显示） */}
+      {onApiFormatChange && category !== "official" && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="codexApiFormat">
+            {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+          </FormLabel>
+          <Select value={apiFormat} onValueChange={onApiFormatChange}>
+            <SelectTrigger id="codexApiFormat" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai_chat">
+                {t("providerForm.apiFormatOpenAIChat", {
+                  defaultValue: "OpenAI Chat Completions (原生)",
+                })}
+              </SelectItem>
+              <SelectItem value="openai_responses">
+                {t("providerForm.apiFormatOpenAIResponses", {
+                  defaultValue: "OpenAI Responses API (需转换)",
+                })}
+              </SelectItem>
+              <SelectItem value="anthropic">
+                {t("providerForm.apiFormatAnthropic", {
+                  defaultValue: "Anthropic Messages (需转换)",
+                })}
+              </SelectItem>
+              <SelectItem value="gemini_native">
+                {t("providerForm.apiFormatGeminiNative", {
+                  defaultValue: "Gemini Native generateContent (需转换)",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.apiFormatHint", {
+              defaultValue: "选择供应商 API 的输入格式，默认 OpenAI Chat Completions",
+            })}
           </p>
         </div>
       )}

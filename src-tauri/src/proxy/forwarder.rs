@@ -965,21 +965,39 @@ impl RequestForwarder {
                 }
             }
         }
-        let resolved_claude_api_format = if adapter.name() == "Claude" {
+        let resolved_api_format: Option<String> = if adapter.name() == "Claude" {
             Some(
                 self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
                     .await,
             )
+        } else if adapter.name() == "Codex" {
+            let fmt = super::providers::get_codex_api_format(provider);
+            if super::providers::codex_api_format_needs_transform(fmt) {
+                Some(fmt.to_string())
+            } else {
+                None
+            }
         } else {
             None
         };
-        let needs_transform = match resolved_claude_api_format.as_deref() {
-            Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
+        let needs_transform = match resolved_api_format.as_deref() {
+            Some(api_format) => {
+                if adapter.name() == "Claude" {
+                    super::providers::claude_api_format_needs_transform(api_format)
+                } else if adapter.name() == "Codex" {
+                    super::providers::codex_api_format_needs_transform(api_format)
+                } else {
+                    false
+                }
+            }
             None => adapter.needs_transform(provider),
         };
         let (effective_endpoint, passthrough_query) =
-            if needs_transform && adapter.name() == "Claude" {
-                let api_format = resolved_claude_api_format
+            if needs_transform && adapter.name() == "Codex" {
+                let api_format = resolved_api_format.as_deref().unwrap_or("openai_chat");
+                rewrite_codex_transform_endpoint(endpoint, api_format)
+            } else if needs_transform && adapter.name() == "Claude" {
+                let api_format = resolved_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
                 rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
@@ -992,7 +1010,7 @@ impl RequestForwarder {
                 )
             };
 
-        let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
+        let url = if matches!(resolved_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
@@ -1006,8 +1024,14 @@ impl RequestForwarder {
 
         // 转换请求体（如果需要）
         let request_body = if needs_transform {
-            if adapter.name() == "Claude" {
-                let api_format = resolved_claude_api_format
+            if adapter.name() == "Codex" {
+                let api_format = resolved_api_format.as_deref().unwrap_or("openai_chat");
+                return Err(ProxyError::ConfigError(format!(
+                    "[Codex] api_format \"{}\" body transform not yet implemented (experimental)",
+                    api_format
+                )));
+            } else if adapter.name() == "Claude" {
+                let api_format = resolved_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
                 super::providers::transform_claude_request_for_api_format(
@@ -1032,7 +1056,7 @@ impl RequestForwarder {
             app_type,
             provider,
             &effective_endpoint,
-            resolved_claude_api_format.as_deref(),
+            resolved_api_format.as_deref(),
             &filtered_body,
             self.session_client_provided,
         );
@@ -1234,7 +1258,7 @@ impl RequestForwarder {
             .and_then(|u| u.authority().map(|a| a.to_string()));
 
         let should_send_anthropic_headers = adapter.name() == "Claude"
-            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
+            && matches!(resolved_api_format.as_deref(), Some("anthropic"));
 
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {
@@ -1462,7 +1486,7 @@ impl RequestForwarder {
         let preserve_exact_header_case = should_preserve_exact_header_case(
             adapter.name(),
             provider,
-            resolved_claude_api_format.as_deref(),
+            resolved_api_format.as_deref(),
             is_copilot,
         );
 
@@ -1529,7 +1553,7 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
-            Ok((response, resolved_claude_api_format))
+            Ok((response, resolved_api_format))
         } else {
             let status_code = status.as_u16();
             let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
@@ -1881,6 +1905,38 @@ fn rewrite_claude_transform_endpoint(
 
     (rewritten, passthrough_query)
 }
+/// Codex 端点重写：将 OpenAI 格式的端点路径映射到目标 api_format。
+///
+/// Codex 原生格式为 openai_chat（/v1/chat/completions），无需重写。
+/// 其他格式需要将路径映射到对应的 API 路径。
+fn rewrite_codex_transform_endpoint(endpoint: &str, api_format: &str) -> (String, Option<String>) {
+    let (path, query) = split_endpoint_and_query(endpoint);
+    let passthrough_query = query.map(ToString::to_string);
+
+    // openai_chat 是 Codex 原生格式，不需要重写
+    // 如果是 openai_chat 请求但 path 是 /v1/responses，需要转换
+    let target_path = match api_format {
+        "openai_responses" if path == "/v1/chat/completions" => "/v1/responses",
+        "openai_chat" if path == "/v1/responses" => "/v1/chat/completions",
+        "anthropic" => "/v1/messages",
+        "gemini_native" => {
+            // Gemini 需要完整的 model 信息，这里只做路径映射
+            // URL 构建由 resolve_gemini_native_url 处理
+            return (endpoint.to_string(), passthrough_query);
+        }
+        _ => {
+            // 未知格式或不需重写，保持原路径
+            return (endpoint.to_string(), passthrough_query);
+        }
+    };
+
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path.to_string(),
+    };
+
+    (rewritten, passthrough_query)
+}
 
 fn merge_query_params(base_query: Option<&str>, extra_param: Option<&str>) -> Option<String> {
     let mut params: Vec<String> = base_query
@@ -1940,7 +1996,7 @@ fn build_codex_oauth_session_headers(
 fn should_preserve_exact_header_case(
     adapter_name: &str,
     provider: &Provider,
-    resolved_claude_api_format: Option<&str>,
+    resolved_api_format: Option<&str>,
     is_copilot: bool,
 ) -> bool {
     if matches!(adapter_name, "Codex" | "Gemini") {
@@ -1951,7 +2007,7 @@ fn should_preserve_exact_header_case(
         return false;
     }
 
-    matches!(resolved_claude_api_format, None | Some("anthropic"))
+    matches!(resolved_api_format, None | Some("anthropic"))
 }
 
 fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::HeaderMap) -> bool {

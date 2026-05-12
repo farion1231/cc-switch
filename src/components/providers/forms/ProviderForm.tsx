@@ -355,8 +355,8 @@ function ProviderFormFull({
   });
 
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
-    if (appId !== "claude") return "anthropic";
-    return initialData?.meta?.apiFormat ?? "anthropic";
+    const defaultFormat = appId === "codex" ? "openai_chat" : "anthropic";
+    return initialData?.meta?.apiFormat ?? defaultFormat;
   });
 
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
@@ -1209,7 +1209,7 @@ function ProviderFormFull({
           ? pricingConfig.pricingModelSource
           : undefined,
       apiFormat:
-        appId === "claude" && category !== "official"
+        (appId === "claude" || appId === "codex") && category !== "official"
           ? localApiFormat
           : undefined,
       apiKeyField:
@@ -1853,6 +1853,8 @@ function ProviderFormFull({
               shouldShowModelField={category !== "official"}
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}
+              apiFormat={localApiFormat}
+              onApiFormatChange={handleApiFormatChange}
               speedTestEndpoints={speedTestEndpoints}
             />
           )}

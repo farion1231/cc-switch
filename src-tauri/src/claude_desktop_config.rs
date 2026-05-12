@@ -241,8 +241,8 @@ fn desktop_model_id(model_id: &str, supports_1m: bool) -> String {
 fn upstream_model_id(model_id: &str, supports_1m: bool) -> String {
     let normalized = strip_one_m_context_suffix(model_id);
     // Only append [1M] for Claude-series upstream models
-    let is_claude_upstream = normalized.starts_with("claude-")
-        || normalized.starts_with("anthropic/");
+    let is_claude_upstream =
+        normalized.starts_with("claude-") || normalized.starts_with("anthropic/");
     if supports_1m && is_claude_upstream {
         format!("{normalized}{ONE_M_CONTEXT_SUFFIX}")
     } else {

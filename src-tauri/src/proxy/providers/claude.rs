@@ -82,6 +82,33 @@ pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     )
 }
 
+/// 获取 Codex 供应商的 API 格式
+///
+/// Codex 原生格式为 "openai_chat"，其他格式需要转换。
+/// 优先级：meta.apiFormat > 默认 "openai_chat"
+pub fn get_codex_api_format(provider: &Provider) -> &'static str {
+    if let Some(meta) = provider.meta.as_ref() {
+        if let Some(api_format) = meta.api_format.as_deref() {
+            return match api_format {
+                "anthropic" => "anthropic",
+                "openai_responses" => "openai_responses",
+                "gemini_native" => "gemini_native",
+                "openai_chat" => "openai_chat",
+                _ => "openai_chat",
+            };
+        }
+    }
+    "openai_chat"
+}
+
+/// Codex api_format 是否需要格式转换（非 openai_chat 均需转换）
+pub fn codex_api_format_needs_transform(api_format: &str) -> bool {
+    matches!(
+        api_format,
+        "anthropic" | "openai_responses" | "gemini_native"
+    )
+}
+
 fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
     value.contains("moonshot") || value.contains("kimi") || value.contains("deepseek")
