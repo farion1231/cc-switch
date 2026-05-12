@@ -4,9 +4,11 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
 import { Monitor, Terminal } from "lucide-react";
 
-const APP_BADGE_ICON: Partial<Record<AppId, typeof Terminal>> = {
-  claude: Terminal,
-  "claude-desktop": Monitor,
+const APP_BADGE_ICON: Partial<
+  Record<AppId, { icon: typeof Terminal; offsetY?: number }>
+> = {
+  claude: { icon: Terminal },
+  "claude-desktop": { icon: Monitor, offsetY: 0.5 },
 };
 
 interface AppSwitcherProps {
@@ -67,7 +69,8 @@ export function AppSwitcher({
   return (
     <div className="inline-flex bg-muted rounded-xl p-1 gap-1">
       {appsToShow.map((app) => {
-        const BadgeIcon = APP_BADGE_ICON[app];
+        const badgeConfig = APP_BADGE_ICON[app];
+        const BadgeIcon = badgeConfig?.icon;
         const isActive = activeApp === app;
         return (
           <button
@@ -97,7 +100,15 @@ export function AppSwitcher({
                   )}
                   aria-hidden="true"
                 >
-                  <BadgeIcon className="h-[8px] w-[8px]" strokeWidth={2.5} />
+                  <BadgeIcon
+                    className="h-[8px] w-[8px]"
+                    strokeWidth={2.5}
+                    style={
+                      badgeConfig?.offsetY
+                        ? { transform: `translateY(${badgeConfig.offsetY}px)` }
+                        : undefined
+                    }
+                  />
                 </span>
               )}
             </span>
