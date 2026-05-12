@@ -22,6 +22,13 @@ const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
 const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
 
+/// Claude Desktop 模型菜单识别的 route ID 前缀。
+pub const CLAUDE_ROUTE_PREFIX: &str = "claude-";
+/// 替代前缀（与前端 `ANTHROPIC_CLAUDE_ROUTE_PREFIX` 一致）。
+pub const ANTHROPIC_CLAUDE_ROUTE_PREFIX: &str = "anthropic/claude-";
+/// cc-switch 历史约定的 1M 上下文标记（ASCII 小写形式，匹配时用 `eq_ignore_ascii_case`）。
+pub const LEGACY_ONE_M_MARKER: &str = "[1m]";
+
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeDesktopDefaultRoute {
@@ -210,8 +217,49 @@ pub fn provider_mode(provider: &Provider) -> ClaudeDesktopMode {
 
 pub fn is_claude_safe_model_id(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
-    (normalized.starts_with("claude-") || normalized.starts_with("anthropic/claude-"))
-        && !normalized.contains("[1m]")
+    (normalized.starts_with(CLAUDE_ROUTE_PREFIX)
+        || normalized.starts_with(ANTHROPIC_CLAUDE_ROUTE_PREFIX))
+        && !normalized.contains(LEGACY_ONE_M_MARKER)
+}
+
+/// 把上游 model 名标准化为 Claude Desktop 路由表 key（即 UI 左列内容）。
+/// 复现前端 `desktopRouteIdFromModel` + `normalizeDesktopRouteSuffix` 的规则：
+///   1. trim
+///   2. 剥离已有 `anthropic/claude-` 或 `claude-` 前缀（长前缀优先匹配）
+///   3. 去 `models/` 前缀（Gemini 风格 `models/gemini-2.0-flash`）
+///   4. 把空格 / 制表 / 正反斜杠替换成 `-`
+///   5. 拼上 `claude-` 前缀
+///
+/// 示例：
+///   "MiniMax-M2"                  → "claude-MiniMax-M2"
+///   "models/gemini-2.0-flash"     → "claude-gemini-2.0-flash"
+///   "claude-sonnet-4-5-20250929"  → "claude-sonnet-4-5-20250929"（剥后再拼，不双重）
+///   "anthropic/claude-3-5-sonnet" → "claude-3-5-sonnet"（与前端一致：anthropic/claude- 被替换为 claude-）
+pub fn derive_desktop_route_id(upstream_model: &str) -> String {
+    let trimmed = upstream_model.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let suffix = if lower.starts_with(ANTHROPIC_CLAUDE_ROUTE_PREFIX) {
+        &trimmed[ANTHROPIC_CLAUDE_ROUTE_PREFIX.len()..]
+    } else if lower.starts_with(CLAUDE_ROUTE_PREFIX) {
+        &trimmed[CLAUDE_ROUTE_PREFIX.len()..]
+    } else {
+        trimmed
+    };
+    let without_models_prefix = suffix
+        .strip_prefix("models/")
+        .or_else(|| suffix.strip_prefix("Models/"))
+        .unwrap_or(suffix);
+    let normalized: String = without_models_prefix
+        .chars()
+        .map(|c| {
+            if matches!(c, ' ' | '\t' | '/' | '\\') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    format!("{CLAUDE_ROUTE_PREFIX}{normalized}")
 }
 
 fn inference_model_json(spec: &InferenceModelSpec) -> Value {
@@ -1385,5 +1433,47 @@ mod tests {
             None,
         );
         assert!(!is_compatible_direct_provider(&missing_bearer));
+    }
+
+    // === derive_desktop_route_id ===
+
+    #[test]
+    fn derive_basic_adds_prefix() {
+        assert_eq!(derive_desktop_route_id("MiniMax-M2"), "claude-MiniMax-M2");
+    }
+
+    #[test]
+    fn derive_strips_gemini_prefix() {
+        assert_eq!(
+            derive_desktop_route_id("models/gemini-2.0-flash"),
+            "claude-gemini-2.0-flash"
+        );
+    }
+
+    #[test]
+    fn derive_keeps_existing_claude_prefix() {
+        assert_eq!(
+            derive_desktop_route_id("claude-sonnet-4-5-20250929"),
+            "claude-sonnet-4-5-20250929"
+        );
+    }
+
+    #[test]
+    fn derive_strips_anthropic_claude_prefix_uses_claude() {
+        // 与前端 normalizeDesktopRouteSuffix 一致：剥离 anthropic/claude- 前缀后用 claude- 替代
+        assert_eq!(
+            derive_desktop_route_id("anthropic/claude-3-5-sonnet"),
+            "claude-3-5-sonnet"
+        );
+    }
+
+    #[test]
+    fn derive_replaces_whitespace_and_slash() {
+        assert_eq!(derive_desktop_route_id("my model/v2"), "claude-my-model-v2");
+    }
+
+    #[test]
+    fn derive_preserves_case_and_dot() {
+        assert_eq!(derive_desktop_route_id("GLM-4.6"), "claude-GLM-4.6");
     }
 }
