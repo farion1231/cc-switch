@@ -6,6 +6,10 @@ use super::hyper_client::ProxyResponse;
 use super::{
     body_filter::filter_private_params_with_whitelist,
     error::*,
+    extra_inputs_rectifier::{
+        extract_extra_input_fields, pre_filter_from_cache, should_rectify_extra_inputs,
+        strip_fields, ExtraInputsCache, ANTHROPIC_ONLY_FIELDS,
+    },
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
@@ -68,6 +72,8 @@ pub struct RequestForwarder {
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
     streaming_first_byte_timeout: std::time::Duration,
+    /// Extra inputs 字段缓存（跨请求共享，1 小时过期）
+    extra_inputs_cache: Arc<ExtraInputsCache>,
 }
 
 impl RequestForwarder {
@@ -88,6 +94,7 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        extra_inputs_cache: Arc<ExtraInputsCache>,
     ) -> Self {
         Self {
             router,
@@ -106,6 +113,7 @@ impl RequestForwarder {
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
             ),
+            extra_inputs_cache,
         }
     }
 
@@ -178,6 +186,7 @@ impl RequestForwarder {
         // 整流器重试标记：确保整流最多触发一次
         let mut rectifier_retried = false;
         let mut budget_rectifier_retried = false;
+        let mut extra_inputs_retried = false;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
@@ -217,6 +226,24 @@ impl RequestForwarder {
                 };
 
             attempted_providers += 1;
+
+            // PRE-SEND extra inputs 预过滤：根据缓存剥离已知不支持的字段
+            if self.rectifier_config.enabled && self.rectifier_config.request_extra_inputs_strip {
+                let blocked_fields = self
+                    .extra_inputs_cache
+                    .get_blocked_fields(&provider.id, endpoint)
+                    .await;
+                if !blocked_fields.is_empty() {
+                    let pre_result = pre_filter_from_cache(&mut provider_body, &blocked_fields);
+                    if !pre_result.removed_fields.is_empty() {
+                        log::info!(
+                            "[{app_type_str}] [RECT-020] extra inputs 预过滤: 移除 {:?}（provider={}）",
+                            pre_result.removed_fields,
+                            provider.name
+                        );
+                    }
+                }
+            }
 
             // 更新状态中的当前Provider信息
             {
@@ -656,6 +683,208 @@ impl RequestForwarder {
                                         error: retry_err,
                                         provider: Some(provider.clone()),
                                     });
+                                }
+                            }
+                        }
+                    }
+
+                    // 检测是否需要触发 extra inputs 整流器
+                    {
+                        let error_message = extract_error_message(&e);
+                        if should_rectify_extra_inputs(
+                            error_message.as_deref(),
+                            &self.rectifier_config,
+                        ) {
+                            if extra_inputs_retried {
+                                log::warn!("[{app_type_str}] [RECT-025] extra inputs 整流器已触发过，不再重试");
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                let mut status = self.status.write().await;
+                                status.failed_requests += 1;
+                                status.last_error = Some(e.to_string());
+                                if status.total_requests > 0 {
+                                    status.success_rate = (status.success_requests as f32
+                                        / status.total_requests as f32)
+                                        * 100.0;
+                                }
+                                return Err(ForwardError {
+                                    error: e,
+                                    provider: Some(provider.clone()),
+                                });
+                            }
+
+                            let mut fields = error_message
+                                .as_deref()
+                                .map(extract_extra_input_fields)
+                                .unwrap_or_default();
+
+                            if fields.is_empty() {
+                                if let Some(obj) = provider_body.as_object() {
+                                    for &f in ANTHROPIC_ONLY_FIELDS {
+                                        if obj.contains_key(f) {
+                                            fields.push(f.to_string());
+                                        }
+                                    }
+                                }
+                                if !fields.is_empty() {
+                                    log::info!(
+                                        "[{app_type_str}] [RECT-026] 错误消息未指明字段，从请求体中检测到已知 Anthropic 候选字段: {fields:?}"
+                                    );
+                                }
+                            }
+
+                            if !fields.is_empty() {
+                                // 缓存这些字段（1 小时过期），按 provider+endpoint 维度隔离
+                                self.extra_inputs_cache
+                                    .insert_many(&provider.id, endpoint, &fields)
+                                    .await;
+
+                                let rectified = strip_fields(&mut provider_body, &fields);
+
+                                if rectified.applied {
+                                    let _ = std::mem::replace(&mut extra_inputs_retried, true);
+                                    log::info!(
+                                        "[{app_type_str}] [RECT-021] extra inputs 整流器触发, 移除字段 {:?}, 缓存到 provider={}",
+                                        rectified.removed_fields,
+                                        provider.name
+                                    );
+
+                                    // 使用同一供应商重试（不计入熔断器）
+                                    match self
+                                        .forward(
+                                            app_type,
+                                            provider,
+                                            endpoint,
+                                            &provider_body,
+                                            &headers,
+                                            &extensions,
+                                            adapter.as_ref(),
+                                        )
+                                        .await
+                                    {
+                                        Ok((response, claude_api_format)) => {
+                                            log::info!(
+                                                "[{app_type_str}] [RECT-022] extra inputs 整流重试成功"
+                                            );
+                                            let _ = self
+                                                .router
+                                                .record_result(
+                                                    &provider.id,
+                                                    app_type_str,
+                                                    used_half_open_permit,
+                                                    true,
+                                                    None,
+                                                )
+                                                .await;
+
+                                            {
+                                                let mut current_providers =
+                                                    self.current_providers.write().await;
+                                                current_providers.insert(
+                                                    app_type_str.to_string(),
+                                                    (provider.id.clone(), provider.name.clone()),
+                                                );
+                                            }
+
+                                            {
+                                                let mut status = self.status.write().await;
+                                                status.success_requests += 1;
+                                                status.last_error = None;
+                                                let should_switch =
+                                                    self.current_provider_id_at_start.as_str()
+                                                        != provider.id.as_str();
+                                                if should_switch {
+                                                    status.failover_count += 1;
+                                                    let fm = self.failover_manager.clone();
+                                                    let ah = self.app_handle.clone();
+                                                    let pid = provider.id.clone();
+                                                    let pname = provider.name.clone();
+                                                    let at = app_type_str.to_string();
+                                                    tokio::spawn(async move {
+                                                        let _ = fm
+                                                            .try_switch(
+                                                                ah.as_ref(),
+                                                                &at,
+                                                                &pid,
+                                                                &pname,
+                                                            )
+                                                            .await;
+                                                    });
+                                                }
+                                                if status.total_requests > 0 {
+                                                    status.success_rate = (status.success_requests
+                                                        as f32
+                                                        / status.total_requests as f32)
+                                                        * 100.0;
+                                                }
+                                            }
+
+                                            return Ok(ForwardResult {
+                                                response,
+                                                provider: provider.clone(),
+                                                claude_api_format,
+                                            });
+                                        }
+                                        Err(retry_err) => {
+                                            log::warn!(
+                                                "[{app_type_str}] [RECT-023] extra inputs 整流重试仍失败: {retry_err}"
+                                            );
+
+                                            let is_provider_error = match &retry_err {
+                                                ProxyError::Timeout(_)
+                                                | ProxyError::ForwardFailed(_) => true,
+                                                ProxyError::UpstreamError { status, .. } => {
+                                                    *status >= 500
+                                                }
+                                                _ => false,
+                                            };
+
+                                            if is_provider_error {
+                                                let _ = self
+                                                    .router
+                                                    .record_result(
+                                                        &provider.id,
+                                                        app_type_str,
+                                                        used_half_open_permit,
+                                                        false,
+                                                        Some(retry_err.to_string()),
+                                                    )
+                                                    .await;
+                                            } else {
+                                                self.router
+                                                    .release_permit_neutral(
+                                                        &provider.id,
+                                                        app_type_str,
+                                                        used_half_open_permit,
+                                                    )
+                                                    .await;
+                                            }
+
+                                            let mut status = self.status.write().await;
+                                            status.failed_requests += 1;
+                                            status.last_error = Some(retry_err.to_string());
+                                            if status.total_requests > 0 {
+                                                status.success_rate = (status.success_requests
+                                                    as f32
+                                                    / status.total_requests as f32)
+                                                    * 100.0;
+                                            }
+                                            return Err(ForwardError {
+                                                error: retry_err,
+                                                provider: Some(provider.clone()),
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    log::warn!(
+                                        "[{app_type_str}] [RECT-024] extra inputs 整流器触发但字段 {:?} 不在 body 中",
+                                        fields
+                                    );
                                 }
                             }
                         }
@@ -1529,10 +1758,53 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
-            Ok((response, resolved_claude_api_format))
+            if response.is_sse() {
+                return Ok((response, resolved_claude_api_format));
+            }
+
+            let mut headers = response.headers().clone();
+            let mut body_bytes = response.bytes().await?;
+
+            // 解压 + 同步剥离 stale Content-Encoding 头（hyper 不自动解压）。
+            // 不变量与 why 详见 response_processor::decompress_and_strip_encoding。
+            let _ = super::response_processor::decompress_and_strip_encoding(
+                &mut headers,
+                &mut body_bytes,
+            );
+
+            if is_valid_response_body(&body_bytes) {
+                let response = ProxyResponse::Buffered {
+                    status,
+                    headers,
+                    body: body_bytes,
+                };
+                Ok((response, resolved_claude_api_format))
+            } else {
+                let body_text = String::from_utf8(body_bytes.into()).ok();
+                log::info!(
+                    "[RECT-027] 上游返回 200 但响应体缺少有效字段，转为 UpstreamError 走重试: body={}",
+                    body_text.as_deref().unwrap_or("<non-utf8>")
+                );
+                Err(ProxyError::UpstreamError {
+                    status: status.as_u16(),
+                    body: body_text,
+                })
+            }
         } else {
             let status_code = status.as_u16();
-            let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
+            let headers = response.headers().clone();
+            let mut error_body = response.bytes().await?.to_vec();
+
+            // 解压 content-encoding
+            if let Some(encoding) = super::response_processor::get_content_encoding(&headers) {
+                if let Ok(decompressed) =
+                    super::response_processor::decompress_body(&encoding, &error_body)
+                {
+                    error_body = decompressed;
+                }
+            }
+
+            let body_text = String::from_utf8(error_body).ok();
 
             Err(ProxyError::UpstreamError {
                 status: status_code,
@@ -1790,6 +2062,27 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
         .into_iter()
         .flatten()
         .find_map(|value| value.as_str().map(ToString::to_string))
+}
+
+/// 判断 200 响应体是否为合法的成功响应。
+///
+/// 背景：某些上游会对错误响应仍然返回 HTTP 200 + 错误 JSON body，
+/// 此时需要把它转为 UpstreamError 走重试/整流。
+///
+/// 策略：检测 JSON 中是否存在**非空**的 `error` 字段。有且非 null 则判定为上游错误，
+/// 缺失或显式为 null 都信任 HTTP 200。这样无需穷举各协议的成功响应格式。
+///
+/// 注意：必须放行 `"error": null` —— OpenAI Responses API 的非流式成功响应
+/// schema 规定 `error` 字段必存在，成功时为 null、失败时为 error object。
+fn is_valid_response_body(body: &[u8]) -> bool {
+    let Ok(json) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let Some(obj) = json.as_object() else {
+        return false;
+    };
+
+    obj.get("error").is_none_or(Value::is_null)
 }
 
 fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
@@ -2601,5 +2894,143 @@ mod tests {
             let will_replace = is_copilot && !is_full_url;
             assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    // ==================== is_valid_response_body 测试 ====================
+
+    #[test]
+    fn valid_anthropic_response() {
+        let body = br#"{"id":"msg_01","type":"message","role":"assistant","content":[{"type":"text","text":"Hi"}],"model":"claude-3","usage":{"input_tokens":10,"output_tokens":5}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn valid_openai_response() {
+        let body = br#"{"id":"chatcmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"}}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn valid_codex_response() {
+        let body = br#"{"id":"resp_1","object":"response","output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}],"usage":{"input_tokens":10,"output_tokens":5}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    /// OpenAI Responses API 非流式成功响应的标准形态带 `"error": null`，
+    /// 不能把它当失败 —— 否则每个成功请求都会被误判为 UpstreamError 触发 retry。
+    #[test]
+    fn valid_openai_responses_with_null_error() {
+        let body = br#"{"id":"resp_abc","object":"response","status":"completed","error":null,"output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}]}"#;
+        assert!(
+            super::is_valid_response_body(body),
+            "error:null 应视为成功响应"
+        );
+    }
+
+    #[test]
+    fn valid_gemini_response() {
+        let body = br#"{"candidates":[{"content":{"parts":[{"text":"Hi"}]}}],"usageMetadata":{"promptTokenCount":5,"totalTokenCount":10}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn valid_gemini_safety_blocked_response() {
+        let body = br#"{"responseId":"resp_3","modelVersion":"gemini-2.5-flash","promptFeedback":{"blockReason":"SAFETY"},"usageMetadata":{"promptTokenCount":4,"totalTokenCount":4}}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_error_json() {
+        let body = br#"{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}"#;
+        assert!(!super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_anthropic_error_envelope() {
+        let body =
+            br#"{"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}"#;
+        assert!(!super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn valid_json_without_error_key() {
+        let body = br#"{"id":"x","object":"chat.completion.chunk","choices":[]}"#;
+        assert!(super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_json_with_error_key() {
+        let body =
+            br#"{"message":"something went wrong","code":"INTERNAL_ERROR","error":"bad request"}"#;
+        assert!(!super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn invalid_non_json() {
+        let body = b"<html>502 Bad Gateway</html>";
+        assert!(!super::is_valid_response_body(body));
+    }
+
+    #[test]
+    fn valid_empty_json_no_error() {
+        let body = b"{}";
+        assert!(super::is_valid_response_body(body));
+    }
+
+    /// gzip 压缩的合法响应体在解压后应被识别为有效
+    ///
+    /// 模拟小米 mimo API 等上游返回 gzip 压缩的 200 响应。
+    /// forwarder 的 hyper 路径需要先解压再调 is_valid_response_body。
+    #[test]
+    fn gzip_compressed_valid_body_passes_after_decompress() {
+        use std::io::Write;
+
+        let valid_json = br#"{"id":"msg_01","type":"message","role":"assistant","content":[{"type":"text","text":"Hi"}],"model":"claude-3","usage":{"input_tokens":10,"output_tokens":5}}"#;
+
+        // 模拟上游 gzip 压缩响应体
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(valid_json).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // 压缩字节直接校验应失败（不是合法 JSON）
+        assert!(!super::is_valid_response_body(&compressed));
+
+        // 通过 response_processor 的解压逻辑还原后，应通过校验
+        let decompressed =
+            super::super::response_processor::decompress_body("gzip", &compressed).unwrap();
+        assert!(
+            super::is_valid_response_body(&decompressed),
+            "gzip 解压后的合法响应体应通过 is_valid_response_body 校验"
+        );
+    }
+
+    /// Gemini :countTokens 合法响应应通过校验
+    #[test]
+    fn valid_gemini_count_tokens_response() {
+        let body = br#"{"totalTokens": 1234, "totalBillableCharacters": 567}"#;
+        assert!(
+            super::is_valid_response_body(body),
+            "Gemini :countTokens 响应应被识别为合法"
+        );
+    }
+
+    /// Gemini :embedContent 合法响应应通过校验
+    #[test]
+    fn valid_gemini_embed_content_response() {
+        let body = br#"{"embedding": {"values": [0.1, 0.2, 0.3]}}"#;
+        assert!(
+            super::is_valid_response_body(body),
+            "Gemini :embedContent 响应应被识别为合法"
+        );
+    }
+
+    /// Gemini :batchEmbedContents 合法响应应通过校验
+    #[test]
+    fn valid_gemini_batch_embed_contents_response() {
+        let body = br#"{"embeddings": [{"values": [0.1]}, {"values": [0.2]}]}"#;
+        assert!(
+            super::is_valid_response_body(body),
+            "Gemini :batchEmbedContents 响应应被识别为合法"
+        );
     }
 }

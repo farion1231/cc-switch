@@ -352,7 +352,9 @@
         "thinkingSignature": "Thinking 签名整流",
         "thinkingSignatureDescription": "当 Anthropic 类型供应商返回 thinking 签名不兼容或非法请求等错误时，自动移除不兼容的 thinking 相关块并对同一供应商重试一次",
         "thinkingBudget": "Thinking Budget 整流",
-        "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次"
+        "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次",
+        "extraInputsStrip": "Extra Inputs 自动剥离",
+        "extraInputsStripDescription": "自动检测并移除可能不被上游支持的字段（如 Anthropic 独有的 context_management 等），然后重试。不支持的字段按供应商缓存 1 小时，后续请求直接预过滤。"
       },
       "optimizer": {
         "title": "Bedrock 请求优化器",

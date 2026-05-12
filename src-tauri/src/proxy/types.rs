@@ -213,6 +213,12 @@ pub struct RectifierConfig {
     /// 处理错误：budget_tokens + thinking 相关约束
     #[serde(default = "default_true")]
     pub request_thinking_budget: bool,
+    /// 请求整流：启用 extra inputs 自动剥离整流器（默认开启）
+    ///
+    /// 处理错误：xxx: Extra inputs are not permitted
+    /// 自动从错误消息中提取不支持的字段名，缓存 1 小时，后续请求预过滤
+    #[serde(default = "default_true")]
+    pub request_extra_inputs_strip: bool,
 }
 
 fn default_true() -> bool {
@@ -229,6 +235,7 @@ impl Default for RectifierConfig {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            request_extra_inputs_strip: true,
         }
     }
 }
@@ -386,6 +393,10 @@ mod tests {
             config.request_thinking_budget,
             "thinking budget 整流器默认应为 true"
         );
+        assert!(
+            config.request_extra_inputs_strip,
+            "extra inputs 整流器默认应为 true"
+        );
     }
 
     #[test]
@@ -396,17 +407,18 @@ mod tests {
         assert!(config.enabled);
         assert!(config.request_thinking_signature);
         assert!(config.request_thinking_budget);
+        assert!(config.request_extra_inputs_strip);
     }
 
     #[test]
     fn test_rectifier_config_serde_explicit_true() {
         // 验证显式设置 true 时正确反序列化
-        let json =
-            r#"{"enabled": true, "requestThinkingSignature": true, "requestThinkingBudget": true}"#;
+        let json = r#"{"enabled": true, "requestThinkingSignature": true, "requestThinkingBudget": true, "requestExtraInputsStrip": true}"#;
         let config: RectifierConfig = serde_json::from_str(json).unwrap();
         assert!(config.enabled);
         assert!(config.request_thinking_signature);
         assert!(config.request_thinking_budget);
+        assert!(config.request_extra_inputs_strip);
     }
 
     #[test]
@@ -417,6 +429,7 @@ mod tests {
         assert!(config.enabled);
         assert!(!config.request_thinking_signature);
         assert!(config.request_thinking_budget);
+        assert!(config.request_extra_inputs_strip);
     }
 
     #[test]

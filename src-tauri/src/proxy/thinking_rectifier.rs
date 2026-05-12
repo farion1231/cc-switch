@@ -251,6 +251,7 @@ mod tests {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            request_extra_inputs_strip: true,
         }
     }
 
@@ -259,6 +260,7 @@ mod tests {
             enabled: true,
             request_thinking_signature: false,
             request_thinking_budget: false,
+            request_extra_inputs_strip: true,
         }
     }
 
@@ -267,6 +269,7 @@ mod tests {
             enabled: false,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            request_extra_inputs_strip: true,
         }
     }
 

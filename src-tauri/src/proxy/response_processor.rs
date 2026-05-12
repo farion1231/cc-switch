@@ -33,9 +33,17 @@ use tokio::sync::Mutex;
 /// 根据 content-encoding 解压响应体字节
 ///
 /// reqwest 自动解压已禁用（为了透传 accept-encoding），需要手动解压。
-fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+pub(crate) fn decompress_body(
+    content_encoding: &str,
+    body: &[u8],
+) -> Result<Vec<u8>, std::io::Error> {
     match content_encoding {
         "gzip" | "x-gzip" => {
+            // gzip magic bytes: 1f 8b。上游代理（如 MiFE）可能已剥
+            // 离 gzip 包装但保留 content-encoding 头，跳过无效解压。
+            if body.len() < 2 || body[0] != 0x1f || body[1] != 0x8b {
+                return Ok(body.to_vec());
+            }
             let mut decoder = flate2::read::GzDecoder::new(body);
             let mut decompressed = Vec::new();
             decoder.read_to_end(&mut decompressed)?;
@@ -60,7 +68,7 @@ fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::
 }
 
 /// 从响应头提取 content-encoding（忽略 identity 和 chunked）
-fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
     headers
         .get("content-encoding")
         .and_then(|v| v.to_str().ok())
@@ -110,6 +118,29 @@ pub(crate) fn strip_entity_headers_for_rebuilt_body(headers: &mut HeaderMap) {
     headers.remove(axum::http::header::TRANSFER_ENCODING);
 }
 
+/// 按 `Content-Encoding` 解压 body 并在成功时剥离 Content-Encoding/Content-Length/
+/// Transfer-Encoding —— 这三个 entity 头一旦 body 被改写就会与实际数据失真。
+///
+/// **不变量**：解压一次 ⇒ 同步剥头。否则下游若再走一次基于 header 的解压（例如
+/// `read_decoded_body`），gzip 会被 magic-bytes guard `1f 8b` 兜底成 pass-through，
+/// 但 `br` / `deflate` 没有此兜底——会在已解码字节上失败、保留 stale 头透传给客户端，
+/// 触发 ZlibError / content-decoding 错误。
+///
+/// 返回 `Ok(true)` 表示已解压并改写 body+headers；`Ok(false)` 表示无 encoding 或
+/// 是 `identity`，body+headers 未变；`Err` 表示解压失败，body+headers 也未变。
+pub(crate) fn decompress_and_strip_encoding(
+    headers: &mut HeaderMap,
+    body: &mut Bytes,
+) -> Result<bool, std::io::Error> {
+    let Some(encoding) = get_content_encoding(headers) else {
+        return Ok(false);
+    };
+    let decompressed = decompress_body(&encoding, body)?;
+    *body = Bytes::from(decompressed);
+    strip_entity_headers_for_rebuilt_body(headers);
+    Ok(true)
+}
+
 /// 读取响应体并在需要时解压，确保 headers 与返回 body 一致。
 ///
 /// `body_timeout`: 整包超时。当非零时用 `tokio::time::timeout` 包住 `.bytes()` 调用，
@@ -142,24 +173,12 @@ pub(crate) async fn read_decoded_body(
         format_headers(&headers)
     );
 
-    let mut body_bytes = raw_bytes.clone();
-    let mut decoded = false;
-
+    let mut body_bytes = raw_bytes;
     if let Some(encoding) = get_content_encoding(&headers) {
         log::debug!("[{tag}] 解压非流式响应: content-encoding={encoding}");
-        match decompress_body(&encoding, &raw_bytes) {
-            Ok(decompressed) => {
-                body_bytes = Bytes::from(decompressed);
-                decoded = true;
-            }
-            Err(e) => {
-                log::warn!("[{tag}] 解压失败 ({encoding}): {e}，使用原始数据");
-            }
-        }
     }
-
-    if decoded {
-        strip_entity_headers_for_rebuilt_body(&mut headers);
+    if let Err(e) = decompress_and_strip_encoding(&mut headers, &mut body_bytes) {
+        log::warn!("[{tag}] 解压失败: {e}，使用原始数据");
     }
 
     Ok((headers, status, body_bytes))
@@ -887,6 +906,9 @@ mod tests {
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            extra_inputs_cache: Arc::new(
+                crate::proxy::extra_inputs_rectifier::ExtraInputsCache::new(),
+            ),
         }
     }
 
@@ -1045,5 +1067,94 @@ mod tests {
             Decimal::from_str("1.5").unwrap()
         );
         Ok(())
+    }
+
+    /// MiFE 代理场景：content-encoding: gzip 但 body 是纯 JSON
+    /// 应返回 Ok(原始字节) 而非 Err，让 read_decoded_body 能剥离误导头
+    #[test]
+    fn test_decompress_body_returns_ok_for_non_gzip_body_with_misleading_header() {
+        let plain_json = br#"{"key":"value"}"#;
+        let result = super::decompress_body("gzip", plain_json).unwrap();
+        assert_eq!(result, plain_json, "非 gzip body 应原样返回 Ok");
+    }
+
+    /// 真正的 gzip 压缩数据仍能正确解压
+    #[test]
+    fn test_decompress_body_still_handles_real_gzip() {
+        use std::io::Write;
+        let json = br#"{"real":"gzip"}"#;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(json).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(compressed.starts_with(&[0x1f, 0x8b]));
+
+        let result = super::decompress_body("gzip", &compressed).unwrap();
+        assert_eq!(result, json);
+    }
+
+    /// 回归：`decompress_and_strip_encoding` 必须对所有支持的编码（br/deflate/gzip）
+    /// 在解压成功后剥离 Content-Encoding。这是 forwarder 与 read_decoded_body 共享
+    /// 的不变量——任一调用方忘了 strip 都会让客户端按 stale header 二次解码失败
+    /// （br/deflate 无 magic-bytes 兜底）。
+    #[test]
+    fn decompress_and_strip_encoding_strips_header_for_all_supported_encodings() {
+        use axum::http::header::CONTENT_ENCODING;
+        use std::io::Write;
+
+        let plain = br#"{"id":"msg_01","type":"message","role":"assistant","content":[{"type":"text","text":"Hi"}],"model":"claude-3","usage":{"input_tokens":10,"output_tokens":5}}"#;
+
+        let mut br_compressed = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut br_compressed, 4096, 5, 22);
+            writer.write_all(plain).unwrap();
+        }
+
+        let mut deflate_compressed = Vec::new();
+        {
+            let mut encoder = flate2::write::DeflateEncoder::new(
+                &mut deflate_compressed,
+                flate2::Compression::default(),
+            );
+            encoder.write_all(plain).unwrap();
+            encoder.finish().unwrap();
+        }
+
+        let mut gzip_compressed = Vec::new();
+        {
+            let mut encoder =
+                flate2::write::GzEncoder::new(&mut gzip_compressed, flate2::Compression::default());
+            encoder.write_all(plain).unwrap();
+            encoder.finish().unwrap();
+        }
+
+        for (encoding, compressed) in [
+            ("br", br_compressed.as_slice()),
+            ("deflate", deflate_compressed.as_slice()),
+            ("gzip", gzip_compressed.as_slice()),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_ENCODING, encoding.parse().unwrap());
+            let mut body = Bytes::copy_from_slice(compressed);
+
+            let did_decompress =
+                super::decompress_and_strip_encoding(&mut headers, &mut body).unwrap();
+
+            assert!(did_decompress, "{encoding}: 应返回 Ok(true) 表示已解压");
+            assert_eq!(body.as_ref(), plain, "{encoding}: body 应被解压为原始字节");
+            assert!(
+                headers.get(CONTENT_ENCODING).is_none(),
+                "{encoding}: 解压后必须剥离 Content-Encoding"
+            );
+        }
+    }
+
+    /// 无 Content-Encoding 时不应修改 body 或 headers。
+    #[test]
+    fn decompress_and_strip_encoding_noop_without_header() {
+        let mut headers = HeaderMap::new();
+        let mut body = Bytes::from_static(b"{\"x\":1}");
+        let did = super::decompress_and_strip_encoding(&mut headers, &mut body).unwrap();
+        assert!(!did);
+        assert_eq!(body.as_ref(), b"{\"x\":1}");
     }
 }
