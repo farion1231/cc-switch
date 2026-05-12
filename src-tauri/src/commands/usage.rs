@@ -81,7 +81,6 @@ pub fn get_request_detail(
 #[tauri::command]
 pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingInfo>, AppError> {
     log::info!("获取模型定价列表");
-    state.db.ensure_model_pricing_seeded()?;
 
     let db = state.db.clone();
     let conn = crate::database::lock_conn!(db.conn);
