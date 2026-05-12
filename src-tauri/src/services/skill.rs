@@ -25,10 +25,10 @@ use crate::error::format_skill_error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SyncMethod {
-    /// 自动选择：优先 symlink，失败时回退到 copy
+    /// 自动选择：优先托管链接，失败时回退到 copy
     #[default]
     Auto,
-    /// 符号链接（推荐，节省磁盘空间）
+    /// 托管链接（Unix symlink；Windows symlink 不可用时使用 junction）
     Symlink,
     /// 文件复制（兼容模式）
     Copy,
@@ -1548,20 +1548,198 @@ impl SkillService {
 
     // ========== 文件同步方法 ==========
 
-    /// 创建符号链接（跨平台）
+    /// 创建目录链接（跨平台）
     ///
     /// - Unix: 使用 std::os::unix::fs::symlink
-    /// - Windows: 使用 std::os::windows::fs::symlink_dir
+    /// - Windows: 优先使用 std::os::windows::fs::symlink_dir，失败时回退到 junction
     #[cfg(unix)]
-    fn create_symlink(src: &Path, dest: &Path) -> Result<()> {
+    fn create_managed_link(src: &Path, dest: &Path) -> Result<()> {
         std::os::unix::fs::symlink(src, dest)
             .with_context(|| format!("创建符号链接失败: {} -> {}", src.display(), dest.display()))
     }
 
     #[cfg(windows)]
-    fn create_symlink(src: &Path, dest: &Path) -> Result<()> {
-        std::os::windows::fs::symlink_dir(src, dest)
-            .with_context(|| format!("创建符号链接失败: {} -> {}", src.display(), dest.display()))
+    fn create_managed_link(src: &Path, dest: &Path) -> Result<()> {
+        match std::os::windows::fs::symlink_dir(src, dest) {
+            Ok(()) => Ok(()),
+            Err(symlink_err) => Self::create_junction(src, dest).with_context(|| {
+                format!(
+                    "创建符号链接失败，junction 回退也失败: {} -> {}. 符号链接错误: {}",
+                    src.display(),
+                    dest.display(),
+                    symlink_err
+                )
+            }),
+        }
+    }
+
+    #[cfg(windows)]
+    fn create_junction(src: &Path, dest: &Path) -> Result<()> {
+        use std::ffi::c_void;
+        use std::io;
+        use std::os::windows::ffi::OsStrExt;
+
+        type Handle = *mut c_void;
+
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        const FSCTL_SET_REPARSE_POINT: u32 = 0x0009_00A4;
+        const GENERIC_WRITE: u32 = 0x4000_0000;
+        const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+        const OPEN_EXISTING: u32 = 3;
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn CreateFileW(
+                lpFileName: *const u16,
+                dwDesiredAccess: u32,
+                dwShareMode: u32,
+                lpSecurityAttributes: *mut c_void,
+                dwCreationDisposition: u32,
+                dwFlagsAndAttributes: u32,
+                hTemplateFile: Handle,
+            ) -> Handle;
+            fn DeviceIoControl(
+                hDevice: Handle,
+                dwIoControlCode: u32,
+                lpInBuffer: *mut c_void,
+                nInBufferSize: u32,
+                lpOutBuffer: *mut c_void,
+                nOutBufferSize: u32,
+                lpBytesReturned: *mut u32,
+                lpOverlapped: *mut c_void,
+            ) -> i32;
+            fn CloseHandle(hObject: Handle) -> i32;
+        }
+
+        struct OwnedHandle(Handle);
+
+        impl Drop for OwnedHandle {
+            fn drop(&mut self) {
+                unsafe {
+                    CloseHandle(self.0);
+                }
+            }
+        }
+
+        fn wide_null(path: &Path) -> Vec<u16> {
+            path.as_os_str().encode_wide().chain(Some(0)).collect()
+        }
+
+        fn write_u16(buffer: &mut Vec<u8>, value: u16) {
+            buffer.extend_from_slice(&value.to_le_bytes());
+        }
+
+        fn write_u32(buffer: &mut Vec<u8>, value: u32) {
+            buffer.extend_from_slice(&value.to_le_bytes());
+        }
+
+        fn push_wide_bytes(buffer: &mut Vec<u8>, values: &[u16]) {
+            for value in values {
+                write_u16(buffer, *value);
+            }
+        }
+
+        fn to_u16_len(value: usize, label: &str) -> Result<u16> {
+            u16::try_from(value).with_context(|| format!("{label} 过长，无法创建 junction"))
+        }
+
+        let target = src
+            .canonicalize()
+            .with_context(|| format!("解析 junction 目标失败: {}", src.display()))?;
+        let target_display = target.display().to_string();
+        let junction_target = if let Some(stripped) = target_display.strip_prefix(r"\\?\") {
+            format!(r"\??\{stripped}")
+        } else if let Some(stripped) = target_display.strip_prefix(r"\\") {
+            format!(r"\??\UNC\{stripped}")
+        } else {
+            format!(r"\??\{target_display}")
+        };
+
+        let substitute_name: Vec<u16> = junction_target.encode_utf16().collect();
+        let print_name: Vec<u16> = target_display.encode_utf16().collect();
+        let substitute_name_len = to_u16_len(substitute_name.len() * 2, "junction 目标路径")?;
+        let print_name_len = to_u16_len(print_name.len() * 2, "junction 显示路径")?;
+        let print_name_offset = to_u16_len((substitute_name.len() + 1) * 2, "junction 路径缓冲区")?;
+        let path_buffer_len = (substitute_name.len() + 1 + print_name.len() + 1) * 2;
+        let reparse_data_len = to_u16_len(8 + path_buffer_len, "junction reparse 数据")?;
+
+        let mut reparse_buffer = Vec::with_capacity(8 + reparse_data_len as usize);
+        write_u32(&mut reparse_buffer, IO_REPARSE_TAG_MOUNT_POINT);
+        write_u16(&mut reparse_buffer, reparse_data_len);
+        write_u16(&mut reparse_buffer, 0);
+        write_u16(&mut reparse_buffer, 0);
+        write_u16(&mut reparse_buffer, substitute_name_len);
+        write_u16(&mut reparse_buffer, print_name_offset);
+        write_u16(&mut reparse_buffer, print_name_len);
+        push_wide_bytes(&mut reparse_buffer, &substitute_name);
+        write_u16(&mut reparse_buffer, 0);
+        push_wide_bytes(&mut reparse_buffer, &print_name);
+        write_u16(&mut reparse_buffer, 0);
+        let reparse_buffer_len = reparse_buffer
+            .len()
+            .try_into()
+            .context("junction reparse 缓冲区过大")?;
+
+        fs::create_dir(dest)
+            .with_context(|| format!("创建 junction 目录失败: {}", dest.display()))?;
+
+        let dest_wide = wide_null(dest);
+        let handle = unsafe {
+            CreateFileW(
+                dest_wide.as_ptr(),
+                GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+                std::ptr::null_mut(),
+            )
+        };
+
+        if handle as isize == -1 {
+            let err = io::Error::last_os_error();
+            let _ = fs::remove_dir(dest);
+            return Err(err).with_context(|| format!("打开 junction 目录失败: {}", dest.display()));
+        }
+
+        let handle_guard = OwnedHandle(handle);
+        let mut bytes_returned = 0u32;
+        let ok = unsafe {
+            DeviceIoControl(
+                handle,
+                FSCTL_SET_REPARSE_POINT,
+                reparse_buffer.as_mut_ptr() as *mut c_void,
+                reparse_buffer_len,
+                std::ptr::null_mut(),
+                0,
+                &mut bytes_returned,
+                std::ptr::null_mut(),
+            )
+        };
+
+        if ok == 0 {
+            let err = io::Error::last_os_error();
+            drop(handle_guard);
+            let _ = fs::remove_dir(dest);
+            return Err(err).with_context(|| {
+                format!(
+                    "设置 junction reparse 数据失败: {} -> {}",
+                    dest.display(),
+                    target.display()
+                )
+            });
+        }
+
+        log::debug!(
+            "Windows symlink 不可用，已通过 junction 同步: {} -> {}",
+            dest.display(),
+            target.display()
+        );
+        Ok(())
     }
 
     /// 检查路径是否为符号链接
@@ -1571,16 +1749,70 @@ impl SkillService {
             .unwrap_or(false)
     }
 
+    #[cfg(windows)]
+    fn is_windows_directory_reparse_point(path: &Path) -> bool {
+        use std::os::windows::fs::MetadataExt;
+
+        const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0010;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+
+        path.symlink_metadata()
+            .map(|m| {
+                let attributes = m.file_attributes();
+                attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+                    && attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(windows))]
+    fn is_windows_directory_reparse_point(_path: &Path) -> bool {
+        false
+    }
+
+    /// 检查路径是否为应用目录中的托管链接（Unix symlink / Windows symlink 或 junction）。
+    fn is_managed_link(path: &Path) -> bool {
+        Self::is_symlink(path) || Self::is_windows_directory_reparse_point(path)
+    }
+
+    #[cfg(windows)]
+    fn normalize_link_target(target: PathBuf) -> PathBuf {
+        let target_str = target.to_string_lossy();
+
+        if let Some(stripped) = target_str.strip_prefix(r"\??\UNC\") {
+            return PathBuf::from(format!(r"\\{stripped}"));
+        }
+
+        if let Some(stripped) = target_str.strip_prefix(r"\??\") {
+            return PathBuf::from(stripped);
+        }
+
+        if let Some(stripped) = target_str.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{stripped}"));
+        }
+
+        if let Some(stripped) = target_str.strip_prefix(r"\\?\") {
+            return PathBuf::from(stripped);
+        }
+
+        target
+    }
+
+    #[cfg(not(windows))]
+    fn normalize_link_target(target: PathBuf) -> PathBuf {
+        target
+    }
+
     /// 获取当前同步方式配置
     fn get_sync_method() -> SyncMethod {
         crate::settings::get_skill_sync_method()
     }
 
-    /// 同步 Skill 到应用目录（使用 symlink 或 copy）
+    /// 同步 Skill 到应用目录（使用托管链接或 copy）
     ///
     /// 根据配置和平台选择最佳同步方式：
-    /// - Auto: 优先尝试 symlink，失败时回退到 copy
-    /// - Symlink: 仅使用 symlink
+    /// - Auto: 优先尝试托管链接，失败时回退到 copy
+    /// - Symlink: 仅使用托管链接
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop) {
@@ -1599,8 +1831,8 @@ impl SkillService {
 
         let dest = app_dir.join(directory);
 
-        // 如果已存在则先删除（无论是 symlink 还是真实目录）
-        if dest.exists() || Self::is_symlink(&dest) {
+        // 如果已存在则先删除（无论是 symlink、junction 还是真实目录）
+        if dest.exists() || Self::is_managed_link(&dest) {
             Self::remove_path(&dest)?;
         }
 
@@ -1608,15 +1840,15 @@ impl SkillService {
 
         match sync_method {
             SyncMethod::Auto => {
-                // 优先尝试 symlink
-                match Self::create_symlink(&source, &dest) {
+                // 优先尝试托管链接
+                match Self::create_managed_link(&source, &dest) {
                     Ok(()) => {
-                        log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
+                        log::debug!("Skill {directory} 已通过托管链接同步到 {app:?}");
                         return Ok(());
                     }
                     Err(err) => {
                         log::warn!(
-                            "Symlink 创建失败，将回退到文件复制: {} -> {}. 错误: {err:#}",
+                            "托管链接创建失败，将回退到文件复制: {} -> {}. 错误: {err:#}",
                             source.display(),
                             dest.display()
                         );
@@ -1627,8 +1859,8 @@ impl SkillService {
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
             SyncMethod::Symlink => {
-                Self::create_symlink(&source, &dest)?;
-                log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
+                Self::create_managed_link(&source, &dest)?;
+                log::debug!("Skill {directory} 已通过托管链接同步到 {app:?}");
             }
             SyncMethod::Copy => {
                 Self::copy_dir_recursive(&source, &dest)?;
@@ -1645,14 +1877,14 @@ impl SkillService {
         Self::sync_to_app_dir(directory, app)
     }
 
-    /// 删除路径（支持 symlink 和真实目录）
+    /// 删除路径（支持 symlink、junction 和真实目录）
     fn remove_path(path: &Path) -> Result<()> {
-        if Self::is_symlink(path) {
-            // 符号链接：仅删除链接本身，不影响源文件
+        if Self::is_managed_link(path) {
+            // 托管链接：仅删除链接本身，不影响源文件
             #[cfg(unix)]
             fs::remove_file(path)?;
             #[cfg(windows)]
-            fs::remove_dir(path)?; // Windows 的目录 symlink 需要用 remove_dir
+            fs::remove_dir(path)?; // Windows 的目录 symlink / junction 需要用 remove_dir
         } else if path.is_dir() {
             // 真实目录：递归删除
             fs::remove_dir_all(path)?;
@@ -1663,29 +1895,35 @@ impl SkillService {
         Ok(())
     }
 
-    /// 判断路径是否为指向 SSOT 目录内的符号链接。
+    /// 判断路径是否为指向 SSOT 目录内的托管链接。
     fn is_symlink_to_ssot(path: &Path, ssot_dir: &Path) -> bool {
-        if !Self::is_symlink(path) {
+        if !Self::is_managed_link(path) {
             return false;
         }
-
-        let Ok(target) = fs::read_link(path) else {
-            return false;
-        };
-
-        if target.is_absolute() && target.starts_with(ssot_dir) {
-            return true;
-        }
-
-        let resolved = path
-            .parent()
-            .map(|parent| parent.join(&target))
-            .unwrap_or(target.clone());
 
         let canonical_ssot = ssot_dir
             .canonicalize()
             .unwrap_or_else(|_| ssot_dir.to_path_buf());
-        let canonical_target = resolved.canonicalize().unwrap_or(resolved);
+
+        let canonical_target = match fs::read_link(path) {
+            Ok(target) => {
+                let target = Self::normalize_link_target(target);
+                if target.is_absolute() && target.starts_with(ssot_dir) {
+                    return true;
+                }
+
+                let resolved = path
+                    .parent()
+                    .map(|parent| parent.join(&target))
+                    .unwrap_or(target);
+
+                resolved.canonicalize().unwrap_or(resolved)
+            }
+            Err(_) => match path.canonicalize() {
+                Ok(resolved) => resolved,
+                Err(_) => return false,
+            },
+        };
 
         canonical_target.starts_with(&canonical_ssot)
     }
@@ -1699,7 +1937,7 @@ impl SkillService {
         let app_dir = Self::get_app_skills_dir(app)?;
         let skill_path = app_dir.join(directory);
 
-        if skill_path.exists() || Self::is_symlink(&skill_path) {
+        if skill_path.exists() || Self::is_managed_link(&skill_path) {
             Self::remove_path(&skill_path)?;
             log::debug!("Skill {directory} 已从 {app:?} 删除");
         }
@@ -3038,5 +3276,26 @@ mod tests {
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_link_target_strips_windows_namespace_prefixes() {
+        assert_eq!(
+            SkillService::normalize_link_target(PathBuf::from(r"\??\C:\Users\Test\skill")),
+            PathBuf::from(r"C:\Users\Test\skill")
+        );
+        assert_eq!(
+            SkillService::normalize_link_target(PathBuf::from(r"\??\UNC\server\share\skill")),
+            PathBuf::from(r"\\server\share\skill")
+        );
+        assert_eq!(
+            SkillService::normalize_link_target(PathBuf::from(r"\\?\C:\Users\Test\skill")),
+            PathBuf::from(r"C:\Users\Test\skill")
+        );
+        assert_eq!(
+            SkillService::normalize_link_target(PathBuf::from(r"\\?\UNC\server\share\skill")),
+            PathBuf::from(r"\\server\share\skill")
+        );
     }
 }

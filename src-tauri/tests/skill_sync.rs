@@ -17,14 +17,51 @@ fn write_skill(dir: &std::path::Path, name: &str) {
     .expect("write SKILL.md");
 }
 
-#[cfg(unix)]
-fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::unix::fs::symlink(src, dest).expect("create symlink");
-}
+#[test]
+fn sync_to_app_dir_creates_live_managed_link() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
 
-#[cfg(windows)]
-fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::windows::fs::symlink_dir(src, dest).expect("create symlink");
+    let ssot_skill_dir = home
+        .join(".cc-switch")
+        .join("skills")
+        .join("live & skill");
+    write_skill(&ssot_skill_dir, "Live Skill");
+    fs::write(ssot_skill_dir.join("prompt.md"), "before").expect("write prompt");
+
+    SkillService::sync_to_app_dir("live & skill", &AppType::OpenCode).expect("sync skill");
+
+    let app_skill_dir = home
+        .join(".config")
+        .join("opencode")
+        .join("skills")
+        .join("live & skill");
+    let metadata = fs::symlink_metadata(&app_skill_dir).expect("read app skill metadata");
+
+    #[cfg(unix)]
+    assert!(
+        metadata.file_type().is_symlink(),
+        "Unix app skill should be a symlink"
+    );
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+
+        assert!(
+            metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0,
+            "Windows app skill should be a symlink or junction reparse point"
+        );
+    }
+
+    fs::write(ssot_skill_dir.join("prompt.md"), "after").expect("update prompt");
+    assert_eq!(
+        fs::read_to_string(app_skill_dir.join("prompt.md")).expect("read synced prompt"),
+        "after",
+        "app skill path should reflect SSOT changes without copying"
+    );
 }
 
 #[test]
@@ -120,7 +157,7 @@ fn import_from_apps_does_not_rewrite_selected_app_directory() {
 }
 
 #[test]
-fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
+fn sync_to_app_removes_disabled_and_orphaned_ssot_managed_links() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let home = ensure_test_home();
@@ -132,9 +169,9 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
     write_skill(&orphan_skill, "Orphan");
 
     let opencode_skills_dir = home.join(".config").join("opencode").join("skills");
-    fs::create_dir_all(&opencode_skills_dir).expect("create opencode skills dir");
-    symlink_dir(&disabled_skill, &opencode_skills_dir.join("disabled-skill"));
-    symlink_dir(&orphan_skill, &opencode_skills_dir.join("orphan-skill"));
+    SkillService::sync_to_app_dir("disabled-skill", &AppType::OpenCode)
+        .expect("sync disabled skill");
+    SkillService::sync_to_app_dir("orphan-skill", &AppType::OpenCode).expect("sync orphan skill");
 
     let state = create_test_state().expect("create test state");
     state
