@@ -38,6 +38,8 @@ export interface ClaudeDesktopProviderPreset {
   mode: "direct" | "proxy";
   apiFormat?: ClaudeDesktopApiFormat;
   modelRoutes?: ClaudeDesktopRoutePreset[];
+  providerType?: "github_copilot" | "codex_oauth";
+  requiresOAuth?: boolean;
 
   endpointCandidates?: string[];
   theme?: PresetTheme;
@@ -154,6 +156,36 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://generativelanguage.googleapis.com"],
     icon: "gemini",
     iconColor: "#4285F4",
+  },
+  {
+    name: "GitHub Copilot",
+    websiteUrl: "https://github.com/features/copilot",
+    category: "third_party",
+    baseUrl: "https://api.githubcopilot.com",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    providerType: "github_copilot",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes(
+      "claude-sonnet-4.6",
+      "claude-sonnet-4.6",
+      "claude-haiku-4.5",
+    ),
+    icon: "github",
+    iconColor: "#000000",
+  },
+  {
+    name: "Codex",
+    websiteUrl: "https://openai.com/chatgpt/pricing",
+    category: "third_party",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+    mode: "proxy",
+    apiFormat: "openai_responses",
+    providerType: "codex_oauth",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes("gpt-5.4", "gpt-5.4", "gpt-5.4-mini"),
+    icon: "openai",
+    iconColor: "#000000",
   },
   {
     name: "DeepSeek",

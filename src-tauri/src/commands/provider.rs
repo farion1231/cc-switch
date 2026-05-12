@@ -184,16 +184,6 @@ pub fn import_claude_desktop_providers_from_claude(
             continue;
         }
 
-        if matches!(
-            provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.provider_type.as_deref()),
-            Some("github_copilot") | Some("codex_oauth")
-        ) {
-            continue;
-        }
-
         let mut desktop_provider = provider.clone();
         desktop_provider.in_failover_queue = false;
         let meta = desktop_provider.meta.get_or_insert_with(Default::default);
@@ -249,12 +239,20 @@ fn suggested_claude_desktop_routes(
         .get("env")
         .and_then(|value| value.as_object())?;
     let mut routes = std::collections::HashMap::new();
+    let supports_1m = !matches!(
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref()),
+        Some("github_copilot") | Some("codex_oauth")
+    );
 
     fn add_route(
         routes: &mut std::collections::HashMap<String, crate::provider::ClaudeDesktopModelRoute>,
         env: &serde_json::Map<String, serde_json::Value>,
         route_id: &str,
         env_key: &str,
+        supports_1m: bool,
     ) {
         if let Some(model) = env
             .get(env_key)
@@ -266,19 +264,25 @@ fn suggested_claude_desktop_routes(
                 route_id.to_string(),
                 crate::provider::ClaudeDesktopModelRoute {
                     model: model.to_string(),
-                    supports_1m: Some(true),
+                    supports_1m: Some(supports_1m),
                 },
             );
         }
     }
 
     for spec in crate::claude_desktop_config::DEFAULT_PROXY_ROUTES {
-        add_route(&mut routes, env, spec.route_id, spec.env_key);
+        add_route(&mut routes, env, spec.route_id, spec.env_key, supports_1m);
     }
 
     let primary_route = crate::claude_desktop_config::DEFAULT_PROXY_ROUTES[0];
     if !routes.contains_key(primary_route.route_id) {
-        add_route(&mut routes, env, primary_route.route_id, "ANTHROPIC_MODEL");
+        add_route(
+            &mut routes,
+            env,
+            primary_route.route_id,
+            "ANTHROPIC_MODEL",
+            supports_1m,
+        );
     }
 
     (!routes.is_empty()).then_some(routes)

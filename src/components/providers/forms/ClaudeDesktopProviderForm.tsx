@@ -37,6 +37,8 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { BasicFormFields } from "./BasicFormFields";
+import { CodexOAuthSection } from "./CodexOAuthSection";
+import { CopilotAuthSection } from "./CopilotAuthSection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
@@ -61,6 +63,7 @@ import {
   providersApi,
   type ClaudeDesktopDefaultRoute,
 } from "@/lib/api/providers";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 
 export type ClaudeDesktopProviderFormValues = ProviderFormData & {
   presetId?: string;
@@ -231,6 +234,15 @@ export function ClaudeDesktopProviderForm({
       ? "ANTHROPIC_API_KEY"
       : "ANTHROPIC_AUTH_TOKEN",
   );
+  const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "github_copilot"));
+  const [selectedCodexAccountId, setSelectedCodexAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+  const [codexFastMode, setCodexFastMode] = useState<boolean>(
+    () => initialData?.meta?.codexFastMode ?? false,
+  );
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     "custom",
   );
@@ -239,6 +251,8 @@ export function ClaudeDesktopProviderForm({
     category?: ProviderCategory;
     isPartner?: boolean;
     partnerPromotionKey?: string;
+    providerType?: string;
+    requiresOAuth?: boolean;
   } | null>(null);
   const [routes, setRoutes] = useState<RouteRow[]>(() =>
     initialRouteRows(initialData?.meta?.claudeDesktopModelRoutes),
@@ -334,6 +348,12 @@ export function ClaudeDesktopProviderForm({
     }),
     [t],
   );
+  const activeProviderType =
+    activePreset?.providerType ?? initialData?.meta?.providerType;
+  const usesManagedOAuth =
+    activePreset?.requiresOAuth === true ||
+    activeProviderType === "github_copilot" ||
+    activeProviderType === "codex_oauth";
 
   const applyDesktopPreset = (preset: ClaudeDesktopProviderPreset) => {
     form.setValue("name", preset.nameKey ? t(preset.nameKey) : preset.name);
@@ -386,6 +406,8 @@ export function ClaudeDesktopProviderForm({
       category: entry.preset.category,
       isPartner: entry.preset.isPartner,
       partnerPromotionKey: entry.preset.partnerPromotionKey,
+      providerType: entry.preset.providerType,
+      requiresOAuth: entry.preset.requiresOAuth,
     });
     applyDesktopPreset(entry.preset);
   };
@@ -469,7 +491,7 @@ export function ClaudeDesktopProviderForm({
       );
       return;
     }
-    if (!apiKey.trim()) {
+    if (!usesManagedOAuth && !apiKey.trim()) {
       toast.error(
         t("providerForm.fetchModelsNeedApiKey", {
           defaultValue: "请先填写 API Key",
@@ -524,16 +546,18 @@ export function ClaudeDesktopProviderForm({
 
     const settingsConfig = clonePlainRecord(initialData?.settingsConfig);
     const env = clonePlainRecord(settingsConfig.env);
-    const otherKey: ApiKeyField =
-      apiKeyField === "ANTHROPIC_AUTH_TOKEN"
-        ? "ANTHROPIC_API_KEY"
-        : "ANTHROPIC_AUTH_TOKEN";
-    delete env[otherKey];
-    settingsConfig.env = {
-      ...env,
-      ANTHROPIC_BASE_URL: baseUrl.trim().replace(/\/+$/, ""),
-      [apiKeyField]: apiKey.trim(),
-    };
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.ANTHROPIC_API_KEY;
+    settingsConfig.env = usesManagedOAuth
+      ? {
+          ...env,
+          ANTHROPIC_BASE_URL: baseUrl.trim().replace(/\/+$/, ""),
+        }
+      : {
+          ...env,
+          ANTHROPIC_BASE_URL: baseUrl.trim().replace(/\/+$/, ""),
+          [apiKeyField]: apiKey.trim(),
+        };
 
     const routeMap = routeEntries.reduce<
       Record<string, ClaudeDesktopModelRoute>
@@ -552,9 +576,25 @@ export function ClaudeDesktopProviderForm({
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
+    meta.providerType = activeProviderType;
+    meta.authBinding =
+      activeProviderType === "github_copilot"
+        ? {
+            source: "managed_account",
+            authProvider: "github_copilot",
+            accountId: selectedGitHubAccountId ?? undefined,
+          }
+        : activeProviderType === "codex_oauth"
+          ? {
+              source: "managed_account",
+              authProvider: "codex_oauth",
+              accountId: selectedCodexAccountId ?? undefined,
+            }
+          : undefined;
+    meta.codexFastMode =
+      activeProviderType === "codex_oauth" ? codexFastMode : undefined;
 
     delete meta.endpointAutoSelect;
-    delete meta.providerType;
     delete meta.isFullUrl;
 
     await onSubmit({
@@ -573,21 +613,23 @@ export function ClaudeDesktopProviderForm({
 
   const renderActionButtons = (onAdd: () => void, addLabel: string) => (
     <div className="flex gap-1">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={handleFetchModels}
-        disabled={isFetchingModels}
-        className="h-7 gap-1"
-      >
-        {isFetchingModels ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Download className="h-3.5 w-3.5" />
-        )}
-        {t("providerForm.fetchModels", { defaultValue: "获取模型" })}
-      </Button>
+      {!usesManagedOAuth && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleFetchModels}
+          disabled={isFetchingModels}
+          className="h-7 gap-1"
+        >
+          {isFetchingModels ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
+          {t("providerForm.fetchModels", { defaultValue: "获取模型" })}
+        </Button>
+      )}
       <Button
         type="button"
         variant="outline"
@@ -621,15 +663,33 @@ export function ClaudeDesktopProviderForm({
 
         <BasicFormFields form={form} />
 
-        <div className="space-y-1">
-          <Label>{"API Key"}</Label>
-          <Input
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            type="password"
-            placeholder="sk-..."
-          />
-        </div>
+        {usesManagedOAuth ? (
+          <div className="rounded-lg border border-border-default bg-muted/20 p-3">
+            {activeProviderType === "github_copilot" ? (
+              <CopilotAuthSection
+                selectedAccountId={selectedGitHubAccountId}
+                onAccountSelect={setSelectedGitHubAccountId}
+              />
+            ) : (
+              <CodexOAuthSection
+                selectedAccountId={selectedCodexAccountId}
+                onAccountSelect={setSelectedCodexAccountId}
+                fastModeEnabled={codexFastMode}
+                onFastModeChange={setCodexFastMode}
+              />
+            )}
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <Label>{"API Key"}</Label>
+            <Input
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              type="password"
+              placeholder="sk-..."
+            />
+          </div>
+        )}
 
         <EndpointField
           id="baseUrl"
