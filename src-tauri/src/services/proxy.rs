@@ -2012,6 +2012,19 @@ impl ProxyService {
             .map_err(|e| format!("获取代理配置失败: {e}"))
     }
 
+    /// 同步全局配置到运行中的代理
+    ///
+    /// 从 DB 重读最新配置并应用到运行中的代理服务和已接管 Live 配置。
+    /// 由 `update_global_proxy_config` 命令在落库后调用，使密码等变更立即生效。
+    pub async fn sync_global_config(&self) -> Result<(), String> {
+        let config = self
+            .db
+            .get_proxy_config()
+            .await
+            .map_err(|e| format!("获取代理配置失败: {e}"))?;
+        self.update_config(&config).await
+    }
+
     /// 更新代理配置
     pub async fn update_config(&self, config: &ProxyConfig) -> Result<(), String> {
         // 记录旧配置用于判定是否需要重启
@@ -2057,38 +2070,36 @@ impl ProxyService {
 
             *server_guard = Some(new_server);
             log::info!("代理配置已更新，服务器已自动重启应用最新配置");
-
-            // 如果当前存在任意 app 的 Live 接管，需要同步更新 Live 中的代理地址（否则客户端仍指向旧端口）
-            drop(server_guard);
-            if let Ok(takeover) = self.get_takeover_status().await {
-                let auth_token = self.get_current_auth_token().await;
-                let mut updated_any = false;
-
-                if takeover.claude {
-                    self.takeover_live_config_best_effort(&AppType::Claude, &auth_token)
-                        .await?;
-                    updated_any = true;
-                }
-                if takeover.codex {
-                    self.takeover_live_config_best_effort(&AppType::Codex, &auth_token)
-                        .await?;
-                    updated_any = true;
-                }
-                if takeover.gemini {
-                    self.takeover_live_config_best_effort(&AppType::Gemini, &auth_token)
-                        .await?;
-                    updated_any = true;
-                }
-
-                if updated_any {
-                    log::info!("已同步更新 Live 配置中的代理地址");
-                }
-            }
-
-            return Ok(());
         } else if let Some(server) = server_guard.as_ref() {
             server.apply_runtime_config(&new_config).await;
             log::info!("代理配置已实时应用，无需重启代理服务器");
+        }
+
+        // 如果当前存在任意 app 的 Live 接管，同步更新 Live 配置（包括地址变更和密码变更）
+        drop(server_guard);
+        if let Ok(takeover) = self.get_takeover_status().await {
+            let auth_token = self.get_current_auth_token().await;
+            let mut updated_any = false;
+
+            if takeover.claude {
+                self.takeover_live_config_best_effort(&AppType::Claude, &auth_token)
+                    .await?;
+                updated_any = true;
+            }
+            if takeover.codex {
+                self.takeover_live_config_best_effort(&AppType::Codex, &auth_token)
+                    .await?;
+                updated_any = true;
+            }
+            if takeover.gemini {
+                self.takeover_live_config_best_effort(&AppType::Gemini, &auth_token)
+                    .await?;
+                updated_any = true;
+            }
+
+            if updated_any {
+                log::info!("已同步更新 Live 配置中的代理地址");
+            }
         }
 
         Ok(())
