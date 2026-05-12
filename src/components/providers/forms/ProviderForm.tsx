@@ -258,6 +258,7 @@ function ProviderFormFull({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setLocalApiKeyHeaderName(initialData?.meta?.apiKeyHeaderName ?? undefined);
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -1510,6 +1511,7 @@ function ProviderFormFull({
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
+    setLocalApiKeyHeaderName(undefined);
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,

@@ -420,10 +420,12 @@ export function ClaudeFormFields({
         />
       )}
 
-      <ApiKeyHeaderSection
-        apiKeyHeaderName={apiKeyHeaderName}
-        onApiKeyHeaderNameChange={onApiKeyHeaderNameChange}
-      />
+      {!usesOAuth && (
+        <ApiKeyHeaderSection
+          apiKeyHeaderName={apiKeyHeaderName}
+          onApiKeyHeaderNameChange={onApiKeyHeaderNameChange}
+        />
+      )}
 
       {/* 模板变量输入 */}
       {templateValueEntries.length > 0 && (

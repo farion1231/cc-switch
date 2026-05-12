@@ -1149,25 +1149,24 @@ impl RequestForwarder {
                 }
             }
 
-            // 通用自定义认证 Header：从 provider.meta.api_key_header_name 注入（覆盖适配器默认策略）
-            if let Some(ref meta) = provider.meta {
-                if let Some(ref header_name) = meta.api_key_header_name {
-                    if !header_name.is_empty() {
-                        auth.custom_auth_header = Some(header_name.clone());
-                    }
-                }
-            }
-
             if let Some(ref header_name) = auth.custom_auth_header {
                 use http::{HeaderName, HeaderValue};
                 if let (Ok(custom_name), Ok(custom_value)) = (
                     HeaderName::from_bytes(header_name.as_bytes()),
                     HeaderValue::from_str(&auth.api_key),
                 ) {
-                    // Keep all adapter headers except authorization, then add the custom one.
-                    // This preserves companion headers (e.g. x-goog-api-client, Copilot headers).
+                    // Strip all default auth headers (authorization, x-api-key, x-goog-api-key)
+                    // plus any header that would duplicate the custom name, then inject once.
+                    // Companion headers (e.g. x-goog-api-client, Copilot headers) are preserved.
+                    let custom_lower = header_name.to_lowercase();
                     let mut headers = adapter.get_auth_headers(&auth);
-                    headers.retain(|(name, _)| name.as_str() != "authorization");
+                    headers.retain(|(name, _)| {
+                        let n = name.as_str();
+                        n != "authorization"
+                            && n != "x-api-key"
+                            && n != "x-goog-api-key"
+                            && n != custom_lower.as_str()
+                    });
                     headers.push((custom_name, custom_value));
                     headers
                 } else {

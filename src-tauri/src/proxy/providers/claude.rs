@@ -603,16 +603,7 @@ impl ProviderAdapter for ClaudeAdapter {
     fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
         use http::{HeaderName, HeaderValue};
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
-
-        // 自定义 Header：直接以原始 key 值发送，不加 Bearer 前缀
-        if let Some(ref header_name) = auth.custom_auth_header {
-            if let (Ok(name), Ok(value)) = (
-                HeaderName::from_bytes(header_name.as_bytes()),
-                HeaderValue::from_str(&auth.api_key),
-            ) {
-                return vec![(name, value)];
-            }
-        }
+        // 自定义 Header 由 forwarder.rs 统一注入，此处只返回策略对应的默认 headers。
 
         let bearer = format!("Bearer {}", auth.api_key);
         match auth.strategy {
