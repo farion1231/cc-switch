@@ -50,7 +50,10 @@ import type {
   ClaudeApiFormat,
   ClaudeApiKeyField,
 } from "@/types";
-import type { TemplateValueConfig } from "@/config/claudeProviderPresets";
+import {
+  providerPresets,
+  type TemplateValueConfig,
+} from "@/config/claudeProviderPresets";
 
 interface EndpointCandidate {
   url: string;
@@ -82,6 +85,8 @@ interface ClaudeFormFieldsProps {
   isCodexOauthAuthenticated?: boolean;
   selectedCodexAccountId?: string | null;
   onCodexAccountSelect?: (accountId: string | null) => void;
+  codexFastMode?: boolean;
+  onCodexFastModeChange?: (enabled: boolean) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -98,18 +103,17 @@ interface ClaudeFormFieldsProps {
   onCustomEndpointsChange?: (endpoints: string[]) => void;
   autoSelect: boolean;
   onAutoSelectChange: (checked: boolean) => void;
+  showEndpointTools?: boolean;
 
   // Model Selector
   shouldShowModelSelector: boolean;
   claudeModel: string;
-  reasoningModel: string;
   defaultHaikuModel: string;
   defaultSonnetModel: string;
   defaultOpusModel: string;
   onModelChange: (
     field:
       | "ANTHROPIC_MODEL"
-      | "ANTHROPIC_REASONING_MODEL"
       | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
       | "ANTHROPIC_DEFAULT_SONNET_MODEL"
       | "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -150,6 +154,8 @@ export function ClaudeFormFields({
   isCodexOauthPreset,
   selectedCodexAccountId,
   onCodexAccountSelect,
+  codexFastMode,
+  onCodexFastModeChange,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -162,9 +168,9 @@ export function ClaudeFormFields({
   onCustomEndpointsChange,
   autoSelect,
   onAutoSelectChange,
+  showEndpointTools = true,
   shouldShowModelSelector,
   claudeModel,
-  reasoningModel,
   defaultHaikuModel,
   defaultSonnetModel,
   defaultOpusModel,
@@ -180,7 +186,6 @@ export function ClaudeFormFields({
   const { t } = useTranslation();
   const hasAnyAdvancedValue = !!(
     claudeModel ||
-    reasoningModel ||
     defaultHaikuModel ||
     defaultSonnetModel ||
     defaultOpusModel ||
@@ -212,8 +217,16 @@ export function ClaudeFormFields({
       });
       return;
     }
+    // 当 baseURL 仍是某预设的默认值时，优先使用预设上的 modelsUrl 覆写
+    // 避免多走一次失败的候选请求（如 DeepSeek 把 /models 挂在根，而不是 /anthropic 子路径下）
+    const matchedPreset = providerPresets.find((p) => {
+      const env = (p.settingsConfig as { env?: Record<string, string> })?.env;
+      return env?.ANTHROPIC_BASE_URL === baseUrl;
+    });
+    const modelsUrl = matchedPreset?.modelsUrl;
+
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey, isFullUrl)
+    fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl)
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
@@ -378,6 +391,8 @@ export function ClaudeFormFields({
         <CodexOAuthSection
           selectedAccountId={selectedCodexAccountId}
           onAccountSelect={onCodexAccountSelect}
+          fastModeEnabled={codexFastMode}
+          onFastModeChange={onCodexFastModeChange}
         />
       )}
 
@@ -451,15 +466,18 @@ export function ClaudeFormFields({
               ? t("providerForm.fullUrlHintGeminiNative")
               : undefined
           }
-          onManageClick={() => onEndpointModalToggle(true)}
-          showFullUrlToggle={true}
+          showManageButton={showEndpointTools}
+          onManageClick={
+            showEndpointTools ? () => onEndpointModalToggle(true) : undefined
+          }
+          showFullUrlToggle={showEndpointTools}
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
         />
       )}
 
       {/* 端点测速弹窗 */}
-      {shouldShowSpeedTest && isEndpointModalOpen && (
+      {shouldShowSpeedTest && showEndpointTools && isEndpointModalOpen && (
         <EndpointSpeedTest
           appId="claude"
           providerId={providerId}
@@ -586,13 +604,11 @@ export function ClaudeFormFields({
                     onClick={() => {
                       const value =
                         claudeModel ||
-                        reasoningModel ||
                         defaultHaikuModel ||
                         defaultSonnetModel ||
                         defaultOpusModel;
                       if (value) {
                         onModelChange("ANTHROPIC_MODEL", value);
-                        onModelChange("ANTHROPIC_REASONING_MODEL", value);
                         onModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", value);
                         onModelChange("ANTHROPIC_DEFAULT_SONNET_MODEL", value);
                         onModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", value);
@@ -605,7 +621,6 @@ export function ClaudeFormFields({
                     }}
                     disabled={
                       !claudeModel &&
-                      !reasoningModel &&
                       !defaultHaikuModel &&
                       !defaultSonnetModel &&
                       !defaultOpusModel
@@ -653,18 +668,6 @@ export function ClaudeFormFields({
                   claudeModel,
                   "ANTHROPIC_MODEL",
                   t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                )}
-              </div>
-
-              {/* 推理模型 */}
-              <div className="space-y-2">
-                <FormLabel htmlFor="reasoningModel">
-                  {t("providerForm.anthropicReasoningModel")}
-                </FormLabel>
-                {renderModelInput(
-                  "reasoningModel",
-                  reasoningModel,
-                  "ANTHROPIC_REASONING_MODEL",
                 )}
               </div>
 

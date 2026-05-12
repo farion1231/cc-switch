@@ -57,7 +57,33 @@ export function useProxyStatus() {
         t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.server.startFailed", {
+          detail,
           defaultValue: `启动代理服务失败: ${detail}`,
+        }),
+      );
+    },
+  });
+
+  // 停止服务器（仅停止服务，不改写/恢复其它应用接管状态）
+  const stopProxyServerMutation = useMutation({
+    mutationFn: () => invoke("stop_proxy_server"),
+    onSuccess: () => {
+      toast.success(
+        t("proxy.server.stopped", {
+          defaultValue: "代理服务已停止",
+        }),
+        { closeButton: true },
+      );
+      queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+    },
+    onError: (error: Error) => {
+      const detail =
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
+      toast.error(
+        t("proxy.server.stopFailed", {
+          detail,
+          defaultValue: `停止代理服务失败: ${detail}`,
         }),
       );
     },
@@ -87,6 +113,7 @@ export function useProxyStatus() {
         t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.stopWithRestoreFailed", {
+          detail,
           defaultValue: `停止失败: ${detail}`,
         }),
       );
@@ -129,6 +156,7 @@ export function useProxyStatus() {
         t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.takeover.failed", {
+          detail,
           defaultValue: `操作失败: ${detail}`,
         }),
       );
@@ -191,6 +219,7 @@ export function useProxyStatus() {
 
     // 启动/停止（总开关）
     startProxyServer: startProxyServerMutation.mutateAsync,
+    stopProxyServer: stopProxyServerMutation.mutateAsync,
     stopWithRestore: stopWithRestoreMutation.mutateAsync,
 
     // 按应用接管开关
@@ -205,9 +234,11 @@ export function useProxyStatus() {
 
     // 加载状态
     isStarting: startProxyServerMutation.isPending,
+    isStoppingServer: stopProxyServerMutation.isPending,
     isStopping: stopWithRestoreMutation.isPending,
     isPending:
       startProxyServerMutation.isPending ||
+      stopProxyServerMutation.isPending ||
       stopWithRestoreMutation.isPending ||
       setTakeoverForAppMutation.isPending,
   };

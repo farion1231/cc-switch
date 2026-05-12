@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
+type DirectoryAppId = Exclude<AppId, "claude-desktop">;
+
 interface DirectorySettingsProps {
   appConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
@@ -17,9 +19,10 @@ interface DirectorySettingsProps {
   geminiDir?: string;
   opencodeDir?: string;
   openclawDir?: string;
-  onDirectoryChange: (app: AppId, value?: string) => void;
-  onBrowseDirectory: (app: AppId) => Promise<void>;
-  onResetDirectory: (app: AppId) => Promise<void>;
+  hermesDir?: string;
+  onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
+  onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
+  onResetDirectory: (app: DirectoryAppId) => Promise<void>;
 }
 
 export function DirectorySettings({
@@ -33,6 +36,7 @@ export function DirectorySettings({
   geminiDir,
   opencodeDir,
   openclawDir,
+  hermesDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -142,6 +146,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("openclaw", val)}
           onBrowse={() => onBrowseDirectory("openclaw")}
           onReset={() => onResetDirectory("openclaw")}
+        />
+
+        <DirectoryInput
+          label={t("settings.hermesConfigDir")}
+          description={undefined}
+          value={hermesDir}
+          resolvedValue={resolvedDirs.hermes}
+          placeholder={t("settings.browsePlaceholderHermes")}
+          onChange={(val) => onDirectoryChange("hermes", val)}
+          onBrowse={() => onBrowseDirectory("hermes")}
+          onReset={() => onResetDirectory("hermes")}
         />
       </section>
     </div>

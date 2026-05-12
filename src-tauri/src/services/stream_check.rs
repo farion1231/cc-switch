@@ -3,7 +3,6 @@
 //! 使用流式 API 进行快速健康检查，只需接收首个 chunk 即判定成功。
 
 use futures::StreamExt;
-use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -17,7 +16,9 @@ use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
-use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
+use crate::proxy::providers::{
+    get_adapter, AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter,
+};
 
 /// 健康状态枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -207,11 +208,18 @@ impl StreamCheckService {
         // OpenCode / OpenClaw 的 settings_config 结构与 Claude/Codex/Gemini 不同
         // （baseUrl / apiKey 直接作为根字段而非嵌套在 env），并且协议由 `api`
         // 或 `npm` 字段显式指定。它们不走 get_adapter 路径，而是直接分发。
-        if matches!(app_type, AppType::OpenCode | AppType::OpenClaw) {
+        if matches!(
+            app_type,
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+        ) {
             return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
 
-        let adapter = get_adapter(app_type);
+        let adapter: Box<dyn ProviderAdapter> = if matches!(app_type, AppType::ClaudeDesktop) {
+            Box::new(ClaudeAdapter::new())
+        } else {
+            get_adapter(app_type)
+        };
 
         let base_url = match base_url_override {
             Some(base_url) => base_url,
@@ -232,7 +240,7 @@ impl StreamCheckService {
         let test_prompt = &config.test_prompt;
 
         let result = match app_type {
-            AppType::Claude => {
+            AppType::Claude | AppType::ClaudeDesktop => {
                 Self::check_claude_stream(
                     &client,
                     &base_url,
@@ -270,9 +278,9 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
                 // Already handled via early dispatch above
-                unreachable!("OpenCode/OpenClaw 已通过 check_once_without_adapter 处理")
+                unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
             }
         };
 
@@ -353,15 +361,17 @@ impl StreamCheckService {
         });
         // Codex OAuth (ChatGPT Plus/Pro 反代) 需要 store:false + include 标记，
         // 否则 Stream Check 会和生产路径一样被服务端 400 拒绝。
-        let is_codex_oauth = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("codex_oauth");
+        let is_codex_oauth = provider.is_codex_oauth();
+        let codex_fast_mode = provider.codex_fast_mode_enabled();
 
         let body = if is_openai_responses {
-            anthropic_to_responses(anthropic_body, Some(&provider.id), is_codex_oauth)
-                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+            anthropic_to_responses(
+                anthropic_body,
+                Some(&provider.id),
+                is_codex_oauth,
+                codex_fast_mode,
+            )
+            .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_gemini_native {
             anthropic_to_gemini(anthropic_body)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
@@ -429,12 +439,13 @@ impl StreamCheckService {
             let os_name = Self::get_os_name();
             let arch_name = Self::get_arch_name();
 
-            request_builder =
-                request_builder.header("authorization", format!("Bearer {}", auth.api_key));
-
-            // Only Anthropic official strategy adds x-api-key
-            if auth.strategy == AuthStrategy::Anthropic {
-                request_builder = request_builder.header("x-api-key", &auth.api_key);
+            // 鉴权头复用 ClaudeAdapter::get_auth_headers，与代理路径（forwarder）保持单一真理来源。
+            // - AuthStrategy::Anthropic  → x-api-key
+            // - AuthStrategy::ClaudeAuth → Authorization: Bearer
+            // - AuthStrategy::Bearer     → Authorization: Bearer
+            // 避免之前"无条件 Bearer + 条件 x-api-key 双发"导致的假阴性 / auth conflict。
+            for (name, value) in ClaudeAdapter::new().get_auth_headers(auth) {
+                request_builder = request_builder.header(name, value);
             }
 
             request_builder = request_builder
@@ -681,7 +692,7 @@ impl StreamCheckService {
 
         let result = match app_type {
             AppType::OpenClaw => {
-                Self::check_openclaw_stream(
+                Self::check_additive_app_stream(
                     &client,
                     provider,
                     &model_to_test,
@@ -700,7 +711,17 @@ impl StreamCheckService {
                 )
                 .await
             }
-            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw"),
+            AppType::Hermes => {
+                Self::check_hermes_stream(
+                    &client,
+                    provider,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                )
+                .await
+            }
+            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes"),
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -775,6 +796,15 @@ impl StreamCheckService {
             return None;
         }
         let lower = body.to_lowercase();
+        let qianfan_quota_indicators = [
+            "coding_plan_hour_quota_exceeded",
+            "coding_plan_week_quota_exceeded",
+            "coding_plan_month_quota_exceeded",
+        ];
+        if qianfan_quota_indicators.iter().any(|s| lower.contains(s)) {
+            return Some("quotaExceeded");
+        }
+
         // 必须提到 "model"，避免通用 404 / 400 被误判
         if !lower.contains("model") {
             return None;
@@ -805,7 +835,7 @@ impl StreamCheckService {
     /// - `anthropic-messages`   → check_claude_stream + api_format="anthropic" (ClaudeAuth 策略)
     /// - `google-generative-ai` → check_gemini_stream (Google API Key 策略)
     /// - `bedrock-converse-stream` → 不支持（需要 AWS SigV4 签名）
-    async fn check_openclaw_stream(
+    async fn check_additive_app_stream(
         client: &Client,
         provider: &Provider,
         model: &str,
@@ -815,7 +845,7 @@ impl StreamCheckService {
         // 自定义认证头（如 Longcat 的 `apikey` 头）不走标准 Bearer，
         // 具体头名由 OpenClaw 网关内部决定，cc-switch 无法准确构造，
         // 因此直接返回友好错误而不是让用户看到一个误导性的 401。
-        if Self::openclaw_uses_auth_header(provider) {
+        if Self::additive_app_uses_auth_header(provider) {
             return Err(AppError::localized(
                 "openclaw_auth_header_not_supported",
                 "该供应商使用自定义认证头，暂不支持流式健康检查。建议直接通过 OpenClaw 测试。",
@@ -908,8 +938,8 @@ impl StreamCheckService {
         }
     }
 
-    /// 判断 OpenClaw 供应商是否使用自定义认证头（`authHeader: true`）
-    fn openclaw_uses_auth_header(provider: &Provider) -> bool {
+    /// 判断 additive-mode 供应商是否使用自定义认证头（`authHeader: true`）
+    fn additive_app_uses_auth_header(provider: &Provider) -> bool {
         provider
             .settings_config
             .get("authHeader")
@@ -969,6 +999,112 @@ impl StreamCheckService {
             .filter(|s| !s.is_empty())
     }
 
+    // Hermes 的 settings_config 用 snake_case（base_url / api_key / api_mode），
+    // 与 OpenClaw 的 camelCase（baseUrl / apiKey / api）是两套独立命名。
+    // 见 src/config/hermesProviderPresets.ts 的 HermesProviderSettingsConfig。
+    fn extract_hermes_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "hermes_base_url_missing",
+                    "Hermes 供应商缺少 base_url",
+                    "Hermes provider is missing `base_url`",
+                )
+            })
+    }
+
+    fn extract_hermes_api_key(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "hermes_api_key_missing",
+                    "Hermes 供应商缺少 api_key",
+                    "Hermes provider is missing `api_key`",
+                )
+            })
+    }
+
+    fn extract_hermes_api_mode(provider: &Provider) -> Option<String> {
+        provider
+            .settings_config
+            .get("api_mode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Hermes 流式检查分发器
+    ///
+    /// Hermes 以 `api_mode` 字段显式指定协议，取值来自
+    /// `HermesApiMode`（hermesProviderPresets.ts）：
+    /// - `chat_completions`   → check_claude_stream + api_format="openai_chat"（Bearer）
+    /// - `anthropic_messages` → check_claude_stream + api_format="anthropic"（ClaudeAuth，与 OpenClaw 的 anthropic-messages 同策略）
+    /// - `codex_responses`    → check_claude_stream + api_format="openai_responses"（Bearer）
+    /// - `bedrock_converse`   → 不支持（需要 AWS SigV4 签名）
+    async fn check_hermes_stream(
+        client: &Client,
+        provider: &Provider,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(u16, String), AppError> {
+        // 先把 api_mode 路由出协议格式与认证策略。
+        // 纯错误路径（bedrock / 未知 / 缺失）直接 return，避免在用户
+        // 选了 bedrock_converse 时被"缺 base_url"的二级错误盖住真正原因。
+        let (api_format, auth_strategy) = match Self::extract_hermes_api_mode(provider).as_deref() {
+            Some("chat_completions") => ("openai_chat", AuthStrategy::Bearer),
+            Some("anthropic_messages") => ("anthropic", AuthStrategy::ClaudeAuth),
+            Some("codex_responses") => ("openai_responses", AuthStrategy::Bearer),
+            Some("bedrock_converse") => {
+                return Err(AppError::localized(
+                    "hermes_bedrock_not_supported",
+                    "AWS Bedrock 需要 SigV4 签名，当前不支持健康检查。",
+                    "AWS Bedrock requires SigV4 signing and is not supported by stream health check.",
+                ));
+            }
+            Some(other) => {
+                return Err(AppError::localized(
+                    "hermes_protocol_not_yet_supported",
+                    format!("Hermes 暂不支持协议: {other}"),
+                    format!("Hermes protocol not yet supported: {other}"),
+                ));
+            }
+            None => {
+                return Err(AppError::localized(
+                    "hermes_api_mode_missing",
+                    "Hermes 供应商缺少 api_mode 字段",
+                    "Hermes provider is missing the `api_mode` field",
+                ));
+            }
+        };
+
+        let base_url = Self::extract_hermes_base_url(provider)?;
+        let api_key = Self::extract_hermes_api_key(provider)?;
+        let auth = AuthInfo::new(api_key, auth_strategy);
+        Self::check_claude_stream(
+            client,
+            &base_url,
+            &auth,
+            model,
+            test_prompt,
+            timeout,
+            provider,
+            Some(api_format),
+            None,
+        )
+        .await
+    }
+
     /// OpenCode 流式检查分发器
     ///
     /// OpenCode 用 `npm` 字段（AI SDK 包名）隐式指定协议。映射关系参见
@@ -1026,7 +1162,7 @@ impl StreamCheckService {
                 .await
             }
             Some("@ai-sdk/anthropic") => {
-                // 见 check_openclaw_stream 对 anthropic-messages 的注释：
+                // 见 check_additive_app_stream 对 anthropic-messages 的处理：
                 // 用 ClaudeAuth（Bearer-only）兼容中转服务。
                 let auth = AuthInfo::new(api_key, AuthStrategy::ClaudeAuth);
                 Self::check_claude_stream(
@@ -1229,8 +1365,10 @@ impl StreamCheckService {
         config: &StreamCheckConfig,
     ) -> String {
         match app_type {
-            AppType::Claude => Self::extract_env_model(provider, "ANTHROPIC_MODEL")
-                .unwrap_or_else(|| config.claude_model.clone()),
+            AppType::Claude | AppType::ClaudeDesktop => {
+                Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                    .unwrap_or_else(|| config.claude_model.clone())
+            }
             AppType::Codex => {
                 Self::extract_codex_model(provider).unwrap_or_else(|| config.codex_model.clone())
             }
@@ -1241,8 +1379,8 @@ impl StreamCheckService {
                 // Try to extract first model from the models object
                 Self::extract_opencode_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
-            AppType::OpenClaw => {
-                // OpenClaw uses models array in settings_config
+            AppType::OpenClaw | AppType::Hermes => {
+                // OpenClaw/Hermes use models array in settings_config
                 // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
@@ -1293,10 +1431,11 @@ impl StreamCheckService {
             return None;
         }
 
-        let re = Regex::new(r#"^model\s*=\s*["']([^"']+)["']"#).ok()?;
-        re.captures(config_text)
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().trim().to_string())
+        let table = toml::from_str::<toml::Table>(config_text).ok()?;
+        table
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
             .filter(|value| !value.is_empty())
     }
 
@@ -1406,24 +1545,24 @@ mod tests {
     }
 
     #[test]
-    fn test_openclaw_uses_auth_header_true() {
+    fn test_additive_app_uses_auth_header_true() {
         let p = make_provider(serde_json::json!({
             "baseUrl": "https://api.longcat.chat/v1",
             "apiKey": "k",
             "api": "openai-completions",
             "authHeader": true,
         }));
-        assert!(StreamCheckService::openclaw_uses_auth_header(&p));
+        assert!(StreamCheckService::additive_app_uses_auth_header(&p));
     }
 
     #[test]
-    fn test_openclaw_uses_auth_header_default_false() {
+    fn test_additive_app_uses_auth_header_default_false() {
         let p = make_provider(serde_json::json!({
             "baseUrl": "https://api.deepseek.com/v1",
             "apiKey": "k",
             "api": "openai-completions",
         }));
-        assert!(!StreamCheckService::openclaw_uses_auth_header(&p));
+        assert!(!StreamCheckService::additive_app_uses_auth_header(&p));
     }
 
     #[test]
@@ -1613,6 +1752,22 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_qianfan_coding_plan_quota_errors() {
+        let cases = [
+            r#"{"error":{"code":"coding_plan_hour_quota_exceeded","message":"hour quota exceeded"}}"#,
+            r#"{"error":{"code":"coding_plan_week_quota_exceeded","message":"week quota exceeded"}}"#,
+            r#"{"error":{"code":"coding_plan_month_quota_exceeded","message":"month quota exceeded"}}"#,
+        ];
+
+        for body in cases {
+            assert_eq!(
+                StreamCheckService::detect_error_category(429, body),
+                Some("quotaExceeded")
+            );
+        }
+    }
+
+    #[test]
     fn test_get_os_name() {
         let os_name = StreamCheckService::get_os_name();
         // 确保返回非空字符串
@@ -1780,6 +1935,22 @@ mod tests {
         );
 
         assert_eq!(url, "https://relay.example/custom/generate-content?alt=sse");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_for_gemini_native_cloudflare_vertex_full_url() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent",
+            AuthStrategy::Google,
+            "gemini_native",
+            true,
+            "gemini-2.5-flash",
+        );
+
+        assert_eq!(
+            url,
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse"
+        );
     }
 
     /// Regression: Gemini SDK outputs commonly surface model ids as the

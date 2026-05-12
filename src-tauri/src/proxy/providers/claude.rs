@@ -82,6 +82,40 @@ pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     )
 }
 
+fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains("moonshot") || value.contains("kimi") || value.contains("deepseek")
+}
+
+fn should_preserve_reasoning_content_for_openai_chat(
+    provider: &Provider,
+    body: &serde_json::Value,
+) -> bool {
+    if body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .is_some_and(is_reasoning_content_compatible_identifier)
+    {
+        return true;
+    }
+
+    let settings = &provider.settings_config;
+    let base_urls = [
+        settings
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str()),
+        settings.get("base_url").and_then(|v| v.as_str()),
+        settings.get("baseURL").and_then(|v| v.as_str()),
+        settings.get("apiEndpoint").and_then(|v| v.as_str()),
+    ];
+
+    base_urls
+        .into_iter()
+        .flatten()
+        .any(is_reasoning_content_compatible_identifier)
+}
+
 pub fn transform_claude_request_for_api_format(
     body: serde_json::Value,
     provider: &Provider,
@@ -89,6 +123,8 @@ pub fn transform_claude_request_for_api_format(
     session_id: Option<&str>,
     shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
 ) -> Result<serde_json::Value, ProxyError> {
+    let is_codex_oauth = provider.is_codex_oauth();
+
     // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
     // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
     // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
@@ -119,35 +155,47 @@ pub fn transform_claude_request_for_api_format(
                     .map(|s| s.to_string())
             })
     } else {
-        None
+        session_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
     };
 
-    let cache_key = session_cache_key
-        .as_deref()
-        .or_else(|| {
-            provider
-                .meta
-                .as_ref()
-                .and_then(|m| m.prompt_cache_key.as_deref())
-        })
-        .unwrap_or(&provider.id);
+    let explicit_cache_key = provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.prompt_cache_key.as_deref());
+    let (cache_key, cache_key_source) = if let Some(key) = explicit_cache_key {
+        (Some(key), "explicit")
+    } else if let Some(key) = session_cache_key.as_deref() {
+        (Some(key), "session")
+    } else {
+        (None, "none")
+    };
     match api_format {
         "openai_responses" => {
+            log::debug!(
+                "[Cache] OpenAI Responses prompt_cache_key source={cache_key_source}, provider={}, codex_oauth={is_codex_oauth}, has_key={}",
+                provider.id,
+                cache_key.is_some()
+            );
             // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
             // + include: ["reasoning.encrypted_content"]，由 transform 层统一处理。
-            let is_codex_oauth = provider
-                .meta
-                .as_ref()
-                .and_then(|m| m.provider_type.as_deref())
-                == Some("codex_oauth");
+            let codex_fast_mode = provider.codex_fast_mode_enabled();
             super::transform_responses::anthropic_to_responses(
                 body,
-                Some(cache_key),
+                cache_key,
                 is_codex_oauth,
+                codex_fast_mode,
             )
         }
         "openai_chat" => {
-            let mut result = super::transform::anthropic_to_openai(body)?;
+            let preserve_reasoning_content =
+                should_preserve_reasoning_content_for_openai_chat(provider, &body);
+            let mut result = super::transform::anthropic_to_openai_with_reasoning_content(
+                body,
+                preserve_reasoning_content,
+            )?;
             // Inject prompt_cache_key only if explicitly configured in meta
             if let Some(key) = provider
                 .meta
@@ -332,6 +380,16 @@ impl ClaudeAdapter {
                 log::debug!("[Claude] 使用 OPENAI_API_KEY");
                 return Some(key.to_string());
             }
+            // Gemini Native key
+            if let Some(key) = env
+                .get("GEMINI_API_KEY")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                log::debug!("[Claude] 使用 GEMINI_API_KEY");
+                return Some(key.to_string());
+            }
         }
 
         // 尝试直接获取
@@ -348,6 +406,33 @@ impl ClaudeAdapter {
         }
 
         log::warn!("[Claude] 未找到有效的 API Key");
+        None
+    }
+
+    /// 根据 env 中填写的变量名推断 Anthropic 默认走哪种鉴权策略。
+    ///
+    /// 与 Anthropic SDK 原生语义保持一致：
+    /// - `ANTHROPIC_AUTH_TOKEN` → `ClaudeAuth`（发送 `Authorization: Bearer`）
+    /// - `ANTHROPIC_API_KEY`    → `Anthropic` （发送 `x-api-key`）
+    ///
+    /// 优先级与 [`extract_key`] 一致；两者都缺时返回 `None` 由调用方决定 fallback。
+    fn infer_anthropic_auth_strategy(&self, provider: &Provider) -> Option<AuthStrategy> {
+        let env = provider.settings_config.get("env")?;
+
+        let has_value = |key: &str| -> bool {
+            env.get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .is_some()
+        };
+
+        if has_value("ANTHROPIC_AUTH_TOKEN") {
+            return Some(AuthStrategy::ClaudeAuth);
+        }
+        if has_value("ANTHROPIC_API_KEY") {
+            return Some(AuthStrategy::Anthropic);
+        }
         None
     }
 }
@@ -463,7 +548,16 @@ impl ProviderAdapter for ClaudeAdapter {
             ProviderType::Gemini => Some(AuthInfo::new(key, AuthStrategy::Google)),
             ProviderType::OpenRouter => Some(AuthInfo::new(key, AuthStrategy::Bearer)),
             ProviderType::ClaudeAuth => Some(AuthInfo::new(key, AuthStrategy::ClaudeAuth)),
-            _ => Some(AuthInfo::new(key, AuthStrategy::Anthropic)),
+            _ => {
+                // 按 env 中的变量名推断鉴权策略，对齐 Anthropic SDK 语义：
+                // ANTHROPIC_AUTH_TOKEN → Authorization: Bearer
+                // ANTHROPIC_API_KEY    → x-api-key
+                // 其他来源（apiKey 直填等）默认走 x-api-key（Anthropic 官方协议）。
+                let strategy = self
+                    .infer_anthropic_auth_strategy(provider)
+                    .unwrap_or(AuthStrategy::Anthropic);
+                Some(AuthInfo::new(key, strategy))
+            }
         }
     }
 
@@ -500,7 +594,13 @@ impl ProviderAdapter for ClaudeAdapter {
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
         let bearer = format!("Bearer {}", auth.api_key);
         match auth.strategy {
-            AuthStrategy::Anthropic | AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
+            AuthStrategy::Anthropic => {
+                vec![(
+                    HeaderName::from_static("x-api-key"),
+                    HeaderValue::from_str(&auth.api_key).unwrap(),
+                )]
+            }
+            AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
                 vec![(
                     HeaderName::from_static("authorization"),
                     HeaderValue::from_str(&bearer).unwrap(),
@@ -701,7 +801,9 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_auth_anthropic() {
+    fn test_extract_auth_anthropic_auth_token_uses_claude_auth_strategy() {
+        // ANTHROPIC_AUTH_TOKEN 在 Anthropic SDK 里语义就是 Authorization: Bearer，
+        // 因此走 ClaudeAuth strategy 而不是 Anthropic（x-api-key）。
         let adapter = ClaudeAdapter::new();
         let provider = create_provider(json!({
             "env": {
@@ -712,7 +814,7 @@ mod tests {
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-ant-test-key");
-        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
     }
 
     #[test]
@@ -731,6 +833,73 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_auth_both_env_vars_prefer_auth_token() {
+        // 两个变量都填时，extract_key 选 AUTH_TOKEN，strategy 推断也必须保持一致。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-from-auth-token",
+                "ANTHROPIC_API_KEY": "sk-from-api-key"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-from-auth-token");
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
+    }
+
+    #[test]
+    fn test_extract_auth_apikey_field_fallback_uses_anthropic_strategy() {
+        // 当用户没填任一 ANTHROPIC_* env，而是直接使用 apiKey 字段时，
+        // 视为没有显式语义偏好，默认走 Anthropic 官方协议（x-api-key）。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiKey": "sk-direct",
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-direct");
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
+    fn test_get_auth_headers_anthropic_emits_x_api_key() {
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new("sk-ant-test".to_string(), AuthStrategy::Anthropic);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "x-api-key");
+        assert_eq!(headers[0].1.to_str().unwrap(), "sk-ant-test");
+    }
+
+    #[test]
+    fn test_get_auth_headers_claude_auth_emits_authorization_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new("sk-relay-test".to_string(), AuthStrategy::ClaudeAuth);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "authorization");
+        assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-relay-test");
+    }
+
+    #[test]
+    fn test_get_auth_headers_bearer_emits_authorization_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new("sk-or-test".to_string(), AuthStrategy::Bearer);
+
+        let headers = adapter.get_auth_headers(&auth);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "authorization");
+        assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-or-test");
+    }
+
+    #[test]
     fn test_extract_auth_openrouter() {
         let adapter = ClaudeAdapter::new();
         let provider = create_provider(json!({
@@ -743,6 +912,27 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-or-test-key");
         assert_eq!(auth.strategy, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_extract_auth_gemini_api_key() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",
+                    "GEMINI_API_KEY": "gemini-test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("gemini_native".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "gemini-test-key");
+        assert_eq!(auth.strategy, AuthStrategy::Google);
     }
 
     #[test]
@@ -1223,6 +1413,202 @@ mod tests {
     }
 
     #[test]
+    fn test_transform_claude_request_for_codex_oauth_uses_session_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            Some("session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "session-123");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_codex_oauth_without_session_omits_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(transformed.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_responses_uses_session_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.example.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            Some("claude-session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "claude-session-123");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_responses_without_session_omits_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.example.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(transformed.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_codex_oauth_keeps_explicit_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                prompt_cache_key: Some("explicit-cache-key".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            Some("session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "explicit-cache-key");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_api_format_codex_oauth_fast_mode_off() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("codex_oauth".to_string()),
+                codex_fast_mode: Some(false),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["store"], json!(false));
+        assert!(transformed.get("service_tier").is_none());
+        assert_eq!(
+            transformed["include"],
+            json!(["reasoning.encrypted_content"])
+        );
+    }
+
+    #[test]
     fn test_transform_claude_request_for_api_format_gemini_native() {
         let provider = create_provider_with_meta(
             json!({
@@ -1309,5 +1695,110 @@ mod tests {
                 .unwrap();
 
         assert_eq!(transformed["prompt_cache_key"], "claude-cache-route");
+    }
+
+    #[test]
+    fn test_transform_openai_chat_skips_reasoning_content_for_generic_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert!(msg.get("tool_calls").is_some());
+        assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_preserves_reasoning_content_for_kimi_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "kimi-k2.6",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_preserves_reasoning_content_for_deepseek_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
     }
 }

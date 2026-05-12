@@ -17,6 +17,7 @@ import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
+import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
@@ -41,7 +42,11 @@ export function AddProviderDialog({
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
   // OpenCode and OpenClaw don't support universal providers
-  const showUniversalTab = appId !== "opencode" && appId !== "openclaw";
+  const showUniversalTab =
+    appId !== "opencode" &&
+    appId !== "openclaw" &&
+    appId !== "hermes" &&
+    appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
   );
@@ -106,7 +111,7 @@ export function AddProviderDialog({
 
       // OpenCode/OpenClaw: pass providerKey for ID generation
       if (
-        (appId === "opencode" || appId === "openclaw") &&
+        (appId === "opencode" || appId === "openclaw" || appId === "hermes") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -170,10 +175,31 @@ export function AddProviderDialog({
                 preset.endpointCandidates.forEach(addUrl);
               }
             }
+          } else if (appId === "claude-desktop") {
+            const presets = claudeDesktopProviderPresets;
+            const presetIndex = parseInt(
+              values.presetId.replace("claude-desktop-", ""),
+            );
+            if (
+              !isNaN(presetIndex) &&
+              presetIndex >= 0 &&
+              presetIndex < presets.length
+            ) {
+              const preset = presets[presetIndex];
+              if (Array.isArray(preset.endpointCandidates)) {
+                preset.endpointCandidates.forEach(addUrl);
+              }
+              addUrl(preset.baseUrl);
+            }
           }
         }
 
         if (appId === "claude") {
+          const env = parsedConfig.env as Record<string, any> | undefined;
+          if (env?.ANTHROPIC_BASE_URL) {
+            addUrl(env.ANTHROPIC_BASE_URL);
+          }
+        } else if (appId === "claude-desktop") {
           const env = parsedConfig.env as Record<string, any> | undefined;
           if (env?.ANTHROPIC_BASE_URL) {
             addUrl(env.ANTHROPIC_BASE_URL);
@@ -202,6 +228,10 @@ export function AddProviderDialog({
           // OpenClaw uses baseUrl directly
           if (parsedConfig.baseUrl) {
             addUrl(parsedConfig.baseUrl as string);
+          }
+        } else if (appId === "hermes") {
+          if (parsedConfig.base_url) {
+            addUrl(parsedConfig.base_url as string);
           }
         }
 
