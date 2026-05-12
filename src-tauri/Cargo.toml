@@ -104,3 +104,11 @@ strip = "symbols"
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"
+
+# Local fork of tray-icon 0.21.3 patched for tauri-apps/tray-icon#251 —
+# the upstream `performClick(None)` synthesizes a click with no NSEvent
+# context, so the menu silently fails to pop up on a secondary display while a
+# full-screen Space is active there. The vendored copy drives the popup via
+# NSStatusItem directly. Remove this section once the upstream library ships a fix.
+[patch.crates-io]
+tray-icon = { path = "vendor/tray-icon" }
