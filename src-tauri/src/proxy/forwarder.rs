@@ -2069,8 +2069,11 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
 /// 背景：某些上游会对错误响应仍然返回 HTTP 200 + 错误 JSON body，
 /// 此时需要把它转为 UpstreamError 走重试/整流。
 ///
-/// 策略：检测 JSON 中是否存在 `error` 字段。有则判定为上游错误，
-/// 没有则信任 HTTP 200 状态码。这样无需穷举各协议的成功响应格式。
+/// 策略：检测 JSON 中是否存在**非空**的 `error` 字段。有且非 null 则判定为上游错误，
+/// 缺失或显式为 null 都信任 HTTP 200。这样无需穷举各协议的成功响应格式。
+///
+/// 注意：必须放行 `"error": null` —— OpenAI Responses API 的非流式成功响应
+/// schema 规定 `error` 字段必存在，成功时为 null、失败时为 error object。
 fn is_valid_response_body(body: &[u8]) -> bool {
     let Ok(json) = serde_json::from_slice::<Value>(body) else {
         return false;
@@ -2079,7 +2082,7 @@ fn is_valid_response_body(body: &[u8]) -> bool {
         return false;
     };
 
-    !obj.contains_key("error")
+    obj.get("error").is_none_or(Value::is_null)
 }
 
 fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
@@ -2911,6 +2914,17 @@ mod tests {
     fn valid_codex_response() {
         let body = br#"{"id":"resp_1","object":"response","output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}],"usage":{"input_tokens":10,"output_tokens":5}}"#;
         assert!(super::is_valid_response_body(body));
+    }
+
+    /// OpenAI Responses API 非流式成功响应的标准形态带 `"error": null`，
+    /// 不能把它当失败 —— 否则每个成功请求都会被误判为 UpstreamError 触发 retry。
+    #[test]
+    fn valid_openai_responses_with_null_error() {
+        let body = br#"{"id":"resp_abc","object":"response","status":"completed","error":null,"output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}]}"#;
+        assert!(
+            super::is_valid_response_body(body),
+            "error:null 应视为成功响应"
+        );
     }
 
     #[test]
