@@ -48,7 +48,11 @@ impl CacheEntry {
 
 /// Extra Inputs 字段缓存
 ///
-/// 缓存 key: `"provider_id:field_name"`
+/// 缓存 key: `"provider_id:endpoint:field_name"`
+/// 加入 endpoint 维度是为了避免一个 model/endpoint 拒绝某字段后，同 provider
+/// 下其它 endpoint 的合法请求被静默剥离。例如某 provider 在 `/v1/responses` 不支持
+/// `stream_options`，但 `/v1/chat/completions` 支持 —— 缓存按 endpoint 隔离才不会
+/// 互相串扰。
 /// 线程安全，支持并发读写。
 #[derive(Debug, Clone)]
 pub struct ExtraInputsCache {
@@ -62,23 +66,23 @@ impl ExtraInputsCache {
         }
     }
 
-    /// 缓存 key 格式
-    fn make_key(provider_id: &str, field_name: &str) -> String {
-        format!("{provider_id}:{field_name}")
+    /// 缓存 key 格式：`provider_id:endpoint:field_name`
+    fn make_key(provider_id: &str, endpoint: &str, field_name: &str) -> String {
+        format!("{provider_id}:{endpoint}:{field_name}")
     }
 
-    /// 批量记录不支持的字段
-    pub async fn insert_many(&self, provider_id: &str, field_names: &[String]) {
+    /// 批量记录某 provider+endpoint 下不支持的字段
+    pub async fn insert_many(&self, provider_id: &str, endpoint: &str, field_names: &[String]) {
         let mut entries = self.entries.write().await;
         for field_name in field_names {
-            let key = Self::make_key(provider_id, field_name);
+            let key = Self::make_key(provider_id, endpoint, field_name);
             entries.insert(key, CacheEntry::new());
         }
     }
 
-    /// 获取某个 provider 所有未过期的不支持字段
-    pub async fn get_blocked_fields(&self, provider_id: &str) -> Vec<String> {
-        let prefix = format!("{provider_id}:");
+    /// 获取 provider+endpoint 维度下所有未过期的不支持字段
+    pub async fn get_blocked_fields(&self, provider_id: &str, endpoint: &str) -> Vec<String> {
+        let prefix = format!("{provider_id}:{endpoint}:");
         let entries = self.entries.read().await;
         let mut expired_keys = Vec::new();
         let mut fields = Vec::new();
@@ -182,6 +186,18 @@ fn extract_from_line(orig: &str, lower: &str, fields: &mut Vec<String>) {
                 .next()
                 .unwrap_or("")
                 .trim();
+
+            // 归一化 JSON Pointer 形式：`#/foo` → `foo`，`#/foo/bar` → `foo.bar`。
+            // 部分基于 JSON Schema 校验器（Pydantic 等）的上游会用这种 loc 写法，
+            // 不归一化的话 `strip_fields` 精确匹配会去删 `#/foo` 这种不存在的 key，
+            // 整流落空、retry 撞同一错误。
+            let pointer_normalized: String;
+            let field_path: &str = if let Some(rest) = field_path.strip_prefix("#/") {
+                pointer_normalized = rest.replace('/', ".");
+                pointer_normalized.as_str()
+            } else {
+                field_path
+            };
 
             if !field_path.is_empty() {
                 // 只取顶层字段：不含 '.' 的路径视为顶层
@@ -423,6 +439,47 @@ mod tests {
         assert!(body.get("generationConfig").is_none());
     }
 
+    /// JSON Pointer 形式的字段路径（`#/foo`）需要归一化为 `foo`，
+    /// 否则 strip_fields 会去找根本不存在的 `#/foo` key。Pydantic 等校验器会
+    /// 在 loc 字段里输出这种格式。
+    #[test]
+    fn test_extract_strips_json_pointer_prefix() {
+        let fields = extract_extra_input_fields("#/stream_options: Extra inputs are not permitted");
+        assert_eq!(fields, vec!["stream_options"]);
+    }
+
+    /// JSON Pointer 风格的嵌套路径 `#/parent/child`：
+    /// 归一化后等价于 `parent.child`，按嵌套路径取顶层 segment `parent`。
+    #[test]
+    fn test_extract_json_pointer_nested_path_takes_top_segment() {
+        let fields =
+            extract_extra_input_fields("#/custom_config/option: Extra inputs are not permitted");
+        assert_eq!(fields, vec!["custom_config"]);
+    }
+
+    /// 真实场景：'Validation error at #/stream_options: Extra inputs are not permitted'
+    #[test]
+    fn test_extract_validation_error_with_json_pointer() {
+        let fields = extract_extra_input_fields(
+            "Validation error at #/stream_options: Extra inputs are not permitted",
+        );
+        assert_eq!(fields, vec!["stream_options"]);
+    }
+
+    /// JSON Pointer + camelCase 组合（如 `#/generationConfig`）也能正确 strip
+    #[test]
+    fn test_extract_json_pointer_with_camel_case() {
+        let fields =
+            extract_extra_input_fields("#/generationConfig: Extra inputs are not permitted");
+        let mut body = json!({
+            "model": "gemini-2.5-pro",
+            "generationConfig": {}
+        });
+        let result = strip_fields(&mut body, &fields);
+        assert!(result.applied);
+        assert_eq!(result.removed_fields, vec!["generationConfig"]);
+    }
+
     // ==================== strip_fields 测试 ====================
 
     #[test]
@@ -510,19 +567,20 @@ mod tests {
         cache
             .insert_many(
                 "provider_1",
+                "/v1/messages",
                 &["context_management".to_string(), "some_field".to_string()],
             )
             .await;
         cache
-            .insert_many("provider_2", &["other_field".to_string()])
+            .insert_many("provider_2", "/v1/messages", &["other_field".to_string()])
             .await;
 
-        let fields = cache.get_blocked_fields("provider_1").await;
+        let fields = cache.get_blocked_fields("provider_1", "/v1/messages").await;
         assert!(fields.contains(&"context_management".to_string()));
         assert!(fields.contains(&"some_field".to_string()));
         assert!(!fields.contains(&"other_field".to_string()));
 
-        let fields2 = cache.get_blocked_fields("provider_2").await;
+        let fields2 = cache.get_blocked_fields("provider_2", "/v1/messages").await;
         assert_eq!(fields2, vec!["other_field"]);
     }
 
@@ -530,10 +588,14 @@ mod tests {
     async fn test_cache_insert_many() {
         let cache = ExtraInputsCache::new();
         cache
-            .insert_many("p1", &["field_a".to_string(), "field_b".to_string()])
+            .insert_many(
+                "p1",
+                "/v1/chat/completions",
+                &["field_a".to_string(), "field_b".to_string()],
+            )
             .await;
 
-        let fields = cache.get_blocked_fields("p1").await;
+        let fields = cache.get_blocked_fields("p1", "/v1/chat/completions").await;
         assert!(fields.contains(&"field_a".to_string()));
         assert!(fields.contains(&"field_b".to_string()));
     }
@@ -541,7 +603,62 @@ mod tests {
     #[tokio::test]
     async fn test_cache_empty_provider() {
         let cache = ExtraInputsCache::new();
-        let fields = cache.get_blocked_fields("nonexistent").await;
+        let fields = cache
+            .get_blocked_fields("nonexistent", "/v1/messages")
+            .await;
         assert!(fields.is_empty());
+    }
+
+    /// 关键回归：同一 provider 下两个不同 endpoint 的缓存必须隔离，
+    /// 否则 `/v1/responses` 拒绝某字段会静默剥离 `/v1/chat/completions` 的合法字段。
+    #[tokio::test]
+    async fn test_cache_isolates_endpoints_within_same_provider() {
+        let cache = ExtraInputsCache::new();
+        cache
+            .insert_many(
+                "shared_provider",
+                "/v1/responses",
+                &["stream_options".to_string()],
+            )
+            .await;
+
+        // /v1/responses 拿到刚刚缓存的字段
+        let on_responses = cache
+            .get_blocked_fields("shared_provider", "/v1/responses")
+            .await;
+        assert_eq!(on_responses, vec!["stream_options"]);
+
+        // /v1/chat/completions 不应受影响
+        let on_chat = cache
+            .get_blocked_fields("shared_provider", "/v1/chat/completions")
+            .await;
+        assert!(
+            on_chat.is_empty(),
+            "其它 endpoint 的缓存不应泄漏，否则会静默剥离合法字段"
+        );
+
+        // /v1/messages 也不受影响
+        let on_messages = cache
+            .get_blocked_fields("shared_provider", "/v1/messages")
+            .await;
+        assert!(on_messages.is_empty());
+    }
+
+    /// endpoint 中带 `:`（如 Gemini 的 `:generateContent`）也要工作
+    #[tokio::test]
+    async fn test_cache_endpoint_with_colon() {
+        let cache = ExtraInputsCache::new();
+        let endpoint = "/v1beta/models/gemini-2.5-pro:generateContent";
+        cache
+            .insert_many("gemini_p", endpoint, &["systemInstruction".to_string()])
+            .await;
+
+        let fields = cache.get_blocked_fields("gemini_p", endpoint).await;
+        assert_eq!(fields, vec!["systemInstruction"]);
+
+        // 不同 model 的 endpoint 隔离
+        let other_model = "/v1beta/models/gemini-2.5-flash:generateContent";
+        let other_fields = cache.get_blocked_fields("gemini_p", other_model).await;
+        assert!(other_fields.is_empty());
     }
 }

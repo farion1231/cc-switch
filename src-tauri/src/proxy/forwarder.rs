@@ -231,7 +231,7 @@ impl RequestForwarder {
             if self.rectifier_config.enabled && self.rectifier_config.request_extra_inputs_strip {
                 let blocked_fields = self
                     .extra_inputs_cache
-                    .get_blocked_fields(&provider.id)
+                    .get_blocked_fields(&provider.id, endpoint)
                     .await;
                 if !blocked_fields.is_empty() {
                     let pre_result = pre_filter_from_cache(&mut provider_body, &blocked_fields);
@@ -739,9 +739,9 @@ impl RequestForwarder {
                             }
 
                             if !fields.is_empty() {
-                                // 缓存这些字段（1 小时过期）
+                                // 缓存这些字段（1 小时过期），按 provider+endpoint 维度隔离
                                 self.extra_inputs_cache
-                                    .insert_many(&provider.id, &fields)
+                                    .insert_many(&provider.id, endpoint, &fields)
                                     .await;
 
                                 let rectified = strip_fields(&mut provider_body, &fields);
