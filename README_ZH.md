@@ -278,6 +278,25 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 3. **生效方式**：重启终端或对应的 CLI 工具以应用更改（CLaude Code 无需重启）
 4. **恢复官方登录**：添加"官方登录"预设，重启 CLI 工具后按照其登录/OAuth 流程操作
 
+### Linux CLI 供应商切换
+
+在 Linux 上，可以直接使用同一个 `cc-switch` 二进制从终端列出并切换供应商：
+
+```bash
+cc-switch list [app] [--json]
+cc-switch switch <app> <provider-id> [--json]
+```
+
+示例：
+
+```bash
+cc-switch list
+cc-switch list claude --json
+cc-switch switch claude packycode
+```
+
+支持的应用：`claude`、`claude-desktop`、`codex`、`gemini`、`opencode`、`openclaw`、`hermes`。
+
 ### MCP、Prompts、Skills 与会话
 
 - **MCP**：点击"MCP"按钮 → 通过模板或自定义配置添加服务器 → 切换各应用同步开关

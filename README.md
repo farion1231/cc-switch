@@ -277,6 +277,25 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 3. **Takes Effect**: Restart your terminal or the corresponding CLI tool to apply changes (Claude Code does not require a restart)
 4. **Back to Official**: Add an "Official Login" preset, restart the CLI tool, then follow its login/OAuth flow
 
+### Linux CLI Provider Switching
+
+On Linux, you can list and switch providers from the terminal with the same `cc-switch` binary:
+
+```bash
+cc-switch list [app] [--json]
+cc-switch switch <app> <provider-id> [--json]
+```
+
+Examples:
+
+```bash
+cc-switch list
+cc-switch list claude --json
+cc-switch switch claude packycode
+```
+
+Supported apps: `claude`, `claude-desktop`, `codex`, `gemini`, `opencode`, `openclaw`, `hermes`.
+
 ### MCP, Prompts, Skills & Sessions
 
 - **MCP**: Click the "MCP" button → Add servers via templates or custom config → Toggle per-app sync
