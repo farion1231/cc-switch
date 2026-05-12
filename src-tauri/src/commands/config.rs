@@ -429,7 +429,8 @@ fn detect_wsl_location(app: &str, distro: &str) -> Option<WslCliLocationDetectio
     })
 }
 
-fn detect_cli_tool(app: &str, _wsl_distro: Option<&str>) -> CliToolDetection {
+#[allow(unused_variables)]
+fn detect_cli_tool(app: &str, wsl_distro: Option<&str>) -> CliToolDetection {
     let config_dir = default_config_dir_for_app(app);
 
     CliToolDetection {
