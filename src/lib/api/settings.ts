@@ -66,6 +66,20 @@ export const settingsApi = {
     return await invoke("get_config_dir", { app: appId });
   },
 
+  async getWslConfigDir(appId: AppId): Promise<string | null> {
+    return await invoke("get_wsl_config_dir", { app: appId });
+  },
+
+  async getConfigDirForEnvironment(
+    appId: AppId,
+    useWsl: boolean,
+  ): Promise<string> {
+    return await invoke("get_config_dir_for_environment", {
+      app: appId,
+      useWsl,
+    });
+  },
+
   async detectCliTools(): Promise<CliDetectionSummary> {
     return await invoke("detect_cli_tools");
   },

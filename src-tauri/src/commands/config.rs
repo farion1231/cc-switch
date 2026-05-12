@@ -404,6 +404,7 @@ fn detect_wsl_config_exists(app: &str, distro: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(target_os = "windows")]
 fn join_config_dir_for_home(home: &Path, app: &str) -> PathBuf {
     match app {
         "claude" => home.join(".claude"),
@@ -428,7 +429,7 @@ fn detect_wsl_location(app: &str, distro: &str) -> Option<WslCliLocationDetectio
     })
 }
 
-fn detect_cli_tool(app: &str, wsl_distro: Option<&str>) -> CliToolDetection {
+fn detect_cli_tool(app: &str, _wsl_distro: Option<&str>) -> CliToolDetection {
     let config_dir = default_config_dir_for_app(app);
 
     CliToolDetection {
@@ -818,4 +819,32 @@ pub async fn extract_common_config_snippet(
 
     crate::services::provider::ProviderService::extract_common_config_snippet(&state, app)
         .map_err(|e| e.to_string())
+}
+
+/// 获取指定应用的 WSL 覆盖目录（如果已配置）
+#[tauri::command]
+pub async fn get_wsl_config_dir(app: String) -> Result<Option<String>, String> {
+    let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
+        AppType::Claude => crate::config::get_claude_wsl_config_dir(),
+        AppType::Codex => crate::config::get_codex_wsl_config_dir(),
+        AppType::Gemini => crate::config::get_gemini_wsl_config_dir(),
+        AppType::OpenCode => crate::config::get_opencode_wsl_config_dir(),
+        AppType::OpenClaw => crate::config::get_openclaw_wsl_config_dir(),
+        _ => None,
+    };
+    Ok(dir.map(|p| p.to_string_lossy().to_string()))
+}
+
+/// 根据运行环境获取配置目录（use_wsl=true 且配置了 WSL 覆盖时返回 WSL 目录）
+#[tauri::command]
+pub async fn get_config_dir_for_environment(app: String, use_wsl: bool) -> Result<String, String> {
+    let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
+        AppType::Claude => crate::config::get_claude_config_dir_for_environment(use_wsl),
+        AppType::Codex => crate::config::get_codex_config_dir_for_environment(use_wsl),
+        AppType::Gemini => crate::config::get_gemini_dir_for_environment(use_wsl),
+        AppType::OpenCode => crate::config::get_opencode_dir_for_environment(use_wsl),
+        AppType::OpenClaw => crate::config::get_openclaw_dir_for_environment(use_wsl),
+        _ => return Err(format!("Unsupported app: {app}")),
+    };
+    Ok(dir.to_string_lossy().to_string())
 }

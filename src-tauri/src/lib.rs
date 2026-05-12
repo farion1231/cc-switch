@@ -1060,6 +1060,8 @@ pub fn run() {
             commands::get_claude_code_config_path,
             commands::get_config_dir,
             commands::detect_cli_tools,
+            commands::get_wsl_config_dir,
+            commands::get_config_dir_for_environment,
             commands::open_config_folder,
             commands::pick_directory,
             commands::open_external,

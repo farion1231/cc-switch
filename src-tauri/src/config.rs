@@ -145,6 +145,7 @@ pub fn get_claude_mcp_path() -> PathBuf {
     get_default_claude_mcp_path()
 }
 
+#[expect(dead_code)]
 /// 获取 Claude Code WSL MCP 配置文件路径，仅当用户显式配置 WSL 目录时返回
 pub fn get_claude_mcp_path_for_environment(use_wsl: bool) -> PathBuf {
     if use_wsl {
