@@ -554,19 +554,7 @@ fn opencode_extra_search_paths(
 
 #[cfg(not(target_os = "windows"))]
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        vec![
-            dir.join(format!("{tool}.cmd")),
-            dir.join(format!("{tool}.exe")),
-            dir.join(tool),
-        ]
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        vec![dir.join(tool)]
-    }
+    vec![dir.join(tool)]
 }
 
 /// 扫描常见路径查找 CLI
