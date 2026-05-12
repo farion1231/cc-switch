@@ -5,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
-import type { CliDetectionItem, CliDetectionMap } from "@/hooks/useDirectorySettings";
+import type {
+  CliDetectionItem,
+  CliDetectionMap,
+} from "@/hooks/useDirectorySettings";
 
 type DirectoryAppId = Exclude<AppId, "claude-desktop">;
 
@@ -426,7 +429,10 @@ function DetectionDetails({ app, detection }: DetectionDetailsProps) {
             </p>
           ) : null}
         </>
-      ) : app === "claude" || app === "codex" || app === "gemini" || app === "opencode" ? (
+      ) : app === "claude" ||
+        app === "codex" ||
+        app === "gemini" ||
+        app === "opencode" ? (
         <p className="text-muted-foreground">
           {t("settings.cliDetection.noWslPath")}
         </p>

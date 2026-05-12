@@ -13,7 +13,12 @@ type AppDirectoryKey =
   | "opencode"
   | "openclaw"
   | "hermes";
-type WslDirectoryKey = "claudeWsl" | "codexWsl" | "geminiWsl" | "opencodeWsl" | "openclawWsl";
+type WslDirectoryKey =
+  | "claudeWsl"
+  | "codexWsl"
+  | "geminiWsl"
+  | "opencodeWsl"
+  | "openclawWsl";
 type DirectoryKey = "appConfig" | AppDirectoryKey | WslDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -411,7 +416,10 @@ export function useDirectorySettings({
       if (!sanitized) return;
       updateDirectoryState("claudeWsl", sanitized);
     } catch (error) {
-      console.error("[useDirectorySettings] Failed to pick WSL directory", error);
+      console.error(
+        "[useDirectorySettings] Failed to pick WSL directory",
+        error,
+      );
       toast.error(
         t("settings.selectFileFailed", {
           defaultValue: "选择目录失败",
@@ -505,15 +513,16 @@ export function useDirectorySettings({
 
   const browseWslDirectory = useCallback(
     async (app: AppId) => {
-      const settingsKeyMap: Record<AppId, keyof SettingsFormState | undefined> = {
-        claude: "claudeConfigDirWsl",
-        "claude-desktop": undefined,
-        codex: "codexConfigDirWsl",
-        gemini: "geminiConfigDirWsl",
-        hermes: undefined,
-        opencode: "opencodeConfigDirWsl",
-        openclaw: "openclawConfigDirWsl",
-      };
+      const settingsKeyMap: Record<AppId, keyof SettingsFormState | undefined> =
+        {
+          claude: "claudeConfigDirWsl",
+          "claude-desktop": undefined,
+          codex: "codexConfigDirWsl",
+          gemini: "geminiConfigDirWsl",
+          hermes: undefined,
+          opencode: "opencodeConfigDirWsl",
+          openclaw: "openclawConfigDirWsl",
+        };
       const settingsKey = settingsKeyMap[app];
       const currentValue = settingsKey
         ? (settings?.[settingsKey] as string | undefined)

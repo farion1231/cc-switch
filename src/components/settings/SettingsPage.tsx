@@ -334,9 +334,13 @@ export function SettingsPage({
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
                             onDirectoryChange={updateDirectory}
-                            onClaudeWslDirectoryChange={updateClaudeWslDirectory}
+                            onClaudeWslDirectoryChange={
+                              updateClaudeWslDirectory
+                            }
                             onBrowseDirectory={browseDirectory}
-                            onBrowseClaudeWslDirectory={browseClaudeWslDirectory}
+                            onBrowseClaudeWslDirectory={
+                              browseClaudeWslDirectory
+                            }
                             onResetDirectory={resetDirectory}
                             onResetClaudeWslDirectory={resetClaudeWslDirectory}
                             onWslDirectoryChange={updateWslDirectory}
