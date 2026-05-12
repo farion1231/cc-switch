@@ -151,7 +151,7 @@ export const providerPresets: ProviderPreset[] = [
     apiKeyUrl: "https://platform.sensenova.cn",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://token.sensenova.cn/v1",
+        ANTHROPIC_BASE_URL: "https://token.sensenova.cn",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "deepseek-v4-flash",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "sensenova-6.7-flash-lite",
