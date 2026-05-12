@@ -39,6 +39,13 @@ pub fn get_claude_config_dir() -> PathBuf {
         return custom;
     }
 
+    if let Ok(env_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        let p = PathBuf::from(env_dir);
+        if p.is_absolute() {
+            return p;
+        }
+    }
+
     get_home_dir().join(".claude")
 }
 
