@@ -26,6 +26,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   const appName = t(`apps.${appId}`);
   const filenameMap: Record<AppId, string> = {
     claude: "CLAUDE.md",
+    "claude-desktop": "CLAUDE.md",
     codex: "AGENTS.md",
     gemini: "GEMINI.md",
     opencode: "AGENTS.md",

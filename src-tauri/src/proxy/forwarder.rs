@@ -7,6 +7,7 @@ use super::{
     body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
+    json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{
@@ -65,6 +66,8 @@ pub struct RequestForwarder {
     copilot_optimizer_config: CopilotOptimizerConfig,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
+    /// 流式请求响应头等待超时（秒）
+    streaming_first_byte_timeout: std::time::Duration,
 }
 
 impl RequestForwarder {
@@ -80,7 +83,7 @@ impl RequestForwarder {
         current_provider_id_at_start: String,
         session_id: String,
         session_client_provided: bool,
-        _streaming_first_byte_timeout: u64,
+        streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
@@ -100,7 +103,44 @@ impl RequestForwarder {
             optimizer_config,
             copilot_optimizer_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
+            streaming_first_byte_timeout: std::time::Duration::from_secs(
+                streaming_first_byte_timeout,
+            ),
         }
+    }
+
+    async fn record_success_result(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        used_half_open_permit: bool,
+    ) {
+        if used_half_open_permit {
+            if let Err(e) = self
+                .router
+                .record_result(provider_id, app_type, true, true, None)
+                .await
+            {
+                log::warn!(
+                    "[{app_type}] 记录 Provider 成功结果失败: provider_id={provider_id}, error={e}"
+                );
+            }
+            return;
+        }
+
+        let router = self.router.clone();
+        let provider_id = provider_id.to_string();
+        let app_type = app_type.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = router
+                .record_result(&provider_id, &app_type, false, true, None)
+                .await
+            {
+                log::warn!(
+                    "[{app_type}] 异步记录 Provider 成功结果失败: provider_id={provider_id}, error={e}"
+                );
+            }
+        });
     }
 
     /// 转发请求（带故障转移）
@@ -190,6 +230,7 @@ impl RequestForwarder {
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
                 .forward(
+                    app_type,
                     provider,
                     endpoint,
                     &provider_body,
@@ -200,16 +241,9 @@ impl RequestForwarder {
                 .await
             {
                 Ok((response, claude_api_format)) => {
-                    // 成功：记录成功并更新熔断器
-                    let _ = self
-                        .router
-                        .record_result(
-                            &provider.id,
-                            app_type_str,
-                            used_half_open_permit,
-                            true,
-                            None,
-                        )
+                    // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
+                    // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
+                    self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
                         .await;
 
                     // 更新当前应用类型使用的 provider
@@ -320,6 +354,7 @@ impl RequestForwarder {
                                 // 使用同一供应商重试（不计入熔断器）
                                 match self
                                     .forward(
+                                        app_type,
                                         provider,
                                         endpoint,
                                         &provider_body,
@@ -331,17 +366,12 @@ impl RequestForwarder {
                                 {
                                     Ok((response, claude_api_format)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
-                                        // 记录成功
-                                        let _ = self
-                                            .router
-                                            .record_result(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                                true,
-                                                None,
-                                            )
-                                            .await;
+                                        self.record_success_result(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await;
 
                                         // 更新当前应用类型使用的 provider
                                         {
@@ -519,6 +549,7 @@ impl RequestForwarder {
                             // 使用同一供应商重试（不计入熔断器）
                             match self
                                 .forward(
+                                    app_type,
                                     provider,
                                     endpoint,
                                     &provider_body,
@@ -530,16 +561,12 @@ impl RequestForwarder {
                             {
                                 Ok((response, claude_api_format)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
-                                    let _ = self
-                                        .router
-                                        .record_result(
-                                            &provider.id,
-                                            app_type_str,
-                                            used_half_open_permit,
-                                            true,
-                                            None,
-                                        )
-                                        .await;
+                                    self.record_success_result(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
 
                                     {
                                         let mut current_providers =
@@ -756,8 +783,10 @@ impl RequestForwarder {
     }
 
     /// 转发单个请求（使用适配器）
+    #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
+        app_type: &AppType,
         provider: &Provider,
         endpoint: &str,
         body: &Value,
@@ -775,8 +804,16 @@ impl RequestForwarder {
             .unwrap_or(false);
 
         // 应用模型映射（独立于格式转换）
-        let (mapped_body, _original_model, _mapped_model) =
-            super::model_mapper::apply_model_mapping(body.clone(), provider);
+        // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
+        // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
+            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+        } else {
+            let (mapped_body, _original_model, _mapped_model) =
+                super::model_mapper::apply_model_mapping(body.clone(), provider);
+            mapped_body
+        };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
@@ -990,7 +1027,15 @@ impl RequestForwarder {
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+        let filtered_body = prepare_upstream_request_body(request_body);
+        log_prompt_cache_trace(
+            app_type,
+            provider,
+            &effective_endpoint,
+            resolved_claude_api_format.as_deref(),
+            &filtered_body,
+            self.session_client_provided,
+        );
         let force_identity_encoding = needs_transform
             || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
@@ -1414,12 +1459,14 @@ impl RequestForwarder {
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
         log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
-        if let Ok(body_str) = serde_json::to_string(&filtered_body) {
-            log::debug!(
-                "[{tag}] >>> 请求体内容 ({}字节): {}",
-                body_str.len(),
-                body_str
-            );
+        if log::log_enabled!(log::Level::Debug) {
+            if let Ok(body_str) = serde_json::to_string(&filtered_body) {
+                log::debug!(
+                    "[{tag}] >>> 请求体内容 ({}字节): {}",
+                    body_str.len(),
+                    body_str
+                );
+            }
         }
 
         // 确定超时
@@ -1438,35 +1485,60 @@ impl RequestForwarder {
             .map(|u| u.starts_with("socks5"))
             .unwrap_or(false);
 
-        let uri: http::Uri = url
-            .parse()
-            .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
+        let preserve_exact_header_case = should_preserve_exact_header_case(
+            adapter.name(),
+            provider,
+            resolved_claude_api_format.as_deref(),
+            is_copilot,
+        );
 
         // 发送请求
-        let response = if is_socks_proxy {
-            // SOCKS5 代理：只能走 reqwest（不支持 header case 保留）
-            log::debug!("[Forwarder] Using reqwest for SOCKS5 proxy");
+        let response = if is_socks_proxy || !preserve_exact_header_case {
+            // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
+            // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
+            log::debug!(
+                "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
+            );
             let client = super::http_client::get();
             let mut request = client.post(&url);
-            if !self.non_streaming_timeout.is_zero() {
+            let request_is_streaming =
+                is_streaming_request(&effective_endpoint, &filtered_body, headers);
+            if request_is_streaming {
+                // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
+                // 的首包/静默期超时控制，避免长流被总时长误杀。
+                request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
+            } else if !self.non_streaming_timeout.is_zero() {
                 request = request.timeout(self.non_streaming_timeout);
             }
             for (key, value) in &ordered_headers {
                 request = request.header(key, value);
             }
-            let reqwest_resp = request.body(body_bytes).send().await.map_err(|e| {
-                if e.is_timeout() {
-                    ProxyError::Timeout(format!("请求超时: {e}"))
-                } else if e.is_connect() {
-                    ProxyError::ForwardFailed(format!("连接失败: {e}"))
+            let send = request.body(body_bytes).send();
+            let send_result = if request_is_streaming {
+                let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
+                    timeout
                 } else {
-                    ProxyError::ForwardFailed(e.to_string())
-                }
-            })?;
+                    self.streaming_first_byte_timeout
+                };
+                tokio::time::timeout(header_timeout, send)
+                    .await
+                    .map_err(|_| {
+                        ProxyError::Timeout(format!(
+                            "流式响应首包超时: {}s（上游未返回响应头）",
+                            header_timeout.as_secs()
+                        ))
+                    })?
+            } else {
+                send.await
+            };
+            let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
             ProxyResponse::Reqwest(reqwest_resp)
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
+            let uri: http::Uri = url
+                .parse()
+                .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
             super::hyper_client::send_request(
                 uri,
                 http::Method::POST,
@@ -1891,11 +1963,24 @@ fn build_codex_oauth_session_headers(
     headers
 }
 
-fn should_force_identity_encoding(
-    endpoint: &str,
-    body: &Value,
-    headers: &axum::http::HeaderMap,
+fn should_preserve_exact_header_case(
+    adapter_name: &str,
+    provider: &Provider,
+    resolved_claude_api_format: Option<&str>,
+    is_copilot: bool,
 ) -> bool {
+    if matches!(adapter_name, "Codex" | "Gemini") {
+        return false;
+    }
+
+    if is_copilot || provider.is_codex_oauth() {
+        return false;
+    }
+
+    matches!(resolved_claude_api_format, None | Some("anthropic"))
+}
+
+fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::HeaderMap) -> bool {
     if body
         .get("stream")
         .and_then(|value| value.as_bool())
@@ -1915,6 +2000,24 @@ fn should_force_identity_encoding(
         .unwrap_or(false)
 }
 
+fn should_force_identity_encoding(
+    endpoint: &str,
+    body: &Value,
+    headers: &axum::http::HeaderMap,
+) -> bool {
+    is_streaming_request(endpoint, body, headers)
+}
+
+fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
+    if error.is_timeout() {
+        ProxyError::Timeout(format!("请求超时: {error}"))
+    } else if error.is_connect() {
+        ProxyError::ForwardFailed(format!("连接失败: {error}"))
+    } else {
+        ProxyError::ForwardFailed(error.to_string())
+    }
+}
+
 fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = normalized.trim();
@@ -1928,12 +2031,91 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     format!("{truncated}...")
 }
 
+fn prepare_upstream_request_body(request_body: Value) -> Value {
+    canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
+}
+
+fn log_prompt_cache_trace(
+    app_type: &AppType,
+    provider: &Provider,
+    endpoint: &str,
+    api_format: Option<&str>,
+    body: &Value,
+    session_client_provided: bool,
+) {
+    if !log::log_enabled!(log::Level::Debug) {
+        return;
+    }
+
+    let prompt_cache_key = body
+        .get("prompt_cache_key")
+        .and_then(|value| value.as_str())
+        .map(|key| format!("present(len={})", key.len()))
+        .unwrap_or_else(|| "absent".to_string());
+    let store = body
+        .get("store")
+        .map(value_for_log)
+        .unwrap_or_else(|| "absent".to_string());
+    let stream = body
+        .get("stream")
+        .map(value_for_log)
+        .unwrap_or_else(|| "absent".to_string());
+
+    log::debug!(
+        "[CacheTrace] app={}, provider={}, endpoint={}, api_format={}, session_client_provided={}, prompt_cache_key={}, store={}, stream={}, instructions_hash={}, tools_hash={}, input_hash={}, include_hash={}, body_hash={}",
+        app_type.as_str(),
+        provider.id,
+        endpoint,
+        api_format.unwrap_or("native"),
+        session_client_provided,
+        prompt_cache_key,
+        store,
+        stream,
+        short_value_hash(body.get("instructions")),
+        short_value_hash(body.get("tools")),
+        short_value_hash(body.get("input")),
+        short_value_hash(body.get("include")),
+        short_value_hash(Some(body)),
+    );
+}
+
+fn value_for_log(value: &Value) -> String {
+    match value {
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Null => "null".to_string(),
+        Value::Array(values) => format!("array(len={})", values.len()),
+        Value::Object(values) => format!("object(len={})", values.len()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use serde_json::json;
+
+    fn test_provider_with_type(provider_type: Option<&str>) -> Provider {
+        Provider {
+            id: "provider-1".to_string(),
+            name: "Provider 1".to_string(),
+            settings_config: json!({}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: provider_type.map(|value| crate::provider::ProviderMeta {
+                provider_type: Some(value.to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
 
     #[test]
     fn single_provider_retryable_log_uses_single_provider_code() {
@@ -2001,6 +2183,86 @@ mod tests {
     }
 
     #[test]
+    fn canonical_json_sorts_object_keys_for_cache_trace_hashes() {
+        let left = json!({
+            "tools": [
+                {
+                    "parameters": {
+                        "properties": {
+                            "b": {"type": "string"},
+                            "a": {"type": "number"}
+                        },
+                        "type": "object"
+                    },
+                    "name": "lookup"
+                }
+            ]
+        });
+        let right = json!({
+            "tools": [
+                {
+                    "name": "lookup",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "a": {"type": "number"},
+                            "b": {"type": "string"}
+                        }
+                    }
+                }
+            ]
+        });
+
+        assert_eq!(
+            crate::proxy::json_canonical::canonical_json_string(&left),
+            crate::proxy::json_canonical::canonical_json_string(&right)
+        );
+        assert_eq!(
+            short_value_hash(Some(&left)),
+            short_value_hash(Some(&right))
+        );
+    }
+
+    #[test]
+    fn prepare_upstream_request_body_filters_private_fields_and_canonicalizes_order() {
+        let body = json!({
+            "z": 1,
+            "_internal": "drop",
+            "tools": [
+                {
+                    "name": "lookup",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "_id": {
+                                "_private_note": "drop",
+                                "type": "string"
+                            },
+                            "b": {"type": "number"},
+                            "a": {"type": "string"}
+                        }
+                    }
+                }
+            ],
+            "a": 2
+        });
+
+        let prepared = prepare_upstream_request_body(body);
+
+        assert!(prepared.get("_internal").is_none());
+        assert!(prepared["tools"][0]["parameters"]["properties"]
+            .get("_id")
+            .is_some());
+        assert!(prepared["tools"][0]["parameters"]["properties"]["_id"]
+            .get("_private_note")
+            .is_none());
+        assert_eq!(
+            serde_json::to_string(&prepared).unwrap(),
+            r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
+        );
+    }
+
+    #[test]
     fn codex_oauth_session_headers_match_codex_cache_identity() {
         let headers = build_codex_oauth_session_headers("session-123");
         let mut map = HeaderMap::new();
@@ -2020,6 +2282,49 @@ mod tests {
             map.get("x-codex-window-id"),
             Some(&HeaderValue::from_static("session-123:0"))
         );
+    }
+
+    #[test]
+    fn exact_header_case_preserved_for_native_claude_only() {
+        let provider = test_provider_with_type(None);
+
+        assert!(should_preserve_exact_header_case(
+            "Claude",
+            &provider,
+            Some("anthropic"),
+            false
+        ));
+        assert!(!should_preserve_exact_header_case(
+            "Claude",
+            &provider,
+            Some("openai_responses"),
+            false
+        ));
+        assert!(!should_preserve_exact_header_case(
+            "Codex", &provider, None, false
+        ));
+        assert!(!should_preserve_exact_header_case(
+            "Gemini", &provider, None, false
+        ));
+    }
+
+    #[test]
+    fn exact_header_case_skipped_for_codex_oauth_and_copilot() {
+        let codex_oauth = test_provider_with_type(Some("codex_oauth"));
+        let copilot = test_provider_with_type(Some("github_copilot"));
+
+        assert!(!should_preserve_exact_header_case(
+            "Claude",
+            &codex_oauth,
+            Some("openai_responses"),
+            false
+        ));
+        assert!(!should_preserve_exact_header_case(
+            "Claude",
+            &copilot,
+            Some("openai_chat"),
+            true
+        ));
     }
 
     #[test]
@@ -2181,6 +2486,17 @@ mod tests {
         let headers = HeaderMap::new();
 
         assert!(should_force_identity_encoding(
+            "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+            &json!({ "model": "gemini-2.5-pro" }),
+            &headers
+        ));
+    }
+
+    #[test]
+    fn streaming_request_detects_gemini_sse_without_body_stream_flag() {
+        let headers = HeaderMap::new();
+
+        assert!(is_streaming_request(
             "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
             &json!({ "model": "gemini-2.5-pro" }),
             &headers

@@ -25,6 +25,28 @@ export interface OpenTerminalOptions {
   cwd?: string;
 }
 
+export interface ClaudeDesktopStatus {
+  supported: boolean;
+  configured: boolean;
+  appliedId?: string | null;
+  profilePath?: string | null;
+  configLibraryPath?: string | null;
+  mode?: "direct" | "proxy" | null;
+  expectedBaseUrl?: string | null;
+  actualBaseUrl?: string | null;
+  proxyRunning: boolean;
+  staleRawModels: boolean;
+  missingRouteMappings: boolean;
+  gatewayTokenConfigured: boolean;
+}
+
+export interface ClaudeDesktopDefaultRoute {
+  routeId: string;
+  envKey: string;
+  displayName: string;
+  supports1m: boolean;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -72,6 +94,18 @@ export const providersApi = {
 
   async importDefault(appId: AppId): Promise<boolean> {
     return await invoke("import_default_config", { app: appId });
+  },
+
+  async importClaudeDesktopFromClaude(): Promise<number> {
+    return await invoke("import_claude_desktop_providers_from_claude");
+  },
+
+  async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {
+    return await invoke("get_claude_desktop_status");
+  },
+
+  async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {
+    return await invoke("get_claude_desktop_default_routes");
   },
 
   async updateTrayMenu(): Promise<boolean> {
