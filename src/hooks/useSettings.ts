@@ -2,13 +2,14 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { providersApi, settingsApi } from "@/lib/api";
+import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
 import type { Settings } from "@/types";
 import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
 import {
   useDirectorySettings,
+  type CliDetectionMap,
   type DirectoryAppId,
   type ResolvedDirectories,
 } from "./useDirectorySettings";
@@ -27,14 +28,26 @@ export interface UseSettingsResult {
   isPortable: boolean;
   appConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
+  cliDetections: CliDetectionMap;
+  cliDetectionMeta: {
+    isLoading: boolean;
+    wslInstalled: boolean;
+    wslDistro?: string;
+  };
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
-  updateDirectory: (app: DirectoryAppId, value?: string) => void;
+  updateDirectory: (app: AppId, value?: string) => void;
+  updateClaudeWslDirectory: (value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: DirectoryAppId) => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
-  resetDirectory: (app: DirectoryAppId) => Promise<void>;
+  browseClaudeWslDirectory: () => Promise<void>;
+  resetDirectory: (app: AppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
+  resetClaudeWslDirectory: () => Promise<void>;
+  updateWslDirectory: (app: AppId, value?: string) => void;
+  browseWslDirectory: (app: AppId) => Promise<void>;
+  resetWslDirectory: (app: AppId) => Promise<void>;
   saveSettings: (
     overrides?: Partial<SettingsFormState>,
     options?: { silent?: boolean },
@@ -81,14 +94,22 @@ export function useSettings(): UseSettingsResult {
   const {
     appConfigDir,
     resolvedDirs,
+    cliDetections,
+    cliDetectionMeta,
     isLoading: isDirectoryLoading,
     initialAppConfigDir,
     updateDirectory,
+    updateClaudeWslDirectory,
     updateAppConfigDir,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
+    updateWslDirectory,
+    browseWslDirectory,
+    resetWslDirectory,
     resetAllDirectories,
   } = useDirectorySettings({
     settings,
@@ -187,10 +208,25 @@ export function useSettings(): UseSettingsResult {
 
       try {
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
+        const sanitizedClaudeDirWsl = sanitizeDir(
+          mergedSettings.claudeConfigDirWsl,
+        );
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
+        const sanitizedCodexDirWsl = sanitizeDir(
+          mergedSettings.codexConfigDirWsl,
+        );
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
+        const sanitizedGeminiDirWsl = sanitizeDir(
+          mergedSettings.geminiConfigDirWsl,
+        );
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
+        );
+        const sanitizedOpencodeDirWsl = sanitizeDir(
+          mergedSettings.opencodeConfigDirWsl,
+        );
+        const sanitizedOpenclawDirWsl = sanitizeDir(
+          mergedSettings.openclawConfigDirWsl,
         );
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
@@ -201,10 +237,15 @@ export function useSettings(): UseSettingsResult {
         const payload: Settings = {
           ...restSettings,
           claudeConfigDir: sanitizedClaudeDir,
+          claudeConfigDirWsl: sanitizedClaudeDirWsl,
           codexConfigDir: sanitizedCodexDir,
+          codexConfigDirWsl: sanitizedCodexDirWsl,
           geminiConfigDir: sanitizedGeminiDir,
+          geminiConfigDirWsl: sanitizedGeminiDirWsl,
           opencodeConfigDir: sanitizedOpencodeDir,
+          opencodeConfigDirWsl: sanitizedOpencodeDirWsl,
           openclawConfigDir: sanitizedOpenclawDir,
+          openclawConfigDirWsl: sanitizedOpenclawDirWsl,
           language: mergedSettings.language,
         };
 
@@ -315,10 +356,25 @@ export function useSettings(): UseSettingsResult {
       try {
         const sanitizedAppDir = sanitizeDir(appConfigDir);
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
+        const sanitizedClaudeDirWsl = sanitizeDir(
+          mergedSettings.claudeConfigDirWsl,
+        );
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
+        const sanitizedCodexDirWsl = sanitizeDir(
+          mergedSettings.codexConfigDirWsl,
+        );
         const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
+        const sanitizedGeminiDirWsl = sanitizeDir(
+          mergedSettings.geminiConfigDirWsl,
+        );
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
+        );
+        const sanitizedOpencodeDirWsl = sanitizeDir(
+          mergedSettings.opencodeConfigDirWsl,
+        );
+        const sanitizedOpenclawDirWsl = sanitizeDir(
+          mergedSettings.openclawConfigDirWsl,
         );
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
@@ -335,10 +391,15 @@ export function useSettings(): UseSettingsResult {
         const payload: Settings = {
           ...restSettings,
           claudeConfigDir: sanitizedClaudeDir,
+          claudeConfigDirWsl: sanitizedClaudeDirWsl,
           codexConfigDir: sanitizedCodexDir,
+          codexConfigDirWsl: sanitizedCodexDirWsl,
           geminiConfigDir: sanitizedGeminiDir,
+          geminiConfigDirWsl: sanitizedGeminiDirWsl,
           opencodeConfigDir: sanitizedOpencodeDir,
+          opencodeConfigDirWsl: sanitizedOpencodeDirWsl,
           openclawConfigDir: sanitizedOpenclawDir,
+          openclawConfigDirWsl: sanitizedOpenclawDirWsl,
           language: mergedSettings.language,
         };
 
@@ -494,14 +555,22 @@ export function useSettings(): UseSettingsResult {
     isPortable,
     appConfigDir,
     resolvedDirs,
+    cliDetections,
+    cliDetectionMeta,
     requiresRestart,
     updateSettings,
     updateDirectory,
+    updateClaudeWslDirectory,
     updateAppConfigDir,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
+    updateWslDirectory,
+    browseWslDirectory,
+    resetWslDirectory,
     saveSettings,
     autoSaveSettings,
     resetSettings,

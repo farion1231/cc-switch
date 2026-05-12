@@ -71,13 +71,21 @@ export function SettingsPage({
     isPortable,
     appConfigDir,
     resolvedDirs,
+    cliDetections,
+    cliDetectionMeta,
     updateSettings,
     updateDirectory,
+    updateClaudeWslDirectory,
     updateAppConfigDir,
+    updateWslDirectory,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
+    browseWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
+    resetWslDirectory,
     saveSettings,
     autoSaveSettings,
     requiresRestart,
@@ -309,18 +317,31 @@ export function SettingsPage({
                           <DirectorySettings
                             appConfigDir={appConfigDir}
                             resolvedDirs={resolvedDirs}
+                            cliDetections={cliDetections}
+                            cliDetectionMeta={cliDetectionMeta}
                             onAppConfigChange={updateAppConfigDir}
                             onBrowseAppConfig={browseAppConfigDir}
                             onResetAppConfig={resetAppConfigDir}
                             claudeDir={settings.claudeConfigDir}
+                            claudeWslDir={settings.claudeConfigDirWsl}
                             codexDir={settings.codexConfigDir}
+                            codexWslDir={settings.codexConfigDirWsl}
                             geminiDir={settings.geminiConfigDir}
+                            geminiWslDir={settings.geminiConfigDirWsl}
                             opencodeDir={settings.opencodeConfigDir}
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
+                            opencodeWslDir={settings.opencodeConfigDirWsl}
+                            openclawWslDir={settings.openclawConfigDirWsl}
                             onDirectoryChange={updateDirectory}
+                            onClaudeWslDirectoryChange={updateClaudeWslDirectory}
                             onBrowseDirectory={browseDirectory}
+                            onBrowseClaudeWslDirectory={browseClaudeWslDirectory}
                             onResetDirectory={resetDirectory}
+                            onResetClaudeWslDirectory={resetClaudeWslDirectory}
+                            onWslDirectoryChange={updateWslDirectory}
+                            onBrowseWslDirectory={browseWslDirectory}
+                            onResetWslDirectory={resetWslDirectory}
                           />
                         </AccordionContent>
                       </AccordionItem>

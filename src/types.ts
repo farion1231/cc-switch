@@ -301,6 +301,16 @@ export interface Settings {
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
   claudeConfigDir?: string;
+  // 可选：Claude Code WSL 配置目录，仅在 Windows 之外的 WSL 环境使用
+  claudeConfigDirWsl?: string;
+  // 可选：Codex WSL 配置目录
+  codexConfigDirWsl?: string;
+  // 可选：Gemini WSL 配置目录
+  geminiConfigDirWsl?: string;
+  // 可选：OpenCode WSL 配置目录
+  opencodeConfigDirWsl?: string;
+  // 可选：OpenClaw WSL 配置目录
+  openclawConfigDirWsl?: string;
   // 覆盖 Codex 配置目录（可选）
   codexConfigDir?: string;
   // 覆盖 Gemini 配置目录（可选）

@@ -357,7 +357,6 @@ function App() {
 
     const setupListener = async () => {
       try {
-        const { listen } = await import("@tauri-apps/api/event");
         unsubscribe = await listen("universal-provider-synced", async () => {
           await queryClient.invalidateQueries({ queryKey: ["providers"] });
           try {

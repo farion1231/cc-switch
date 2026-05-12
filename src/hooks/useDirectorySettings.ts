@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { homeDir, join } from "@tauri-apps/api/path";
@@ -9,11 +9,15 @@ export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
 type AppDirectoryKey =
   | "claude"
   | "codex"
+  | "codexWsl"
   | "gemini"
+  | "geminiWsl"
   | "opencode"
+  | "opencodeWsl"
   | "openclaw"
+  | "openclawWsl"
   | "hermes";
-type DirectoryKey = "appConfig" | AppDirectoryKey;
+type DirectoryKey = "appConfig" | AppDirectoryKey | "claudeWsl";
 
 export interface ResolvedDirectories {
   appConfig: string;
@@ -49,6 +53,33 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
 };
+
+export interface CliDetectionItem {
+  app: AppId;
+  native: {
+    envType: "windows" | "wsl" | "macos" | "linux" | "unknown";
+    executablePath?: string | null;
+    configDir: string;
+    configExists: boolean;
+  };
+  wsl?: {
+    envType: "windows" | "wsl" | "macos" | "linux" | "unknown";
+    distro: string;
+    executablePath?: string | null;
+    configDir: string;
+    configExists: boolean;
+  } | null;
+}
+
+export interface CliDetectionMap {
+  claude?: CliDetectionItem;
+  codex?: CliDetectionItem;
+  gemini?: CliDetectionItem;
+  opencode?: CliDetectionItem;
+}
+
+const isCliDetectableApp = (app: string): app is keyof CliDetectionMap =>
+  app === "claude" || app === "codex" || app === "gemini" || app === "opencode";
 
 const sanitizeDir = (value?: string | null): string | undefined => {
   if (!value) return undefined;
@@ -92,15 +123,27 @@ export interface UseDirectorySettingsProps {
 export interface UseDirectorySettingsResult {
   appConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
+  cliDetections: CliDetectionMap;
+  cliDetectionMeta: {
+    isLoading: boolean;
+    wslInstalled: boolean;
+    wslDistro?: string;
+  };
   isLoading: boolean;
   initialAppConfigDir?: string;
   updateDirectory: (app: DirectoryAppId, value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: DirectoryAppId) => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
-  resetDirectory: (app: DirectoryAppId) => Promise<void>;
+  browseClaudeWslDirectory: () => Promise<void>;
+  updateClaudeWslDirectory: (value?: string) => void;
+  resetDirectory: (app: AppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
+  resetClaudeWslDirectory: () => Promise<void>;
   resetAllDirectories: (overrides?: ResolvedAppDirectoryOverrides) => void;
+  updateWslDirectory: (app: AppId, value?: string) => void;
+  browseWslDirectory: (app: AppId) => Promise<void>;
+  resetWslDirectory: (app: AppId) => Promise<void>;
 }
 
 export type ResolvedAppDirectoryOverrides = Partial<
@@ -133,6 +176,15 @@ export function useDirectorySettings({
     opencode: "",
     openclaw: "",
     hermes: "",
+  });
+  const [cliDetections, setCliDetections] = useState<CliDetectionMap>({});
+  const [cliDetectionMeta, setCliDetectionMeta] = useState<{
+    isLoading: boolean;
+    wslInstalled: boolean;
+    wslDistro?: string;
+  }>({
+    isLoading: true,
+    wslInstalled: false,
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -230,15 +282,81 @@ export function useDirectorySettings({
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    const loadCliDetections = async () => {
+      try {
+        const summary = await settingsApi.detectCliTools();
+        if (!active) return;
+
+        const mapped = summary.tools.reduce<CliDetectionMap>((acc, item) => {
+          if (isCliDetectableApp(item.app)) {
+            acc[item.app] = {
+              app: item.app,
+              native: item.native,
+              wsl: item.wsl,
+            };
+          }
+          return acc;
+        }, {});
+
+        setCliDetections(mapped);
+        setCliDetectionMeta({
+          isLoading: false,
+          wslInstalled: summary.wslInstalled,
+          wslDistro: summary.wslDistro ?? undefined,
+        });
+      } catch (error) {
+        console.error(
+          "[useDirectorySettings] Failed to load CLI detection info",
+          error,
+        );
+        if (!active) return;
+        setCliDetectionMeta({
+          isLoading: false,
+          wslInstalled: false,
+        });
+      }
+    };
+
+    void loadCliDetections();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const normalizedCliDetections = useMemo(() => cliDetections, [cliDetections]);
+
   const updateDirectoryState = useCallback(
     (key: DirectoryKey, value?: string) => {
       const sanitized = sanitizeDir(value);
       if (key === "appConfig") {
         setAppConfigDir(sanitized);
+      } else if (key === "claudeWsl") {
+        onUpdateSettings({ claudeConfigDirWsl: sanitized });
+      } else if (key === "codexWsl") {
+        onUpdateSettings({ codexConfigDirWsl: sanitized });
+      } else if (key === "geminiWsl") {
+        onUpdateSettings({ geminiConfigDirWsl: sanitized });
+      } else if (key === "opencodeWsl") {
+        onUpdateSettings({ opencodeConfigDirWsl: sanitized });
+      } else if (key === "openclawWsl") {
+        onUpdateSettings({ openclawConfigDirWsl: sanitized });
       } else {
         onUpdateSettings({
           [DIRECTORY_KEY_TO_SETTINGS_FIELD[key]]: sanitized,
         });
+      }
+
+      if (
+        key === "claudeWsl" ||
+        key === "codexWsl" ||
+        key === "geminiWsl" ||
+        key === "opencodeWsl" ||
+        key === "openclawWsl"
+      ) {
+        return;
       }
 
       setResolvedDirs((prev) => {
@@ -290,6 +408,23 @@ export function useDirectorySettings({
     [settings, resolvedDirs, t, updateDirectoryState],
   );
 
+  const browseClaudeWslDirectory = useCallback(async () => {
+    const currentValue = settings?.claudeConfigDirWsl ?? undefined;
+    try {
+      const picked = await settingsApi.selectConfigDirectory(currentValue);
+      const sanitized = sanitizeDir(picked ?? undefined);
+      if (!sanitized) return;
+      updateDirectoryState("claudeWsl", sanitized);
+    } catch (error) {
+      console.error("[useDirectorySettings] Failed to pick WSL directory", error);
+      toast.error(
+        t("settings.selectFileFailed", {
+          defaultValue: "选择目录失败",
+        }),
+      );
+    }
+  }, [settings, t, updateDirectoryState]);
+
   const browseAppConfigDir = useCallback(async () => {
     const currentValue = appConfigDir ?? resolvedDirs.appConfig;
     try {
@@ -340,6 +475,79 @@ export function useDirectorySettings({
     updateDirectoryState("appConfig", undefined);
   }, [updateDirectoryState]);
 
+  const updateClaudeWslDirectory = useCallback(
+    (value?: string) => {
+      updateDirectoryState("claudeWsl", value);
+    },
+    [updateDirectoryState],
+  );
+
+  const resetClaudeWslDirectory = useCallback(async () => {
+    updateDirectoryState("claudeWsl", undefined);
+  }, [updateDirectoryState]);
+
+  const wslKeyForApp = useCallback((app: AppId): DirectoryKey => {
+    switch (app) {
+      case "codex":
+        return "codexWsl";
+      case "gemini":
+        return "geminiWsl";
+      case "opencode":
+        return "opencodeWsl";
+      case "openclaw":
+        return "openclawWsl";
+      default:
+        return "codexWsl";
+    }
+  }, []);
+
+  const updateWslDirectory = useCallback(
+    (app: AppId, value?: string) => {
+      updateDirectoryState(wslKeyForApp(app), value);
+    },
+    [updateDirectoryState, wslKeyForApp],
+  );
+
+  const browseWslDirectory = useCallback(
+    async (app: AppId) => {
+      const settingsKeyMap: Record<AppId, keyof SettingsFormState | undefined> = {
+        claude: "claudeConfigDirWsl",
+        codex: "codexConfigDirWsl",
+        gemini: "geminiConfigDirWsl",
+        opencode: "opencodeConfigDirWsl",
+        openclaw: "openclawConfigDirWsl",
+      };
+      const settingsKey = settingsKeyMap[app];
+      const currentValue = settingsKey
+        ? (settings?.[settingsKey] as string | undefined)
+        : undefined;
+      try {
+        const picked = await settingsApi.selectConfigDirectory(currentValue);
+        const sanitized = sanitizeDir(picked ?? undefined);
+        if (!sanitized) return;
+        updateWslDirectory(app, sanitized);
+      } catch (error) {
+        console.error(
+          "[useDirectorySettings] Failed to pick WSL directory",
+          error,
+        );
+        toast.error(
+          t("settings.selectFileFailed", {
+            defaultValue: "选择目录失败",
+          }),
+        );
+      }
+    },
+    [settings, t, updateWslDirectory],
+  );
+
+  const resetWslDirectory = useCallback(
+    async (app: AppId) => {
+      updateWslDirectory(app, undefined);
+    },
+    [updateWslDirectory],
+  );
+
   const resetAllDirectories = useCallback(
     (overrides?: ResolvedAppDirectoryOverrides) => {
       setAppConfigDir(initialAppConfigDirRef.current);
@@ -360,14 +568,22 @@ export function useDirectorySettings({
   return {
     appConfigDir,
     resolvedDirs,
+    cliDetections: normalizedCliDetections,
+    cliDetectionMeta,
     isLoading,
     initialAppConfigDir: initialAppConfigDirRef.current,
     updateDirectory,
     updateAppConfigDir,
+    updateClaudeWslDirectory,
     browseDirectory,
     browseAppConfigDir,
+    browseClaudeWslDirectory,
     resetDirectory,
     resetAppConfigDir,
+    resetClaudeWslDirectory,
+    updateWslDirectory,
+    browseWslDirectory,
+    resetWslDirectory,
     resetAllDirectories,
   };
 }

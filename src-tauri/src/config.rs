@@ -42,6 +42,81 @@ pub fn get_claude_config_dir() -> PathBuf {
     get_home_dir().join(".claude")
 }
 
+/// 获取 Claude Code WSL 配置目录，仅当用户显式配置时返回
+pub fn get_claude_wsl_config_dir() -> Option<PathBuf> {
+    crate::settings::get_claude_wsl_override_dir()
+}
+
+/// 根据运行环境选择 Claude 配置目录：WSL 优先级仅在 use_wsl=true 时使用
+pub fn get_claude_config_dir_for_environment(use_wsl: bool) -> PathBuf {
+    if use_wsl {
+        if let Some(custom) = crate::settings::get_claude_wsl_override_dir() {
+            return custom;
+        }
+    }
+    get_claude_config_dir()
+}
+
+/// 获取 Codex WSL 配置目录，仅当用户显式配置时返回
+pub fn get_codex_wsl_config_dir() -> Option<PathBuf> {
+    crate::settings::get_codex_wsl_override_dir()
+}
+
+/// 根据运行环境选择 Codex 配置目录：WSL 优先级仅在 use_wsl=true 时使用
+pub fn get_codex_config_dir_for_environment(use_wsl: bool) -> PathBuf {
+    if use_wsl {
+        if let Some(custom) = crate::settings::get_codex_wsl_override_dir() {
+            return custom;
+        }
+    }
+    crate::codex_config::get_codex_config_dir()
+}
+
+/// 获取 Gemini WSL 配置目录，仅当用户显式配置时返回
+pub fn get_gemini_wsl_config_dir() -> Option<PathBuf> {
+    crate::settings::get_gemini_wsl_override_dir()
+}
+
+/// 根据运行环境选择 Gemini 配置目录：WSL 优先级仅在 use_wsl=true 时使用
+pub fn get_gemini_dir_for_environment(use_wsl: bool) -> PathBuf {
+    if use_wsl {
+        if let Some(custom) = crate::settings::get_gemini_wsl_override_dir() {
+            return custom;
+        }
+    }
+    crate::gemini_config::get_gemini_dir()
+}
+
+/// 获取 OpenCode WSL 配置目录，仅当用户显式配置时返回
+pub fn get_opencode_wsl_config_dir() -> Option<PathBuf> {
+    crate::settings::get_opencode_wsl_override_dir()
+}
+
+/// 根据运行环境选择 OpenCode 配置目录：WSL 优先级仅在 use_wsl=true 时使用
+pub fn get_opencode_dir_for_environment(use_wsl: bool) -> PathBuf {
+    if use_wsl {
+        if let Some(custom) = crate::settings::get_opencode_wsl_override_dir() {
+            return custom;
+        }
+    }
+    crate::opencode_config::get_opencode_dir()
+}
+
+/// 获取 OpenClaw WSL 配置目录，仅当用户显式配置时返回
+pub fn get_openclaw_wsl_config_dir() -> Option<PathBuf> {
+    crate::settings::get_openclaw_wsl_override_dir()
+}
+
+/// 根据运行环境选择 OpenClaw 配置目录：WSL 优先级仅在 use_wsl=true 时使用
+pub fn get_openclaw_dir_for_environment(use_wsl: bool) -> PathBuf {
+    if use_wsl {
+        if let Some(custom) = crate::settings::get_openclaw_wsl_override_dir() {
+            return custom;
+        }
+    }
+    crate::openclaw_config::get_openclaw_dir()
+}
+
 /// 默认 Claude MCP 配置文件路径 (~/.claude.json)
 pub fn get_default_claude_mcp_path() -> PathBuf {
     get_home_dir().join(".claude.json")
@@ -68,6 +143,18 @@ pub fn get_claude_mcp_path() -> PathBuf {
         }
     }
     get_default_claude_mcp_path()
+}
+
+/// 获取 Claude Code WSL MCP 配置文件路径，仅当用户显式配置 WSL 目录时返回
+pub fn get_claude_mcp_path_for_environment(use_wsl: bool) -> PathBuf {
+    if use_wsl {
+        if let Some(custom_dir) = crate::settings::get_claude_wsl_override_dir() {
+            if let Some(path) = derive_mcp_path_from_override(&custom_dir) {
+                return path;
+            }
+        }
+    }
+    get_claude_mcp_path()
 }
 
 /// 获取 Claude Code 主配置文件路径
