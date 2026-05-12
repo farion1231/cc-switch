@@ -138,14 +138,18 @@ pub fn should_rectify_extra_inputs(error_message: Option<&str>, config: &Rectifi
 /// - 多个错误用换行或 JSON 嵌套时，尝试匹配所有出现
 ///
 /// 只提取**顶层字段**（不含 `.` 的路径前缀），嵌套路径（如 `messages.0.xxx`）跳过。
+///
+/// 大小写处理：对错误模板做 ASCII 大小写不敏感匹配，但**保留字段名的原始大小写**
+/// —— 否则 `strip_fields` 的精确 key 匹配对 camelCase 字段（如 Gemini 的
+/// `generationConfig`）会失效，导致 retry 反复撞同一错误并把错误的小写键污染到缓存。
 pub fn extract_extra_input_fields(error_message: &str) -> Vec<String> {
-    let lower = error_message.to_lowercase();
+    // ASCII-only 小写化保证与原串字节长度 1:1 对齐，可以同步遍历 lines 和按位置切片。
+    // 模式本身是 ASCII（`"extra inputs are not permitted"`），无需处理 Unicode 折叠。
+    let lower = error_message.to_ascii_lowercase();
     let mut fields = Vec::new();
 
-    // 匹配模式：`field_name: Extra inputs are not permitted`
-    // 或嵌套 JSON 中的同一模式
-    for line in lower.lines() {
-        extract_from_line(line, &mut fields);
+    for (orig_line, lower_line) in error_message.lines().zip(lower.lines()) {
+        extract_from_line(orig_line, lower_line, &mut fields);
     }
 
     fields.sort();
@@ -154,16 +158,20 @@ pub fn extract_extra_input_fields(error_message: &str) -> Vec<String> {
 }
 
 /// 从一行文本中提取 `field: Extra inputs are not permitted` 的字段名
-fn extract_from_line(text: &str, fields: &mut Vec<String>) {
+///
+/// `lower` 仅用于大小写不敏感的模式定位，`orig` 用于切出保留原始大小写的字段名。
+/// 两者必须字节对齐（由 `to_ascii_lowercase` 保证）。
+fn extract_from_line(orig: &str, lower: &str, fields: &mut Vec<String>) {
     let pattern = "extra inputs are not permitted";
     let mut search_from = 0;
 
-    while let Some(pos) = text[search_from..].find(pattern) {
+    while let Some(pos) = lower[search_from..].find(pattern) {
         let abs_pos = search_from + pos;
 
         // 向前查找 ": " 或 ":" 分隔符
         if abs_pos >= 2 {
-            let before = &text[..abs_pos];
+            // 从 orig 取 before（保留大小写），而不是 lower
+            let before = &orig[..abs_pos];
             // 去掉尾部的 ": " 或 ":"
             let before = before.trim_end_matches(": ").trim_end_matches(':');
 
@@ -187,10 +195,13 @@ fn extract_from_line(text: &str, fields: &mut Vec<String>) {
                     // 仅当第一段不是 "messages" 等已知数组路径时才提取
                     let first_segment = field_path.split('.').next().unwrap_or("");
                     // 排除已知的消息/内容路径前缀，这些由其他整流器处理
-                    if !matches!(
-                        first_segment,
-                        "messages" | "content" | "tools" | "tool_choice" | "metadata"
-                    ) && !first_segment.is_empty()
+                    // 用 ASCII 大小写不敏感比较，防止 "Messages" / "MESSAGES" 漏掉黑名单
+                    let is_known_prefix =
+                        ["messages", "content", "tools", "tool_choice", "metadata"]
+                            .iter()
+                            .any(|prefix| first_segment.eq_ignore_ascii_case(prefix));
+                    if !is_known_prefix
+                        && !first_segment.is_empty()
                         && !first_segment.chars().all(|c| c.is_ascii_digit())
                     {
                         fields.push(first_segment.to_string());
@@ -367,6 +378,49 @@ mod tests {
         let fields =
             extract_extra_input_fields("custom_config.option: Extra inputs are not permitted");
         assert_eq!(fields, vec!["custom_config"]);
+    }
+
+    /// 字段名必须保留原始大小写 —— 否则 strip_fields 的精确 key 匹配会漏掉
+    /// camelCase 字段（如 Gemini 的 generationConfig），导致 retry 撞同一错误。
+    #[test]
+    fn test_extract_preserves_camel_case() {
+        let fields = extract_extra_input_fields("generationConfig: Extra inputs are not permitted");
+        assert_eq!(fields, vec!["generationConfig"]);
+    }
+
+    /// 多个 camelCase 字段同时出现
+    #[test]
+    fn test_extract_preserves_mixed_case_multiple() {
+        let msg = "safetySettings: Extra inputs are not permitted, systemInstruction: Extra inputs are not permitted";
+        let fields = extract_extra_input_fields(msg);
+        assert!(fields.contains(&"safetySettings".to_string()));
+        assert!(fields.contains(&"systemInstruction".to_string()));
+    }
+
+    /// 模板部分应大小写不敏感 —— 上游可能大写呈现"EXTRA INPUTS ARE NOT PERMITTED"
+    #[test]
+    fn test_extract_pattern_is_case_insensitive() {
+        let fields = extract_extra_input_fields("generationConfig: EXTRA INPUTS ARE NOT PERMITTED");
+        assert_eq!(fields, vec!["generationConfig"]);
+    }
+
+    /// end-to-end：提取 → strip_fields 能实际删除 camelCase 字段
+    #[test]
+    fn test_extract_then_strip_works_on_camel_case() {
+        let fields = extract_extra_input_fields("generationConfig: Extra inputs are not permitted");
+        let mut body = json!({
+            "model": "gemini-2.5-pro",
+            "generationConfig": { "temperature": 0.7 },
+            "contents": []
+        });
+        let result = strip_fields(&mut body, &fields);
+
+        assert!(
+            result.applied,
+            "camelCase 字段应能被提取并成功 strip，否则 retry 会撞同一错误"
+        );
+        assert_eq!(result.removed_fields, vec!["generationConfig"]);
+        assert!(body.get("generationConfig").is_none());
     }
 
     // ==================== strip_fields 测试 ====================
