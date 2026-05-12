@@ -47,14 +47,15 @@ function parseJsonError(error: unknown): string {
   }
 
   // 通用情况：提取关键错误信息
-  const cleanMessage = message
-    .replace(/^JSON\.parse:\s*/i, "")
+  const cleanMessage = message.replace(/^JSON\.parse:\s*/i, "").trim();
+
+  const zhMessage = cleanMessage
     .replace(/^Unexpected\s+/i, "意外的 ")
     .replace(/token/gi, "符号")
     .replace(/Expected/gi, "预期");
 
   return t({
-    zh: `JSON 格式错误：${cleanMessage}`,
+    zh: `JSON 格式错误：${zhMessage}`,
     en: `Invalid JSON format: ${cleanMessage}`,
     ja: `JSON 形式が無効です: ${cleanMessage}`,
     ru: `Неверный формат JSON: ${cleanMessage}`,
@@ -65,38 +66,50 @@ export const providerSchema = z.object({
   name: z.string(), // 必填校验移至 handleSubmit 中用 toast 提示
   websiteUrl: z
     .string()
-    .url(
-      t({
-        zh: "请输入有效的网址",
-        en: "Please enter a valid URL",
-        ja: "有効な URL を入力してください",
-        ru: "Введите действительный URL",
-      }),
-    )
     .optional()
-    .or(z.literal("")),
-  notes: z.string().optional(),
-  settingsConfig: z
-    .string()
-    .min(
-      1,
-      t({
-        zh: "请填写配置内容",
-        en: "Please fill in the configuration",
-        ja: "設定内容を入力してください",
-        ru: "Укажите содержимое конфигурации",
-      }),
-    )
+    .or(z.literal(""))
     .superRefine((value, ctx) => {
+      const candidate = value ?? "";
+      if (!candidate) return;
+
       try {
-        JSON.parse(value);
-      } catch (error) {
+        new URL(candidate);
+      } catch {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: parseJsonError(error),
+          message: t({
+            zh: "请输入有效的网址",
+            en: "Please enter a valid URL",
+            ja: "有効な URL を入力してください",
+            ru: "Введите действительный URL",
+          }),
         });
       }
     }),
+  notes: z.string().optional(),
+  settingsConfig: z.string().superRefine((value, ctx) => {
+    if (value.length < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: t({
+          zh: "请填写配置内容",
+          en: "Please fill in the configuration",
+          ja: "設定内容を入力してください",
+          ru: "Укажите содержимое конфигурации",
+        }),
+      });
+      return;
+    }
+
+    try {
+      JSON.parse(value);
+    } catch (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: parseJsonError(error),
+      });
+    }
+  }),
   // 图标配置
   icon: z.string().optional(),
   iconColor: z.string().optional(),
