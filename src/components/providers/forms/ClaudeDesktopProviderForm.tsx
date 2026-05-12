@@ -111,6 +111,7 @@ type RouteRowValues = Omit<RouteRow, "rowId">;
 
 const CLAUDE_ROUTE_PREFIX = "claude-";
 const ANTHROPIC_CLAUDE_ROUTE_PREFIX = "anthropic/claude-";
+const LEGACY_ONE_M_MARKER = "[1m]";
 
 function envString(
   settingsConfig: Record<string, unknown> | undefined,
@@ -188,11 +189,10 @@ function initialRouteRows(
 
 function isClaudeSafeRoute(route: string) {
   const normalized = route.trim().toLowerCase();
-  return (
-    (normalized.startsWith(CLAUDE_ROUTE_PREFIX) &&
-      normalized.length > CLAUDE_ROUTE_PREFIX.length) ||
-    (normalized.startsWith(ANTHROPIC_CLAUDE_ROUTE_PREFIX) &&
-      normalized.length > ANTHROPIC_CLAUDE_ROUTE_PREFIX.length)
+  if (normalized.includes(LEGACY_ONE_M_MARKER)) return false;
+  return [CLAUDE_ROUTE_PREFIX, ANTHROPIC_CLAUDE_ROUTE_PREFIX].some(
+    (prefix) =>
+      normalized.startsWith(prefix) && normalized.length > prefix.length,
   );
 }
 
@@ -825,12 +825,12 @@ export function ClaudeDesktopProviderForm({
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("claudeDesktop.routeMapHint", {
                     defaultValue:
-                      "左侧决定 Claude Desktop 模型菜单里的可见模型 ID，实际写入为 claude-*；右侧填写供应商实际请求的模型名。",
+                      "左侧决定 Claude Desktop 模型菜单里的可见模型 ID；1M 只控制是否向 Claude Desktop 声明支持 1M 上下文，实际请求模型按右侧填写内容发送。",
                   })}
                 </p>
               </div>
 
-              <div className="hidden grid-cols-[1fr_1fr_92px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+              <div className="hidden grid-cols-[1fr_1fr_116px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                 <span>
                   {t("claudeDesktop.routeModelLabel", {
                     defaultValue: "Desktop 显示模型",
@@ -843,7 +843,7 @@ export function ClaudeDesktopProviderForm({
                 </span>
                 <span>
                   {t("claudeDesktop.supports1mLabel", {
-                    defaultValue: "1M",
+                    defaultValue: "声明支持 1M",
                   })}
                 </span>
                 <span />
@@ -851,7 +851,7 @@ export function ClaudeDesktopProviderForm({
               {routes.map((route, index) => (
                 <div
                   key={route.rowId}
-                  className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_92px_36px]"
+                  className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_116px_36px]"
                 >
                   <div className="flex">
                     <span className="inline-flex h-9 items-center rounded-l-md border border-r-0 border-input bg-muted px-3 text-sm text-muted-foreground">
@@ -896,7 +896,9 @@ export function ClaudeDesktopProviderForm({
                         updateRoute(index, { supports1m: checked === true })
                       }
                     />
-                    1M
+                    {t("claudeDesktop.supports1mShort", {
+                      defaultValue: "1M",
+                    })}
                   </label>
                   <Button
                     type="button"
@@ -975,7 +977,7 @@ export function ClaudeDesktopProviderForm({
                     {routes.map((route, index) => (
                       <div
                         key={route.rowId}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_92px_36px]"
+                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_116px_36px]"
                       >
                         <div className="flex gap-1">
                           <Input
@@ -1004,7 +1006,9 @@ export function ClaudeDesktopProviderForm({
                               })
                             }
                           />
-                          1M
+                          {t("claudeDesktop.supports1mShort", {
+                            defaultValue: "1M",
+                          })}
                         </label>
                         <Button
                           type="button"
