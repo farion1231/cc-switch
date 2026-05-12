@@ -246,6 +246,7 @@ export function DirectorySettings({
         />
 
         <DirectoryInput
+          app="openclaw"
           label={t("settings.openclawConfigDir")}
           description={undefined}
           value={openclawDir}
@@ -257,6 +258,7 @@ export function DirectorySettings({
         />
 
         <DirectoryInput
+          app="hermes"
           label={t("settings.hermesConfigDir")}
           description={undefined}
           value={hermesDir}

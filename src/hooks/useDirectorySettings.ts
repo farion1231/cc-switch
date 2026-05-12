@@ -507,8 +507,10 @@ export function useDirectorySettings({
     async (app: AppId) => {
       const settingsKeyMap: Record<AppId, keyof SettingsFormState | undefined> = {
         claude: "claudeConfigDirWsl",
+        "claude-desktop": undefined,
         codex: "codexConfigDirWsl",
         gemini: "geminiConfigDirWsl",
+        hermes: undefined,
         opencode: "opencodeConfigDirWsl",
         openclaw: "openclawConfigDirWsl",
       };
