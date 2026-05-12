@@ -3,8 +3,8 @@
  *
  * 形态与 Claude Code 预设不同：
  * - baseUrl 是顶级字段，而不是 settingsConfig.env.ANTHROPIC_BASE_URL
- * - 模型信息以"请求模型 → 上游模型 → 显示模型"三段式表达，
- *   对应后端 ClaudeDesktopModelRoute 的 routeId / model / displayName
+ * - 模型信息以"Desktop 可见模型 ID → 上游模型"表达，
+ *   对应后端 ClaudeDesktopModelRoute 的 routeId / model
  *
  * 翻译来源：src/config/claudeProviderPresets.ts（排除 OAuth 与不兼容预设）
  */
@@ -20,7 +20,6 @@ export type ClaudeDesktopApiFormat =
 export interface ClaudeDesktopRoutePreset {
   routeId: string;
   upstreamModel: string;
-  displayName: string;
   supports1m: boolean;
 }
 
@@ -50,19 +49,16 @@ const passthroughRoutes = (supports1m = false): ClaudeDesktopRoutePreset[] => [
   {
     routeId: "claude-sonnet-4-6",
     upstreamModel: "claude-sonnet-4-6",
-    displayName: "Sonnet",
     supports1m,
   },
   {
     routeId: "claude-opus-4-7",
     upstreamModel: "claude-opus-4-7",
-    displayName: "Opus",
     supports1m,
   },
   {
     routeId: "claude-haiku-4-5",
     upstreamModel: "claude-haiku-4-5",
-    displayName: "Haiku",
     supports1m,
   },
 ];
@@ -76,52 +72,55 @@ const mappedRoutes = (
   {
     routeId: "claude-sonnet-4-6",
     upstreamModel: sonnet,
-    displayName: "Sonnet",
     supports1m,
   },
   {
     routeId: "claude-opus-4-7",
     upstreamModel: opus,
-    displayName: "Opus",
     supports1m,
   },
   {
     routeId: "claude-haiku-4-5",
     upstreamModel: haiku,
-    displayName: "Haiku",
     supports1m,
   },
 ];
 
+const routeIdFromModel = (model: string) => {
+  const trimmed = model.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("claude-") || lower.startsWith("anthropic/claude-")) {
+    return trimmed;
+  }
+
+  return `claude-${trimmed.replace(/^models\//i, "").replace(/[/\\\s]+/g, "-")}`;
+};
+
 /**
- * 非 Claude 上游模型用此工厂：displayName 直接等于 upstreamModel，
- * 让用户在 Claude Desktop 看到的就是实际请求的模型 ID（如 "deepseek-v4-pro"）。
+ * 非 Claude 上游模型用此工厂：用 claude-* route ID 承载品牌化模型名，
+ * 让 Claude Desktop 菜单能从 ID 看到接近上游模型的名称。
  */
 const brandedRoutes = (
   sonnet: string,
   opus: string,
   haiku: string,
   supports1m = false,
-): ClaudeDesktopRoutePreset[] => [
-  {
-    routeId: "claude-sonnet-4-6",
-    upstreamModel: sonnet,
-    displayName: sonnet,
-    supports1m,
-  },
-  {
-    routeId: "claude-opus-4-7",
-    upstreamModel: opus,
-    displayName: opus,
-    supports1m,
-  },
-  {
-    routeId: "claude-haiku-4-5",
-    upstreamModel: haiku,
-    displayName: haiku,
-    supports1m,
-  },
-];
+): ClaudeDesktopRoutePreset[] => {
+  const seen = new Set<string>();
+  return [sonnet, opus, haiku]
+    .map((upstreamModel) => ({
+      routeId: routeIdFromModel(upstreamModel),
+      upstreamModel,
+      supports1m,
+    }))
+    .filter((route) => {
+      if (seen.has(route.routeId)) {
+        return false;
+      }
+      seen.add(route.routeId);
+      return true;
+    });
+};
 
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {

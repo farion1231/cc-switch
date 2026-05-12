@@ -28,7 +28,6 @@ const ONE_M_CONTEXT_SUFFIX: &str = " [1M]";
 pub struct ClaudeDesktopDefaultRoute {
     pub route_id: &'static str,
     pub env_key: &'static str,
-    pub display_name: &'static str,
     #[serde(rename = "supports1m")]
     pub supports_1m: bool,
 }
@@ -37,19 +36,16 @@ pub const DEFAULT_PROXY_ROUTES: &[ClaudeDesktopDefaultRoute] = &[
     ClaudeDesktopDefaultRoute {
         route_id: "claude-sonnet-4-6",
         env_key: "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        display_name: "Sonnet",
         supports_1m: true,
     },
     ClaudeDesktopDefaultRoute {
         route_id: "claude-opus-4-7",
         env_key: "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        display_name: "Opus",
         supports_1m: true,
     },
     ClaudeDesktopDefaultRoute {
         route_id: "claude-haiku-4-5",
         env_key: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        display_name: "Haiku",
         supports_1m: true,
     },
 ];
@@ -96,7 +92,6 @@ pub struct ClaudeDesktopStatus {
 pub struct ResolvedModelRoute {
     pub route_id: String,
     pub upstream_model: String,
-    pub display_name: Option<String>,
     pub supports_1m: bool,
 }
 
@@ -518,7 +513,6 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
         result.push(ResolvedModelRoute {
             route_id: desktop_model_id(&route_id, supports_1m),
             upstream_model: upstream_model_id(upstream_model, supports_1m),
-            display_name: route.display_name.clone(),
             supports_1m,
         });
     }
@@ -546,7 +540,6 @@ pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
             let mut item = json!({
                 "type": "model",
                 "id": model_id,
-                "display_name": route.display_name.as_deref().unwrap_or(&route.route_id),
                 "created_at": DEFAULT_CREATED_AT,
             });
             if route.supports_1m {
@@ -1065,7 +1058,6 @@ mod tests {
                 "claude-sonnet-4-6".to_string(),
                 ClaudeDesktopModelRoute {
                     model: "kimi-k2".to_string(),
-                    display_name: Some("Kimi".to_string()),
                     supports_1m: Some(true),
                 },
             )]),
@@ -1083,7 +1075,6 @@ mod tests {
                 "claude-deepseek-chat".to_string(),
                 ClaudeDesktopModelRoute {
                     model: "claude-deepseek-chat".to_string(),
-                    display_name: Some("DeepSeek".to_string()),
                     supports_1m: Some(true),
                 },
             )]),

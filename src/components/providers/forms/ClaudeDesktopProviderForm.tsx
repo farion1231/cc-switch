@@ -100,9 +100,11 @@ export interface ClaudeDesktopProviderFormProps {
 type RouteRow = {
   route: string;
   model: string;
-  displayName: string;
   supports1m: boolean;
 };
+
+const CLAUDE_ROUTE_PREFIX = "claude-";
+const ANTHROPIC_CLAUDE_ROUTE_PREFIX = "anthropic/claude-";
 
 function envString(
   settingsConfig: Record<string, unknown> | undefined,
@@ -121,13 +123,50 @@ function clonePlainRecord(value: unknown): Record<string, unknown> {
   return { ...(value as Record<string, unknown>) };
 }
 
+function desktopRouteInputValue(route: string) {
+  const trimmed = route.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith(CLAUDE_ROUTE_PREFIX)) {
+    return trimmed.slice(CLAUDE_ROUTE_PREFIX.length);
+  }
+  if (lower.startsWith(ANTHROPIC_CLAUDE_ROUTE_PREFIX)) {
+    return trimmed.slice(ANTHROPIC_CLAUDE_ROUTE_PREFIX.length);
+  }
+  return trimmed;
+}
+
+function normalizeDesktopRouteSuffix(value: string) {
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith(CLAUDE_ROUTE_PREFIX)) {
+    return trimmed.slice(CLAUDE_ROUTE_PREFIX.length);
+  }
+  if (lower.startsWith(ANTHROPIC_CLAUDE_ROUTE_PREFIX)) {
+    return trimmed.slice(ANTHROPIC_CLAUDE_ROUTE_PREFIX.length);
+  }
+  return trimmed;
+}
+
+function desktopRouteIdFromInput(value: string) {
+  const suffix = normalizeDesktopRouteSuffix(value).replace(/[/\\\s]+/g, "-");
+  if (!suffix) return "";
+  return `${CLAUDE_ROUTE_PREFIX}${suffix}`;
+}
+
+function desktopRouteIdFromModel(model: string) {
+  const suffix = model
+    .trim()
+    .replace(/^models\//i, "")
+    .replace(/[/\\\s]+/g, "-");
+  return desktopRouteIdFromInput(suffix);
+}
+
 function initialRouteRows(
   routes: Record<string, ClaudeDesktopModelRoute> | undefined,
 ): RouteRow[] {
   return Object.entries(routes ?? {}).map(([route, value]) => ({
     route,
     model: value.model ?? "",
-    displayName: value.displayName ?? "",
     supports1m: value.supports1m ?? false,
   }));
 }
@@ -135,8 +174,10 @@ function initialRouteRows(
 function isClaudeSafeRoute(route: string) {
   const normalized = route.trim().toLowerCase();
   return (
-    normalized.startsWith("claude-") ||
-    normalized.startsWith("anthropic/claude-")
+    (normalized.startsWith(CLAUDE_ROUTE_PREFIX) &&
+      normalized.length > CLAUDE_ROUTE_PREFIX.length) ||
+    (normalized.startsWith(ANTHROPIC_CLAUDE_ROUTE_PREFIX) &&
+      normalized.length > ANTHROPIC_CLAUDE_ROUTE_PREFIX.length)
   );
 }
 
@@ -147,7 +188,6 @@ function defaultRouteRows(
   return defaults.map((route, index) => ({
     route: route.routeId,
     model: index === 0 ? defaultModel : "",
-    displayName: route.displayName,
     supports1m: route.supports1m,
   }));
 }
@@ -159,7 +199,6 @@ function nextRouteRow(current: RouteRow[], defaults: RouteRow[]): RouteRow {
     ) ?? {
       route: "",
       model: "",
-      displayName: "",
       supports1m: true,
     }
   );
@@ -315,7 +354,6 @@ export function ClaudeDesktopProviderForm({
         preset.modelRoutes.map((r) => ({
           route: r.routeId,
           model: r.upstreamModel,
-          displayName: r.displayName,
           supports1m: r.supports1m,
         })),
       );
@@ -441,24 +479,22 @@ export function ClaudeDesktopProviderForm({
     }
 
     const routeEntries = routes
-      .map((route, index) => ({
+      .map((route) => ({
         ...route,
-        route:
-          route.route.trim() ||
-          (mode === "proxy"
-            ? `claude-${route.model.trim().replace(/[/\\]/g, "-") || `model-${index + 1}`}`
-            : ""),
+        route: route.route.trim(),
         model: route.model.trim(),
-        displayName: route.displayName.trim(),
       }))
       .filter((route) => route.route || route.model);
 
     if (mode === "proxy") {
-      const missing = routeEntries.find((route) => !route.model);
-      if (missing) {
+      const invalid = routeEntries.find(
+        (route) =>
+          !route.route || !route.model || !isClaudeSafeRoute(route.route),
+      );
+      if (invalid) {
         toast.error(
           t("claudeDesktop.routeInvalid", {
-            defaultValue: "请填写上游模型名",
+            defaultValue: "请填写 Desktop 显示模型和实际请求模型",
           }),
         );
         return;
@@ -466,7 +502,7 @@ export function ClaudeDesktopProviderForm({
       if (routeEntries.length === 0) {
         toast.error(
           t("claudeDesktop.routesRequired", {
-            defaultValue: "至少填写一个上游模型",
+            defaultValue: "至少填写一个模型映射",
           }),
         );
         return;
@@ -504,7 +540,6 @@ export function ClaudeDesktopProviderForm({
     >((acc, route) => {
       acc[route.route] = {
         model: route.model || route.route,
-        displayName: route.displayName || undefined,
         supports1m: route.supports1m || undefined,
       };
       return acc;
@@ -705,20 +740,20 @@ export function ClaudeDesktopProviderForm({
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("claudeDesktop.routeMapHint", {
                     defaultValue:
-                      "填写供应商实际提供的模型名，显示名为在 Claude Desktop 模型列表中展示的名称。",
+                      "左侧决定 Claude Desktop 模型菜单里的可见模型 ID，实际写入为 claude-*；右侧填写供应商实际请求的模型名。",
                   })}
                 </p>
               </div>
 
               <div className="hidden grid-cols-[1fr_1fr_92px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                 <span>
-                  {t("claudeDesktop.upstreamModelLabel", {
-                    defaultValue: "实际请求模型",
+                  {t("claudeDesktop.routeModelLabel", {
+                    defaultValue: "Desktop 显示模型",
                   })}
                 </span>
                 <span>
-                  {t("claudeDesktop.displayNameLabel", {
-                    defaultValue: "显示名",
+                  {t("claudeDesktop.upstreamModelLabel", {
+                    defaultValue: "实际请求模型",
                   })}
                 </span>
                 <span>
@@ -733,6 +768,21 @@ export function ClaudeDesktopProviderForm({
                   key={`${route.route}-${index}`}
                   className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_92px_36px]"
                 >
+                  <div className="flex">
+                    <span className="inline-flex h-9 items-center rounded-l-md border border-r-0 border-input bg-muted px-3 text-sm text-muted-foreground">
+                      {CLAUDE_ROUTE_PREFIX}
+                    </span>
+                    <Input
+                      value={desktopRouteInputValue(route.route)}
+                      onChange={(event) =>
+                        updateRoute(index, {
+                          route: desktopRouteIdFromInput(event.target.value),
+                        })
+                      }
+                      placeholder="gpt-5.5"
+                      className="rounded-l-none"
+                    />
+                  </div>
                   <div className="flex gap-1">
                     <Input
                       value={route.model}
@@ -745,17 +795,15 @@ export function ClaudeDesktopProviderForm({
                     {fetchedModels.length > 0 && (
                       <ModelDropdown
                         models={fetchedModels}
-                        onSelect={(id) => updateRoute(index, { model: id })}
+                        onSelect={(id) =>
+                          updateRoute(index, {
+                            model: id,
+                            route: route.route || desktopRouteIdFromModel(id),
+                          })
+                        }
                       />
                     )}
                   </div>
-                  <Input
-                    value={route.displayName}
-                    onChange={(event) =>
-                      updateRoute(index, { displayName: event.target.value })
-                    }
-                    placeholder="Sonnet"
-                  />
                   <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
                     <Checkbox
                       checked={route.supports1m}
@@ -830,7 +878,6 @@ export function ClaudeDesktopProviderForm({
                         {
                           route: "",
                           model: "",
-                          displayName: "",
                           supports1m: false,
                         },
                       ]),

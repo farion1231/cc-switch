@@ -255,7 +255,6 @@ fn suggested_claude_desktop_routes(
         env: &serde_json::Map<String, serde_json::Value>,
         route_id: &str,
         env_key: &str,
-        display_name: &str,
     ) {
         if let Some(model) = env
             .get(env_key)
@@ -267,7 +266,6 @@ fn suggested_claude_desktop_routes(
                 route_id.to_string(),
                 crate::provider::ClaudeDesktopModelRoute {
                     model: model.to_string(),
-                    display_name: Some(display_name.to_string()),
                     supports_1m: Some(true),
                 },
             );
@@ -275,24 +273,12 @@ fn suggested_claude_desktop_routes(
     }
 
     for spec in crate::claude_desktop_config::DEFAULT_PROXY_ROUTES {
-        add_route(
-            &mut routes,
-            env,
-            spec.route_id,
-            spec.env_key,
-            spec.display_name,
-        );
+        add_route(&mut routes, env, spec.route_id, spec.env_key);
     }
 
     let primary_route = crate::claude_desktop_config::DEFAULT_PROXY_ROUTES[0];
     if !routes.contains_key(primary_route.route_id) {
-        add_route(
-            &mut routes,
-            env,
-            primary_route.route_id,
-            "ANTHROPIC_MODEL",
-            primary_route.display_name,
-        );
+        add_route(&mut routes, env, primary_route.route_id, "ANTHROPIC_MODEL");
     }
 
     (!routes.is_empty()).then_some(routes)
