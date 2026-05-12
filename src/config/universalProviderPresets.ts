@@ -74,6 +74,21 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       "NewAPI 是一个可自部署的 API 网关，支持 Anthropic、OpenAI、Gemini 等多种协议",
   },
   {
+    name: "OfoxAI",
+    providerType: "ofoxai",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: true,
+    },
+    defaultModels: NEWAPI_DEFAULT_MODELS,
+    websiteUrl: "https://ofox.ai",
+    icon: "openai",
+    iconColor: "#FF6B35",
+    description:
+      "OfoxAI is a unified LLM API gateway — one API key for 100+ models (Claude, GPT, Gemini, DeepSeek, etc.) with native OpenAI, Anthropic, and Gemini protocol support. Pay per token, no monthly fees.",
+  },
+  {
     name: "自定义网关",
     providerType: "custom_gateway",
     defaultApps: {
