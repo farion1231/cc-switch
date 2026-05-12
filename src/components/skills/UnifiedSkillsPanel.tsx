@@ -6,9 +6,12 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Search,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
@@ -79,6 +82,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data: skills, isLoading } = useInstalledSkills();
   const {
@@ -111,6 +115,28 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
     return map;
   }, [skillUpdates]);
+
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+
+  const filteredSkills = useMemo(() => {
+    if (!skills) return [];
+    if (!normalizedSearchQuery) return skills;
+
+    return skills.filter((skill) => {
+      const source =
+        skill.repoOwner && skill.repoName
+          ? `${skill.repoOwner}/${skill.repoName}`
+          : "";
+      return [
+        skill.name,
+        skill.directory,
+        skill.description,
+        skill.repoOwner,
+        skill.repoName,
+        source,
+      ].some((value) => value?.toLowerCase().includes(normalizedSearchQuery));
+    });
+  }, [skills, normalizedSearchQuery]);
 
   const enabledCounts = useMemo(() => {
     const counts = {
@@ -399,6 +425,38 @@ const UnifiedSkillsPanel = React.forwardRef<
         </div>
       </div>
 
+      {skills && skills.length > 0 && (
+        <div className="mb-3 flex items-center gap-3">
+          <div className="relative w-full max-w-md">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t("skills.searchPlaceholder")}
+              aria-label={t("skills.search")}
+              className="h-8 pl-9 pr-8 text-xs"
+            />
+            {normalizedSearchQuery && (
+              <button
+                type="button"
+                aria-label={t("common.clear")}
+                title={t("common.clear")}
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          {normalizedSearchQuery && (
+            <div className="shrink-0 text-xs text-muted-foreground">
+              {t("skills.count", { count: filteredSkills.length })}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -416,10 +474,19 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : filteredSkills.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <Search size={24} className="text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-medium text-foreground mb-2">
+              {t("skills.noResults")}
+            </h3>
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
             <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
+              {filteredSkills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
@@ -431,7 +498,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+                  isLast={index === filteredSkills.length - 1}
                 />
               ))}
             </div>
