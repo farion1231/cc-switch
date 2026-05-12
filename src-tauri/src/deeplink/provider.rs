@@ -2,14 +2,16 @@
 //!
 //! Handles importing provider configurations via ccswitch:// URLs.
 
-use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
+use super::utils::{decode_base64_param, infer_homepage_from_endpoint, validate_url};
 use super::DeepLinkImportRequest;
 use crate::error::AppError;
+use crate::gemini_config::is_valid_env_key as is_valid_gemini_env_key;
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
 use crate::services::ProviderService;
 use crate::store::AppState;
 use crate::AppType;
 use serde_json::json;
+use serde_json::{Map, Value};
 use std::str::FromStr;
 
 /// Import a provider from a deep link request
@@ -141,17 +143,22 @@ pub(crate) fn build_provider_from_request(
     app_type: &AppType,
     request: &DeepLinkImportRequest,
 ) -> Result<Provider, AppError> {
+    ensure_extra_env_supported(app_type, request)?;
+    let extra_env = decode_extra_env(request.extra_env.as_deref());
+
     let settings_config = match app_type {
-        AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
+        AppType::Claude | AppType::ClaudeDesktop => {
+            build_claude_settings(request, extra_env.as_ref())
+        }
         AppType::Codex => build_codex_settings(request),
-        AppType::Gemini => build_gemini_settings(request),
+        AppType::Gemini => build_gemini_settings(request, extra_env.as_ref()),
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
     };
 
     // Build usage script configuration if provided
-    let mut meta = build_provider_meta(request)?;
+    let mut meta = build_provider_meta(app_type, request, &settings_config)?;
     if matches!(app_type, AppType::ClaudeDesktop) {
         meta.get_or_insert_with(ProviderMeta::default)
             .claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
@@ -185,8 +192,88 @@ fn get_primary_endpoint(request: &DeepLinkImportRequest) -> String {
         .unwrap_or_default()
 }
 
+/// Same as `get_primary_endpoint`, but returns `None` when the result is empty.
+fn primary_endpoint_or_none(request: &DeepLinkImportRequest) -> Option<String> {
+    let primary = get_primary_endpoint(request);
+    (!primary.is_empty()).then_some(primary)
+}
+
+fn extract_usage_api_key_default(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+    settings_config: &Value,
+) -> Option<String> {
+    match app_type {
+        AppType::Claude => settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .and_then(|env| {
+                env.get("ANTHROPIC_AUTH_TOKEN")
+                    .or_else(|| env.get("ANTHROPIC_API_KEY"))
+                    .or_else(|| env.get("OPENROUTER_API_KEY"))
+                    .or_else(|| env.get("OPENAI_API_KEY"))
+            })
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| request.api_key.clone()),
+        AppType::Gemini => settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .and_then(|env| env.get("GEMINI_API_KEY"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| request.api_key.clone()),
+        _ => request.api_key.clone(),
+    }
+}
+
+fn claude_extra_env_prefers_non_default_auth(
+    env: &Map<String, Value>,
+    extra_env: &Map<String, Value>,
+) -> bool {
+    !extra_env.contains_key("ANTHROPIC_AUTH_TOKEN")
+        && ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"]
+            .iter()
+            .any(|key| {
+                extra_env.contains_key(*key)
+                    && env
+                        .get(*key)
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .is_some()
+            })
+}
+
+fn extract_usage_base_url_default(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+    settings_config: &Value,
+) -> Option<String> {
+    let env_key = match app_type {
+        AppType::Claude => Some("ANTHROPIC_BASE_URL"),
+        AppType::Gemini => Some("GOOGLE_GEMINI_BASE_URL"),
+        _ => None,
+    };
+
+    env_key
+        .and_then(|key| {
+            settings_config
+                .get("env")
+                .and_then(|v| v.as_object())
+                .and_then(|env| env.get(key))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .or_else(|| primary_endpoint_or_none(request))
+}
+
 /// Build provider meta with usage script configuration
-fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
+fn build_provider_meta(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+    settings_config: &Value,
+) -> Result<Option<ProviderMeta>, AppError> {
     // Check if any usage script fields are provided
     if request.usage_script.is_none()
         && request.usage_enabled.is_none()
@@ -211,8 +298,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
     // Determine enabled state: explicit param > has code > false
     let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
 
-    // Build UsageScript - use provider's API key and endpoint as defaults
-    // Note: use primary endpoint only (first one if comma-separated)
+    // Build UsageScript - use the final provider config as the default credential source
     let usage_script = UsageScript {
         enabled,
         language: "javascript".to_string(),
@@ -221,15 +307,13 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         api_key: request
             .usage_api_key
             .clone()
-            .or_else(|| request.api_key.clone()),
-        base_url: request.usage_base_url.clone().or_else(|| {
-            let primary = get_primary_endpoint(request);
-            if primary.is_empty() {
-                None
-            } else {
-                Some(primary)
-            }
-        }),
+            .filter(|value| !value.is_empty())
+            .or_else(|| extract_usage_api_key_default(app_type, request, settings_config)),
+        base_url: request
+            .usage_base_url
+            .clone()
+            .filter(|value| !value.is_empty())
+            .or_else(|| extract_usage_base_url_default(app_type, request, settings_config)),
         access_token: request.usage_access_token.clone(),
         user_id: request.usage_user_id.clone(),
         template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)
@@ -244,7 +328,10 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
 }
 
 /// Build Claude settings configuration
-fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+fn build_claude_settings(
+    request: &DeepLinkImportRequest,
+    extra_env: Option<&Map<String, Value>>,
+) -> serde_json::Value {
     let mut env = serde_json::Map::new();
     env.insert(
         "ANTHROPIC_AUTH_TOKEN".to_string(),
@@ -281,35 +368,125 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     }
 
     // Merge extra environment variables if provided (v3.10+)
-    if let Some(extra_b64) = &request.extra_env {
-        merge_extra_env(&mut env, extra_b64);
+    if let Some(extra_env) = extra_env {
+        merge_extra_env(&mut env, extra_env, AppType::Claude);
+        if claude_extra_env_prefers_non_default_auth(&env, extra_env) {
+            env.remove("ANTHROPIC_AUTH_TOKEN");
+        }
     }
 
     json!({ "env": env })
 }
 
-/// Decode and merge extra environment variables from a Base64-encoded JSON object.
-fn merge_extra_env(
-    env: &mut serde_json::Map<String, serde_json::Value>,
-    extra_b64: &str,
-) {
+/// Decode extra environment variables from a Base64-encoded JSON object.
+fn decode_extra_env(extra_b64: Option<&str>) -> Option<Map<String, Value>> {
+    let extra_b64 = extra_b64?;
     let decoded = match decode_base64_param("extra_env", extra_b64) {
         Ok(d) => d,
         Err(e) => {
             log::warn!("Failed to decode extra_env Base64: {e}");
-            return;
+            return None;
         }
     };
-    let extra_map: serde_json::Map<String, serde_json::Value> = match serde_json::from_slice(&decoded)
-    {
+    match serde_json::from_slice(&decoded) {
         Ok(m) => m,
         Err(e) => {
             log::warn!("Failed to parse extra_env as JSON: {e}");
-            return;
+            None
         }
-    };
-    for (k, v) in extra_map {
-        env.insert(k, v);
+    }
+}
+
+/// Reject extraEnv on provider types that do not store runtime settings in env.
+fn ensure_extra_env_supported(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+) -> Result<(), AppError> {
+    if request.extra_env.is_none() {
+        return Ok(());
+    }
+
+    match app_type {
+        AppType::Claude | AppType::ClaudeDesktop | AppType::Gemini => Ok(()),
+        _ => Err(AppError::InvalidInput(format!(
+            "extraEnv is currently only supported for Claude, ClaudeDesktop and Gemini provider deeplinks, got '{}'",
+            app_type.as_str()
+        ))),
+    }
+}
+
+fn is_protected_env_key(app_type: &AppType, key: &str) -> bool {
+    match app_type {
+        AppType::Claude | AppType::ClaudeDesktop => matches!(
+            key,
+            "ANTHROPIC_AUTH_TOKEN"
+                | "ANTHROPIC_API_KEY"
+                | "ANTHROPIC_BASE_URL"
+                | "OPENAI_API_KEY"
+                | "OPENROUTER_API_KEY"
+        ),
+        AppType::Gemini => matches!(key, "GEMINI_API_KEY" | "GOOGLE_GEMINI_BASE_URL"),
+        _ => false,
+    }
+}
+
+fn is_url_env_key(app_type: &AppType, key: &str) -> bool {
+    match app_type {
+        AppType::Claude | AppType::ClaudeDesktop => key == "ANTHROPIC_BASE_URL",
+        AppType::Gemini => key == "GOOGLE_GEMINI_BASE_URL",
+        _ => false,
+    }
+}
+
+fn normalize_extra_env_value(app_type: &AppType, key: &str, value: &Value) -> Option<Value> {
+    if matches!(app_type, AppType::Gemini) && !is_valid_gemini_env_key(key) {
+        log::warn!(
+            "Skipping extra_env key '{key}': Gemini env keys must use only letters, numbers, and underscores"
+        );
+        return None;
+    }
+
+    if is_protected_env_key(app_type, key) {
+        let Some(raw) = value.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+            log::warn!(
+                "Skipping extra_env key '{key}': protected env fields must be non-empty strings"
+            );
+            return None;
+        };
+        if is_url_env_key(app_type, key) {
+            if let Err(err) = validate_url(raw, key) {
+                log::warn!("Skipping extra_env key '{key}': {err}");
+                return None;
+            }
+        }
+        return Some(Value::String(raw.to_string()));
+    }
+
+    match value {
+        Value::String(s) => Some(Value::String(s.clone())),
+        Value::Bool(b) => Some(Value::String(b.to_string())),
+        Value::Number(n) => Some(Value::String(n.to_string())),
+        Value::Null => {
+            log::warn!("Skipping extra_env key '{key}': null is not a valid env value");
+            None
+        }
+        Value::Array(_) | Value::Object(_) => {
+            log::warn!("Skipping extra_env key '{key}': arrays/objects are not valid env values");
+            None
+        }
+    }
+}
+
+/// Merge extra environment variables into settings_config.env.
+fn merge_extra_env(
+    env: &mut Map<String, Value>,
+    extra_env: &Map<String, Value>,
+    app_type: AppType,
+) {
+    for (key, value) in extra_env {
+        if let Some(normalized) = normalize_extra_env_value(&app_type, key, value) {
+            env.insert(key.clone(), normalized);
+        }
     }
 }
 
@@ -385,7 +562,10 @@ requires_openai_auth = true
 }
 
 /// Build Gemini settings configuration
-fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+fn build_gemini_settings(
+    request: &DeepLinkImportRequest,
+    extra_env: Option<&Map<String, Value>>,
+) -> serde_json::Value {
     let mut env = serde_json::Map::new();
     env.insert("GEMINI_API_KEY".to_string(), json!(request.api_key));
     env.insert(
@@ -396,6 +576,10 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     // Add model if provided
     if let Some(model) = &request.model {
         env.insert("GEMINI_MODEL".to_string(), json!(model));
+    }
+
+    if let Some(extra_env) = extra_env {
+        merge_extra_env(&mut env, extra_env, AppType::Gemini);
     }
 
     json!({ "env": env })
