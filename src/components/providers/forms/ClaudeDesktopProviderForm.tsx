@@ -101,10 +101,13 @@ export interface ClaudeDesktopProviderFormProps {
 }
 
 type RouteRow = {
+  rowId: string;
   route: string;
   model: string;
   supports1m: boolean;
 };
+
+type RouteRowValues = Omit<RouteRow, "rowId">;
 
 const CLAUDE_ROUTE_PREFIX = "claude-";
 const ANTHROPIC_CLAUDE_ROUTE_PREFIX = "anthropic/claude-";
@@ -164,14 +167,23 @@ function desktopRouteIdFromModel(model: string) {
   return desktopRouteIdFromInput(suffix);
 }
 
+function createRouteRow(row: RouteRowValues): RouteRow {
+  return {
+    rowId: crypto.randomUUID(),
+    ...row,
+  };
+}
+
 function initialRouteRows(
   routes: Record<string, ClaudeDesktopModelRoute> | undefined,
 ): RouteRow[] {
-  return Object.entries(routes ?? {}).map(([route, value]) => ({
-    route,
-    model: value.model ?? "",
-    supports1m: value.supports1m ?? false,
-  }));
+  return Object.entries(routes ?? {}).map(([route, value]) =>
+    createRouteRow({
+      route,
+      model: value.model ?? "",
+      supports1m: value.supports1m ?? false,
+    }),
+  );
 }
 
 function isClaudeSafeRoute(route: string) {
@@ -188,23 +200,34 @@ function defaultRouteRows(
   defaults: ClaudeDesktopDefaultRoute[],
   defaultModel: string,
 ): RouteRow[] {
-  return defaults.map((route, index) => ({
-    route: route.routeId,
-    model: index === 0 ? defaultModel : "",
-    supports1m: route.supports1m,
-  }));
+  return defaults.map((route, index) =>
+    createRouteRow({
+      route: route.routeId,
+      model: index === 0 ? defaultModel : "",
+      supports1m: route.supports1m,
+    }),
+  );
 }
 
 function nextRouteRow(current: RouteRow[], defaults: RouteRow[]): RouteRow {
-  return (
+  const defaultRow =
     defaults.find(
       (route) => !current.some((existing) => existing.route === route.route),
-    ) ?? {
-      route: "",
-      model: "",
-      supports1m: true,
-    }
-  );
+    ) ?? null;
+
+  if (defaultRow) {
+    return createRouteRow({
+      route: defaultRow.route,
+      model: defaultRow.model,
+      supports1m: defaultRow.supports1m,
+    });
+  }
+
+  return createRouteRow({
+    route: "",
+    model: "",
+    supports1m: true,
+  });
 }
 
 export function ClaudeDesktopProviderForm({
@@ -371,11 +394,13 @@ export function ClaudeDesktopProviderForm({
     setMode(preset.mode);
     if (preset.mode === "proxy" && preset.modelRoutes) {
       setRoutes(
-        preset.modelRoutes.map((r) => ({
-          route: r.routeId,
-          model: r.upstreamModel,
-          supports1m: r.supports1m,
-        })),
+        preset.modelRoutes.map((r) =>
+          createRouteRow({
+            route: r.routeId,
+            model: r.upstreamModel,
+            supports1m: r.supports1m,
+          }),
+        ),
       );
     } else {
       setRoutes([]);
@@ -412,7 +437,7 @@ export function ClaudeDesktopProviderForm({
     applyDesktopPreset(entry.preset);
   };
 
-  const updateRoute = (index: number, patch: Partial<RouteRow>) => {
+  const updateRoute = (index: number, patch: Partial<RouteRowValues>) => {
     setRoutes((current) =>
       current.map((row, i) => (i === index ? { ...row, ...patch } : row)),
     );
@@ -825,7 +850,7 @@ export function ClaudeDesktopProviderForm({
               </div>
               {routes.map((route, index) => (
                 <div
-                  key={`${route.route}-${index}`}
+                  key={route.rowId}
                   className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_92px_36px]"
                 >
                   <div className="flex">
@@ -935,11 +960,11 @@ export function ClaudeDesktopProviderForm({
                     () =>
                       setRoutes((current) => [
                         ...current,
-                        {
+                        createRouteRow({
                           route: "",
                           model: "",
                           supports1m: false,
-                        },
+                        }),
                       ]),
                     t("claudeDesktop.addModel", { defaultValue: "添加模型" }),
                   )}
@@ -949,7 +974,7 @@ export function ClaudeDesktopProviderForm({
                   <div className="space-y-2">
                     {routes.map((route, index) => (
                       <div
-                        key={`${route.route}-${index}`}
+                        key={route.rowId}
                         className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_92px_36px]"
                       >
                         <div className="flex gap-1">
