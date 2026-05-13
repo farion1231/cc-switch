@@ -7,6 +7,7 @@ use super::{
     body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
+    json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{
@@ -108,6 +109,40 @@ impl RequestForwarder {
         }
     }
 
+    async fn record_success_result(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        used_half_open_permit: bool,
+    ) {
+        if used_half_open_permit {
+            if let Err(e) = self
+                .router
+                .record_result(provider_id, app_type, true, true, None)
+                .await
+            {
+                log::warn!(
+                    "[{app_type}] 记录 Provider 成功结果失败: provider_id={provider_id}, error={e}"
+                );
+            }
+            return;
+        }
+
+        let router = self.router.clone();
+        let provider_id = provider_id.to_string();
+        let app_type = app_type.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = router
+                .record_result(&provider_id, &app_type, false, true, None)
+                .await
+            {
+                log::warn!(
+                    "[{app_type}] 异步记录 Provider 成功结果失败: provider_id={provider_id}, error={e}"
+                );
+            }
+        });
+    }
+
     /// 转发请求（带故障转移）
     ///
     /// # Arguments
@@ -206,16 +241,9 @@ impl RequestForwarder {
                 .await
             {
                 Ok((response, claude_api_format)) => {
-                    // 成功：记录成功并更新熔断器
-                    let _ = self
-                        .router
-                        .record_result(
-                            &provider.id,
-                            app_type_str,
-                            used_half_open_permit,
-                            true,
-                            None,
-                        )
+                    // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
+                    // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
+                    self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
                         .await;
 
                     // 更新当前应用类型使用的 provider
@@ -338,17 +366,12 @@ impl RequestForwarder {
                                 {
                                     Ok((response, claude_api_format)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
-                                        // 记录成功
-                                        let _ = self
-                                            .router
-                                            .record_result(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                                true,
-                                                None,
-                                            )
-                                            .await;
+                                        self.record_success_result(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await;
 
                                         // 更新当前应用类型使用的 provider
                                         {
@@ -538,16 +561,12 @@ impl RequestForwarder {
                             {
                                 Ok((response, claude_api_format)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
-                                    let _ = self
-                                        .router
-                                        .record_result(
-                                            &provider.id,
-                                            app_type_str,
-                                            used_half_open_permit,
-                                            true,
-                                            None,
-                                        )
-                                        .await;
+                                    self.record_success_result(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
 
                                     {
                                         let mut current_providers =
@@ -764,6 +783,7 @@ impl RequestForwarder {
     }
 
     /// 转发单个请求（使用适配器）
+    #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
         app_type: &AppType,
@@ -1007,7 +1027,15 @@ impl RequestForwarder {
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
+        let filtered_body = prepare_upstream_request_body(request_body);
+        log_prompt_cache_trace(
+            app_type,
+            provider,
+            &effective_endpoint,
+            resolved_claude_api_format.as_deref(),
+            &filtered_body,
+            self.session_client_provided,
+        );
         let force_identity_encoding = needs_transform
             || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
@@ -1405,12 +1433,14 @@ impl RequestForwarder {
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
         log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
-        if let Ok(body_str) = serde_json::to_string(&filtered_body) {
-            log::debug!(
-                "[{tag}] >>> 请求体内容 ({}字节): {}",
-                body_str.len(),
-                body_str
-            );
+        if log::log_enabled!(log::Level::Debug) {
+            if let Ok(body_str) = serde_json::to_string(&filtered_body) {
+                log::debug!(
+                    "[{tag}] >>> 请求体内容 ({}字节): {}",
+                    body_str.len(),
+                    body_str
+                );
+            }
         }
 
         // 确定超时
@@ -1975,6 +2005,65 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     format!("{truncated}...")
 }
 
+fn prepare_upstream_request_body(request_body: Value) -> Value {
+    canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
+}
+
+fn log_prompt_cache_trace(
+    app_type: &AppType,
+    provider: &Provider,
+    endpoint: &str,
+    api_format: Option<&str>,
+    body: &Value,
+    session_client_provided: bool,
+) {
+    if !log::log_enabled!(log::Level::Debug) {
+        return;
+    }
+
+    let prompt_cache_key = body
+        .get("prompt_cache_key")
+        .and_then(|value| value.as_str())
+        .map(|key| format!("present(len={})", key.len()))
+        .unwrap_or_else(|| "absent".to_string());
+    let store = body
+        .get("store")
+        .map(value_for_log)
+        .unwrap_or_else(|| "absent".to_string());
+    let stream = body
+        .get("stream")
+        .map(value_for_log)
+        .unwrap_or_else(|| "absent".to_string());
+
+    log::debug!(
+        "[CacheTrace] app={}, provider={}, endpoint={}, api_format={}, session_client_provided={}, prompt_cache_key={}, store={}, stream={}, instructions_hash={}, tools_hash={}, input_hash={}, include_hash={}, body_hash={}",
+        app_type.as_str(),
+        provider.id,
+        endpoint,
+        api_format.unwrap_or("native"),
+        session_client_provided,
+        prompt_cache_key,
+        store,
+        stream,
+        short_value_hash(body.get("instructions")),
+        short_value_hash(body.get("tools")),
+        short_value_hash(body.get("input")),
+        short_value_hash(body.get("include")),
+        short_value_hash(Some(body)),
+    );
+}
+
+fn value_for_log(value: &Value) -> String {
+    match value {
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Null => "null".to_string(),
+        Value::Array(values) => format!("array(len={})", values.len()),
+        Value::Object(values) => format!("object(len={})", values.len()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2065,6 +2154,86 @@ mod tests {
         let summary = summarize_text_for_log("line1\n\n line2   line3", 12);
 
         assert_eq!(summary, "line1 line2...");
+    }
+
+    #[test]
+    fn canonical_json_sorts_object_keys_for_cache_trace_hashes() {
+        let left = json!({
+            "tools": [
+                {
+                    "parameters": {
+                        "properties": {
+                            "b": {"type": "string"},
+                            "a": {"type": "number"}
+                        },
+                        "type": "object"
+                    },
+                    "name": "lookup"
+                }
+            ]
+        });
+        let right = json!({
+            "tools": [
+                {
+                    "name": "lookup",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "a": {"type": "number"},
+                            "b": {"type": "string"}
+                        }
+                    }
+                }
+            ]
+        });
+
+        assert_eq!(
+            crate::proxy::json_canonical::canonical_json_string(&left),
+            crate::proxy::json_canonical::canonical_json_string(&right)
+        );
+        assert_eq!(
+            short_value_hash(Some(&left)),
+            short_value_hash(Some(&right))
+        );
+    }
+
+    #[test]
+    fn prepare_upstream_request_body_filters_private_fields_and_canonicalizes_order() {
+        let body = json!({
+            "z": 1,
+            "_internal": "drop",
+            "tools": [
+                {
+                    "name": "lookup",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "_id": {
+                                "_private_note": "drop",
+                                "type": "string"
+                            },
+                            "b": {"type": "number"},
+                            "a": {"type": "string"}
+                        }
+                    }
+                }
+            ],
+            "a": 2
+        });
+
+        let prepared = prepare_upstream_request_body(body);
+
+        assert!(prepared.get("_internal").is_none());
+        assert!(prepared["tools"][0]["parameters"]["properties"]
+            .get("_id")
+            .is_some());
+        assert!(prepared["tools"][0]["parameters"]["properties"]["_id"]
+            .get("_private_note")
+            .is_none());
+        assert_eq!(
+            serde_json::to_string(&prepared).unwrap(),
+            r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
+        );
     }
 
     #[test]

@@ -154,37 +154,37 @@ pub fn transform_claude_request_for_api_format(
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
             })
-    } else if is_codex_oauth {
+    } else {
         session_id
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(ToString::to_string)
-    } else {
-        None
     };
 
     let explicit_cache_key = provider
         .meta
         .as_ref()
         .and_then(|m| m.prompt_cache_key.as_deref());
-    let cache_key = if is_codex_oauth {
-        explicit_cache_key
-            .or(session_cache_key.as_deref())
-            .unwrap_or(&provider.id)
+    let (cache_key, cache_key_source) = if let Some(key) = explicit_cache_key {
+        (Some(key), "explicit")
+    } else if let Some(key) = session_cache_key.as_deref() {
+        (Some(key), "session")
     } else {
-        session_cache_key
-            .as_deref()
-            .or(explicit_cache_key)
-            .unwrap_or(&provider.id)
+        (None, "none")
     };
     match api_format {
         "openai_responses" => {
+            log::debug!(
+                "[Cache] OpenAI Responses prompt_cache_key source={cache_key_source}, provider={}, codex_oauth={is_codex_oauth}, has_key={}",
+                provider.id,
+                cache_key.is_some()
+            );
             // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
             // + include: ["reasoning.encrypted_content"]，由 transform 层统一处理。
             let codex_fast_mode = provider.codex_fast_mode_enabled();
             super::transform_responses::anthropic_to_responses(
                 body,
-                Some(cache_key),
+                cache_key,
                 is_codex_oauth,
                 codex_fast_mode,
             )
@@ -1445,7 +1445,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_claude_request_for_codex_oauth_without_session_falls_back_to_provider_id() {
+    fn test_transform_claude_request_for_codex_oauth_without_session_omits_cache_key() {
         let provider = create_provider_with_meta(
             json!({
                 "env": {
@@ -1473,7 +1473,69 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(transformed["prompt_cache_key"], provider.id);
+        assert!(transformed.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_responses_uses_session_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.example.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            Some("claude-session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "claude-session-123");
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_responses_without_session_omits_cache_key() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.example.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(transformed.get("prompt_cache_key").is_none());
     }
 
     #[test]

@@ -3,7 +3,9 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{atomic_write, delete_file, get_home_dir, read_json_file, write_json_file};
+#[cfg(any(target_os = "macos", windows))]
+use crate::config::get_home_dir;
+use crate::config::{atomic_write, delete_file, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID;
 use crate::error::AppError;
@@ -12,7 +14,9 @@ use crate::provider::{ClaudeDesktopMode, Provider};
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
 
+#[cfg(any(target_os = "macos", windows, test))]
 const CONFIG_FILE: &str = "claude_desktop_config.json";
+#[cfg(any(target_os = "macos", windows, test))]
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
@@ -586,15 +590,12 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     let routes = proxy_model_routes(provider)?;
-    let route = routes
-        .iter()
-        .find(|r| r.route_id == requested)
-        .or_else(|| {
-            let base = strip_one_m_context_suffix(&requested);
-            routes
-                .iter()
-                .find(|r| strip_one_m_context_suffix(&r.route_id) == base)
-        });
+    let route = routes.iter().find(|r| r.route_id == requested).or_else(|| {
+        let base = strip_one_m_context_suffix(&requested);
+        routes
+            .iter()
+            .find(|r| strip_one_m_context_suffix(&r.route_id) == base)
+    });
     let Some(route) = route else {
         return Err(AppError::localized(
             "claude_desktop.provider.route_unknown",
@@ -628,7 +629,9 @@ fn apply_provider_to_paths(
     }
 
     validate_provider(provider)?;
-    with_rollback(paths, |paths| apply_provider_to_paths_inner(db, provider, paths))
+    with_rollback(paths, |paths| {
+        apply_provider_to_paths_inner(db, provider, paths)
+    })
 }
 
 fn restore_official_at_paths(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
@@ -645,9 +648,7 @@ where
         Err(err) => match restore_snapshots(&snapshots) {
             Ok(()) => Err(err),
             Err(rollback_err) => {
-                log::error!(
-                    "Failed to rollback Claude Desktop config after error: {rollback_err}"
-                );
+                log::error!("Failed to rollback Claude Desktop config after error: {rollback_err}");
                 Err(AppError::Message(format!(
                     "{err}; rollback failed: {rollback_err}"
                 )))
@@ -894,6 +895,7 @@ fn is_supported_platform() -> bool {
     cfg!(any(target_os = "macos", windows))
 }
 
+#[allow(clippy::needless_return)]
 fn current_platform_paths() -> Result<ClaudeDesktopPaths, AppError> {
     #[cfg(target_os = "macos")]
     {
@@ -960,6 +962,7 @@ fn pick_windows_claude_dir(local_app_data: &Path, threep: bool) -> Option<PathBu
     candidates.into_iter().next()
 }
 
+#[cfg(any(target_os = "macos", windows, test))]
 fn paths_from_dirs(normal_dir: PathBuf, threep_dir: PathBuf) -> ClaudeDesktopPaths {
     let config_library_path = threep_dir.join(CONFIG_LIBRARY_DIR);
     let profile_path = config_library_path.join(format!("{PROFILE_ID}.json"));
