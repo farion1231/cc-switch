@@ -507,10 +507,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
 
     // 5 小时窗口限额
     if let Some(q5h) = data.get("quota_5_hour") {
-        let usage_pct = q5h
-            .get("usage_percentage")
-            .and_then(parse_f64)
-            .unwrap_or(0.0);
+        let usage_pct = q5h.get("usage_percentage").and_then(parse_f64).unwrap_or(0.0);
         let resets_at = q5h.get("resets_at").and_then(|v| v.as_str()).map(String::from);
         let used_usd = q5h.get("used_value_usd").and_then(parse_f64);
         let max_usd = q5h.get("max_value_usd").and_then(parse_f64);
@@ -525,10 +522,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
 
     // 7 天窗口限额
     if let Some(q7d) = data.get("quota_7_day") {
-        let usage_pct = q7d
-            .get("usage_percentage")
-            .and_then(parse_f64)
-            .unwrap_or(0.0);
+        let usage_pct = q7d.get("usage_percentage").and_then(parse_f64).unwrap_or(0.0);
         let resets_at = q7d.get("resets_at").and_then(|v| v.as_str()).map(String::from);
         let used_usd = q7d.get("used_value_usd").and_then(parse_f64);
         let max_usd = q7d.get("max_value_usd").and_then(parse_f64);
