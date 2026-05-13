@@ -131,5 +131,4 @@ mod tests {
         let value: i64 = conn.query_row(&sql, [], |r| r.get(0)).unwrap();
         assert_eq!(value, 100);
     }
-
 }
