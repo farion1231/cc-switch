@@ -180,13 +180,8 @@ impl RequestContext {
             .map(|pq| pq.as_str())
             .unwrap_or(uri.path());
 
-        self.request_model = endpoint
-            .split('/')
-            .find(|s| s.starts_with("models/"))
-            .and_then(|s| s.strip_prefix("models/"))
-            .map(|s| s.split(':').next().unwrap_or(s))
-            .unwrap_or("unknown")
-            .to_string();
+        self.request_model =
+            extract_gemini_model_from_path(endpoint).unwrap_or_else(|| "unknown".to_string());
 
         self
     }
@@ -268,5 +263,80 @@ impl RequestContext {
                 idle_timeout: 0,
             }
         }
+    }
+}
+
+/// Pull the Gemini model name out of an API path.
+///
+/// Accepts forms like `/v1beta/models/gemini-pro:generateContent`,
+/// `/v1/models/gemini-1.5-flash`, `gemini/v1beta/models/<model>:streamGenerateContent`.
+/// Returns `None` when no `models/<name>` segment is present.
+pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
+    let segments: Vec<&str> = endpoint.split('/').collect();
+    segments
+        .iter()
+        .position(|s| *s == "models")
+        .and_then(|i| segments.get(i + 1).copied())
+        .map(|s| s.split(':').next().unwrap_or(s))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_gemini_model_from_path;
+
+    #[test]
+    fn extract_model_with_action() {
+        assert_eq!(
+            extract_gemini_model_from_path("/v1beta/models/gemini-pro:generateContent").as_deref(),
+            Some("gemini-pro"),
+        );
+    }
+
+    #[test]
+    fn extract_model_with_dotted_version() {
+        assert_eq!(
+            extract_gemini_model_from_path("/v1beta/models/gemini-1.5-flash:streamGenerateContent")
+                .as_deref(),
+            Some("gemini-1.5-flash"),
+        );
+    }
+
+    #[test]
+    fn extract_model_without_action() {
+        assert_eq!(
+            extract_gemini_model_from_path("/v1/models/gemini-1.5-pro").as_deref(),
+            Some("gemini-1.5-pro"),
+        );
+    }
+
+    #[test]
+    fn extract_model_with_proxy_prefix() {
+        assert_eq!(
+            extract_gemini_model_from_path("/gemini/v1beta/models/gemini-2.0-flash:countTokens")
+                .as_deref(),
+            Some("gemini-2.0-flash"),
+        );
+    }
+
+    #[test]
+    fn extract_model_with_query_string() {
+        assert_eq!(
+            extract_gemini_model_from_path("/v1beta/models/gemini-pro:generateContent?key=abc")
+                .as_deref(),
+            Some("gemini-pro"),
+        );
+    }
+
+    #[test]
+    fn extract_model_missing_segment() {
+        assert_eq!(extract_gemini_model_from_path("/v1beta/operations"), None);
+    }
+
+    #[test]
+    fn extract_model_trailing_models_segment() {
+        // `/v1beta/models` (list endpoint) has no following segment → None.
+        assert_eq!(extract_gemini_model_from_path("/v1beta/models"), None);
     }
 }
