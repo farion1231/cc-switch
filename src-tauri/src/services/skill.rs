@@ -19,6 +19,8 @@ use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
 
+const MAX_SKILL_NOTES_LENGTH: usize = 1000;
+
 // ========== 数据结构 ==========
 
 /// Skill 同步方式
@@ -761,6 +763,7 @@ impl SkillService {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            notes: None,
         };
 
         // 保存到数据库
@@ -1099,6 +1102,7 @@ impl SkillService {
             installed_at: skill.installed_at,
             content_hash: new_hash,
             updated_at: chrono::Utc::now().timestamp(),
+            notes: skill.notes.clone(),
         };
 
         db.save_skill(&updated_skill)?;
@@ -1377,6 +1381,28 @@ impl SkillService {
         Ok(())
     }
 
+    /// 更新 Skill 备注
+    pub fn update_notes(db: &Arc<Database>, id: &str, notes: Option<String>) -> Result<()> {
+        let trimmed = notes
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty());
+
+        if let Some(notes) = trimmed.as_deref() {
+            if notes.chars().count() > MAX_SKILL_NOTES_LENGTH {
+                return Err(anyhow!(
+                    "Skill notes must be at most {MAX_SKILL_NOTES_LENGTH} characters"
+                ));
+            }
+        }
+
+        if !db.update_skill_notes(id, trimmed)? {
+            return Err(anyhow!("Skill not found: {id}"));
+        }
+
+        log::info!("Skill {id} 备注已更新");
+        Ok(())
+    }
+
     /// 扫描未管理的 Skills
     ///
     /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills
@@ -1533,6 +1559,7 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                notes: None,
             };
 
             // 保存到数据库
@@ -2591,6 +2618,7 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                notes: None,
             };
 
             // 保存到数据库
@@ -2978,6 +3006,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            notes: None,
         };
 
         db.save_skill(&skill)?;

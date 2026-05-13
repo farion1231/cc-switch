@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Sparkles,
@@ -6,8 +6,11 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Pencil,
 } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -63,6 +66,8 @@ function formatSkillBackupDate(unixSeconds: number): string {
     ? String(unixSeconds)
     : date.toLocaleString();
 }
+
+const SKILL_NOTES_MAX_LENGTH = 1000;
 
 const UnifiedSkillsPanel = React.forwardRef<
   UnifiedSkillsPanelHandle,
@@ -497,6 +502,88 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   isLast,
 }) => {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [isEditingNotes, setIsEditingNotes] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const isSavingNotesRef = useRef(false);
+  const shouldSkipSaveOnBlurRef = useRef(false);
+
+  const updateNotesMutation = useMutation({
+    mutationFn: ({ id, notes }: { id: string; notes: string | null }) =>
+      skillsApi.updateNotes(id, notes),
+    onMutate: async ({ id, notes }) => {
+      await queryClient.cancelQueries({ queryKey: ["skills", "installed"] });
+      const previous = queryClient.getQueryData<InstalledSkill[]>([
+        "skills",
+        "installed",
+      ]);
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (old) =>
+          old?.map((s) =>
+            s.id === id ? { ...s, notes: notes ?? undefined } : s,
+          ) ?? [],
+      );
+      return { previous };
+    },
+    onError: (error, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["skills", "installed"], context.previous);
+      }
+      toast.error(t("common.error"), { description: String(error) });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    },
+  });
+
+  const handleStartEdit = useCallback(() => {
+    setNotesDraft(skill.notes ?? "");
+    shouldSkipSaveOnBlurRef.current = false;
+    setIsEditingNotes(true);
+  }, [skill.notes]);
+
+  const handleSaveNotes = useCallback(() => {
+    if (shouldSkipSaveOnBlurRef.current) {
+      shouldSkipSaveOnBlurRef.current = false;
+      return;
+    }
+    if (isSavingNotesRef.current || updateNotesMutation.isPending) {
+      return;
+    }
+
+    const trimmed = notesDraft.trim();
+    const newNotes = trimmed || null;
+    if (newNotes === (skill.notes ?? null)) {
+      setIsEditingNotes(false);
+      return;
+    }
+
+    isSavingNotesRef.current = true;
+    setIsEditingNotes(false);
+    updateNotesMutation.mutate(
+      { id: skill.id, notes: newNotes },
+      {
+        onSettled: () => {
+          isSavingNotesRef.current = false;
+        },
+      },
+    );
+  }, [notesDraft, skill.notes, skill.id, updateNotesMutation]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        (e.currentTarget as HTMLElement).blur();
+      } else if (e.key === "Escape") {
+        shouldSkipSaveOnBlurRef.current = true;
+        setIsEditingNotes(false);
+        (e.currentTarget as HTMLElement).blur();
+      }
+    },
+    [],
+  );
 
   const openDocs = async () => {
     if (!skill.readmeUrl) return;
@@ -549,6 +636,45 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           >
             {skill.description}
           </p>
+        )}
+        {/* 备注区域 */}
+        {isEditingNotes ? (
+          <div className="mt-1 flex items-center gap-1">
+            <Input
+              autoFocus
+              value={notesDraft}
+              onChange={(e) =>
+                setNotesDraft(e.target.value.slice(0, SKILL_NOTES_MAX_LENGTH))
+              }
+              onBlur={handleSaveNotes}
+              onKeyDown={handleKeyDown}
+              placeholder={t("skills.notesPlaceholder")}
+              maxLength={SKILL_NOTES_MAX_LENGTH}
+              disabled={updateNotesMutation.isPending}
+              className="h-6 text-xs px-2 py-0 max-w-xs"
+            />
+          </div>
+        ) : skill.notes ? (
+          <div
+            className="mt-1 flex items-center gap-1 cursor-pointer group/notes"
+            onClick={handleStartEdit}
+          >
+            <p className="text-xs text-muted-foreground line-clamp-1">
+              {skill.notes}
+            </p>
+            <Pencil
+              size={10}
+              className="text-muted-foreground/40 group-hover/notes:text-muted-foreground flex-shrink-0 opacity-0 group-hover/notes:opacity-100 transition-opacity"
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={handleStartEdit}
+            className="mt-1 text-xs text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+          >
+            + {t("skills.addNotes")}
+          </button>
         )}
       </div>
 

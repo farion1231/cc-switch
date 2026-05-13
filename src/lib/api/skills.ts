@@ -36,6 +36,7 @@ export interface InstalledSkill {
   installedAt: number;
   contentHash?: string;
   updatedAt: number;
+  notes?: string;
 }
 
 export interface SkillUninstallResult {
@@ -175,6 +176,11 @@ export const skillsApi = {
   /** 切换 Skill 的应用启用状态 */
   async toggleApp(id: string, app: AppId, enabled: boolean): Promise<boolean> {
     return await invoke("toggle_skill_app", { id, app, enabled });
+  },
+
+  /** 更新 Skill 备注 */
+  async updateNotes(id: string, notes: string | null): Promise<boolean> {
+    return await invoke("update_skill_notes", { id, notes });
   },
 
   /** 扫描未管理的 Skills */

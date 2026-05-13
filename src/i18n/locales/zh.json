@@ -1949,7 +1949,9 @@
       "successSingle": "技能 {{name}} 已安装",
       "successMultiple": "成功安装 {{count}} 个技能",
       "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
-    }
+    },
+    "addNotes": "添加备注",
+    "notesPlaceholder": "输入备注..."
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",
