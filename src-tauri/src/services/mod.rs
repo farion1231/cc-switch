@@ -14,6 +14,7 @@ pub mod session_usage_codex;
 pub mod session_usage_gemini;
 pub mod skill;
 pub mod speedtest;
+pub mod sql_helpers;
 pub mod stream_check;
 pub mod subscription;
 pub mod usage_cache;
@@ -35,5 +36,5 @@ pub use usage_cache::UsageCache;
 #[allow(unused_imports)]
 pub use usage_stats::{
     DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary,
+    RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };

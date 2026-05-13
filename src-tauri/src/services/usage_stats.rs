@@ -4,6 +4,7 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use crate::services::sql_helpers::fresh_input_sql;
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,39 @@ pub struct UsageSummary {
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
     pub success_rate: f32,
+    /// input + output + cache_creation + cache_read — the total tokens
+    /// actually processed by the model (including cache hits). Used as the
+    /// headline "real consumption" number in the usage hero.
+    pub real_total_tokens: u64,
+    /// cache_read / (input + cache_creation + cache_read). Range 0.0–1.0.
+    /// Reported as a fraction; multiply by 100 in UI for percentage display.
+    pub cache_hit_rate: f64,
+}
+
+/// Per-app-type usage summary used by the dashboard breakdown rail.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummaryByApp {
+    pub app_type: String,
+    pub summary: UsageSummary,
+}
+
+/// Helper: compute (real_total, hit_rate) from the four token counters.
+/// All inputs must already be cache-normalized (i.e. input excludes cache).
+fn derive_real_total_and_hit_rate(
+    fresh_input: u64,
+    output: u64,
+    cache_creation: u64,
+    cache_read: u64,
+) -> (u64, f64) {
+    let real_total = fresh_input + output + cache_creation + cache_read;
+    let cacheable_input = fresh_input + cache_creation + cache_read;
+    let hit_rate = if cacheable_input > 0 {
+        cache_read as f64 / cacheable_input as f64
+    } else {
+        0.0
+    };
+    (real_total, hit_rate)
 }
 
 /// 每日统计
@@ -451,6 +485,8 @@ impl Database {
             format!("WHERE {}", rollup_conditions.join(" AND "))
         };
 
+        let fresh_input_detail = fresh_input_sql("l");
+        let fresh_input_rollup = fresh_input_sql("");
         let sql = format!(
             "SELECT
                 COALESCE(d.total_requests, 0) + COALESCE(r.total_requests, 0),
@@ -463,17 +499,17 @@ impl Database {
             FROM
                 (SELECT
                     COUNT(*) as total_requests,
-                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-                    COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
-                    COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
+                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
+                    COALESCE(SUM({fresh_input_detail}), 0) as total_input_tokens,
+                    COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
+                    COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens,
+                    COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
                  FROM proxy_request_logs l {where_clause}) d,
                 (SELECT
                     COALESCE(SUM(request_count), 0) as total_requests,
                     COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as total_cost,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                    COALESCE(SUM({fresh_input_rollup}), 0) as total_input_tokens,
                     COALESCE(SUM(output_tokens), 0) as total_output_tokens,
                     COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
@@ -501,6 +537,13 @@ impl Database {
                 0.0
             };
 
+            let (real_total_tokens, cache_hit_rate) = derive_real_total_and_hit_rate(
+                total_input_tokens as u64,
+                total_output_tokens as u64,
+                total_cache_creation_tokens as u64,
+                total_cache_read_tokens as u64,
+            );
+
             Ok(UsageSummary {
                 total_requests: total_requests as u64,
                 total_cost: format!("{total_cost:.6}"),
@@ -509,10 +552,144 @@ impl Database {
                 total_cache_creation_tokens: total_cache_creation_tokens as u64,
                 total_cache_read_tokens: total_cache_read_tokens as u64,
                 success_rate,
+                real_total_tokens,
+                cache_hit_rate,
             })
         })?;
 
         Ok(result)
+    }
+
+    /// 按 app_type 维度拆分的使用量汇总，用于 Dashboard 的分应用展示条。
+    /// 返回所有有数据的 app_type，按 real_total_tokens 降序。
+    ///
+    /// Single SQL with `GROUP BY app_type` — avoids the N+1 round-trip that
+    /// would result from invoking `get_usage_summary` once per app_type.
+    pub fn get_usage_summary_by_app(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<Vec<UsageSummaryByApp>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let mut detail_conditions = vec![effective_usage_log_filter("l")];
+        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(start) = start_date {
+            detail_conditions.push("l.created_at >= ?".to_string());
+            detail_params.push(Box::new(start));
+        }
+        if let Some(end) = end_date {
+            detail_conditions.push("l.created_at <= ?".to_string());
+            detail_params.push(Box::new(end));
+        }
+        let detail_where = format!("WHERE {}", detail_conditions.join(" AND "));
+
+        let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
+        let mut rollup_conditions: Vec<String> = Vec::new();
+        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        push_rollup_date_filters(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "date",
+            &rollup_bounds,
+        );
+        let rollup_where = if rollup_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", rollup_conditions.join(" AND "))
+        };
+
+        let fresh_input_detail = fresh_input_sql("l");
+        let fresh_input_rollup = fresh_input_sql("");
+
+        let sql = format!(
+            "SELECT app_type,
+                SUM(req_count) as req_count,
+                SUM(cost) as cost,
+                SUM(input_t) as input_t,
+                SUM(output_t) as output_t,
+                SUM(cache_create_t) as cache_create_t,
+                SUM(cache_read_t) as cache_read_t,
+                SUM(success_count) as success_count
+            FROM (
+                SELECT l.app_type,
+                    COUNT(*) as req_count,
+                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as cost,
+                    COALESCE(SUM({fresh_input_detail}), 0) as input_t,
+                    COALESCE(SUM(l.output_tokens), 0) as output_t,
+                    COALESCE(SUM(l.cache_creation_tokens), 0) as cache_create_t,
+                    COALESCE(SUM(l.cache_read_tokens), 0) as cache_read_t,
+                    COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
+                FROM proxy_request_logs l {detail_where}
+                GROUP BY l.app_type
+                UNION ALL
+                SELECT app_type,
+                    COALESCE(SUM(request_count), 0),
+                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
+                    COALESCE(SUM({fresh_input_rollup}), 0),
+                    COALESCE(SUM(output_tokens), 0),
+                    COALESCE(SUM(cache_creation_tokens), 0),
+                    COALESCE(SUM(cache_read_tokens), 0),
+                    COALESCE(SUM(success_count), 0)
+                FROM usage_daily_rollups {rollup_where}
+                GROUP BY app_type
+            )
+            GROUP BY app_type"
+        );
+
+        let mut combined: Vec<Box<dyn rusqlite::ToSql>> = detail_params;
+        combined.extend(rollup_params);
+        let refs: Vec<&dyn rusqlite::ToSql> = combined.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(refs.as_slice(), |row| {
+            let app_type: String = row.get(0)?;
+            let total_requests: i64 = row.get(1)?;
+            let total_cost: f64 = row.get(2)?;
+            let total_input_tokens: i64 = row.get(3)?;
+            let total_output_tokens: i64 = row.get(4)?;
+            let total_cache_creation_tokens: i64 = row.get(5)?;
+            let total_cache_read_tokens: i64 = row.get(6)?;
+            let success_count: i64 = row.get(7)?;
+
+            let success_rate = if total_requests > 0 {
+                (success_count as f32 / total_requests as f32) * 100.0
+            } else {
+                0.0
+            };
+            let (real_total_tokens, cache_hit_rate) = derive_real_total_and_hit_rate(
+                total_input_tokens as u64,
+                total_output_tokens as u64,
+                total_cache_creation_tokens as u64,
+                total_cache_read_tokens as u64,
+            );
+
+            Ok(UsageSummaryByApp {
+                app_type,
+                summary: UsageSummary {
+                    total_requests: total_requests as u64,
+                    total_cost: format!("{total_cost:.6}"),
+                    total_input_tokens: total_input_tokens as u64,
+                    total_output_tokens: total_output_tokens as u64,
+                    total_cache_creation_tokens: total_cache_creation_tokens as u64,
+                    total_cache_read_tokens: total_cache_read_tokens as u64,
+                    success_rate,
+                    real_total_tokens,
+                    cache_hit_rate,
+                },
+            })
+        })?;
+
+        let mut summaries = Vec::new();
+        for row in rows {
+            let item = row?;
+            if item.summary.total_requests == 0 && item.summary.real_total_tokens == 0 {
+                continue;
+            }
+            summaries.push(item);
+        }
+        summaries.sort_by(|a, b| b.summary.real_total_tokens.cmp(&a.summary.real_total_tokens));
+        Ok(summaries)
     }
 
     /// 获取每日趋势（滑动窗口，<=24h 按小时，>24h 按天，窗口与汇总一致）
@@ -551,13 +728,14 @@ impl Database {
             };
 
             let effective_filter = effective_usage_log_filter("l");
+            let fresh_input = fresh_input_sql("l");
             let sql = format!(
                 "SELECT
                     CAST((l.created_at - ?1) / ?3 AS INTEGER) as bucket_idx,
                     COUNT(*) as request_count,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
-                    COALESCE(SUM(l.input_tokens + l.output_tokens), 0) as total_tokens,
-                    COALESCE(SUM(l.input_tokens), 0) as total_input_tokens,
+                    COALESCE(SUM({fresh_input} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({fresh_input}), 0) as total_input_tokens,
                     COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
@@ -640,13 +818,14 @@ impl Database {
         };
 
         let effective_filter = effective_usage_log_filter("l");
+        let fresh_input = fresh_input_sql("l");
         let detail_sql = format!(
             "SELECT
                 date(l.created_at, 'unixepoch', 'localtime') as bucket_date,
                 COUNT(*) as request_count,
                 COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
-                COALESCE(SUM(l.input_tokens + l.output_tokens), 0) as total_tokens,
-                COALESCE(SUM(l.input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM({fresh_input} + l.output_tokens), 0) as total_tokens,
+                COALESCE(SUM({fresh_input}), 0) as total_input_tokens,
                 COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
                 COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
                 COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
@@ -708,13 +887,14 @@ impl Database {
             format!("WHERE {}", rollup_conditions.join(" AND "))
         };
 
+        let fresh_input_rollup = fresh_input_sql("");
         let rollup_sql = format!(
             "SELECT
                 date,
                 COALESCE(SUM(request_count), 0),
                 COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
-                COALESCE(SUM(input_tokens + output_tokens), 0),
-                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM({fresh_input_rollup} + output_tokens), 0),
+                COALESCE(SUM({fresh_input_rollup}), 0),
                 COALESCE(SUM(output_tokens), 0),
                 COALESCE(SUM(cache_creation_tokens), 0),
                 COALESCE(SUM(cache_read_tokens), 0)
@@ -845,6 +1025,8 @@ impl Database {
         // UNION detail logs + rollup data, then aggregate
         let detail_pname = provider_name_coalesce("l", "p");
         let rollup_pname = provider_name_coalesce("r", "p2");
+        let fresh_input_detail = fresh_input_sql("l");
+        let fresh_input_rollup = fresh_input_sql("r");
         let sql = format!(
             "SELECT
                 provider_id, app_type, provider_name,
@@ -859,7 +1041,7 @@ impl Database {
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
                     COUNT(*) as request_count,
-                    COALESCE(SUM(l.input_tokens + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
                     COALESCE(SUM(l.latency_ms), 0) as latency_sum
@@ -871,7 +1053,7 @@ impl Database {
                 SELECT r.provider_id, r.app_type,
                     {rollup_pname} as provider_name,
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM(r.input_tokens + r.output_tokens), 0),
+                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
                     COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
@@ -967,6 +1149,8 @@ impl Database {
         };
 
         // UNION detail logs + rollup data
+        let fresh_input_detail = fresh_input_sql("l");
+        let fresh_input_rollup = fresh_input_sql("r");
         let sql = format!(
             "SELECT
                 model,
@@ -976,16 +1160,16 @@ impl Database {
             FROM (
                 SELECT l.model,
                     COUNT(*) as request_count,
-                    COALESCE(SUM(l.input_tokens + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
                 FROM proxy_request_logs l
                 {detail_where}
                 GROUP BY l.model
                 UNION ALL
                 SELECT r.model,
-                    COALESCE(SUM(request_count), 0),
-                    COALESCE(SUM(input_tokens + output_tokens), 0),
-                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
+                    COALESCE(SUM(r.request_count), 0),
+                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
                 FROM usage_daily_rollups r
                 {rollup_where}
                 GROUP BY r.model
@@ -1962,10 +2146,18 @@ mod tests {
 
         let summary = db.get_usage_summary(None, None, None)?;
         assert_eq!(summary.total_requests, 4);
-        assert_eq!(summary.total_input_tokens, 650);
+        // codex-proxy contributes 100-10=90; gemini-proxy contributes 200-30=170
+        // (both cache-inclusive providers). claude-proxy=300, codex-session-only=50.
+        // 90 + 170 + 300 + 50 = 610.
+        assert_eq!(summary.total_input_tokens, 610);
         assert_eq!(summary.total_output_tokens, 125);
         assert_eq!(summary.total_cache_read_tokens, 60);
         assert_eq!(summary.total_cache_creation_tokens, 12);
+        // real_total = fresh_input(610) + output(125) + cache_create(12) + cache_read(60) = 807
+        assert_eq!(summary.real_total_tokens, 807);
+        // hit_rate = 60 / (610 + 12 + 60) = 60 / 682
+        let expected_hit_rate = 60.0_f64 / 682.0_f64;
+        assert!((summary.cache_hit_rate - expected_hit_rate).abs() < 1e-9);
 
         let trends = db.get_daily_trends(Some(0), Some(40_000), None)?;
         assert_eq!(trends.iter().map(|stat| stat.request_count).sum::<u64>(), 4);

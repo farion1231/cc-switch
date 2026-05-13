@@ -18,7 +18,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useRequestLogs } from "@/lib/query/usage";
-import type { LogFilters, UsageRangeSelection } from "@/types/usage";
+import {
+  KNOWN_APP_TYPES,
+  getFreshInputTokens,
+  type LogFilters,
+  type UsageRangeSelection,
+} from "@/types/usage";
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import {
@@ -138,9 +143,11 @@ export function RequestLogTable({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t("usage.allApps")}</SelectItem>
-              <SelectItem value="claude">Claude</SelectItem>
-              <SelectItem value="codex">Codex</SelectItem>
-              <SelectItem value="gemini">Gemini</SelectItem>
+              {KNOWN_APP_TYPES.map((at) => (
+                <SelectItem key={at} value={at}>
+                  {t(`usage.appFilter.${at}`, { defaultValue: at })}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
@@ -323,9 +330,23 @@ export function RequestLogTable({
                         </div>
                       </TableCell>
                       <TableCell className="text-center px-1.5">
-                        <div className="tabular-nums">
-                          {fmtInt(log.inputTokens, locale)}
-                        </div>
+                        {(() => {
+                          const freshInput = getFreshInputTokens(log);
+                          const isCacheInclusive =
+                            log.inputTokens !== freshInput;
+                          return (
+                            <div
+                              className="tabular-nums"
+                              title={
+                                isCacheInclusive
+                                  ? `Raw: ${log.inputTokens.toLocaleString()}`
+                                  : undefined
+                              }
+                            >
+                              {fmtInt(freshInput, locale)}
+                            </div>
+                          );
+                        })()}
                         {(log.cacheReadTokens > 0 ||
                           log.cacheCreationTokens > 0) && (
                           <div className="text-[10px] text-muted-foreground whitespace-nowrap">

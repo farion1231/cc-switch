@@ -18,6 +18,16 @@ pub fn get_usage_summary(
         .get_usage_summary(start_date, end_date, app_type.as_deref())
 }
 
+/// 获取按 app_type 拆分的使用量汇总
+#[tauri::command]
+pub fn get_usage_summary_by_app(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+) -> Result<Vec<UsageSummaryByApp>, AppError> {
+    state.db.get_usage_summary_by_app(start_date, end_date)
+}
+
 /// 获取每日趋势
 #[tauri::command]
 pub fn get_usage_trends(
