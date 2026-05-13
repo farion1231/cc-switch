@@ -2196,7 +2196,7 @@
         "saveFailed": "保存失败: {{error}}"
       },
       "invalidPort": "端口无效，请输入 1024-65535 之间的数字",
-      "invalidAddress": "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
+      "invalidAddress": "地址无效，请输入 IPv4（如 127.0.0.1）、IPv6（如 ::1）或 localhost",
       "configSaved": "路由配置已保存",
       "configSaveFailed": "保存配置失败",
       "restartRequired": "修改地址或端口后需要重启路由服务才能生效"
