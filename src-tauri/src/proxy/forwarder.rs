@@ -160,9 +160,11 @@ impl RequestForwarder {
     /// `active_connections` / 刷新 `last_request_at`，无论 inner 走哪条出口路径，
     /// 出口处都会把 `active_connections` 回收。Per-attempt 维度（成功/失败/熔断
     /// 等）仍由 inner 内自行更新 `success_requests` / `failed_requests`。
+    #[allow(clippy::too_many_arguments)]
     pub async fn forward_with_retry(
         &self,
         app_type: &AppType,
+        method: http::Method,
         endpoint: &str,
         body: Value,
         headers: axum::http::HeaderMap,
@@ -176,7 +178,9 @@ impl RequestForwarder {
             s.last_request_at = Some(chrono::Utc::now().to_rfc3339());
         }
         let result = self
-            .forward_with_retry_inner(app_type, endpoint, body, headers, extensions, providers)
+            .forward_with_retry_inner(
+                app_type, method, endpoint, body, headers, extensions, providers,
+            )
             .await;
         {
             let mut s = self.status.write().await;
@@ -189,13 +193,16 @@ impl RequestForwarder {
     ///
     /// # Arguments
     /// * `app_type` - 应用类型
+    /// * `method` - 客户端请求的 HTTP 方法（透传给上游，支持 GET/POST 等）
     /// * `endpoint` - API 端点
     /// * `body` - 请求体
     /// * `headers` - 请求头
     /// * `providers` - 已选择的 Provider 列表（由 RequestContext 提供，避免重复调用 select_providers）
+    #[allow(clippy::too_many_arguments)]
     async fn forward_with_retry_inner(
         &self,
         app_type: &AppType,
+        method: http::Method,
         endpoint: &str,
         body: Value,
         headers: axum::http::HeaderMap,
@@ -286,6 +293,7 @@ impl RequestForwarder {
             match self
                 .forward(
                     app_type,
+                    &method,
                     provider,
                     endpoint,
                     &provider_body,
@@ -410,6 +418,7 @@ impl RequestForwarder {
                                 match self
                                     .forward(
                                         app_type,
+                                        &method,
                                         provider,
                                         endpoint,
                                         &provider_body,
@@ -616,6 +625,7 @@ impl RequestForwarder {
                             match self
                                 .forward(
                                     app_type,
+                                    &method,
                                     provider,
                                     endpoint,
                                     &provider_body,
@@ -864,6 +874,7 @@ impl RequestForwarder {
     async fn forward(
         &self,
         app_type: &AppType,
+        method: &http::Method,
         provider: &Provider,
         endpoint: &str,
         body: &Value,
@@ -1493,9 +1504,15 @@ impl RequestForwarder {
             ordered_headers.insert(name, value);
         }
 
-        // 序列化请求体
-        let body_bytes = serde_json::to_vec(&filtered_body)
-            .map_err(|e| ProxyError::Internal(format!("Failed to serialize request body: {e}")))?;
+        // 序列化请求体。GET/HEAD 是 idempotent/safe 方法，按 HTTP 语义不应携带 body；
+        // 强行附带 JSON body 会让某些上游（如 Google Gemini 的 models.list）拒绝请求。
+        let body_bytes = if matches!(method, &http::Method::GET | &http::Method::HEAD) {
+            Vec::new()
+        } else {
+            serde_json::to_vec(&filtered_body).map_err(|e| {
+                ProxyError::Internal(format!("Failed to serialize request body: {e}"))
+            })?
+        };
 
         // 确保 content-type 存在
         if !ordered_headers.contains_key(http::header::CONTENT_TYPE) {
@@ -1553,7 +1570,7 @@ impl RequestForwarder {
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
             let client = super::http_client::get();
-            let mut request = client.post(&url);
+            let mut request = client.request(method.clone(), &url);
             let request_is_streaming =
                 is_streaming_request(&effective_endpoint, &filtered_body, headers);
             if request_is_streaming {
@@ -1594,7 +1611,7 @@ impl RequestForwarder {
                 .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
             super::hyper_client::send_request(
                 uri,
-                http::Method::POST,
+                method.clone(),
                 ordered_headers,
                 extensions.clone(),
                 body_bytes,
