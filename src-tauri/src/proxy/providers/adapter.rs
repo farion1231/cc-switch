@@ -30,7 +30,14 @@ pub trait ProviderAdapter: Send + Sync {
     ///
     /// The forwarder inserts these at the position of the original auth header
     /// so that header order is preserved.
-    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)>;
+    ///
+    /// Returns `ProxyError::AuthError` when the credential contains characters
+    /// that cannot be encoded as an HTTP header value (e.g. control chars,
+    /// CR/LF), which would otherwise panic inside `HeaderValue::from_str`.
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+    ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError>;
 
     /// 是否需要格式转换
     fn needs_transform(&self, _provider: &Provider) -> bool {
