@@ -31,6 +31,7 @@ pub struct CliError {
     pub code: &'static str,
     pub message: String,
     pub exit_code: i32,
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,8 +64,12 @@ where
             code: "unknown_command",
             message: format!("Unknown command: {unknown}"),
             exit_code: 2,
+            json: args[2..].iter().any(|a| a == "--json"),
         }),
-        _ => usage_error("Usage: cc-switch list [app] [--json]"),
+        _ => {
+            let help = help_text();
+            usage_error(help.trim_end(), args[2..].iter().any(|a| a == "--json"))
+        }
     }
 }
 
@@ -76,11 +81,11 @@ fn parse_list_args(args: &[String]) -> CliParseOutcome {
         if arg == "--json" {
             json = true;
         } else if arg.starts_with('-') || app.is_some() {
-            return usage_error("Usage: cc-switch list [app] [--json]");
+            return usage_error("Usage: cc-switch list [app] [--json]", json);
         } else {
             match AppType::from_str(arg) {
                 Ok(parsed) => app = Some(parsed),
-                Err(err) => return unsupported_app_error(err.to_string()),
+                Err(err) => return unsupported_app_error(err.to_string(), json),
             }
         }
     }
@@ -96,19 +101,19 @@ fn parse_switch_args(args: &[String]) -> CliParseOutcome {
         if arg == "--json" {
             json = true;
         } else if arg.starts_with('-') {
-            return usage_error("Usage: cc-switch switch <app> <provider-id> [--json]");
+            return usage_error("Usage: cc-switch switch <app> <provider-id> [--json]", json);
         } else {
             positional.push(arg);
         }
     }
 
     if positional.len() != 2 {
-        return usage_error("Usage: cc-switch switch <app> <provider-id> [--json]");
+        return usage_error("Usage: cc-switch switch <app> <provider-id> [--json]", json);
     }
 
     let app = match AppType::from_str(positional[0]) {
         Ok(parsed) => parsed,
-        Err(err) => return unsupported_app_error(err.to_string()),
+        Err(err) => return unsupported_app_error(err.to_string(), json),
     };
 
     CliParseOutcome::Command(CliCommand::Switch {
@@ -118,19 +123,21 @@ fn parse_switch_args(args: &[String]) -> CliParseOutcome {
     })
 }
 
-fn unsupported_app_error(message: String) -> CliParseOutcome {
+fn unsupported_app_error(message: String, json: bool) -> CliParseOutcome {
     CliParseOutcome::Error(CliError {
         code: "unsupported_app",
         message,
         exit_code: 2,
+        json,
     })
 }
 
-fn usage_error(message: &str) -> CliParseOutcome {
+fn usage_error(message: &str, json: bool) -> CliParseOutcome {
     CliParseOutcome::Error(CliError {
         code: "usage",
         message: message.to_string(),
         exit_code: 2,
+        json,
     })
 }
 
@@ -238,6 +245,7 @@ pub fn execute_switch(
             code: "switch_failed",
             message: err.to_string(),
             exit_code: 1,
+            json: false,
         })?;
 
     if !providers.contains_key(provider_id) {
@@ -245,6 +253,7 @@ pub fn execute_switch(
             code: "provider_not_found",
             message: format!("Provider not found: {provider_id} for {}", app.as_str()),
             exit_code: 1,
+            json: false,
         });
     }
 
@@ -252,6 +261,7 @@ pub fn execute_switch(
         code: "switch_failed",
         message: err.to_string(),
         exit_code: 1,
+        json: false,
     })
 }
 
@@ -266,7 +276,7 @@ where
             stderr: String::new(),
             exit_code: 0,
         }),
-        CliParseOutcome::Error(error) => Some(error_output(&error, false)),
+        CliParseOutcome::Error(error) => Some(error_output(&error, error.json)),
         CliParseOutcome::NotCli => None,
     }
 }
@@ -277,6 +287,10 @@ where
 {
     let output = match parse_cli_args(args) {
         CliParseOutcome::Command(command) => {
+            let json = match &command {
+                CliCommand::List { json, .. } => *json,
+                CliCommand::Switch { json, .. } => *json,
+            };
             let db = match Database::init() {
                 Ok(db) => std::sync::Arc::new(db),
                 Err(err) => {
@@ -285,8 +299,9 @@ where
                             code: "startup_failed",
                             message: err.to_string(),
                             exit_code: 1,
+                            json,
                         },
-                        false,
+                        json,
                     );
                     print_cli_output(&output);
                     return Some(output.exit_code);
@@ -300,7 +315,7 @@ where
             stderr: String::new(),
             exit_code: 0,
         },
-        CliParseOutcome::Error(error) => error_output(&error, false),
+        CliParseOutcome::Error(error) => error_output(&error, error.json),
         CliParseOutcome::NotCli => return None,
     };
     print_cli_output(&output);
@@ -341,6 +356,7 @@ pub fn run_cli_command(state: &AppState, command: CliCommand) -> CliOutput {
                             code: "list_failed",
                             message: err.to_string(),
                             exit_code: 1,
+                            json,
                         },
                         json,
                     ),
@@ -351,6 +367,7 @@ pub fn run_cli_command(state: &AppState, command: CliCommand) -> CliOutput {
                     code: "list_failed",
                     message: err.to_string(),
                     exit_code: 1,
+                    json,
                 },
                 json,
             ),
@@ -377,12 +394,18 @@ pub fn run_cli_command(state: &AppState, command: CliCommand) -> CliOutput {
                             code: "switch_failed",
                             message: err.to_string(),
                             exit_code: 1,
+                            json,
                         },
                         json,
                     ),
                 }
             }
-            Err(err) => error_output(&err, json),
+            Err(err) => error_output(&CliError {
+                code: err.code,
+                message: err.message,
+                exit_code: err.exit_code,
+                json,
+            }, json),
         },
     }
 }
@@ -1069,6 +1092,7 @@ mod tests {
                 code: "provider_not_found",
                 message: "Provider not found: bad\u{1b}]52;c;secret\u{7}".to_string(),
                 exit_code: 1,
+                json: false,
             },
             false,
         );
@@ -1085,6 +1109,7 @@ mod tests {
                 code: "provider_not_found",
                 message: "Provider not found: bad\u{1b}".to_string(),
                 exit_code: 1,
+                json: true,
             },
             true,
         );
@@ -1170,6 +1195,7 @@ mod tests {
                 code: "unknown_command",
                 message: "Unknown command: providers".to_string(),
                 exit_code: 2,
+                json: false,
             })
         );
     }
@@ -1182,6 +1208,7 @@ mod tests {
                 code: "usage",
                 message: "Usage: cc-switch switch <app> <provider-id> [--json]".to_string(),
                 exit_code: 2,
+                json: false,
             })
         );
     }
@@ -1194,7 +1221,63 @@ mod tests {
                 code: "usage",
                 message: "Usage: cc-switch list [app] [--json]".to_string(),
                 exit_code: 2,
+                json: false,
             })
         );
+    }
+
+    #[test]
+    fn parse_error_carries_json_flag_when_json_requested() {
+        let result = parse(&["cc-switch", "switch", "claude", "--json"]);
+        match result {
+            CliParseOutcome::Error(err) => {
+                assert_eq!(err.code, "usage");
+                assert!(err.json);
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_unknown_command_with_json_carries_json_flag() {
+        let result = parse(&["cc-switch", "bogus", "--json"]);
+        match result {
+            CliParseOutcome::Error(err) => {
+                assert_eq!(err.code, "unknown_command");
+                assert!(err.json);
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_unrecognized_flag_shows_combined_usage() {
+        let result = parse(&["cc-switch", "--foo"]);
+        match result {
+            CliParseOutcome::Error(err) => {
+                assert_eq!(err.code, "usage");
+                assert!(err.message.contains("list"));
+                assert!(err.message.contains("switch"));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_output_uses_json_when_error_has_json_flag() {
+        let output = error_output(
+            &CliError {
+                code: "usage",
+                message: "bad input".to_string(),
+                exit_code: 2,
+                json: true,
+            },
+            true,
+        );
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(output.stderr.trim()).expect("stderr should be valid json");
+        assert_eq!(parsed["ok"], false);
+        assert_eq!(parsed["code"], "usage");
     }
 }
