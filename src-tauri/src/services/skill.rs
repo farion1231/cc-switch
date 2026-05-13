@@ -19,7 +19,7 @@ use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
 
-const MAX_SKILL_NOTES_LENGTH: usize = 1000;
+const MAX_SKILL_NOTES_LENGTH: usize = 30;
 
 // ========== 数据结构 ==========
 

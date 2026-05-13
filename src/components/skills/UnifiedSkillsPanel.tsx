@@ -67,7 +67,7 @@ function formatSkillBackupDate(unixSeconds: number): string {
     : date.toLocaleString();
 }
 
-const SKILL_NOTES_MAX_LENGTH = 1000;
+const SKILL_NOTES_MAX_LENGTH = 30;
 
 const UnifiedSkillsPanel = React.forwardRef<
   UnifiedSkillsPanelHandle,
