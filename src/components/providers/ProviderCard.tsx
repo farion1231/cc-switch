@@ -12,6 +12,10 @@ import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
+import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
+import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
+import { PROVIDER_TYPES } from "@/config/constants";
+import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
@@ -58,6 +62,10 @@ interface ProviderCardProps {
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+  if (provider.category === "official") {
+    return true;
+  }
+
   const config = provider.settingsConfig as Record<string, any>;
   if (appId === "claude") {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
@@ -172,11 +180,24 @@ export function ProviderCard({
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
   const isOfficial = isOfficialProvider(provider, appId);
+  const isOfficialBlockedByProxy =
+    isProxyTakeover && (provider.category === "official" || isOfficial);
+  const isCopilot =
+    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
+    provider.meta?.usage_script?.templateType === "github_copilot";
+  // Hermes v12+ overlay entries live under the `providers:` dict and are
+  // read-only here — writes have to go through Hermes Web UI.
+  const isHermesReadOnly =
+    appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
+  const isCodexOauth =
+    provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
 
   // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw）：使用 isInConfig 代替 isCurrent
+  // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" ? isInConfig : isCurrent;
+    appId === "opencode" || appId === "openclaw" || appId === "hermes"
+      ? isInConfig
+      : isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
@@ -301,6 +322,16 @@ export function ProviderCard({
                 </span>
               )}
 
+              {appId === "claude-desktop" &&
+                provider.category !== "official" &&
+                provider.meta?.claudeDesktopMode === "proxy" && (
+                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                    {t("claudeDesktop.modeProxy", {
+                      defaultValue: "需要路由",
+                    })}
+                  </span>
+                )}
+
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}
@@ -324,6 +355,19 @@ export function ProviderCard({
                     ⭐
                   </span>
                 )}
+
+              {isHermesReadOnly && (
+                <span
+                  className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
+                  title={t("provider.managedByHermesHint", {
+                    defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
+                  })}
+                >
+                  {t("provider.managedByHermes", {
+                    defaultValue: "Hermes Managed",
+                  })}
+                </span>
+              )}
             </div>
 
             {displayUrl && (
@@ -348,8 +392,24 @@ export function ProviderCard({
         <div className="flex items-center ml-auto min-w-0 gap-3">
           <div className="ml-auto">
             <div className="flex items-center gap-1">
-              {isOfficial ? (
-                <SubscriptionQuotaFooter appId={appId} inline={true} />
+              {isCopilot ? (
+                <CopilotQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isCodexOauth ? (
+                <CodexOauthQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isOfficial ? (
+                <SubscriptionQuotaFooter
+                  appId={appId}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
               ) : hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                   <span className="font-medium">
@@ -400,15 +460,21 @@ export function ProviderCard({
               isInConfig={isInConfig}
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
+              isOfficialBlockedByProxy={isOfficialBlockedByProxy}
+              isReadOnly={isHermesReadOnly}
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={
-                onTest && !isOfficial ? () => onTest(provider) : undefined
+                onTest && !isOfficial && !isCopilot && !isCodexOauth
+                  ? () => onTest(provider)
+                  : undefined
               }
               onConfigureUsage={
-                isOfficial ? undefined : () => onConfigureUsage(provider)
+                isOfficial || isCopilot || isCodexOauth
+                  ? undefined
+                  : () => onConfigureUsage(provider)
               }
               onDelete={() => onDelete(provider)}
               onRemoveFromConfig={

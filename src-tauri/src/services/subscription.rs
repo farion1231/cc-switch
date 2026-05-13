@@ -60,7 +60,7 @@ pub struct SubscriptionQuota {
 }
 
 impl SubscriptionQuota {
-    fn not_found(tool: &str) -> Self {
+    pub(crate) fn not_found(tool: &str) -> Self {
         Self {
             tool: tool.to_string(),
             credential_status: CredentialStatus::NotFound,
@@ -73,7 +73,7 @@ impl SubscriptionQuota {
         }
     }
 
-    fn error(tool: &str, status: CredentialStatus, message: String) -> Self {
+    pub(crate) fn error(tool: &str, status: CredentialStatus, message: String) -> Self {
         Self {
             tool: tool.to_string(),
             credential_status: status,
@@ -291,12 +291,26 @@ struct ApiExtraUsage {
     currency: Option<String>,
 }
 
-/// 已知的 Claude 用量窗口名称
+/// 已知的 Claude 用量窗口名称。`QuotaTier::name` 会是其中之一。
+pub const TIER_FIVE_HOUR: &str = "five_hour";
+pub const TIER_SEVEN_DAY: &str = "seven_day";
+pub const TIER_SEVEN_DAY_OPUS: &str = "seven_day_opus";
+pub const TIER_SEVEN_DAY_SONNET: &str = "seven_day_sonnet";
+
+/// Coding Plan（Kimi / MiniMax）的周窗口 tier 名。与 `coding_plan::query_*`
+/// 写入、tray 渲染、commands::provider 扁平化三处共用同一标识。
+pub const TIER_WEEKLY_LIMIT: &str = "weekly_limit";
+
+/// Gemini 用量分组名称（按模型而非时间窗口）。`classify_gemini_model` 输出。
+pub const TIER_GEMINI_PRO: &str = "gemini_pro";
+pub const TIER_GEMINI_FLASH: &str = "gemini_flash";
+pub const TIER_GEMINI_FLASH_LITE: &str = "gemini_flash_lite";
+
 const KNOWN_TIERS: &[&str] = &[
-    "five_hour",
-    "seven_day",
-    "seven_day_opus",
-    "seven_day_sonnet",
+    TIER_FIVE_HOUR,
+    TIER_SEVEN_DAY,
+    TIER_SEVEN_DAY_OPUS,
+    TIER_SEVEN_DAY_SONNET,
 ];
 
 /// 查询 Claude 官方订阅额度
@@ -621,8 +635,17 @@ fn unix_ts_to_iso(ts: i64) -> Option<String> {
     chrono::DateTime::from_timestamp(ts, 0).map(|dt| dt.to_rfc3339())
 }
 
-/// 查询 Codex 官方订阅额度
-async fn query_codex_quota(access_token: &str, account_id: Option<&str>) -> SubscriptionQuota {
+/// 查询 Codex / ChatGPT 反代订阅额度
+///
+/// 参数化 `tool_label` 和 `expired_message` 让该函数可被两个调用点共用：
+/// - `"codex"` + "Please re-login with Codex CLI."（CLI 凭据路径）
+/// - `"codex_oauth"` + "Please re-login via cc-switch."（cc-switch 自管 OAuth 路径）
+pub(crate) async fn query_codex_quota(
+    access_token: &str,
+    account_id: Option<&str>,
+    tool_label: &str,
+    expired_message: &str,
+) -> SubscriptionQuota {
     let client = crate::proxy::http_client::get();
 
     let mut req = client
@@ -639,7 +662,7 @@ async fn query_codex_quota(access_token: &str, account_id: Option<&str>) -> Subs
         Ok(r) => r,
         Err(e) => {
             return SubscriptionQuota::error(
-                "codex",
+                tool_label,
                 CredentialStatus::Valid,
                 format!("Network error: {e}"),
             );
@@ -650,16 +673,16 @@ async fn query_codex_quota(access_token: &str, account_id: Option<&str>) -> Subs
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return SubscriptionQuota::error(
-            "codex",
+            tool_label,
             CredentialStatus::Expired,
-            format!("Authentication failed (HTTP {status}). Please re-login with Codex CLI."),
+            format!("{expired_message} (HTTP {status})"),
         );
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         return SubscriptionQuota::error(
-            "codex",
+            tool_label,
             CredentialStatus::Valid,
             format!("API error (HTTP {status}): {body}"),
         );
@@ -669,7 +692,7 @@ async fn query_codex_quota(access_token: &str, account_id: Option<&str>) -> Subs
         Ok(v) => v,
         Err(e) => {
             return SubscriptionQuota::error(
-                "codex",
+                tool_label,
                 CredentialStatus::Valid,
                 format!("Failed to parse API response: {e}"),
             );
@@ -697,7 +720,7 @@ async fn query_codex_quota(access_token: &str, account_id: Option<&str>) -> Subs
     }
 
     SubscriptionQuota {
-        tool: "codex".to_string(),
+        tool: tool_label.to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
         success: true,
@@ -984,11 +1007,11 @@ fn extract_project_id(value: &serde_json::Value) -> Option<String> {
 /// 将 Gemini 模型 ID 分类为 Pro / Flash / Flash Lite
 fn classify_gemini_model(model_id: &str) -> &str {
     if model_id.contains("flash-lite") {
-        "gemini_flash_lite"
+        TIER_GEMINI_FLASH_LITE
     } else if model_id.contains("flash") {
-        "gemini_flash"
+        TIER_GEMINI_FLASH
     } else if model_id.contains("pro") {
-        "gemini_pro"
+        TIER_GEMINI_PRO
     } else {
         model_id
     }
@@ -1143,9 +1166,9 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
     // 转换为 tiers（remainingFraction → utilization: 已用百分比）
     let sort_order = |name: &str| -> usize {
         match name {
-            "gemini_pro" => 0,
-            "gemini_flash" => 1,
-            "gemini_flash_lite" => 2,
+            TIER_GEMINI_PRO => 0,
+            TIER_GEMINI_FLASH => 1,
+            TIER_GEMINI_FLASH_LITE => 2,
             _ => 3,
         }
     };
@@ -1221,7 +1244,13 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 CredentialStatus::Expired => {
                     // 即使可能过期也尝试调用 API
                     if let Some(token) = token {
-                        let result = query_codex_quota(&token, account_id.as_deref()).await;
+                        let result = query_codex_quota(
+                            &token,
+                            account_id.as_deref(),
+                            "codex",
+                            "Authentication failed. Please re-login with Codex CLI.",
+                        )
+                        .await;
                         if result.success {
                             return Ok(result);
                         }
@@ -1234,7 +1263,13 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 }
                 CredentialStatus::Valid => {
                     let token = token.expect("token must be Some when status is Valid");
-                    Ok(query_codex_quota(&token, account_id.as_deref()).await)
+                    Ok(query_codex_quota(
+                        &token,
+                        account_id.as_deref(),
+                        "codex",
+                        "Authentication failed. Please re-login with Codex CLI.",
+                    )
+                    .await)
                 }
             }
         }

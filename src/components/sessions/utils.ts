@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { createElement } from "react";
 import { SessionMeta } from "@/types";
 
 export const getSessionKey = (session: SessionMeta) =>
@@ -76,5 +78,25 @@ export const formatSessionTitle = (session: SessionMeta) => {
     session.title ||
     getBaseName(session.projectDir) ||
     session.sessionId.slice(0, 8)
+  );
+};
+
+export const highlightText = (text: string, query: string): ReactNode => {
+  if (!query) return text;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped})`, "gi"));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1
+      ? createElement(
+          "mark",
+          {
+            key: i,
+            className:
+              "bg-yellow-200/60 dark:bg-yellow-500/30 text-inherit rounded-sm px-0.5",
+          },
+          part,
+        )
+      : part,
   );
 };

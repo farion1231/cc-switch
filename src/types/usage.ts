@@ -31,6 +31,20 @@ export interface RequestLog {
   statusCode: number;
   errorMessage?: string;
   createdAt: number;
+  dataSource?: string;
+}
+
+export interface SessionSyncResult {
+  imported: number;
+  skipped: number;
+  filesScanned: number;
+  errors: string[];
+}
+
+export interface DataSourceSummary {
+  dataSource: string;
+  requestCount: number;
+  totalCostUsd: string;
 }
 
 export interface PaginatedLogs {
@@ -107,10 +121,18 @@ export interface ProviderLimitStatus {
   monthlyExceeded: boolean;
 }
 
-export type TimeRange = "1d" | "7d" | "30d";
+export type UsageRangePreset = "today" | "1d" | "7d" | "14d" | "30d" | "custom";
+
+export interface UsageRangeSelection {
+  preset: UsageRangePreset;
+  customStartDate?: number;
+  customEndDate?: number;
+}
+
+export type AppTypeFilter = "all" | "claude" | "codex" | "gemini";
 
 export interface StatsFilters {
-  timeRange: TimeRange;
+  timeRange: UsageRangePreset;
   providerId?: string;
   appType?: string;
 }

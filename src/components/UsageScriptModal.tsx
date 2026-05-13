@@ -3,7 +3,7 @@ import { Play, Wand2, Eye, EyeOff, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { Provider, UsageScript, UsageData } from "@/types";
+import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
@@ -21,6 +21,10 @@ import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
 import { TEMPLATE_TYPES, PROVIDER_TYPES } from "@/config/constants";
+import {
+  CODING_PLAN_PROVIDERS,
+  detectCodingPlanProvider,
+} from "@/config/codingPlanProviders";
 
 interface UsageScriptModalProps {
   provider: Provider;
@@ -73,6 +77,7 @@ const generatePresetTemplates = (
     headers: {
       "Content-Type": "application/json",
       "Authorization": "Bearer {{accessToken}}",
+      "User-Agent": "cc-switch/1.0",
       "New-Api-User": "{{userId}}"
     },
   },
@@ -98,6 +103,9 @@ const generatePresetTemplates = (
 
   // Coding Plan 模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.TOKEN_PLAN]: "",
+
+  // 官方余额查询模板不需要脚本，使用专用 Rust 查询
+  [TEMPLATE_TYPES.BALANCE]: "",
 });
 
 // 模板名称国际化键映射
@@ -107,30 +115,26 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
+  [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
 };
 
-/** Coding Plan 供应商选项 */
-const TOKEN_PLAN_PROVIDERS = [
-  { id: "kimi", label: "Kimi For Coding", pattern: /api\.kimi\.com\/coding/i },
+/** 官方余额查询供应商检测 */
+const BALANCE_PROVIDERS = [
+  { id: "deepseek", label: "DeepSeek", pattern: /api\.deepseek\.com/i },
+  { id: "stepfun", label: "StepFun", pattern: /api\.stepfun\.(ai|com)/i },
   {
-    id: "zhipu",
-    label: "Zhipu GLM (智谱)",
-    pattern: /bigmodel\.cn|api\.z\.ai/i,
+    id: "siliconflow",
+    label: "SiliconFlow",
+    pattern: /api\.siliconflow\.(cn|com)/i,
   },
-  {
-    id: "minimax",
-    label: "MiniMax",
-    pattern: /api\.minimaxi?\.com|api\.minimax\.io/i,
-  },
+  { id: "openrouter", label: "OpenRouter", pattern: /openrouter\.ai/i },
+  { id: "novita", label: "Novita AI", pattern: /api\.novita\.ai/i },
 ] as const;
 
-/** 根据 Base URL 自动检测 Coding Plan 供应商 */
-function detectTokenPlanProvider(baseUrl: string | undefined): string | null {
-  if (!baseUrl) return null;
-  for (const cp of TOKEN_PLAN_PROVIDERS) {
-    if (cp.pattern.test(baseUrl)) return cp.id;
-  }
-  return null;
+/** 根据 Base URL 自动检测余额查询供应商 */
+function detectBalanceProvider(baseUrl: string | undefined): boolean {
+  if (!baseUrl) return false;
+  return BALANCE_PROVIDERS.some((bp) => bp.pattern.test(baseUrl));
 }
 
 const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
@@ -180,6 +184,18 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           apiKey: env.GEMINI_API_KEY,
           baseUrl: env.GOOGLE_GEMINI_BASE_URL,
         };
+      } else if (appId === "hermes") {
+        // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
+        return {
+          apiKey: (config as any).api_key,
+          baseUrl: (config as any).base_url,
+        };
+      } else if (appId === "openclaw") {
+        // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
+        return {
+          apiKey: (config as any).apiKey,
+          baseUrl: (config as any).baseUrl,
+        };
       }
       return { apiKey: undefined, baseUrl: undefined };
     } catch (error) {
@@ -201,30 +217,24 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return {
           ...savedScript,
           codingPlanProvider:
-            detectTokenPlanProvider(providerCredentials.baseUrl) || "kimi",
+            detectCodingPlanProvider(providerCredentials.baseUrl) || "kimi",
         };
       }
       return savedScript;
     }
 
-    // 新配置：如果 URL 匹配 Coding Plan，自动初始化
-    const autoDetected = detectTokenPlanProvider(providerCredentials.baseUrl);
+    const autoDetected = detectCodingPlanProvider(providerCredentials.baseUrl);
     if (autoDetected) {
-      return {
-        enabled: false,
-        language: "javascript" as const,
-        code: "",
-        timeout: 10,
-        codingPlanProvider: autoDetected,
-      };
+      return createUsageScript({ codingPlanProvider: autoDetected });
     }
 
-    return {
-      enabled: false,
-      language: "javascript" as const,
+    if (detectBalanceProvider(providerCredentials.baseUrl)) {
+      return createUsageScript();
+    }
+
+    return createUsageScript({
       code: PRESET_TEMPLATES[TEMPLATE_TYPES.GENERAL],
-      timeout: 10,
-    };
+    });
   });
 
   const [testing, setTesting] = useState(false);
@@ -297,8 +307,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return TEMPLATE_TYPES.GENERAL;
       }
       // 新配置：如果 URL 匹配 Coding Plan 供应商，自动选择 Coding Plan 模板
-      if (detectTokenPlanProvider(providerCredentials.baseUrl)) {
+      if (detectCodingPlanProvider(providerCredentials.baseUrl)) {
         return TEMPLATE_TYPES.TOKEN_PLAN;
+      }
+      // 新配置：如果 URL 匹配官方余额查询供应商，自动选择 Balance 模板
+      if (detectBalanceProvider(providerCredentials.baseUrl)) {
+        return TEMPLATE_TYPES.BALANCE;
       }
       // 默认使用 GENERAL（与默认代码模板一致）
       return TEMPLATE_TYPES.GENERAL;
@@ -331,10 +345,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const handleSave = () => {
-    // Copilot 和 Coding Plan 模板不需要脚本验证
+    // Copilot、Coding Plan、Balance 模板不需要脚本验证
     if (
       selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-      selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN
+      selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN &&
+      selectedTemplate !== TEMPLATE_TYPES.BALANCE
     ) {
       if (script.enabled && !script.code.trim()) {
         toast.error(t("usageScript.scriptEmpty"));
@@ -354,6 +369,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "newapi"
         | "github_copilot"
         | "token_plan"
+        | "balance"
         | undefined,
     };
     onSave(scriptWithTemplate);
@@ -363,14 +379,37 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const handleTest = async () => {
     setTesting(true);
     try {
+      // 官方余额查询模板使用专用 API
+      if (selectedTemplate === TEMPLATE_TYPES.BALANCE) {
+        const baseUrl = providerCredentials.baseUrl ?? "";
+        const apiKey = providerCredentials.apiKey ?? "";
+        const { subscriptionApi } = await import("@/lib/api/subscription");
+        const result = await subscriptionApi.getBalance(baseUrl, apiKey);
+        if (result.success && result.data && result.data.length > 0) {
+          const summary = result.data
+            .map((d) => {
+              const name = d.planName ? `[${d.planName}] ` : "";
+              return `${name}${t("usage.remaining")} ${d.remaining?.toFixed(2)} ${d.unit || ""}`;
+            })
+            .join(", ");
+          toast.success(`${t("usageScript.testSuccess")}${summary}`, {
+            duration: 3000,
+            closeButton: true,
+          });
+          queryClient.setQueryData(["usage", provider.id, appId], result);
+        } else {
+          toast.error(
+            `${t("usageScript.testFailed")}: ${result.error || t("endpointTest.noResult")}`,
+            { duration: 5000 },
+          );
+        }
+        return;
+      }
+
       // Coding Plan 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
-        const config = provider.settingsConfig as Record<string, any>;
-        const baseUrl: string = config?.env?.ANTHROPIC_BASE_URL ?? "";
-        const apiKey: string =
-          config?.env?.ANTHROPIC_AUTH_TOKEN ??
-          config?.env?.ANTHROPIC_API_KEY ??
-          "";
+        const baseUrl = providerCredentials.baseUrl ?? "";
+        const apiKey = providerCredentials.apiKey ?? "";
         const { subscriptionApi } = await import("@/lib/api/subscription");
         const quota = await subscriptionApi.getCodingPlanQuota(baseUrl, apiKey);
         if (quota.success && quota.tiers.length > 0) {
@@ -545,7 +584,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         });
       } else if (presetName === TEMPLATE_TYPES.TOKEN_PLAN) {
         // Coding Plan 模板不需要脚本，使用 Rust 原生查询
-        const autoDetected = detectTokenPlanProvider(
+        const autoDetected = detectCodingPlanProvider(
           providerCredentials.baseUrl,
         );
         setScript({
@@ -557,6 +596,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           userId: undefined,
           codingPlanProvider:
             script.codingPlanProvider || autoDetected || "kimi",
+        });
+      } else if (presetName === TEMPLATE_TYPES.BALANCE) {
+        // 官方余额查询模板不需要脚本，使用 Rust 原生查询
+        setScript({
+          ...script,
+          code: "",
+          apiKey: undefined,
+          baseUrl: undefined,
+          accessToken: undefined,
+          userId: undefined,
         });
       }
       setSelectedTemplate(presetName);
@@ -746,6 +795,27 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               </div>
             )}
 
+            {/* 官方余额查询模式：自动提示 */}
+            {selectedTemplate === TEMPLATE_TYPES.BALANCE && (
+              <div className="space-y-3 border-t border-white/10 pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {t("usageScript.balanceHint")}
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  {BALANCE_PROVIDERS.filter((bp) =>
+                    bp.pattern.test(providerCredentials.baseUrl || ""),
+                  ).map((bp) => (
+                    <span
+                      key={bp.id}
+                      className="inline-flex items-center px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium"
+                    >
+                      {bp.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Coding Plan 模式：供应商选择 */}
             {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN && (
               <div className="space-y-3 border-t border-white/10 pt-3">
@@ -753,7 +823,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   {t("usageScript.tokenPlanHint")}
                 </p>
                 <div className="flex gap-2 flex-wrap">
-                  {TOKEN_PLAN_PROVIDERS.map((cp) => (
+                  {CODING_PLAN_PROVIDERS.map((cp) => (
                     <Button
                       key={cp.id}
                       type="button"
@@ -960,7 +1030,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   onChange={(e) =>
                     setScript({
                       ...script,
-                      timeout: validateTimeout(e.target.value),
+                      timeout:
+                        e.target.value === ""
+                          ? ("" as unknown as number)
+                          : Number(e.target.value),
                     })
                   }
                   onBlur={(e) =>
@@ -984,14 +1057,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   min={0}
                   max={1440}
                   value={
-                    script.autoQueryInterval ?? script.autoIntervalMinutes ?? 0
+                    script.autoQueryInterval ?? script.autoIntervalMinutes ?? 5
                   }
                   onChange={(e) =>
                     setScript({
                       ...script,
-                      autoQueryInterval: validateAndClampInterval(
-                        e.target.value,
-                      ),
+                      autoQueryInterval:
+                        e.target.value === ""
+                          ? ("" as unknown as number)
+                          : Number(e.target.value),
                     })
                   }
                   onBlur={(e) =>

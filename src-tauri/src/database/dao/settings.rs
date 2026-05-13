@@ -33,6 +33,18 @@ impl Database {
         }
     }
 
+    /// 以布尔语义读取 flag：`"true"` 或 `"1"` → true，其它全部 false。
+    ///
+    /// 用于一次性启动 flag（`official_providers_seeded` / `first_run_notice_shown` 等）。
+    /// 与 `is_legacy_common_config_migrated` 等只认 `"true"` 的历史辅助函数**不同**——
+    /// 这里同时接受 `"1"` 是为了兼容 `init_default_official_providers` 既有写法。
+    pub fn get_bool_flag(&self, key: &str) -> Result<bool, AppError> {
+        Ok(matches!(
+            self.get_setting(key)?.as_deref(),
+            Some("true") | Some("1")
+        ))
+    }
+
     /// 设置值
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);

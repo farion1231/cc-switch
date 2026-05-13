@@ -1,6 +1,7 @@
 mod app_config;
 mod app_store;
 mod auto_launch;
+mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
@@ -11,8 +12,11 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+pub mod hermes_config;
 mod init_status;
 mod lightweight;
+#[cfg(target_os = "linux")]
+mod linux_fix;
 mod mcp;
 mod openclaw_config;
 mod opencode_config;
@@ -61,6 +65,7 @@ use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 fn redact_url_for_log(url_str: &str) -> String {
     match url::Url::parse(url_str) {
@@ -132,6 +137,10 @@ fn handle_deeplink_url(
                     let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
+                    #[cfg(target_os = "linux")]
+                    {
+                        linux_fix::nudge_main_window(window.clone());
+                    }
                     log::info!("✓ Window shown and focused");
                 }
             }
@@ -162,7 +171,7 @@ async fn update_tray_menu(
 ) -> Result<bool, String> {
     match tray::create_tray_menu(&app, state.inner()) {
         Ok(new_menu) => {
-            if let Some(tray) = app.tray_by_id("main") {
+            if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
                 tray.set_menu(Some(new_menu))
                     .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
                 return Ok(true);
@@ -229,6 +238,10 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
+                #[cfg(target_os = "linux")]
+                {
+                    linux_fix::nudge_main_window(window.clone());
+                }
             }
         }));
     }
@@ -253,6 +266,7 @@ pub fn run() {
                         tray::apply_tray_policy(window.app_handle(), false);
                     }
                 } else {
+                    api.prevent_close();
                     window.app_handle().exit(0);
                 }
             }
@@ -261,7 +275,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .build(),
+        )
         .setup(|app| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+
             // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
             app_store::refresh_app_config_dir_override(app.handle());
             panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
@@ -457,6 +478,100 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
+            // 1.5. 自动导入 live 配置 + seed 官方预设供应商（Claude / Codex / Gemini）
+            //
+            // 先 import 后 seed 是有意为之：先把用户手动配置的 settings.json / auth.json / .env
+            // 落成 "default" provider 设为 current，再追加官方预设（is_current=false）。
+            // 这样用户切到官方预设时，回填机制会保护原 live 配置不丢失。
+            //
+            // 捕获首次运行快照：所有全新装用户都会看到欢迎弹窗介绍 CC Switch 的工作方式。
+            // 读失败时默认不弹，宁可漏弹也不要因为故障打扰用户。
+            let first_run_already_confirmed = crate::settings::get_settings()
+                .first_run_notice_confirmed
+                .unwrap_or(false);
+            let fresh_install_at_startup =
+                app_state.db.is_providers_empty().unwrap_or(false);
+
+            for app_type in
+                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
+            {
+                if !crate::services::provider::should_import_default_config_on_startup(
+                    &app_state,
+                    &app_type,
+                )
+                .unwrap_or(false)
+                {
+                    log::debug!(
+                        "○ {} already has providers; live import skipped",
+                        app_type.as_str()
+                    );
+                    continue;
+                }
+
+                match crate::services::provider::import_default_config(
+                    &app_state,
+                    app_type.clone(),
+                ) {
+                    Ok(true) => log::info!(
+                        "✓ Imported live config for {} as default provider",
+                        app_type.as_str()
+                    ),
+                    Ok(false) => log::debug!(
+                        "○ {} already has providers; live import skipped",
+                        app_type.as_str()
+                    ),
+                    Err(e) => log::debug!(
+                        "○ No live config to import for {}: {e}",
+                        app_type.as_str()
+                    ),
+                }
+            }
+
+            match app_state.db.init_default_official_providers() {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Seeded {count} official provider(s)");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
+            }
+
+            // 老用户 / 已确认的路径由 `fresh_install_at_startup` 自行拦截，这里不做写入。
+            // 字段只由前端在用户点击"我知道了"时 save_settings 回写，语义是"用户显式确认过"。
+            if !first_run_already_confirmed && fresh_install_at_startup {
+                log::info!("✓ First-run welcome notice pending");
+            }
+
+            // 1.6. 自动同步 OpenCode / OpenClaw 的 live providers 到数据库
+            //
+            // additive 模式（OpenCode / OpenClaw）的 import 函数本身按 id 幂等，
+            // 已有的 provider 会被跳过，所以每次启动都跑是安全的——既保证新装
+            // 用户开箱可见 live 中的供应商，也让外部修改的 live 文件能在重启
+            // 后同步到数据库（与之前依赖前端"导入当前配置"按钮手动触发不同）。
+            //
+            // 底层 read_*_config 在文件不存在时返回默认空配置，因此新装且无
+            // live 文件的用户走 Ok(0) 路径，不会产生错误日志噪音。
+            match crate::services::provider::import_opencode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} OpenCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new OpenCode providers to import"),
+                Err(e) => log::warn!("✗ Failed to import OpenCode providers: {e}"),
+            }
+            match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new OpenClaw providers to import"),
+                Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
+            }
+            match crate::services::provider::import_hermes_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} Hermes provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new Hermes providers to import"),
+                Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
+            }
+
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
                 let has_omo = app_state
@@ -543,6 +658,14 @@ pub fn run() {
                     Ok(_) => log::debug!("○ No OpenCode MCP servers found to import"),
                     Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
                 }
+
+                match crate::services::mcp::McpService::import_from_hermes(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Hermes");
+                    }
+                    Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
+                }
             }
 
             // 4. 导入提示词文件（表空时触发）
@@ -555,6 +678,7 @@ pub fn run() {
                     crate::app_config::AppType::Gemini,
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
+                    crate::app_config::AppType::Hermes,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -644,10 +768,18 @@ pub fn run() {
             let menu = tray::create_tray_menu(app.handle(), &app_state)?;
 
             // 构建托盘
-            let mut tray_builder = TrayIconBuilder::with_id("main")
-                .on_tray_icon_event(|_tray, event| match event {
-                    // 左键点击已通过 show_menu_on_left_click(true) 打开菜单，这里不再额外处理
-                    TrayIconEvent::Click { .. } => {}
+            let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
+                .tooltip("CC Switch") // 鼠标悬停提示
+                .on_tray_icon_event(|tray, event| match event {
+                    // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+                    // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
+                    // refresh_all_usage_in_tray 内部有 10 秒防抖。
+                    TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+                        let app = tray.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            crate::tray::refresh_all_usage_in_tray(&app).await;
+                        });
+                    }
                     _ => log::debug!("unhandled event {event:?}"),
                 })
                 .menu(&menu)
@@ -713,6 +845,18 @@ pub fn run() {
                 let copilot_auth_manager = CopilotAuthManager::new(app_config_dir);
                 app.manage(CopilotAuthState(Arc::new(RwLock::new(copilot_auth_manager))));
                 log::info!("✓ CopilotAuthManager initialized");
+            }
+
+            // 初始化 CodexOAuthManager (ChatGPT Plus/Pro 反代)
+            {
+                use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+                use commands::CodexOAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let codex_oauth_manager = CodexOAuthManager::new(app_config_dir);
+                app.manage(CodexOAuthState(Arc::new(RwLock::new(codex_oauth_manager))));
+                log::info!("✓ CodexOAuthManager initialized");
             }
 
             // 初始化全局出站代理 HTTP 客户端
@@ -796,6 +940,59 @@ pub fn run() {
                         }
                     }
                 });
+
+                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
+                let db_for_session_sync = state.db.clone();
+                tauri::async_runtime::spawn(async move {
+                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
+
+                    fn run_step<T>(name: &str, result: Result<T, crate::error::AppError>) {
+                        if let Err(e) = result {
+                            log::warn!("{name} failed: {e}");
+                        }
+                    }
+
+                    let db = &db_for_session_sync;
+
+                    // 首次同步
+                    run_step(
+                        "Usage cost startup backfill",
+                        db.backfill_missing_usage_costs(),
+                    );
+                    run_step(
+                        "Session usage initial sync",
+                        crate::services::session_usage::sync_claude_session_logs(db),
+                    );
+                    run_step(
+                        "Codex usage initial sync",
+                        crate::services::session_usage_codex::sync_codex_usage(db),
+                    );
+                    run_step(
+                        "Gemini usage initial sync",
+                        crate::services::session_usage_gemini::sync_gemini_usage(db),
+                    );
+
+                    // 定期同步
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                        SESSION_SYNC_INTERVAL_SECS,
+                    ));
+                    interval.tick().await; // skip immediate first tick
+                    loop {
+                        interval.tick().await;
+                        run_step(
+                            "Session usage periodic sync",
+                            crate::services::session_usage::sync_claude_session_logs(db),
+                        );
+                        run_step(
+                            "Codex usage periodic sync",
+                            crate::services::session_usage_codex::sync_codex_usage(db),
+                        );
+                        run_step(
+                            "Gemini usage periodic sync",
+                            crate::services::session_usage_gemini::sync_gemini_usage(db),
+                        );
+                    }
+                });
             });
 
             // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
@@ -816,6 +1013,10 @@ pub fn run() {
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
             if let Some(window) = app.get_webview_window("main") {
+                // 在窗口首次显示前同步装饰状态，避免前端加载后再切换导致标题栏闪烁
+                // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
+                #[cfg(target_os = "linux")]
+                let _ = window.set_decorations(!settings.use_app_window_controls);
                 if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
@@ -828,6 +1029,14 @@ pub fn run() {
                     // 正常启动模式：显示窗口
                     let _ = window.show();
                     log::info!("正常启动模式：主窗口已显示");
+
+                    // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
+                    // 启动时 webview 未获取焦点 + surface 尺寸协商失败，导致点击无效。
+                    // 这里做 set_focus + 伪 resize，等价于无视觉版本的"最大化-还原"。
+                    #[cfg(target_os = "linux")]
+                    {
+                        linux_fix::nudge_main_window(window.clone());
+                    }
                 }
             }
 
@@ -843,6 +1052,9 @@ pub fn run() {
             commands::remove_provider_from_live_config,
             commands::switch_provider,
             commands::import_default_config,
+            commands::get_claude_desktop_status,
+            commands::get_claude_desktop_default_routes,
+            commands::import_claude_desktop_providers_from_claude,
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,
@@ -892,7 +1104,9 @@ pub fn run() {
             commands::testUsageScript,
             // subscription quota
             commands::get_subscription_quota,
+            commands::get_codex_oauth_quota,
             commands::get_coding_plan_quota,
+            commands::get_balance,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
             commands::upsert_mcp_server_in_config,
@@ -962,6 +1176,10 @@ pub fn run() {
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
             commands::discover_available_skills,
+            commands::check_skill_updates,
+            commands::update_skill,
+            commands::migrate_skill_storage,
+            commands::search_skills_sh,
             // Skill management (legacy API compatibility)
             commands::get_skills,
             commands::get_skills_for_app,
@@ -978,6 +1196,7 @@ pub fn run() {
             commands::get_auto_launch_status,
             // Proxy server management
             commands::start_proxy_server,
+            commands::stop_proxy_server,
             commands::stop_proxy_with_restore,
             commands::get_proxy_takeover_status,
             commands::set_proxy_takeover_for_app,
@@ -1020,6 +1239,9 @@ pub fn run() {
             commands::update_model_pricing,
             commands::delete_model_pricing,
             commands::check_provider_limits,
+            // Session usage sync
+            commands::sync_session_usage,
+            commands::get_usage_data_sources,
             // Stream health check
             commands::stream_check_provider,
             commands::stream_check_all_providers,
@@ -1058,6 +1280,17 @@ pub fn run() {
             commands::set_openclaw_env,
             commands::get_openclaw_tools,
             commands::set_openclaw_tools,
+            // Hermes specific
+            commands::import_hermes_providers_from_live,
+            commands::get_hermes_live_provider_ids,
+            commands::get_hermes_live_provider,
+            commands::get_hermes_model_config,
+            commands::open_hermes_web_ui,
+            commands::launch_hermes_dashboard,
+            commands::get_hermes_memory,
+            commands::set_hermes_memory,
+            commands::get_hermes_memory_limits,
+            commands::set_hermes_memory_enabled,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
@@ -1137,6 +1370,7 @@ pub fn run() {
 
             let app_handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
+                save_window_state_before_exit(&app_handle);
                 cleanup_before_exit(&app_handle).await;
                 log::info!("清理完成，退出应用");
 
@@ -1542,4 +1776,22 @@ fn show_database_init_error_dialog(
             exit_text.to_string(),
         ))
         .blocking_show()
+}
+
+// ============================================================
+// 在应用主动退出前显式持久化窗口状态
+// ============================================================
+
+fn window_state_flags() -> StateFlags {
+    StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED
+}
+
+/// 当前应用的退出路径会拦截 `ExitRequested` 并最终直接 `std::process::exit(0)`，
+/// 这里需要在真正结束进程前手动落盘，避免 window-state 插件的默认退出钩子被绕过。
+pub fn save_window_state_before_exit(app_handle: &tauri::AppHandle) {
+    if let Err(err) = app_handle.save_window_state(window_state_flags()) {
+        log::error!("退出前保存窗口状态失败: {err}");
+    } else {
+        log::info!("已在退出前保存窗口状态");
+    }
 }

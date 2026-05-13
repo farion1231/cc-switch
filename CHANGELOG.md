@@ -7,6 +7,210 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **OpenAI Responses API usage parsing robustness**: Hardened `build_anthropic_usage_from_responses()` and the Responses → Anthropic SSE translator so a missing or malformed upstream `usage` no longer produces `"usage": null` in `message_delta`. This unblocks strict Anthropic clients (notably the VSCode Claude Code extension) that crashed with "Cannot read properties of null (reading 'output_tokens')" against providers such as Codex OAuth and DashScope's `compatible-mode/v1/responses` endpoint. Added OpenAI field-name fallbacks (`prompt_tokens` / `completion_tokens`), null/empty/partial object handling, and preserved cache token fields even when input/output tokens are missing (#2422).
+
+## [3.14.1] - 2026-04-23
+
+Development since v3.14.0 focuses on Codex OAuth stability, tray usage visibility, Skills import/install reliability, Gemini session restore paths, and simplifying Hermes configuration health handling.
+
+**Stats**: 13 commits | 48 files changed | +1,883 insertions | -808 deletions
+
+### Added
+
+- **Tray Usage Visibility**: System tray submenus now show cached usage for the current Claude / Codex / Gemini provider, including subscription and script-based usage summaries with utilization color markers. Tray-triggered refreshes are throttled, limited to visible apps, and synchronized back into React Query so the main window and tray share fresh usage data (#2184).
+- **Tray Coding-Plan Usage (Kimi / Zhipu / MiniMax)**: System tray now renders 5-hour + weekly window usage for Chinese coding-plan providers using the same `🟢 h12% w80%` two-window layout as official subscription badges (worst utilization drives the emoji). Creating a Claude provider whose `ANTHROPIC_BASE_URL` matches a known coding-plan host now auto-injects `meta.usage_script`, so the tray lights up without opening the Usage Script modal. Existing `usage_script` values are preserved on update.
+- **Codex OAuth FAST Mode**: Added an explicit FAST mode toggle for Codex OAuth-backed Claude providers. When enabled, converted Responses requests send `service_tier="priority"` for lower latency; the toggle stays off by default to avoid unexpectedly increasing ChatGPT quota consumption (#2210).
+
+### Changed
+
+- **Session and Settings Layout Polish**: Hardened the scroll-area viewport with width containment to fix horizontal overflow, and tightened app bottom spacing plus settings footer spacing so long session/settings views fit more cleanly (#2201).
+
+### Removed
+
+- **Hermes Config Health Scanner**: Removed the in-app Hermes config health scanner, warning banner, `scan_hermes_config_health` command, `HermesHealthWarning` type, and `HermesWriteOutcome.warnings` payload. CC Switch now keeps the Hermes surface focused on active provider display, provider switching defaults, memory editing, and launching the Hermes Web UI for deep configuration.
+
+### Fixed
+
+- **Codex OAuth Cache Routing**: Stabilized ChatGPT Codex reverse-proxy cache identity by using client-provided session IDs for `prompt_cache_key` and Codex session headers, preserving explicit cache keys, and avoiding generated UUID cache churn (#2218).
+- **Codex OAuth Responses SSE Aggregation**: Non-streaming Anthropic clients now receive JSON even when the ChatGPT Codex upstream forces OpenAI Responses SSE; CC Switch aggregates the upstream SSE events before running the non-streaming transform (#2235).
+- **Codex OAuth Stream Check Parity**: Stream checks now build Codex OAuth test requests with the same `store: false`, encrypted reasoning include, and provider FAST mode setting as production proxy requests (#2210).
+- **Codex Model Extraction**: Replaced first-line regex matching with TOML parsing when reading Codex config models, so multiline TOML is handled correctly (#2227).
+- **Model Quick-Set / One-Click Config**: Model quick-set updates now apply against the latest provider form config, preventing stale state from making one-click configuration fail (#2249).
+- **Skills Import Duplicates**: The Skills import dialog disables actions while import is pending and the installed-skills cache deduplicates imported results by ID, preventing double-clicks from adding duplicate installed entries (#2139, #2211).
+- **Root-Level Skill Repos**: Skill install and update flows now consistently resolve three source patterns: direct nested paths, install-name recursive search, and repository-root `SKILL.md` sources (#2231).
+- **Gemini Session Restore Paths**: Gemini session scanning now reads `.project_root` metadata so restore flows can pass the original project directory when available (#2240).
+- **Provider Hover Names**: Provider icons now expose the provider name on hover for inline SVG, image URL, and fallback initials render paths (#2237).
+
+## [3.14.0] - 2026-04-21
+
+Development since v3.13.0 focuses on onboarding Hermes Agent as a first-class managed app, rolling out Claude Opus 4.7 across the preset matrix, adding a Gemini Native API proxy, and sharpening session, usage, and proxy workflows.
+
+**Stats**: 100 commits | 219 files changed | +20,548 insertions | -3,569 deletions
+
+### Added
+
+- **Hermes Agent Support (6th Managed App)**: Added Hermes Agent as a first-class managed app with database migration v9→v10, full Rust command surface, YAML-backed `~/.hermes/config.yaml` read/write with atomic backups, MCP sync, Skills sync, session manager with SQLite + JSONL support, and dedicated frontend panels. Supports four API protocols (`chat_completions`, `anthropic_messages`, `codex_responses`, `bedrock_converse`) aligned with Hermes Agent 0.10.0 schema. Read-only rendering for providers owned by the user-authored `providers:` dict, with deep configuration delegated to the Hermes Web UI.
+- **Hermes Memory Panel**: Added a Memory panel for editing `MEMORY.md` and `USER.md` directly from CC Switch, with an enable switch, character-count limits, and a live save flow. Replaces the Prompts entry for Hermes.
+- **Hermes Provider Presets**: Added ~50 Hermes provider presets spanning Nous Research, Shengsuanyun, OpenRouter, DeepSeek, Together AI, StepFun, Zhipu GLM, Bailian, Kimi, MiniMax, DouBao, BaiLing, ModelScope, KAT-Coder, PackyCode, Cubence, AIGoCode, RightCode, AICodeMirror, AICoding, CrazyRouter, SSSAiCode, Micu, CTok.ai, DDSHub, E-FlowCode, LionCCAPI, PIPELLM, Compshare, SiliconFlow, AiHubMix, DMXAPI, TheRouter, Novita, Nvidia, and Xiaomi MiMo.
+- **Claude Opus 4.7 Support**: Added Claude Opus 4.7 with adaptive thinking whitelisting, per-million pricing seed, and Bedrock SKU (`anthropic.claude-opus-4-7` / `global.anthropic.claude-opus-4-7`, dropping the legacy `-v1` suffix). Migrated all aggregator and Bedrock presets to Opus 4.7 as the default Opus model.
+- **Claude `max` Effort Tier**: Upgraded the Claude effort dropdown from `high` to `max` for extended reasoning capacity.
+- **Gemini Native API Proxy**: Added `api_format = "gemini_native"` so the proxy can forward to Google's `generateContent` API with full streaming, schema conversion, and shadow request support. Adds `gemini_url.rs`, `gemini_schema.rs`, `gemini_shadow.rs`, `streaming_gemini.rs`, and `transform_gemini.rs` under the proxy providers module.
+- **GitHub Copilot Enterprise Server**: Added GHES authentication and endpoint configuration for Copilot-backed Claude providers, plus thinking-block stripping before upstream to preserve premium interaction quota.
+- **Session List Virtualization**: Virtualized the session list via `@tanstack/react-virtual` so long conversations (thousands of records) scroll smoothly; long session messages are now collapsed by default to reduce text layout cost.
+- **Codex / OpenClaw Session Title Extraction**: Added meaningful title auto-extraction for Codex and OpenClaw sessions with 2-line display; strips OpenClaw `message_id` suffix noise.
+- **Usage Date Range Picker**: Added a date range selector to the usage dashboard with preset tabs (Today / 1d / 7d / 14d / 30d), a custom date + time calendar picker, and a page-jump input on paginated lists.
+- **Model Mapping Quick-Set**: Added a quick-set button next to model mapping fields in provider forms for faster edits.
+- **Stream Check Error Classification**: Classified Stream Check errors and surfaced them as color-coded toasts; refreshed default probe models and added explicit detection for "model not found" responses.
+- **Block Official Provider Switching During Local Routing**: Blocks switching to official providers while Local Routing is active, since routing official API traffic through the local proxy carries account-suspension risk. A warning toast surfaces the block.
+- **Pricing Database Refresh (v8 → v9)**: Added ~50 new model pricing entries and corrected stale prices via a reseed-on-migration step, including Claude 4.7, Opus 4.7 Adaptive Thinking, Grok 4, Qwen 3.5/3.6, MiniMax M2.5/M2.7, Doubao Seed 2.0 series, and GLM-5/5.1. DeepSeek and Kimi K2.5 prices updated.
+- **Application-Level Window Controls**: Added an opt-in setting to render CC Switch's own minimize / toggle-maximize / close buttons instead of the system decorations, materially improving the experience on Linux Wayland where compositor-drawn buttons can become inert.
+- **Hermes in Unified Skills Management**: Added Hermes to the unified Skills surface; skill install, enable, and filter now cover the Hermes app alongside Claude / Codex / Gemini / OpenCode / OpenClaw.
+- **OpenClaw Config Directory Override**: Added a settings option to point CC Switch at a custom `openclaw.json` location.
+- **Hermes Config Directory Override**: Added a settings option to point CC Switch at a custom `~/.hermes/config.yaml` location, backed by data-driven dispatch.
+- **StepFun Step Plan Preset**: Added StepFun Step Plan (EN/ZH) provider presets.
+- **New API Usage Script Template**: Added a User-Agent header to the New API usage script template for better upstream compatibility.
+- **Launch Hermes Dashboard from Toolbar**: When the Hermes Web UI probe fails, the toolbar entry now offers to run `hermes dashboard` in the user's preferred terminal via a temp bash/batch script. `hermes dashboard` opens the browser itself once ready, so no polling is required. Also corrects the stale `hermes web` hint in the offline toast (the real command is `hermes dashboard`) and reorders Linux terminal detection to try `which` before stat'ing `/usr/bin`, `/bin`, `/usr/local/bin`.
+- **LemonData Provider Preset (All Six Apps)**: Registered LemonData as a third-party partner preset across Claude, Codex, Gemini, OpenCode, OpenClaw, and Hermes, with icon assets and zh/en/ja partner-promotion copy. Claude uses `ANTHROPIC_API_KEY` auth; OpenAI-compatible apps target `gpt-5.4`.
+- **DDSHub Codex Preset**: Added a Codex-compatible endpoint for DDSHub at the same host as its Claude service; base URL omits the `/v1` suffix because the gateway auto-routes OpenAI SDK paths.
+
+### Changed
+
+- **"Local Proxy Takeover" → "Local Routing"**: Unified terminology across UI copy, README, and docs in all three locales. Functional behavior is unchanged.
+- **Hermes `Auto` api_mode Removed**: Users must now pick an explicit protocol; new deeplinks default to `chat_completions`. Eliminates URL-based heuristic surprises.
+- **Hermes Provider Form**: Added an API mode dropdown and per-provider model editor; bound per-provider models to the top-level `model:` when switching active providers.
+- **Hermes Deep Config Delegation**: Deep YAML knobs are now delegated to the Hermes Web UI via a direct launch action, rather than duplicated in the CC Switch form.
+- **`ANTHROPIC_REASONING_MODEL` Removed from Claude Quick-Set**: Decoupled the reasoning capability from model selection; the legacy field is no longer surfaced in the quick-set form.
+- **Per-Provider Proxy Config Removed**: Consolidated into global Local Routing; the provider-level proxy toggle and associated storage are gone.
+- **Unified Toolbar Icon Button Width**: Normalized icon-button widths across Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes panels for a consistent header look.
+- **Rust Toolchain Pinned to 1.95**: Adopted clippy 1.95 suggestions across the workspace and pinned the toolchain to prevent nightly drift.
+- **Tray Menu ID Constant**: The tray identifier moved from the hardcoded string `"main"` to a `TRAY_ID` constant (`"cc-switch"`) across all call sites.
+- **Copilot Request Classification**: Refined request routing inside the Copilot optimizer to further reduce unnecessary premium interaction consumption.
+- **Usage Script Intranet Support**: Removed private-IP / suspicious-hostname blocking from usage scripts, unblocking enterprise intranet, Docker, and self-hosted API endpoints. Built-in templates still enforce HTTPS (except localhost) and same-origin checks; custom templates remain user-controlled with those request-URL checks skipped.
+- **Failover Queue Notes**: Provider notes now appear in failover queue selectors and queue rows for easier identification across multi-provider queues.
+- **Hermes Toolbar Layout**: Swapped the Hermes Web UI button from `ExternalLink` to `LayoutDashboard` (clicking may spawn `hermes dashboard` rather than just opening a URL), and moved MCP to the final toolbar slot so Hermes matches the Claude / Codex / Gemini / OpenCode layout.
+
+### Fixed
+
+- **Header Auto-Compact Latching After Maximize**: The toolbar no longer stays compacted after maximize/restore; compaction now reevaluates on size changes.
+- **Hermes YAML Pollution & OAuth MCP Auth Drop**: Round-tripping through CC Switch no longer drops OAuth MCP `auth` blocks or pollutes unrelated YAML keys; guard tests added via `tests/hermes_roundtrip.rs`.
+- **Hermes Active Provider Display**: Hermes UI now correctly surfaces the active provider and wires add / enable / remove actions.
+- **Hermes Provider Persistence**: Providers persist under `custom_providers:` so `api_mode` and `model` survive restarts and config reloads.
+- **Codex `cache_control` Preservation**: Preserve `cache_control` when merging system prompts during Codex format conversion (#1946).
+- **Claude Prompt Cache Key Leak**: Stopped sending prompt cache keys during Claude chat conversions (#2003).
+- **Proxy Hop-by-Hop Header Stripping**: Strip hop-by-hop response headers (Connection, Keep-Alive, Transfer-Encoding, etc.) per RFC 7230.
+- **Permissive Proxy CORS Removed**: Removed the permissive CORS layer from the proxy (#1915).
+- **Copilot Premium Consumption**: Further reduced unnecessary Copilot premium interaction consumption during pass-through traffic.
+- **Backend Error Details in Proxy Toast**: Surface backend error payload details in proxy-related toast messages instead of a generic failure string.
+- **Usage Log Deduplication**: Deduplicated proxy and session-log usage records so the same request is no longer double-counted; synced the request log time range with the dashboard's 1d / 7d / 30d selector.
+- **Common Config Checkbox Persistence**: Checkbox state for Claude / Codex / Gemini common-config toggles now persists correctly across reopens.
+- **Claude Plugin `settings.json` Sync**: Editing the current provider now syncs back to `settings.json` for the Claude plugin path.
+- **Google Official Gemini Env Preservation**: Saving the Google Official Gemini provider no longer clobbers the `env` block.
+- **OpenCode JSON5 Parser for Trailing Commas**: OpenCode config reads now tolerate trailing commas via a JSON5 parser.
+- **Preset Refreshes**: Refreshed stale context windows for DeepSeek and Claude 1M; refreshed stale model IDs; backfilled Hermes model lists; fixed the Nous endpoint and replaced the Hermes placeholder icon with Nous brand artwork; pruned unused official Hermes presets.
+- **Auto-Expand Collapsed Messages on Search Hit**: Collapsed messages now auto-expand when a search match lands inside hidden content.
+- **Unknown Subscription Quota Tiers Hidden**: Provider cards no longer render unknown subscription quota tiers.
+- **Weekly Limit Label Unified**: Aligned the weekly_limit tier label with the official 7-day naming across locales.
+- **Root-Level Skill Repo Install**: Fixed skill installation when the repository root itself is a skill.
+- **Session ID Parsing Clippy**: Removed a redundant closure in session ID parsing (clippy warning).
+- **Usage Log Stat Dedup**: Deduplicated proxy-sourced and session-log-sourced usage records for accurate totals.
+- **Stream Check Default Models Refresh**: Updated stream-check default probe models to match each vendor's current lineup.
+- **Skills Import Sync**: Imported Skills are now immediately synced into enabled app directories instead of only being recorded in the database, so the UI no longer shows "installed" while the target app directory is missing the skill.
+- **Ghostty Session Restore**: Fixed Ghostty session restore launch by using shell execution with `--working-directory`, avoiding `cwd` escaping issues when the path contains spaces or special characters.
+- **Hermes Health Check Borrowing OpenClaw Schema**: Hermes providers were routed through `check_additive_app_stream` (the OpenClaw dispatcher), which reads camelCase `baseUrl` / `apiKey` / `api` and surfaced "OpenClaw provider is missing baseUrl" even when every Hermes field was filled. Introduced `check_hermes_stream` with Hermes-specific extractors that map `api_mode` (`chat_completions` / `anthropic_messages` / `codex_responses`) to the matching `check_claude_stream` `api_format`, and returns `bedrock_converse` as unsupported. `api_mode` is now resolved before URL / API key extraction, so `bedrock_converse` users see the real cause rather than a misleading "missing base_url".
+- **Usage Query Modal for Hermes & OpenClaw**: `getProviderCredentials` now reads flat `settingsConfig` fields for Hermes (snake_case `base_url` / `api_key`) and OpenClaw (camelCase `baseUrl` / `apiKey`), so the "official balance" template auto-selects for matching providers like SiliconFlow. Also refactored the BALANCE and TOKEN_PLAN test paths to reuse the precomputed `providerCredentials` instead of re-reading `env.ANTHROPIC_*` directly, fixing the "empty key" error for non-Claude apps even when the key was configured.
+
+### Docs
+
+- **README Sponsor Updates**: Updated SiliconFlow signup bonus to ¥16, trimmed the SSSAiCode sponsor blurb, updated partner logos, and added LemonData as a new sponsor.
+- **Global Proxy Hint Clarified**: Clarified the global proxy hint about local routing across all three locales.
+- **Takeover → Routing Rename**: Renamed takeover docs to routing and updated anchors across all languages.
+- **PIPELLM Website URL**: Updated the PIPELLM sponsor website URL to `code.pipellm.ai`.
+
+### Breaking
+
+- **Hermes requires explicit `api_mode`**: The `Auto` mode is gone; imported or deeplinked providers default to `chat_completions`. Users with prior `Auto` configs will be prompted to pick a protocol.
+- **`ANTHROPIC_REASONING_MODEL` removed from Claude quick-set**: The legacy field is no longer exposed; existing settings are cleaned up automatically.
+- **Per-provider proxy configuration removed**: Migrate to the global Local Routing setting. Existing per-provider proxy values are ignored.
+- **Database schema bumped v9 → v10**: Adds `enabled_hermes` columns to `mcp_servers` and `skills` (auto-migrated with `DEFAULT 0`; no data loss).
+- **Pricing table reseeded (v8 → v9)**: The `model_pricing` table is cleared and reseeded on first launch to pick up new models and corrected prices.
+- **XCodeAPI preset removed**: Users of the XCodeAPI preset should switch to another provider.
+
+---
+
+## [3.13.0] - 2026-04-10
+
+Development since v3.12.3 focuses on quota visibility, provider workflow upgrades, stronger proxy compatibility, and lower-overhead tray / session workflows.
+
+### Added
+
+- **Lightweight Mode**: Added a tray-only mode that destroys the main window and keeps CC Switch running from the system tray, with the window recreated when users reopen it.
+- **Provider Model Auto-Fetch**: Added OpenAI-compatible `/v1/models` discovery for Claude, Codex, Gemini, OpenCode, and OpenClaw provider forms, including grouped dropdown selection and failure-specific error messages.
+- **Quota & Balance Visibility**: Added inline quota or balance display for official Claude / Codex / Gemini providers, GitHub Copilot premium interactions, Codex OAuth providers, Token Plan providers (Kimi / Zhipu GLM / MiniMax), and official balance queries for DeepSeek, StepFun, SiliconFlow, OpenRouter, and Novita AI. Copilot / ChatGPT OAuth and CLI subscription quota now only auto-poll for the currently active provider, preventing unnecessary API calls and misleading displays on non-current cards.
+- **Skills Discovery & Batch Updates**: Added SHA-256 based skill update detection, per-skill and batch update actions, a storage-location toggle between CC Switch and `~/.agents/skills`, and public `skills.sh` search integration.
+- **Session Workflow Upgrades**: Added batch delete in Session Manager, a directory picker before launching Claude terminal restore commands, usage import from Claude / Codex / Gemini session logs without requiring proxy interception, and per-app usage filtering for Claude / Codex / Gemini dashboards.
+- **Codex OAuth Reverse Proxy**: Added ChatGPT Plus / Pro based Codex OAuth reverse proxy support for Claude provider cards, including managed OAuth login and inline subscription quota display.
+- **OpenCode / OpenClaw Stream Check Coverage**: Added OpenCode npm package mapping plus support for OpenClaw `openai-completions` and the remaining OpenClaw protocol variants in Stream Check.
+- **Full URL Endpoint Mode**: Added a provider option that treats `base_url` as a complete upstream endpoint so proxy forwarding and stream checks can work with vendors that require nonstandard URL layouts.
+- **OpenCode StepFun Step Plan Preset**: Added a StepFun Step Plan provider preset for OpenCode.
+- **Copilot Interaction Optimizer**: Added request classification and routing logic to reduce unnecessary GitHub Copilot premium interaction consumption.
+- **First-Run Welcome Dialog**: Added a one-time welcome dialog on fresh installs explaining how existing configuration is preserved as a default provider and how the bundled official preset enables one-click revert. Upgrade users are excluded.
+- **Official Provider Seeding**: Added automatic seeding of Claude Official, OpenAI Official, and Google Official provider entries on startup, giving every user a one-click path back to the official endpoint.
+- **OpenCode / OpenClaw Auto-Import**: Added automatic startup import of live OpenCode and OpenClaw provider configurations, matching the auto-import behavior already present for Claude, Codex, and Gemini.
+- **Common Config Editor Guidance**: Added an informational guide and empty-state prompt to the Common Config snippet editor modal for Claude, Codex, and Gemini, with i18n support.
+- **Common Config First-Run Notice**: Added a one-time informational dialog explaining Common Config Snippets when users first open the provider add/edit form.
+- **Claude Session Titles**: Added meaningful title extraction for Claude sessions using a priority chain: custom-title metadata, first real user message, then directory basename fallback.
+- **Session Search Highlighting**: Added keyword highlighting in session titles and messages during Session Manager search.
+- **URL-Based Provider Icons**: Added a dual rendering mode to the icon system supporting Vite URL imports for large SVGs and raster images (PNG, JPG, WebP), keeping small SVGs inlined.
+- **Kaku Terminal Support**: Added Kaku as a selectable terminal for session launch on macOS, reusing the WezTerm-compatible launch path.
+- **OMO Slim Council Support**: Restored first-class council support as a built-in oh-my-opencode-slim agent with updated metadata and UI copy.
+- **TheRouter Provider Preset**: Added TheRouter provider presets across Claude, Codex, Gemini, OpenCode, and OpenClaw.
+- **DDSHub Provider Preset**: Added DDSHub as a third-party partner provider for Claude with icon and partner promotion text.
+- **LionCCAPI Provider Preset**: Added LionCCAPI as a third-party partner provider across all five apps with anthropic-messages protocol for OpenCode and OpenClaw.
+- **Shengsuanyun Provider Preset**: Added Shengsuanyun (胜算云) as an aggregator partner provider across all five apps with URL-based icon and localized display name.
+- **PIPELLM Provider Preset**: Added PIPELLM provider preset across Claude, Codex, OpenCode, and OpenClaw with full model definitions and icon.
+- **E-FlowCode Provider Preset**: Added E-FlowCode provider preset across all five apps with per-app protocol configuration.
+
+### Changed
+
+- **Tray Menu Organization**: Reworked the tray menu into per-app submenus to prevent overflow and make background provider switching scale better with larger provider lists.
+- **Proxy Forwarding Stack**: Refactored proxy forwarding onto a Hyper-based client with transparent header forwarding, improved endpoint rewriting, and better support for dynamic upstream endpoints.
+- **OAuth Auth Center UI Polish**: Tightened the Auth Center copy, layout, and icon presentation so the Codex OAuth login flow feels cleaner and less cluttered.
+- **Provider Key Lifecycle & Live Sync**: Reworked additive provider create / rename / duplicate flows so live config writes, cleanup, and rollback stay consistent across OpenCode / OpenClaw and takeover scenarios.
+- **Codex OAuth Defaults**: Updated the Codex OAuth preset to the GPT-5.4 model family.
+
+### Fixed
+
+- **Copilot Authentication & Proxy Compatibility**: Fixed GitHub Copilot authentication regressions, corrected enterprise / dynamic endpoint handling, repaired clipboard verification-code copying on macOS and Linux, and fixed Responses routing when Copilot-backed Claude providers target OpenAI models.
+- **Streaming Parser Compatibility**: Fixed SSE parsing to accept fields with optional spaces, improving compatibility with non-strict streaming implementations.
+- **UTF-8 Stream Chunk Boundaries**: Fixed intermittent garbled output (U+FFFD replacement characters) in Claude Code when multi-byte UTF-8 sequences such as Chinese characters or emoji were split across TCP stream chunks via the Copilot reverse proxy, by preserving incomplete trailing bytes across chunks in all four SSE streaming paths instead of lossy decoding.
+- **Fragmented System Prompt Normalization**: Fixed strict OpenAI-compatible chat backends (Nvidia, Qwen-style) rejecting requests when converted Claude payloads contained multiple system messages, by merging system content into a single leading system message during the Anthropic → OpenAI chat transformation.
+- **Provider Switch State Corruption**: Serialized per-app provider switches to prevent concurrent failover or hot-switch operations from leaving `is_current`, settings state, and live backup state out of sync.
+- **Claude Takeover Live Config Drift**: Fixed provider edits while Claude takeover is active so live settings remain aligned with the latest provider state without breaking takeover restore behavior.
+- **WebDAV Password Retention & Validation**: Fixed the WebDAV password field so saved credentials remain visible after refresh and treated `MKCOL 405` responses correctly during connection validation.
+- **Provider Card Action States**: Fixed additive-mode highlight behavior, aligned usage display layout across provider cards, replaced hard proxy-switch blocking with a warning path, and disabled unsupported test / usage actions for Copilot and Codex OAuth cards.
+- **Usage Accuracy & Pricing**: Fixed MiniMax quota math and 0%→100% progression, corrected CNY→USD pricing plus missing model definitions, improved Gemini session-log syncing, and resolved session-based usage entries being shown as unknown providers.
+- **Usage Editor & Skills UI Regressions**: Fixed usage query fields being reset while editing extractor code, corrected broken `skills.sh` links and empty descriptions, and fixed auto-query defaults plus number-input clearing in usage configuration.
+- **Chinese Skills Terminology**: Unified Skills-related labels across settings panels in the `zh` locale so storage and sync options use consistent wording.
+- **Environment & Preset Compatibility**: Added Bun global bin detection in CLI scan, adapted to the oh-my-openagent rename with backward compatibility, corrected the OpenCode `kimi-for-coding` preset, gated Gemini keychain parsing to macOS, and fixed an OpenClaw serializer panic on empty collections.
+- **Linux UI Unresponsive on Startup**: Fixed a bug where the window UI (including native title bar buttons) couldn't receive clicks on Linux until the user manually maximized and restored the window. Root causes: (1) Tauri webview did not acquire keyboard focus after `show()` on Linux, so the first click was consumed by X11/Wayland click-to-activate (Tauri #10746, wry #637); (2) GTK surface's input region failed to renegotiate on the `visible:false → show()` path under some WebKitGTK/compositor combinations, leaving the entire window unresponsive. Mitigations: set `WEBKIT_DISABLE_COMPOSITING_MODE=1` at startup, and added a new `linux_fix::nudge_main_window` helper that performs `set_focus` + a ±1px no-op resize ~200ms after show, equivalent to a visually invisible "maximize-and-restore". Wired into all window-re-show paths (normal startup, deeplink, single_instance, tray `show_main`, lightweight exit).
+- **Linux Drag Region on Header**: Removed `data-tauri-drag-region` from the top header bar on Linux to avoid triggering `gtk_window_begin_move_drag` paths affected by Tauri #13440 under Wayland. macOS drag behavior is preserved.
+- **OpenCode / OpenClaw Stream Check Edge Cases**: Fixed custom-header passthrough, OpenClaw custom auth-header detection, Bedrock error messaging, and OpenCode default `baseURL` fallback handling in Stream Check.
+- **Duplicate Toast on Provider Switch**: Fixed double toast notifications (proxy-required warning followed by switch-success) when switching to Copilot, ChatGPT, or OpenAI-format providers with the proxy not running.
+- **Session Search Accuracy & Chinese Support**: Fixed session search result truncation across providers and switched FlexSearch tokenizer to full mode for proper Chinese substring matching.
+- **Adaptive Thinking Reasoning Effort**: Fixed `resolve_reasoning_effort()` mapping adaptive thinking to `xhigh` instead of incorrectly using `high` in OpenAI format conversions.
+- **Thinking Model Fallback Display**: Fixed the Claude provider form showing an empty Thinking model field after saving only a main model by applying read-only fallback to ANTHROPIC_MODEL.
+- **Auth Tab Localization**: Fixed missing i18n translation keys for the settings auth tab label across all locale bundles.
+- **Schema Migration Guard**: Fixed database migrations failing when skills or model_pricing tables did not exist by adding table-existence checks before ALTER and UPDATE operations.
+
+### Docs
+
+- **User Manual Refresh**: Updated the EN / ZH / JA manuals for tray submenus, lightweight mode, provider model fetching, session management, workspace files, WebDAV v2 behavior, OpenCode / OpenClaw activation, and other provider workflow improvements.
+- **Community & Contribution Docs**: Added `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, bilingual issue / PR templates, Dependabot config, and CI quality checks.
+- **Release Notes Risk Notice**: Added a Copilot reverse proxy risk notice and anchored highlight links in the v3.12.3 release notes across all three languages.
+- **Sponsor Partners**: Added Shengsuanyun, LionCC, and DDS as sponsor partners in README across all languages.
+
 ---
 
 ## [3.12.3] - 2026-03-24

@@ -15,6 +15,7 @@ use crate::services::provider::{
 use serde_json::{json, Value};
 use std::str::FromStr;
 use std::sync::Arc;
+use tauri::Emitter;
 use tokio::sync::RwLock;
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
@@ -26,7 +27,7 @@ const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 /// Claude Code 会继续以旧模型名发起请求，导致新供应商不支持时失败。
 const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 6] = [
     "ANTHROPIC_MODEL",
-    "ANTHROPIC_REASONING_MODEL",
+    "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -375,6 +376,26 @@ impl ProxyService {
 
             // 7) 兼容旧逻辑：写入 any-of 标志（失败不影响功能）
             let _ = self.db.set_live_takeover_active(true).await;
+
+            // 8) Warn if the current provider is official (risk of account ban via proxy)
+            if let Ok(Some(current_id)) =
+                crate::settings::get_effective_current_provider(&self.db, &app)
+            {
+                if let Ok(Some(provider)) = self.db.get_provider_by_id(&current_id, app_type_str) {
+                    if provider.category.as_deref() == Some("official") {
+                        if let Some(handle) = self.app_handle.read().await.as_ref() {
+                            let _ = handle.emit(
+                                "proxy-official-warning",
+                                serde_json::json!({
+                                    "appType": app_type_str,
+                                    "providerName": provider.name,
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+
             return Ok(());
         }
 
@@ -445,14 +466,7 @@ impl ProxyService {
             AppType::Claude => self.read_claude_live()?,
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                return Err("OpenCode 不支持代理功能".to_string());
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                return Err("OpenClaw 不支持代理功能".to_string());
-            }
+            _ => return Err("该应用不支持代理功能".to_string()),
         };
 
         self.sync_live_config_to_provider(app_type, &live_config)
@@ -666,12 +680,7 @@ impl ProxyService {
                     }
                 }
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features, skip silently
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features, skip silently
-            }
+            _ => {}
         }
 
         Ok(())
@@ -850,14 +859,7 @@ impl ProxyService {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                return Err("OpenCode 不支持代理功能".to_string());
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                return Err("OpenClaw 不支持代理功能".to_string());
-            }
+            _ => return Err("该应用不支持代理功能".to_string()),
         };
 
         let json_str = serde_json::to_string(&config)
@@ -998,14 +1000,7 @@ impl ProxyService {
                 self.write_gemini_live(&live_config)?;
                 log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                return Err("OpenCode 不支持代理功能".to_string());
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                return Err("OpenClaw 不支持代理功能".to_string());
-            }
+            _ => return Err("该应用不支持代理功能".to_string()),
         }
 
         Ok(())
@@ -1055,12 +1050,7 @@ impl ProxyService {
                     let _ = self.write_gemini_live(&live_config);
                 }
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features, skip silently
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features, skip silently
-            }
+            _ => {}
         }
 
         Ok(())
@@ -1098,12 +1088,7 @@ impl ProxyService {
                     log::info!("Gemini Live 配置已恢复");
                 }
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features, skip silently
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features, skip silently
-            }
+            _ => {}
         }
 
         Ok(())
@@ -1192,14 +1177,7 @@ impl ProxyService {
             AppType::Claude => self.write_claude_live(config),
             AppType::Codex => self.write_codex_live(config),
             AppType::Gemini => self.write_gemini_live(config),
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                Err("OpenCode 不支持代理功能".to_string())
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                Err("OpenClaw 不支持代理功能".to_string())
-            }
+            _ => Err("该应用不支持代理功能".to_string()),
         }
     }
 
@@ -1217,14 +1195,7 @@ impl ProxyService {
                 Ok(config) => Self::is_gemini_live_taken_over(&config),
                 Err(_) => false,
             },
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy takeover
-                false
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy takeover
-                false
-            }
+            _ => false,
         }
     }
 
@@ -1264,14 +1235,7 @@ impl ProxyService {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                Ok(())
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                Ok(())
-            }
+            _ => Ok(()),
         }
     }
 
@@ -1488,20 +1452,33 @@ impl ProxyService {
                 .map_err(|e| format!("构建 {app_type} 有效配置失败: {e}"))?;
 
         if matches!(app_type_enum, AppType::Codex) {
-            let existing_backup = self
+            let existing_backup_value = self
                 .db
                 .get_live_backup(app_type)
                 .await
-                .map_err(|e| format!("读取 {app_type} 现有备份失败: {e}"))?;
+                .map_err(|e| format!("读取 {app_type} 现有备份失败: {e}"))?
+                .map(|backup| {
+                    serde_json::from_str::<Value>(&backup.original_config)
+                        .map_err(|e| format!("解析 {app_type} 现有备份失败: {e}"))
+                })
+                .transpose()?;
 
-            if let Some(existing_backup) = existing_backup {
-                let existing_value: Value = serde_json::from_str(&existing_backup.original_config)
-                    .map_err(|e| format!("解析 {app_type} 现有备份失败: {e}"))?;
+            if let Some(existing_value) = existing_backup_value.as_ref() {
                 Self::preserve_codex_mcp_servers_in_backup(
                     &mut effective_settings,
-                    &existing_value,
+                    existing_value,
                 )?;
             }
+
+            let anchor_config_text = existing_backup_value
+                .as_ref()
+                .and_then(|value| value.get("config"))
+                .and_then(|value| value.as_str());
+            crate::codex_config::normalize_codex_settings_config_model_provider(
+                &mut effective_settings,
+                anchor_config_text,
+            )
+            .map_err(|e| format!("归一化 Codex restore backup 失败: {e}"))?;
         }
 
         let backup_json = match app_type_enum {
@@ -1519,9 +1496,7 @@ impl ProxyService {
                 serde_json::to_string(&env_backup)
                     .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?
             }
-            AppType::OpenCode | AppType::OpenClaw => {
-                return Err(format!("未知的应用类型: {app_type}"));
-            }
+            _ => return Err(format!("未知的应用类型: {app_type}")),
         };
 
         self.db
@@ -1547,6 +1522,14 @@ impl ProxyService {
             .get_provider_by_id(provider_id, app_type)
             .map_err(|e| format!("读取供应商失败: {e}"))?
             .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
+
+        // Defense-in-depth: block official providers during proxy takeover
+        if provider.category.as_deref() == Some("official") {
+            return Err(
+                "代理接管模式下不能切换到官方供应商 (Cannot switch to official provider during proxy takeover)"
+                    .to_string(),
+            );
+        }
 
         let logical_target_changed =
             crate::settings::get_effective_current_provider(&self.db, &app_type_enum)
@@ -1753,6 +1736,8 @@ impl ProxyService {
         let auth = config.get("auth");
         let config_str = config.get("config").and_then(|v| v.as_str());
 
+        // Proxy restore writes saved live backups verbatim. Provider-driven writes go
+        // through write_live_with_common_config(), which normalizes Codex provider ids.
         match (auth, config_str) {
             (Some(auth), Some(cfg)) => write_codex_live_atomic(auth, Some(cfg))
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?,
@@ -2694,6 +2679,147 @@ base_url = "https://new.example/v1"
         assert!(
             config.contains("https://new.example/v1"),
             "provider-specific base_url should still update to the new provider"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_codex_provider_keeps_model_provider_stable_in_backup_and_restore() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "RightCode".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "rightcode-key"
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "AiHubMix".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "aihubmix-key"
+                },
+                "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_codex_live(&json!({
+                "auth": {
+                    "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }))
+            .expect("seed taken-over Codex live config");
+
+        service
+            .hot_switch_provider("codex", "b")
+            .await
+            .expect("hot switch Codex provider");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        let backup_config = stored
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("backup config string");
+        let parsed_backup: toml::Value =
+            toml::from_str(backup_config).expect("parse backup config");
+        assert_eq!(
+            parsed_backup.get("model_provider").and_then(|v| v.as_str()),
+            Some("rightcode"),
+            "provider-derived restore backup should retain stable Codex model_provider"
+        );
+        let backup_model_providers = parsed_backup
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("backup model_providers");
+        assert!(backup_model_providers.get("aihubmix").is_none());
+        assert_eq!(
+            backup_model_providers
+                .get("rightcode")
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://aihubmix.example/v1"),
+            "stable provider id should point at the hot-switched provider endpoint"
+        );
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore Codex live config");
+
+        let live = service.read_codex_live().expect("read Codex live config");
+        let live_config = live
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("live config string");
+        let parsed_live: toml::Value = toml::from_str(live_config).expect("parse live config");
+        assert_eq!(
+            parsed_live.get("model_provider").and_then(|v| v.as_str()),
+            Some("rightcode"),
+            "restored Codex live config should not switch history buckets"
+        );
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("aihubmix-key"),
+            "restore should still use the hot-switched provider auth"
         );
     }
 
