@@ -35,3 +35,24 @@ fn get_model_pricing_does_not_restore_deleted_default_pricing() {
         "deleted default pricing should not be restored by listing pricing"
     );
 }
+
+#[test]
+fn startup_pricing_seed_does_not_restore_deleted_default_pricing() {
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let app = build_test_app(db.clone());
+    let state = app.state::<AppState>();
+    let model_id = "claude-sonnet-4-5-20250929".to_string();
+
+    delete_model_pricing(state.clone(), model_id.clone()).expect("delete default pricing");
+
+    db.ensure_model_pricing_seeded()
+        .expect("simulate startup pricing seed");
+
+    let pricing_after_seed = get_model_pricing(state).expect("list pricing after startup seed");
+    assert!(
+        !pricing_after_seed
+            .iter()
+            .any(|pricing| pricing.model_id == model_id),
+        "deleted default pricing should not be restored by startup seeding"
+    );
+}
