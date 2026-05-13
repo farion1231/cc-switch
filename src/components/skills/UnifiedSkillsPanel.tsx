@@ -571,19 +571,16 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
     );
   }, [notesDraft, skill.notes, skill.id, updateNotesMutation]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        (e.currentTarget as HTMLElement).blur();
-      } else if (e.key === "Escape") {
-        shouldSkipSaveOnBlurRef.current = true;
-        setIsEditingNotes(false);
-        (e.currentTarget as HTMLElement).blur();
-      }
-    },
-    [],
-  );
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      (e.currentTarget as HTMLElement).blur();
+    } else if (e.key === "Escape") {
+      shouldSkipSaveOnBlurRef.current = true;
+      setIsEditingNotes(false);
+      (e.currentTarget as HTMLElement).blur();
+    }
+  }, []);
 
   const openDocs = async () => {
     if (!skill.readmeUrl) return;
