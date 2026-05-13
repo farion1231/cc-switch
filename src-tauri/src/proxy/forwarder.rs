@@ -803,6 +803,14 @@ impl RequestForwarder {
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
 
+        // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
+        let is_copilot = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("github_copilot")
+            || base_url.contains("githubcopilot.com");
+
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
@@ -818,20 +826,14 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
-        // 确定有效端点
-        // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
-        let is_copilot = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("github_copilot")
-            || base_url.contains("githubcopilot.com");
-
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
             self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
                 .await;
+        } else {
+            mapped_body =
+                super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
         }
 
         // --- Copilot 优化器：分类 + 请求体优化（在格式转换之前执行） ---

@@ -26,8 +26,9 @@ const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
 pub const CLAUDE_ROUTE_PREFIX: &str = "claude-";
 /// 替代前缀（与前端 `ANTHROPIC_CLAUDE_ROUTE_PREFIX` 一致）。
 pub const ANTHROPIC_CLAUDE_ROUTE_PREFIX: &str = "anthropic/claude-";
-/// cc-switch 历史约定的 1M 上下文标记（ASCII 小写形式，匹配时用 `eq_ignore_ascii_case`）。
-pub const LEGACY_ONE_M_MARKER: &str = "[1m]";
+/// Claude Code env 中通过 `[1M]` 后缀声明 1M 上下文能力（匹配用 `eq_ignore_ascii_case`）。
+/// Claude Desktop schema 不接受此后缀，import 边界翻译为 `supports1m` 字段。
+pub const ONE_M_CONTEXT_MARKER: &str = "[1m]";
 
 const NON_ANTHROPIC_ROUTE_MARKERS: &[&str] = &[
     "ark-code",
@@ -267,7 +268,7 @@ pub fn is_claude_safe_model_id(model: &str) -> bool {
         || (normalized.starts_with("opus-") && normalized.len() > "opus-".len())
         || (normalized.starts_with("haiku-") && normalized.len() > "haiku-".len());
     has_allowed_shape
-        && !normalized.contains(LEGACY_ONE_M_MARKER)
+        && !normalized.contains(ONE_M_CONTEXT_MARKER)
         && !NON_ANTHROPIC_ROUTE_MARKERS
             .iter()
             .any(|marker| normalized.contains(marker))

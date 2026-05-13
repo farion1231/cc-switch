@@ -275,7 +275,7 @@ pub(crate) fn suggested_claude_desktop_routes(
 
         // Claude 端 env 值可能带 [1M] 后缀；Claude Desktop schema 不接受后缀，
         // 改用 supports1m 字段表达 1M 能力。在 import 边界做单向翻译。
-        let marker = crate::claude_desktop_config::LEGACY_ONE_M_MARKER.as_bytes();
+        let marker = crate::claude_desktop_config::ONE_M_CONTEXT_MARKER.as_bytes();
         let raw_bytes = raw_model.as_bytes();
         let has_1m_marker = raw_bytes.len() >= marker.len()
             && raw_bytes[raw_bytes.len() - marker.len()..].eq_ignore_ascii_case(marker);
@@ -288,31 +288,44 @@ pub(crate) fn suggested_claude_desktop_routes(
             return;
         }
         let effective_supports_1m = supports_1m_default || has_1m_marker;
-        let label_override =
+        let explicit_label_override = env
+            .get(&format!("{env_key}_NAME"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let label_override = explicit_label_override.clone().or_else(|| {
             (!crate::claude_desktop_config::is_claude_safe_model_id(stripped_model))
-                .then(|| stripped_model.to_string());
+                .then(|| stripped_model.to_string())
+        });
+
+        // 何时覆盖既有 label_override：原本为空 / 这次来的是 explicit _NAME /
+        // 既有值只是 stripped_model 派生的占位（被 explicit 或更具体的值挤掉）。
+        let should_overwrite = |existing: Option<&str>| {
+            existing.is_none()
+                || explicit_label_override.is_some()
+                || existing == Some(stripped_model)
+        };
+
+        let merge_into = |existing: &mut crate::provider::ClaudeDesktopModelRoute| {
+            let merged = existing.supports_1m.unwrap_or(false) || effective_supports_1m;
+            existing.supports_1m = Some(merged);
+            if should_overwrite(existing.label_override.as_deref()) {
+                existing.label_override = label_override.clone();
+            }
+        };
 
         if let Some(existing) = routes
             .values_mut()
             .find(|existing| existing.model == stripped_model)
         {
-            let merged = existing.supports_1m.unwrap_or(false) || effective_supports_1m;
-            existing.supports_1m = Some(merged);
-            if existing.label_override.is_none() {
-                existing.label_override = label_override;
-            }
+            merge_into(existing);
             return;
         }
 
         routes
             .entry(route_key.to_string())
-            .and_modify(|existing| {
-                let merged = existing.supports_1m.unwrap_or(false) || effective_supports_1m;
-                existing.supports_1m = Some(merged);
-                if existing.label_override.is_none() {
-                    existing.label_override = label_override.clone();
-                }
-            })
+            .and_modify(merge_into)
             .or_insert_with(|| crate::provider::ClaudeDesktopModelRoute {
                 model: stripped_model.to_string(),
                 label_override,
@@ -789,6 +802,23 @@ mod import_claude_desktop_tests {
         assert_eq!(r.label_override.as_deref(), Some("kimi-k2"));
         // 默认 provider_type 缺省 → supports_1m_default = true
         assert_eq!(r.supports_1m, Some(true));
+    }
+
+    #[test]
+    fn route_uses_claude_code_model_name_as_label_override() {
+        let p = make_provider(
+            json!({
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Kimi K2",
+            }),
+            None,
+        );
+        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
+        let r = routes
+            .get("claude-sonnet-4-6")
+            .expect("sonnet route present");
+        assert_eq!(r.model, "kimi-k2");
+        assert_eq!(r.label_override.as_deref(), Some("Kimi K2"));
     }
 
     #[test]

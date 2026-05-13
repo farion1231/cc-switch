@@ -346,8 +346,11 @@ function ProviderFormFull({
   const {
     claudeModel,
     defaultHaikuModel,
+    defaultHaikuModelName,
     defaultSonnetModel,
+    defaultSonnetModelName,
     defaultOpusModel,
+    defaultOpusModelName,
     handleModelChange,
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
@@ -1815,8 +1818,11 @@ function ProviderFormFull({
               shouldShowModelSelector={category !== "official"}
               claudeModel={claudeModel}
               defaultHaikuModel={defaultHaikuModel}
+              defaultHaikuModelName={defaultHaikuModelName}
               defaultSonnetModel={defaultSonnetModel}
+              defaultSonnetModelName={defaultSonnetModelName}
               defaultOpusModel={defaultOpusModel}
+              defaultOpusModelName={defaultOpusModelName}
               onModelChange={handleModelChange}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
