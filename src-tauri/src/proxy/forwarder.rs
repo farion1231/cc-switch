@@ -156,13 +156,44 @@ impl RequestForwarder {
 
     /// 转发请求（带故障转移）
     ///
+    /// 这是 thin wrapper：在客户端请求维度记一次 `total_requests` / 调整
+    /// `active_connections` / 刷新 `last_request_at`，无论 inner 走哪条出口路径，
+    /// 出口处都会把 `active_connections` 回收。Per-attempt 维度（成功/失败/熔断
+    /// 等）仍由 inner 内自行更新 `success_requests` / `failed_requests`。
+    pub async fn forward_with_retry(
+        &self,
+        app_type: &AppType,
+        endpoint: &str,
+        body: Value,
+        headers: axum::http::HeaderMap,
+        extensions: Extensions,
+        providers: Vec<Provider>,
+    ) -> Result<ForwardResult, ForwardError> {
+        {
+            let mut s = self.status.write().await;
+            s.total_requests = s.total_requests.saturating_add(1);
+            s.active_connections = s.active_connections.saturating_add(1);
+            s.last_request_at = Some(chrono::Utc::now().to_rfc3339());
+        }
+        let result = self
+            .forward_with_retry_inner(app_type, endpoint, body, headers, extensions, providers)
+            .await;
+        {
+            let mut s = self.status.write().await;
+            s.active_connections = s.active_connections.saturating_sub(1);
+        }
+        result
+    }
+
+    /// 实际转发逻辑（不包含客户端维度的入口/出口计数）
+    ///
     /// # Arguments
     /// * `app_type` - 应用类型
     /// * `endpoint` - API 端点
     /// * `body` - 请求体
     /// * `headers` - 请求头
     /// * `providers` - 已选择的 Provider 列表（由 RequestContext 提供，避免重复调用 select_providers）
-    pub async fn forward_with_retry(
+    async fn forward_with_retry_inner(
         &self,
         app_type: &AppType,
         endpoint: &str,
@@ -240,13 +271,15 @@ impl RequestForwarder {
 
             attempted_providers += 1;
 
-            // 更新状态中的当前Provider信息
+            // 更新状态中的当前 Provider 信息（per-attempt 维度的标识）
+            //
+            // total_requests / last_request_at / active_connections 已由
+            // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
+            // 新「正在尝试哪个 provider」的展示字段。
             {
                 let mut status = self.status.write().await;
                 status.current_provider = Some(provider.name.clone());
                 status.current_provider_id = Some(provider.id.clone());
-                status.total_requests += 1;
-                status.last_request_at = Some(chrono::Utc::now().to_rfc3339());
             }
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
