@@ -309,8 +309,7 @@ export const TierBadge: React.FC<{
     : tier.name;
   const countdown = countdownStr(tier.resetsAt);
 
-  const hasUsd =
-    tier.usedValueUsd != null && tier.maxValueUsd != null;
+  const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
 
   return (
     <div className="flex items-center gap-0.5">
