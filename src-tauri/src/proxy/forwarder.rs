@@ -68,6 +68,12 @@ pub struct RequestForwarder {
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
     streaming_first_byte_timeout: std::time::Duration,
+    /// 单个客户端请求最多尝试的 provider 数。
+    ///
+    /// 由 `AppProxyConfig.max_retries` (UI: "请求失败时的重试次数, 0-10") 派生：
+    /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
+    /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
+    max_attempts: usize,
 }
 
 impl RequestForwarder {
@@ -88,7 +94,11 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        max_retries: u32,
     ) -> Self {
+        // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
+        // saturating_add 防止 u32::MAX + 1 溢出。
+        let max_attempts = (max_retries as usize).saturating_add(1);
         Self {
             router,
             status,
@@ -106,6 +116,7 @@ impl RequestForwarder {
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
             ),
+            max_attempts,
         }
     }
 
@@ -184,6 +195,17 @@ impl RequestForwarder {
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
+            // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
+            // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
+            if attempted_providers >= self.max_attempts {
+                log::warn!(
+                    "[{app_type_str}] 已达最大尝试次数上限 ({}/{}), 停止故障转移",
+                    attempted_providers,
+                    self.max_attempts
+                );
+                break;
+            }
+
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
             // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
             let (allowed, used_half_open_permit) = if bypass_circuit_breaker {

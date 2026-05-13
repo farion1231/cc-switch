@@ -211,6 +211,13 @@ impl RequestContext {
                 (0, 0, 0)
             };
 
+        // 故障转移关闭时强制 max_retries=0（仅尝试 1 个 provider），与「不超时 + 不切换」语义一致。
+        let max_retries = if self.app_config.auto_failover_enabled {
+            self.app_config.max_retries
+        } else {
+            0
+        };
+
         RequestForwarder::new(
             state.provider_router.clone(),
             non_streaming_timeout,
@@ -227,6 +234,7 @@ impl RequestContext {
             self.rectifier_config.clone(),
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
+            max_retries,
         )
     }
 
