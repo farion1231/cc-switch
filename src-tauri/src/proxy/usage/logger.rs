@@ -4,7 +4,7 @@ use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::services::usage_stats::find_model_pricing_row;
+use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
 use rust_decimal::Decimal;
 use std::{str::FromStr, time::SystemTime};
 
@@ -303,11 +303,21 @@ impl<'a> UsageLogger<'a> {
     ) -> Result<(), AppError> {
         let pricing = self.get_model_pricing(&pricing_model)?;
 
-        if pricing.is_none() {
+        let has_usage = usage.input_tokens > 0
+            || usage.output_tokens > 0
+            || usage.cache_read_tokens > 0
+            || usage.cache_creation_tokens > 0;
+
+        if pricing.is_none() && has_usage && !is_placeholder_pricing_model(&pricing_model) {
             log::warn!("[USG-002] 模型定价未找到，成本将记录为 0: {pricing_model}");
         }
 
-        let cost = CostCalculator::try_calculate(&usage, pricing.as_ref(), cost_multiplier);
+        let cost = CostCalculator::try_calculate_for_app(
+            &app_type,
+            &usage,
+            pricing.as_ref(),
+            cost_multiplier,
+        );
 
         let log = RequestLog {
             request_id,

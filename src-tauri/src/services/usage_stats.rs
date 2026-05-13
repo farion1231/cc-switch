@@ -8,7 +8,6 @@ use crate::services::sql_helpers::fresh_input_sql;
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -688,7 +687,11 @@ impl Database {
             }
             summaries.push(item);
         }
-        summaries.sort_by(|a, b| b.summary.real_total_tokens.cmp(&a.summary.real_total_tokens));
+        summaries.sort_by(|a, b| {
+            b.summary
+                .real_total_tokens
+                .cmp(&a.summary.real_total_tokens)
+        });
         Ok(summaries)
     }
 
@@ -1289,17 +1292,11 @@ impl Database {
         let rows = stmt.query_map(params_refs.as_slice(), row_to_request_log_detail)?;
 
         let mut logs = Vec::new();
-        let mut provider_cache = HashMap::new();
         let mut pricing_cache = HashMap::new();
 
         for row in rows {
             let mut log = row?;
-            Self::maybe_backfill_log_costs(
-                &conn,
-                &mut log,
-                &mut provider_cache,
-                &mut pricing_cache,
-            )?;
+            Self::maybe_backfill_log_costs(&conn, &mut log, &mut pricing_cache)?;
             logs.push(log);
         }
 
@@ -1334,14 +1331,8 @@ impl Database {
 
         match result {
             Ok(mut detail) => {
-                let mut provider_cache = HashMap::new();
                 let mut pricing_cache = HashMap::new();
-                Self::maybe_backfill_log_costs(
-                    &conn,
-                    &mut detail,
-                    &mut provider_cache,
-                    &mut pricing_cache,
-                )?;
+                Self::maybe_backfill_log_costs(&conn, &mut detail, &mut pricing_cache)?;
                 Ok(Some(detail))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -1496,10 +1487,9 @@ impl Database {
             .map_err(|e| AppError::Database(format!("启动用量成本回填事务失败: {e}")))?;
 
         let mut updated = 0u64;
-        let mut provider_cache = HashMap::new();
         let mut pricing_cache = HashMap::new();
         for log in &mut logs {
-            if Self::maybe_backfill_log_costs(&tx, log, &mut provider_cache, &mut pricing_cache)? {
+            if Self::maybe_backfill_log_costs(&tx, log, &mut pricing_cache)? {
                 updated += 1;
             }
         }
@@ -1517,7 +1507,6 @@ impl Database {
     fn maybe_backfill_log_costs(
         conn: &Connection,
         log: &mut RequestLogDetail,
-        provider_cache: &mut HashMap<(String, String), rust_decimal::Decimal>,
         pricing_cache: &mut HashMap<String, PricingInfo>,
     ) -> Result<bool, AppError> {
         let existing_cost = rust_decimal::Decimal::from_str(&log.total_cost_usd)
@@ -1532,25 +1521,32 @@ impl Database {
             return Ok(false);
         }
 
-        let pricing = match Self::get_model_pricing_cached(conn, pricing_cache, &log.model)? {
+        let pricing = match Self::get_log_model_pricing_cached(conn, pricing_cache, log)? {
             Some(info) => info,
             None => return Ok(false),
         };
-        let multiplier = Self::get_cost_multiplier_cached(
-            conn,
-            provider_cache,
-            &log.provider_id,
-            &log.app_type,
-        )?;
+        let multiplier =
+            rust_decimal::Decimal::from_str(&log.cost_multiplier).unwrap_or_else(|e| {
+                log::warn!(
+                    "历史用量倍率解析失败 request_id={}: {} - {e}",
+                    log.request_id,
+                    log.cost_multiplier
+                );
+                rust_decimal::Decimal::ONE
+            });
 
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
-        // 与 CostCalculator::calculate 保持一致的计算逻辑：
-        // 1. input_cost 需要扣除 cache_read_tokens（避免缓存部分被重复计费）
-        // 2. 各项成本是基础成本（不含倍率）
-        // 3. 倍率只作用于最终总价
-        let billable_input_tokens =
-            (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64);
+        // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
+        // 1. Codex/Gemini 的 input_tokens 包含 cache_read_tokens，需要扣除后按输入价计费
+        // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
+        // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
+        let input_includes_cache_read = matches!(log.app_type.as_str(), "codex" | "gemini");
+        let billable_input_tokens = if input_includes_cache_read {
+            (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
+        } else {
+            log.input_tokens as u64
+        };
         let input_cost =
             rust_decimal::Decimal::from(billable_input_tokens) * pricing.input / million;
         let output_cost =
@@ -1593,39 +1589,6 @@ impl Database {
         Ok(true)
     }
 
-    fn get_cost_multiplier_cached(
-        conn: &Connection,
-        cache: &mut HashMap<(String, String), rust_decimal::Decimal>,
-        provider_id: &str,
-        app_type: &str,
-    ) -> Result<rust_decimal::Decimal, AppError> {
-        let key = (provider_id.to_string(), app_type.to_string());
-        if let Some(multiplier) = cache.get(&key) {
-            return Ok(*multiplier);
-        }
-
-        let meta_json: Option<String> = conn
-            .query_row(
-                "SELECT meta FROM providers WHERE id = ? AND app_type = ?",
-                params![provider_id, app_type],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|e| AppError::Database(format!("查询 provider meta 失败: {e}")))?;
-
-        let multiplier = meta_json
-            .and_then(|meta| serde_json::from_str::<Value>(&meta).ok())
-            .and_then(|value| value.get("costMultiplier").cloned())
-            .and_then(|val| {
-                val.as_str()
-                    .and_then(|s| rust_decimal::Decimal::from_str(s).ok())
-            })
-            .unwrap_or(rust_decimal::Decimal::ONE);
-
-        cache.insert(key, multiplier);
-        Ok(multiplier)
-    }
-
     fn get_model_pricing_cached(
         conn: &Connection,
         cache: &mut HashMap<String, PricingInfo>,
@@ -1654,15 +1617,143 @@ impl Database {
         cache.insert(model.to_string(), pricing.clone());
         Ok(Some(pricing))
     }
+
+    fn get_log_model_pricing_cached(
+        conn: &Connection,
+        cache: &mut HashMap<String, PricingInfo>,
+        log: &RequestLogDetail,
+    ) -> Result<Option<PricingInfo>, AppError> {
+        if let Some(pricing) = Self::get_model_pricing_cached(conn, cache, &log.model)? {
+            return Ok(Some(pricing));
+        }
+
+        let Some(request_model) = log.request_model.as_deref() else {
+            return Ok(None);
+        };
+        if request_model == log.model {
+            return Ok(None);
+        }
+
+        Self::get_model_pricing_cached(conn, cache, request_model)
+    }
 }
 
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
-    // 清洗模型名称：去前缀(/)、去后缀(:)、@ 替换为 -
-    // 例如 moonshotai/gpt-5.2-codex@low:v2 → gpt-5.2-codex-low
-    let cleaned = model_id
+    let candidates = model_pricing_candidates(model_id);
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    for candidate in &candidates {
+        if let Some(row) = query_model_pricing_exact(conn, candidate)? {
+            return Ok(Some(row));
+        }
+    }
+
+    for candidate in &candidates {
+        if should_try_pricing_prefix_match(candidate) {
+            if let Some(row) = query_model_pricing_prefix(conn, candidate)? {
+                return Ok(Some(row));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
+    let normalized = model_id.trim().to_ascii_lowercase();
+    normalized.is_empty() || matches!(normalized.as_str(), "unknown" | "null" | "none")
+}
+
+fn query_model_pricing_exact(
+    conn: &Connection,
+    model_id: &str,
+) -> Result<Option<(String, String, String, String)>, AppError> {
+    conn.query_row(
+        "SELECT input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+         FROM model_pricing
+         WHERE model_id = ?1",
+        [model_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        },
+    )
+    .optional()
+    .map_err(|e| AppError::Database(format!("查询模型定价失败: {e}")))
+}
+
+fn query_model_pricing_prefix(
+    conn: &Connection,
+    model_id: &str,
+) -> Result<Option<(String, String, String, String)>, AppError> {
+    let pattern = format!("{model_id}-%");
+    conn.query_row(
+        "SELECT input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+         FROM model_pricing
+         WHERE model_id LIKE ?1
+         ORDER BY LENGTH(model_id) ASC
+         LIMIT 1",
+        [pattern],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        },
+    )
+    .optional()
+    .map_err(|e| AppError::Database(format!("查询模型前缀定价失败: {e}")))
+}
+
+fn model_pricing_candidates(model_id: &str) -> Vec<String> {
+    let cleaned = clean_model_id_for_pricing(model_id);
+    if is_placeholder_pricing_model(&cleaned) {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    let mut queue = vec![cleaned];
+
+    while let Some(candidate) = queue.pop() {
+        if !push_unique_candidate(&mut candidates, candidate.clone()) {
+            continue;
+        }
+
+        if let Some(stripped) = strip_known_model_namespace(&candidate) {
+            queue.push(stripped);
+        }
+        if let Some(stripped) = strip_claude_desktop_non_anthropic_prefix(&candidate) {
+            queue.push(stripped);
+        }
+        if let Some(stripped) = strip_bedrock_model_version_suffix(&candidate) {
+            queue.push(stripped);
+        }
+        if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
+            queue.push(stripped);
+        }
+        if candidate.starts_with("claude-") && candidate.contains('.') {
+            queue.push(candidate.replace('.', "-"));
+        }
+    }
+
+    candidates
+}
+
+fn clean_model_id_for_pricing(model_id: &str) -> String {
+    let normalized = model_id
         .rsplit_once('/')
         .map_or(model_id, |(_, r)| r)
         .split(':')
@@ -1672,31 +1763,110 @@ pub(crate) fn find_model_pricing_row(
         .replace('@', "-")
         .to_ascii_lowercase();
 
-    // 精确匹配清洗后的名称
-    let exact = conn
-        .query_row(
-            "SELECT input_cost_per_million, output_cost_per_million,
-                    cache_read_cost_per_million, cache_creation_cost_per_million
-             FROM model_pricing
-             WHERE model_id = ?1",
-            [&cleaned],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(|e| AppError::Database(format!("查询模型定价失败: {e}")))?;
+    normalized
+        .trim_end_matches(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
+        .trim()
+        .to_string()
+}
 
-    if exact.is_none() {
-        log::warn!("模型 {model_id}（清洗后: {cleaned}）未找到定价信息，成本将记录为 0");
+fn push_unique_candidate(candidates: &mut Vec<String>, candidate: String) -> bool {
+    if candidate.is_empty() || candidates.iter().any(|existing| existing == &candidate) {
+        return false;
+    }
+    candidates.push(candidate);
+    true
+}
+
+fn strip_known_model_namespace(model_id: &str) -> Option<String> {
+    if let Some(pos) = model_id.rfind("claude-") {
+        if pos > 0 {
+            return Some(model_id[pos..].to_string());
+        }
     }
 
-    Ok(exact)
+    for marker in [
+        "openai.",
+        "anthropic.",
+        "google.",
+        "moonshot.",
+        "moonshotai.",
+        "bedrock.",
+        "global.",
+    ] {
+        if let Some(stripped) = model_id.strip_prefix(marker) {
+            return Some(stripped.to_string());
+        }
+    }
+
+    None
+}
+
+fn strip_claude_desktop_non_anthropic_prefix(model_id: &str) -> Option<String> {
+    const NON_ANTHROPIC_MARKERS: &[&str] = &[
+        "abab",
+        "ark-code",
+        "arctic",
+        "astron",
+        "codex",
+        "command-r",
+        "deepseek",
+        "doubao",
+        "ernie",
+        "gemini",
+        "gemma",
+        "glm",
+        "gpt",
+        "grok",
+        "hermes",
+        "hy3",
+        "hunyuan",
+        "jamba",
+        "kimi",
+        "lfm",
+        "llama",
+        "longcat",
+        "mercury",
+        "mimo",
+        "minimax",
+        "mistral",
+        "mixtral",
+        "moonshot",
+        "nemotron",
+        "nova-",
+        "openai",
+        "qianfan",
+        "qwen",
+        "seed-",
+        "solar",
+        "stepfun",
+    ];
+
+    let rest = model_id.strip_prefix("claude-")?;
+    NON_ANTHROPIC_MARKERS
+        .iter()
+        .any(|marker| rest.starts_with(marker))
+        .then(|| rest.to_string())
+}
+
+fn strip_bedrock_model_version_suffix(model_id: &str) -> Option<String> {
+    let (base, suffix) = model_id.rsplit_once("-v")?;
+    (!base.is_empty() && !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
+        .then(|| base.to_string())
+}
+
+fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
+    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
+        if let Some(stripped) = model_id.strip_suffix(suffix) {
+            if !stripped.is_empty() {
+                return Some(stripped.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn should_try_pricing_prefix_match(model_id: &str) -> bool {
+    model_id.starts_with("claude-") && model_id.matches('-').count() >= 3
 }
 
 #[cfg(test)]
@@ -1853,6 +2023,125 @@ mod tests {
         assert_eq!(input_cost, "5.000000");
         assert_eq!(output_cost, "30.000000");
         assert_eq!(total_cost, "35.000000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_missing_usage_costs_uses_stored_multiplier() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "codex-gpt-5-5-multiplier",
+                "codex",
+                "_codex_session",
+                "gpt-5.5",
+                "codex_session",
+                1000,
+                1_000_000,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET cost_multiplier = '1.5'
+                 WHERE request_id = 'codex-gpt-5-5-multiplier'",
+                [],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, total_cost): (String, String) = conn.query_row(
+            "SELECT input_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'codex-gpt-5-5-multiplier'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(input_cost, "5.000000");
+        assert_eq!(total_cost, "7.500000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_missing_usage_costs_falls_back_to_request_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (
+                    'codex-request-model-fallback', '_codex_session', 'codex', 'unknown', 'gpt-5.5',
+                    1000000, 0, 0, 0,
+                    '0', '0', '0', '0',
+                    '0', 100, 200, 1000, 'codex_session'
+                )",
+                [],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let total_cost: String = conn.query_row(
+            "SELECT total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'codex-request-model-fallback'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total_cost, "5.000000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_missing_usage_costs_keeps_claude_fresh_input() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "claude-cache-fresh-input",
+                "claude",
+                "_session",
+                "claude-haiku-4-5",
+                "session_log",
+                1000,
+                100,
+                0,
+                200,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, cache_read_cost, total_cost): (String, String, String) = conn.query_row(
+            "SELECT input_cost_usd, cache_read_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'claude-cache-fresh-input'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(input_cost, "0.000100");
+        assert_eq!(cache_read_cost, "0.000020");
+        assert_eq!(total_cost, "0.000120");
 
         Ok(())
     }
@@ -2792,6 +3081,39 @@ mod tests {
             result.is_some(),
             "大小写混合的 GPT-5.5 模型应能归一化匹配到 gpt-5.5-high"
         );
+
+        // Claude Desktop route 短 ID：应通过前缀匹配到带日期的定价
+        let result = find_model_pricing_row(&conn, "claude-haiku-4-5")?;
+        assert!(
+            result.is_some(),
+            "Claude Desktop 短路由 claude-haiku-4-5 应能匹配到 claude-haiku-4-5-20251001"
+        );
+
+        // Claude Desktop 旧版/异常包装的非 Anthropic route：claude-gpt-5.5 → gpt-5.5
+        let result = find_model_pricing_row(&conn, "claude-gpt-5.5")?;
+        assert!(
+            result.is_some(),
+            "带 claude- 包装的非 Anthropic 模型应能剥离后匹配到真实模型定价"
+        );
+
+        // Bedrock/Vertex 常见形态：provider 前缀 + -vN 后缀 + :0 修饰
+        let result =
+            find_model_pricing_row(&conn, "global.anthropic.claude-haiku-4-5-20251001-v1:0")?;
+        assert!(
+            result.is_some(),
+            "Bedrock/Vertex 风格 Claude 模型 ID 应能归一化到基础 Claude 模型定价"
+        );
+
+        // Reasoning effort 后缀：没有专门价格时回退到基础模型
+        let result = find_model_pricing_row(&conn, "gpt-5.4@low")?;
+        assert!(
+            result.is_some(),
+            "缺少专门 effort 价格时应回退到 gpt-5.4 基础模型定价"
+        );
+
+        // Kimi Code 是订阅/额度模型，不应伪装成公开按 token 计费模型
+        let result = find_model_pricing_row(&conn, "kimi-for-coding")?;
+        assert!(result.is_none(), "kimi-for-coding 没有固定 token 单价");
 
         // 测试不存在的模型
         let result = find_model_pricing_row(&conn, "unknown-model-123")?;

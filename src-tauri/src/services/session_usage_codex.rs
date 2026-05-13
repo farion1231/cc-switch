@@ -480,7 +480,7 @@ fn insert_codex_session_entry(
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
     {
         Some(p) => {
-            let cost = CostCalculator::calculate(&usage, &p, multiplier);
+            let cost = CostCalculator::calculate_for_app("codex", &usage, &p, multiplier);
             (
                 cost.input_cost.to_string(),
                 cost.output_cost.to_string(),
