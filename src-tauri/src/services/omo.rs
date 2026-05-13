@@ -232,11 +232,68 @@ impl OmoService {
 
     fn build_config(v: &OmoVariant, profile_data: Option<&OmoProfileData>) -> Value {
         let mut result = Map::new();
+
+        // Read existing config file to preserve any agent/category entries
+        // not managed by the current provider config. This prevents data loss
+        // when the provider config is missing certain agent keys (e.g. sisyphus
+        // not being updated alongside other agents during provider switching).
+        let existing_obj = Self::config_path(v)
+            .exists()
+            .then(|| Self::read_jsonc_object(&Self::config_path(v)))
+            .transpose()
+            .ok()
+            .flatten();
+
         if let Some((agents, categories, other_fields)) = profile_data {
             Self::insert_object_entries(&mut result, other_fields.as_ref());
-            Self::insert_opt_value(&mut result, "agents", agents);
+
+            // Merge agents: provider config takes precedence, existing file fills gaps
+            if let Some(provider_agents) = agents {
+                let mut merged_agents = provider_agents
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(ref existing) = existing_obj {
+                    if let Some(existing_agents) =
+                        existing.get("agents").and_then(|a| a.as_object())
+                    {
+                        for (key, value) in existing_agents {
+                            if !merged_agents.contains_key(key) {
+                                merged_agents.insert(key.clone(), value.clone());
+                            }
+                        }
+                    }
+                }
+                result.insert(
+                    "agents".to_string(),
+                    Value::Object(merged_agents),
+                );
+            }
+
             if v.has_categories {
-                Self::insert_opt_value(&mut result, "categories", categories);
+                // Merge categories: same preservation logic as agents
+                if let Some(provider_categories) = categories {
+                    let mut merged_categories = provider_categories
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default();
+                    if let Some(ref existing) = existing_obj {
+                        if let Some(existing_categories) = existing
+                            .get("categories")
+                            .and_then(|c| c.as_object())
+                        {
+                            for (key, value) in existing_categories {
+                                if !merged_categories.contains_key(key) {
+                                    merged_categories.insert(key.clone(), value.clone());
+                                }
+                            }
+                        }
+                    }
+                    result.insert(
+                        "categories".to_string(),
+                        Value::Object(merged_categories),
+                    );
+                }
             }
         }
         Value::Object(result)
