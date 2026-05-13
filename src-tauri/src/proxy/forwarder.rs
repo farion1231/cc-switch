@@ -422,12 +422,14 @@ impl RequestForwarder {
                                         });
                                     }
                                     Err(retry_err) => {
-                                        // 整流重试仍失败：区分错误类型决定是否记录熔断器
+                                        // 整流重试仍失败：区分错误类型
                                         log::warn!(
                                             "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
                                         );
 
-                                        // 区分错误类型：Provider 问题记录失败，客户端问题仅释放 permit
+                                        // Provider 错误 vs 客户端错误：Provider 错误说明本家
+                                        // 上游有问题，下一家 provider 可能可用，应当继续故障转移；
+                                        // 客户端错误说明整流后的请求本身就有问题，下一家也修不好。
                                         let is_provider_error = match &retry_err {
                                             ProxyError::Timeout(_)
                                             | ProxyError::ForwardFailed(_) => true,
@@ -438,7 +440,7 @@ impl RequestForwarder {
                                         };
 
                                         if is_provider_error {
-                                            // Provider 问题：记录失败到熔断器
+                                            // Provider 问题：记录熔断器后继续轮询下一家
                                             let _ = self
                                                 .router
                                                 .record_result(
@@ -449,17 +451,26 @@ impl RequestForwarder {
                                                     Some(retry_err.to_string()),
                                                 )
                                                 .await;
-                                        } else {
-                                            // 客户端问题：仅释放 permit，不记录熔断器
-                                            self.router
-                                                .release_permit_neutral(
-                                                    &provider.id,
-                                                    app_type_str,
-                                                    used_half_open_permit,
-                                                )
-                                                .await;
+                                            {
+                                                let mut status = self.status.write().await;
+                                                status.last_error = Some(format!(
+                                                    "Provider {} 整流重试失败: {}",
+                                                    provider.name, retry_err
+                                                ));
+                                            }
+                                            last_error = Some(retry_err);
+                                            last_provider = Some(provider.clone());
+                                            continue;
                                         }
 
+                                        // 客户端问题：释放 permit 后直接返回，不再尝试其它 provider
+                                        self.router
+                                            .release_permit_neutral(
+                                                &provider.id,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                            )
+                                            .await;
                                         let mut status = self.status.write().await;
                                         status.failed_requests += 1;
                                         status.last_error = Some(retry_err.to_string());
@@ -615,6 +626,8 @@ impl RequestForwarder {
                                         "[{app_type_str}] [RECT-012] budget 整流重试仍失败: {retry_err}"
                                     );
 
+                                    // 与 signature 整流分支保持一致：provider 错误继续故障转移，
+                                    // 客户端错误直接返回。
                                     let is_provider_error = match &retry_err {
                                         ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => {
                                             true
@@ -634,16 +647,25 @@ impl RequestForwarder {
                                                 Some(retry_err.to_string()),
                                             )
                                             .await;
-                                    } else {
-                                        self.router
-                                            .release_permit_neutral(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                            )
-                                            .await;
+                                        {
+                                            let mut status = self.status.write().await;
+                                            status.last_error = Some(format!(
+                                                "Provider {} budget 整流重试失败: {}",
+                                                provider.name, retry_err
+                                            ));
+                                        }
+                                        last_error = Some(retry_err);
+                                        last_provider = Some(provider.clone());
+                                        continue;
                                     }
 
+                                    self.router
+                                        .release_permit_neutral(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await;
                                     let mut status = self.status.write().await;
                                     status.failed_requests += 1;
                                     status.last_error = Some(retry_err.to_string());
@@ -1654,10 +1676,22 @@ impl RequestForwarder {
             ProxyError::Timeout(_) => ErrorCategory::Retryable,
             ProxyError::ForwardFailed(_) => ErrorCategory::Retryable,
             ProxyError::ProviderUnhealthy(_) => ErrorCategory::Retryable,
-            // 上游 HTTP 错误：无论状态码如何，都尝试下一个供应商
-            // 原因：不同供应商有不同的限制和认证，一个供应商的 4xx 错误
-            // 不代表其他供应商也会失败
-            ProxyError::UpstreamError { .. } => ErrorCategory::Retryable,
+            // 上游 HTTP 错误：按状态码分桶。
+            //
+            // 客户端请求自身有问题的状态码无论换哪个 provider 都会被拒绝，
+            // 继续轮询只会放大错误率、污染熔断器健康度、浪费配额：
+            //   400 Bad Request / 422 Unprocessable Entity   ← 请求体格式或语义错误
+            //   405 Method Not Allowed / 406 Not Acceptable  ← 方法或 Accept 错误
+            //   413 Payload Too Large / 414 URI Too Long     ← 客户端构造超限
+            //   415 Unsupported Media Type                    ← Content-Type 错误
+            //   501 Not Implemented                           ← 上游协议确实不支持
+            //
+            // 其他 4xx（401/403/404/408/409/429/451 等）和全部 5xx 都保留
+            // Retryable —— 换一家 provider 可能持有不同的 key、配额、地域或模型映射。
+            ProxyError::UpstreamError { status, .. } => match *status {
+                400 | 405 | 406 | 413 | 414 | 415 | 422 | 501 => ErrorCategory::NonRetryable,
+                _ => ErrorCategory::Retryable,
+            },
             // Provider 级配置/转换问题：换一个 Provider 可能就能成功
             ProxyError::ConfigError(_) => ErrorCategory::Retryable,
             ProxyError::TransformError(_) => ErrorCategory::Retryable,
