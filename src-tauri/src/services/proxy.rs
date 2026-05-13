@@ -327,12 +327,15 @@ impl ProxyService {
                 };
                 let live_taken_over = self.detect_takeover_in_live_config_for_app(&app);
 
-                if has_backup || live_taken_over {
+                // 必须 backup AND live 占位符同时存在才算真接管。
+                // 只看其一会出现「UI 显示已接管但 Live 已被恢复」或「Live 仍是占位符但备份丢失」
+                // 两种脏角落，下面的重建分支会把这些情况修复成一致状态。
+                if has_backup && live_taken_over {
                     return Ok(());
                 }
 
                 log::warn!(
-                    "{app_type_str} 标记为已接管，但缺少备份或占位符，正在重新接管并补齐备份"
+                    "{app_type_str} 标记为已接管，但 backup={has_backup} live_taken_over={live_taken_over}，正在重新接管并补齐备份"
                 );
             }
 
@@ -411,7 +414,11 @@ impl ProxyService {
         }
 
         // 1) 恢复 Live 配置
-        self.restore_live_config_for_app(&app).await?;
+        //
+        // 必须走 with_fallback 版本：备份 → SSOT → 清理占位符 的三层兜底。
+        // 简版 restore_live_config_for_app 在备份缺失时会静默 Ok(())，
+        // 留下接管时写入的占位符（代理地址/PROXY_MANAGED token），客户端无法工作。
+        self.restore_live_config_for_app_with_fallback(&app).await?;
 
         // 2) 删除该 app 的备份（避免长期存储敏感 Token）
         self.db
