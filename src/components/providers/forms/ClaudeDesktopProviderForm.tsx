@@ -51,8 +51,10 @@ import type {
 } from "@/types";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import {
+  CLAUDE_DESKTOP_ROLE_ROUTE_IDS,
   claudeDesktopProviderPresets,
   type ClaudeDesktopProviderPreset,
+  type ClaudeDesktopRoleId,
 } from "@/config/claudeDesktopProviderPresets";
 import {
   fetchModelsForConfig,
@@ -104,14 +106,56 @@ type RouteRow = {
   rowId: string;
   route: string;
   model: string;
+  labelOverride: string;
   supports1m: boolean;
 };
 
 type RouteRowValues = Omit<RouteRow, "rowId">;
+type RouteRole = ClaudeDesktopRoleId;
 
 const CLAUDE_ROUTE_PREFIX = "claude-";
 const ANTHROPIC_CLAUDE_ROUTE_PREFIX = "anthropic/claude-";
 const LEGACY_ONE_M_MARKER = "[1m]";
+const ROLE_ROUTE_IDS = CLAUDE_DESKTOP_ROLE_ROUTE_IDS;
+const ROLE_ORDER: RouteRole[] = ["sonnet", "opus", "haiku"];
+const NON_ANTHROPIC_ROUTE_MARKERS = [
+  "ark-code",
+  "astron",
+  "command-r",
+  "deepseek",
+  "doubao",
+  "gemini",
+  "gemma",
+  "glm",
+  "gpt",
+  "grok",
+  "hermes",
+  "hy3",
+  "kimi",
+  "lfm",
+  "llama",
+  "longcat",
+  "mimo",
+  "minimax",
+  "mistral",
+  "mixtral",
+  "moonshot",
+  "nemotron",
+  "openai",
+  "qianfan",
+  "qwen",
+  "stepfun",
+  "seed-",
+  "hunyuan",
+  "nova-",
+  "ernie",
+  "codex",
+  "abab",
+  "jamba",
+  "arctic",
+  "solar",
+  "mercury",
+];
 
 function envString(
   settingsConfig: Record<string, unknown> | undefined,
@@ -130,42 +174,30 @@ function clonePlainRecord(value: unknown): Record<string, unknown> {
   return { ...(value as Record<string, unknown>) };
 }
 
-function desktopRouteInputValue(route: string) {
-  const trimmed = route.trim();
-  const lower = trimmed.toLowerCase();
-  if (lower.startsWith(CLAUDE_ROUTE_PREFIX)) {
-    return trimmed.slice(CLAUDE_ROUTE_PREFIX.length);
-  }
-  if (lower.startsWith(ANTHROPIC_CLAUDE_ROUTE_PREFIX)) {
-    return trimmed.slice(ANTHROPIC_CLAUDE_ROUTE_PREFIX.length);
-  }
-  return trimmed;
+function routeRoleFromId(route: string): RouteRole {
+  const normalized = route.trim().toLowerCase();
+  if (normalized.includes("opus")) return "opus";
+  if (normalized.includes("haiku")) return "haiku";
+  return "sonnet";
 }
 
-function normalizeDesktopRouteSuffix(value: string) {
-  const trimmed = value.trim();
-  const lower = trimmed.toLowerCase();
-  if (lower.startsWith(CLAUDE_ROUTE_PREFIX)) {
-    return trimmed.slice(CLAUDE_ROUTE_PREFIX.length);
+function routeIdForRole(role: RouteRole, usedRoutes: Set<string>) {
+  const baseRoute = ROLE_ROUTE_IDS[role];
+  if (!usedRoutes.has(baseRoute)) return baseRoute;
+
+  let index = 2;
+  while (usedRoutes.has(`${baseRoute}-r${index}`)) {
+    index += 1;
   }
-  if (lower.startsWith(ANTHROPIC_CLAUDE_ROUTE_PREFIX)) {
-    return trimmed.slice(ANTHROPIC_CLAUDE_ROUTE_PREFIX.length);
-  }
-  return trimmed;
+  return `${baseRoute}-r${index}`;
 }
 
-function desktopRouteIdFromInput(value: string) {
-  const suffix = normalizeDesktopRouteSuffix(value).replace(/[/\\\s]+/g, "-");
-  if (!suffix) return "";
-  return `${CLAUDE_ROUTE_PREFIX}${suffix}`;
-}
-
-function desktopRouteIdFromModel(model: string) {
-  const suffix = model
-    .trim()
-    .replace(/^models\//i, "")
-    .replace(/[/\\\s]+/g, "-");
-  return desktopRouteIdFromInput(suffix);
+function fallbackCatalogRouteId(usedRoutes: Set<string>) {
+  const role = ROLE_ORDER.find((candidate) => {
+    const route = ROLE_ROUTE_IDS[candidate];
+    return !usedRoutes.has(route);
+  });
+  return routeIdForRole(role ?? "sonnet", usedRoutes);
 }
 
 function createRouteRow(row: RouteRowValues): RouteRow {
@@ -178,21 +210,42 @@ function createRouteRow(row: RouteRowValues): RouteRow {
 function initialRouteRows(
   routes: Record<string, ClaudeDesktopModelRoute> | undefined,
 ): RouteRow[] {
-  return Object.entries(routes ?? {}).map(([route, value]) =>
-    createRouteRow({
-      route,
-      model: value.model ?? "",
-      supports1m: value.supports1m ?? false,
-    }),
+  const usedRoutes = new Set(
+    Object.keys(routes ?? {}).filter((route) => isClaudeSafeRoute(route)),
   );
+
+  return Object.entries(routes ?? {}).map(([route, value]) => {
+    const routeId = isClaudeSafeRoute(route)
+      ? route
+      : fallbackCatalogRouteId(usedRoutes);
+    usedRoutes.add(routeId);
+
+    return createRouteRow({
+      route: routeId,
+      model: value.model ?? "",
+      labelOverride:
+        value.labelOverride ??
+        (!isClaudeSafeRoute(route) ? value.model || route : ""),
+      supports1m: value.supports1m ?? false,
+    });
+  });
 }
 
 function isClaudeSafeRoute(route: string) {
   const normalized = route.trim().toLowerCase();
   if (normalized.includes(LEGACY_ONE_M_MARKER)) return false;
-  return [CLAUDE_ROUTE_PREFIX, ANTHROPIC_CLAUDE_ROUTE_PREFIX].some(
-    (prefix) =>
-      normalized.startsWith(prefix) && normalized.length > prefix.length,
+  const hasAllowedShape =
+    [CLAUDE_ROUTE_PREFIX, ANTHROPIC_CLAUDE_ROUTE_PREFIX].some(
+      (prefix) =>
+        normalized.startsWith(prefix) && normalized.length > prefix.length,
+    ) ||
+    ["sonnet", "opus", "haiku"].includes(normalized) ||
+    normalized.startsWith("sonnet-") ||
+    normalized.startsWith("opus-") ||
+    normalized.startsWith("haiku-");
+  return (
+    hasAllowedShape &&
+    !NON_ANTHROPIC_ROUTE_MARKERS.some((marker) => normalized.includes(marker))
   );
 }
 
@@ -204,6 +257,7 @@ function defaultRouteRows(
     createRouteRow({
       route: route.routeId,
       model: index === 0 ? defaultModel : "",
+      labelOverride: "",
       supports1m: route.supports1m,
     }),
   );
@@ -219,13 +273,16 @@ function nextRouteRow(current: RouteRow[], defaults: RouteRow[]): RouteRow {
     return createRouteRow({
       route: defaultRow.route,
       model: defaultRow.model,
+      labelOverride: defaultRow.labelOverride,
       supports1m: defaultRow.supports1m,
     });
   }
 
+  const usedRoutes = new Set(current.map((route) => route.route));
   return createRouteRow({
-    route: "",
+    route: routeIdForRole("sonnet", usedRoutes),
     model: "",
+    labelOverride: "",
     supports1m: true,
   });
 }
@@ -399,6 +456,7 @@ export function ClaudeDesktopProviderForm({
           createRouteRow({
             route: r.routeId,
             model: r.upstreamModel,
+            labelOverride: r.labelOverride ?? "",
             supports1m: r.supports1m,
           }),
         ),
@@ -442,6 +500,19 @@ export function ClaudeDesktopProviderForm({
     setRoutes((current) =>
       current.map((row, i) => (i === index ? { ...row, ...patch } : row)),
     );
+  };
+
+  const updateRouteRole = (index: number, role: RouteRole) => {
+    setRoutes((current) => {
+      const usedRoutes = new Set(
+        current
+          .filter((_, i) => i !== index)
+          .map((row) => row.route)
+          .filter(Boolean),
+      );
+      const route = routeIdForRole(role, usedRoutes);
+      return current.map((row, i) => (i === index ? { ...row, route } : row));
+    });
   };
 
   const handleModelMappingChange = (checked: boolean) => {
@@ -555,6 +626,7 @@ export function ClaudeDesktopProviderForm({
         ...route,
         route: route.route.trim(),
         model: route.model.trim(),
+        labelOverride: route.labelOverride.trim(),
       }))
       .filter((route) => route.route || route.model);
 
@@ -614,6 +686,8 @@ export function ClaudeDesktopProviderForm({
     >((acc, route) => {
       acc[route.route] = {
         model: route.model || route.route,
+        labelOverride:
+          route.labelOverride || (mode === "proxy" ? route.model : undefined),
         supports1m: route.supports1m || undefined,
       };
       return acc;
@@ -863,15 +937,20 @@ export function ClaudeDesktopProviderForm({
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {t("claudeDesktop.routeMapHint", {
                         defaultValue:
-                          "左侧决定 Claude Desktop 模型菜单里的可见模型 ID；1M 只控制是否向 Claude Desktop 声明支持 1M 上下文，实际请求模型按右侧填写内容发送。",
+                          "选择模型角色后，CC Switch 会自动生成 Claude Desktop 兼容路由；菜单显示名可以写 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
                       })}
                     </p>
                   </div>
 
-                  <div className="hidden grid-cols-[1fr_1fr_116px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                  <div className="hidden grid-cols-[140px_1fr_1fr_116px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                     <span>
                       {t("claudeDesktop.routeModelLabel", {
-                        defaultValue: "Desktop 显示模型",
+                        defaultValue: "模型角色",
+                      })}
+                    </span>
+                    <span>
+                      {t("claudeDesktop.labelOverrideLabel", {
+                        defaultValue: "菜单显示名",
                       })}
                     </span>
                     <span>
@@ -889,25 +968,44 @@ export function ClaudeDesktopProviderForm({
                   {routes.map((route, index) => (
                     <div
                       key={route.rowId}
-                      className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_116px_36px]"
+                      className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr_116px_36px]"
                     >
-                      <div className="flex">
-                        <span className="inline-flex h-9 items-center rounded-l-md border border-r-0 border-input bg-muted px-3 text-sm text-muted-foreground">
-                          {CLAUDE_ROUTE_PREFIX}
-                        </span>
-                        <Input
-                          value={desktopRouteInputValue(route.route)}
-                          onChange={(event) =>
-                            updateRoute(index, {
-                              route: desktopRouteIdFromInput(
-                                event.target.value,
-                              ),
-                            })
-                          }
-                          placeholder="gpt-5.5"
-                          className="rounded-l-none"
-                        />
-                      </div>
+                      <Select
+                        value={routeRoleFromId(route.route)}
+                        onValueChange={(value) =>
+                          updateRouteRole(index, value as RouteRole)
+                        }
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sonnet">
+                            {t("claudeDesktop.routeRoleSonnet", {
+                              defaultValue: "Sonnet",
+                            })}
+                          </SelectItem>
+                          <SelectItem value="opus">
+                            {t("claudeDesktop.routeRoleOpus", {
+                              defaultValue: "Opus",
+                            })}
+                          </SelectItem>
+                          <SelectItem value="haiku">
+                            {t("claudeDesktop.routeRoleHaiku", {
+                              defaultValue: "Haiku",
+                            })}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        value={route.labelOverride}
+                        onChange={(event) =>
+                          updateRoute(index, {
+                            labelOverride: event.target.value,
+                          })
+                        }
+                        placeholder="DeepSeek V4 Pro"
+                      />
                       <div className="flex gap-1">
                         <Input
                           value={route.model}
@@ -923,8 +1021,13 @@ export function ClaudeDesktopProviderForm({
                             onSelect={(id) =>
                               updateRoute(index, {
                                 model: id,
+                                labelOverride: route.labelOverride || id,
                                 route:
-                                  route.route || desktopRouteIdFromModel(id),
+                                  route.route ||
+                                  routeIdForRole(
+                                    "sonnet",
+                                    new Set(routes.map((row) => row.route)),
+                                  ),
                               })
                             }
                           />
@@ -1006,6 +1109,7 @@ export function ClaudeDesktopProviderForm({
                             createRouteRow({
                               route: "",
                               model: "",
+                              labelOverride: "",
                               supports1m: false,
                             }),
                           ]),

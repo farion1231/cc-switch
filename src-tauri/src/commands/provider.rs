@@ -260,6 +260,7 @@ pub(crate) fn suggested_claude_desktop_routes(
     fn add_route(
         routes: &mut std::collections::HashMap<String, crate::provider::ClaudeDesktopModelRoute>,
         env: &serde_json::Map<String, serde_json::Value>,
+        route_key: &str,
         env_key: &str,
         supports_1m_default: bool,
     ) {
@@ -287,27 +288,58 @@ pub(crate) fn suggested_claude_desktop_routes(
             return;
         }
         let effective_supports_1m = supports_1m_default || has_1m_marker;
-        let route_key = crate::claude_desktop_config::derive_desktop_route_id(stripped_model);
+        let label_override =
+            (!crate::claude_desktop_config::is_claude_safe_model_id(stripped_model))
+                .then(|| stripped_model.to_string());
+
+        if let Some(existing) = routes
+            .values_mut()
+            .find(|existing| existing.model == stripped_model)
+        {
+            let merged = existing.supports_1m.unwrap_or(false) || effective_supports_1m;
+            existing.supports_1m = Some(merged);
+            if existing.label_override.is_none() {
+                existing.label_override = label_override;
+            }
+            return;
+        }
 
         routes
-            .entry(route_key)
+            .entry(route_key.to_string())
             .and_modify(|existing| {
                 let merged = existing.supports_1m.unwrap_or(false) || effective_supports_1m;
                 existing.supports_1m = Some(merged);
+                if existing.label_override.is_none() {
+                    existing.label_override = label_override.clone();
+                }
             })
             .or_insert_with(|| crate::provider::ClaudeDesktopModelRoute {
                 model: stripped_model.to_string(),
+                label_override,
                 supports_1m: Some(effective_supports_1m),
             });
     }
 
     for spec in crate::claude_desktop_config::DEFAULT_PROXY_ROUTES {
-        add_route(&mut routes, env, spec.env_key, supports_1m_default);
+        add_route(
+            &mut routes,
+            env,
+            spec.route_id,
+            spec.env_key,
+            supports_1m_default,
+        );
     }
 
     // 三个 default env_key 全空时用 ANTHROPIC_MODEL 派生兜底路由。
     if routes.is_empty() {
-        add_route(&mut routes, env, "ANTHROPIC_MODEL", supports_1m_default);
+        let primary_route = crate::claude_desktop_config::DEFAULT_PROXY_ROUTES[0].route_id;
+        add_route(
+            &mut routes,
+            env,
+            primary_route,
+            "ANTHROPIC_MODEL",
+            supports_1m_default,
+        );
     }
 
     (!routes.is_empty()).then_some(routes)
@@ -729,15 +761,15 @@ mod import_claude_desktop_tests {
             None,
         );
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        // env 已带 claude- 前缀，派生 key 不重复加前缀
         let r = routes
-            .get("claude-sonnet-4-5-20250929")
-            .expect("derived route present");
+            .get("claude-sonnet-4-6")
+            .expect("sonnet route present");
         assert_eq!(r.model, "claude-sonnet-4-5-20250929");
         assert!(
             !r.model.to_ascii_lowercase().contains("[1m]"),
             "model must not contain [1m] suffix"
         );
+        assert_eq!(r.label_override, None);
         assert_eq!(r.supports_1m, Some(true));
     }
 
@@ -750,8 +782,11 @@ mod import_claude_desktop_tests {
             None,
         );
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        let r = routes.get("claude-kimi-k2").expect("derived route present");
+        let r = routes
+            .get("claude-sonnet-4-6")
+            .expect("sonnet route present");
         assert_eq!(r.model, "kimi-k2");
+        assert_eq!(r.label_override.as_deref(), Some("kimi-k2"));
         // 默认 provider_type 缺省 → supports_1m_default = true
         assert_eq!(r.supports_1m, Some(true));
     }
@@ -767,9 +802,10 @@ mod import_claude_desktop_tests {
         );
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
         let r = routes
-            .get("claude-gpt-5-codex")
-            .expect("derived route present");
+            .get("claude-sonnet-4-6")
+            .expect("sonnet route present");
         assert_eq!(r.model, "gpt-5-codex");
+        assert_eq!(r.label_override.as_deref(), Some("gpt-5-codex"));
         assert_eq!(r.supports_1m, Some(true));
     }
 
@@ -783,9 +819,10 @@ mod import_claude_desktop_tests {
         );
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
         let r = routes
-            .get("claude-gpt-5-codex")
-            .expect("derived route present");
+            .get("claude-sonnet-4-6")
+            .expect("sonnet route present");
         assert_eq!(r.model, "gpt-5-codex");
+        assert_eq!(r.label_override.as_deref(), Some("gpt-5-codex"));
         assert_eq!(r.supports_1m, Some(false));
     }
 
@@ -802,9 +839,10 @@ mod import_claude_desktop_tests {
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
         assert_eq!(routes.len(), 1, "three aliases → one merged route");
         let r = routes
-            .get("claude-MiniMax-M2")
+            .get("claude-sonnet-4-6")
             .expect("merged route present");
         assert_eq!(r.model, "MiniMax-M2");
+        assert_eq!(r.label_override.as_deref(), Some("MiniMax-M2"));
     }
 
     #[test]
@@ -821,7 +859,7 @@ mod import_claude_desktop_tests {
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
         assert_eq!(routes.len(), 1);
         let r = routes
-            .get("claude-MiniMax-M2")
+            .get("claude-sonnet-4-6")
             .expect("merged route present");
         assert_eq!(r.supports_1m, Some(true));
     }
@@ -838,11 +876,16 @@ mod import_claude_desktop_tests {
         );
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
         assert_eq!(routes.len(), 3);
-        assert_eq!(routes.get("claude-GLM-4.6").unwrap().model, "GLM-4.6");
-        assert_eq!(routes.get("claude-GLM-4-Air").unwrap().model, "GLM-4-Air");
+        assert_eq!(routes.get("claude-sonnet-4-6").unwrap().model, "GLM-4.6");
+        assert_eq!(routes.get("claude-opus-4-7").unwrap().model, "GLM-4-Air");
+        assert_eq!(routes.get("claude-haiku-4-5").unwrap().model, "GLM-4-Flash");
         assert_eq!(
-            routes.get("claude-GLM-4-Flash").unwrap().model,
-            "GLM-4-Flash"
+            routes
+                .get("claude-sonnet-4-6")
+                .unwrap()
+                .label_override
+                .as_deref(),
+            Some("GLM-4.6")
         );
     }
 
@@ -858,9 +901,10 @@ mod import_claude_desktop_tests {
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
         assert_eq!(routes.len(), 1);
         let r = routes
-            .get("claude-kimi-k2")
+            .get("claude-sonnet-4-6")
             .expect("fallback route present");
         assert_eq!(r.model, "kimi-k2");
+        assert_eq!(r.label_override.as_deref(), Some("kimi-k2"));
     }
 
     #[test]
@@ -872,8 +916,14 @@ mod import_claude_desktop_tests {
             None,
         );
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        // key 应是 "claude-sonnet-4-5-20250929"，不出现双重 claude- 前缀
-        assert!(routes.contains_key("claude-sonnet-4-5-20250929"));
+        assert!(routes.contains_key("claude-sonnet-4-6"));
         assert!(!routes.contains_key("claude-claude-sonnet-4-5-20250929"));
+        assert_eq!(
+            routes
+                .get("claude-sonnet-4-6")
+                .expect("route")
+                .label_override,
+            None
+        );
     }
 }

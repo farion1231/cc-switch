@@ -28,7 +28,7 @@ function renderForm(
 }
 
 describe("ClaudeDesktopProviderForm", () => {
-  it("编辑模型映射的 Desktop 模型 ID 时保持输入框焦点", () => {
+  it("编辑模型映射的菜单显示名时保持输入框焦点", () => {
     renderForm({
       name: "Proxy Provider",
       settingsConfig: {
@@ -47,15 +47,17 @@ describe("ClaudeDesktopProviderForm", () => {
       },
     });
 
-    const input = screen.getByPlaceholderText("gpt-5.5") as HTMLInputElement;
+    const input = screen.getByPlaceholderText(
+      "DeepSeek V4 Pro",
+    ) as HTMLInputElement;
     input.focus();
 
-    fireEvent.change(input, { target: { value: "12345" } });
+    fireEvent.change(input, { target: { value: "DeepSeek V4 Pro" } });
 
     const currentInput = screen.getByPlaceholderText(
-      "gpt-5.5",
+      "DeepSeek V4 Pro",
     ) as HTMLInputElement;
-    expect(currentInput).toHaveValue("12345");
+    expect(currentInput).toHaveValue("DeepSeek V4 Pro");
     expect(document.activeElement).toBe(currentInput);
   });
 

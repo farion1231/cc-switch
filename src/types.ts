@@ -133,8 +133,7 @@ export interface AuthBinding {
 
 export interface ClaudeDesktopModelRoute {
   model: string;
-  /** @deprecated Claude Desktop ignores this in the model menu; kept only to read old configs. */
-  displayName?: string;
+  labelOverride?: string;
   supports1m?: boolean;
 }
 

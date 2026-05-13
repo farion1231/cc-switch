@@ -29,6 +29,45 @@ pub const ANTHROPIC_CLAUDE_ROUTE_PREFIX: &str = "anthropic/claude-";
 /// cc-switch 历史约定的 1M 上下文标记（ASCII 小写形式，匹配时用 `eq_ignore_ascii_case`）。
 pub const LEGACY_ONE_M_MARKER: &str = "[1m]";
 
+const NON_ANTHROPIC_ROUTE_MARKERS: &[&str] = &[
+    "ark-code",
+    "astron",
+    "command-r",
+    "deepseek",
+    "doubao",
+    "gemini",
+    "gemma",
+    "glm",
+    "gpt",
+    "grok",
+    "hermes",
+    "hy3",
+    "kimi",
+    "lfm",
+    "llama",
+    "longcat",
+    "mimo",
+    "minimax",
+    "mistral",
+    "mixtral",
+    "moonshot",
+    "nemotron",
+    "openai",
+    "qianfan",
+    "qwen",
+    "stepfun",
+    "seed-",
+    "hunyuan",
+    "nova-",
+    "ernie",
+    "codex",
+    "abab",
+    "jamba",
+    "arctic",
+    "solar",
+    "mercury",
+];
+
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeDesktopDefaultRoute {
@@ -98,12 +137,14 @@ pub struct ClaudeDesktopStatus {
 pub struct ResolvedModelRoute {
     pub route_id: String,
     pub upstream_model: String,
+    pub label_override: Option<String>,
     pub supports_1m: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InferenceModelSpec {
     name: String,
+    label_override: Option<String>,
     supports_1m: bool,
 }
 
@@ -217,57 +258,31 @@ pub fn provider_mode(provider: &Provider) -> ClaudeDesktopMode {
 
 pub fn is_claude_safe_model_id(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
-    (normalized.starts_with(CLAUDE_ROUTE_PREFIX)
-        || normalized.starts_with(ANTHROPIC_CLAUDE_ROUTE_PREFIX))
+    let has_allowed_shape = (normalized.starts_with(CLAUDE_ROUTE_PREFIX)
+        && normalized.len() > CLAUDE_ROUTE_PREFIX.len())
+        || (normalized.starts_with(ANTHROPIC_CLAUDE_ROUTE_PREFIX)
+            && normalized.len() > ANTHROPIC_CLAUDE_ROUTE_PREFIX.len())
+        || matches!(normalized.as_str(), "sonnet" | "opus" | "haiku")
+        || (normalized.starts_with("sonnet-") && normalized.len() > "sonnet-".len())
+        || (normalized.starts_with("opus-") && normalized.len() > "opus-".len())
+        || (normalized.starts_with("haiku-") && normalized.len() > "haiku-".len());
+    has_allowed_shape
         && !normalized.contains(LEGACY_ONE_M_MARKER)
-}
-
-/// 把上游 model 名标准化为 Claude Desktop 路由表 key（即 UI 左列内容）。
-/// 复现前端 `desktopRouteIdFromModel` + `normalizeDesktopRouteSuffix` 的规则：
-///   1. trim
-///   2. 剥离已有 `anthropic/claude-` 或 `claude-` 前缀（长前缀优先匹配）
-///   3. 去 `models/` 前缀（Gemini 风格 `models/gemini-2.0-flash`）
-///   4. 把空格 / 制表 / 正反斜杠替换成 `-`
-///   5. 拼上 `claude-` 前缀
-///
-/// 示例：
-///   "MiniMax-M2"                  → "claude-MiniMax-M2"
-///   "models/gemini-2.0-flash"     → "claude-gemini-2.0-flash"
-///   "claude-sonnet-4-5-20250929"  → "claude-sonnet-4-5-20250929"（剥后再拼，不双重）
-///   "anthropic/claude-3-5-sonnet" → "claude-3-5-sonnet"（与前端一致：anthropic/claude- 被替换为 claude-）
-pub fn derive_desktop_route_id(upstream_model: &str) -> String {
-    let trimmed = upstream_model.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    let suffix = if lower.starts_with(ANTHROPIC_CLAUDE_ROUTE_PREFIX) {
-        &trimmed[ANTHROPIC_CLAUDE_ROUTE_PREFIX.len()..]
-    } else if lower.starts_with(CLAUDE_ROUTE_PREFIX) {
-        &trimmed[CLAUDE_ROUTE_PREFIX.len()..]
-    } else {
-        trimmed
-    };
-    let without_models_prefix = suffix
-        .strip_prefix("models/")
-        .or_else(|| suffix.strip_prefix("Models/"))
-        .unwrap_or(suffix);
-    let normalized: String = without_models_prefix
-        .chars()
-        .map(|c| {
-            if matches!(c, ' ' | '\t' | '/' | '\\') {
-                '-'
-            } else {
-                c
-            }
-        })
-        .collect();
-    format!("{CLAUDE_ROUTE_PREFIX}{normalized}")
+        && !NON_ANTHROPIC_ROUTE_MARKERS
+            .iter()
+            .any(|marker| normalized.contains(marker))
 }
 
 fn inference_model_json(spec: &InferenceModelSpec) -> Value {
-    if spec.supports_1m {
-        json!({
-            "name": spec.name,
-            "supports1m": true,
-        })
+    if spec.supports_1m || spec.label_override.is_some() {
+        let mut item = json!({ "name": spec.name });
+        if let Some(label_override) = spec.label_override.as_deref() {
+            item["labelOverride"] = json!(label_override);
+        }
+        if spec.supports_1m {
+            item["supports1m"] = json!(true);
+        }
+        item
     } else {
         Value::String(spec.name.clone())
     }
@@ -507,12 +522,22 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
         if !is_claude_safe_model_id(route_id) {
             return Err(AppError::localized(
                 "claude_desktop.provider.route_invalid",
-                format!("Claude Desktop 直连模型必须使用 claude-* 或 anthropic/claude-* 名称: {route_id}"),
-                format!("Claude Desktop direct model must use a claude-* or anthropic/claude-* name: {route_id}"),
+                format!(
+                    "Claude Desktop 直连模型必须使用 claude-* 或 anthropic/claude-* 名称: {route_id}"
+                ),
+                format!(
+                    "Claude Desktop direct model must use a claude-* or anthropic/claude-* name: {route_id}"
+                ),
             ));
         }
         result.push(InferenceModelSpec {
             name: route_id.to_string(),
+            label_override: route
+                .label_override
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
             supports_1m,
         });
     }
@@ -541,24 +566,39 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
             )
         })?;
 
+    let reserved_route_ids = routes
+        .keys()
+        .map(|route_id| route_id.trim())
+        .filter(|route_id| is_claude_safe_model_id(route_id))
+        .map(str::to_string)
+        .collect::<std::collections::HashSet<_>>();
     let mut result = Vec::new();
-    for (route_id, route) in routes {
+    let mut entries = routes.iter().collect::<Vec<_>>();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    for (route_id, route) in entries {
         let supports_1m = route.supports_1m.unwrap_or(false);
         let route_id = route_id.trim();
         let upstream_model = route.model.trim();
         if route_id.is_empty() || upstream_model.is_empty() {
             continue;
         }
-        if !is_claude_safe_model_id(route_id) {
-            return Err(AppError::localized(
-                "claude_desktop.provider.route_invalid",
-                format!("Claude Desktop 模型路由必须使用 claude-* 或 anthropic/claude-* 名称: {route_id}"),
-                format!("Claude Desktop model route must use a claude-* or anthropic/claude-* name: {route_id}"),
-            ));
-        }
+        let repaired_route_id = if is_claude_safe_model_id(route_id) {
+            route_id.to_string()
+        } else {
+            next_catalog_safe_route_id(&result, &reserved_route_ids)
+        };
         result.push(ResolvedModelRoute {
-            route_id: route_id.to_string(),
+            route_id: repaired_route_id,
             upstream_model: upstream_model.to_string(),
+            label_override: route
+                .label_override
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .or_else(|| {
+                    (!is_claude_safe_model_id(route_id)).then(|| upstream_model.to_string())
+                }),
             supports_1m,
         });
     }
@@ -575,6 +615,32 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
     }
 
     Ok(result)
+}
+
+fn next_catalog_safe_route_id(
+    existing: &[ResolvedModelRoute],
+    reserved: &std::collections::HashSet<String>,
+) -> String {
+    if let Some(default_route) = DEFAULT_PROXY_ROUTES
+        .iter()
+        .map(|route| route.route_id)
+        .find(|route_id| {
+            !reserved.contains(*route_id)
+                && !existing.iter().any(|route| route.route_id == *route_id)
+        })
+    {
+        return default_route.to_string();
+    }
+
+    let mut index = 2usize;
+    loop {
+        let route_id = format!("{}-r{index}", DEFAULT_PROXY_ROUTES[0].route_id);
+        if !reserved.contains(&route_id) && !existing.iter().any(|route| route.route_id == route_id)
+        {
+            return route_id;
+        }
+        index += 1;
+    }
 }
 
 pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
@@ -714,6 +780,7 @@ fn apply_provider_to_paths_inner(
                 .iter()
                 .map(|route| InferenceModelSpec {
                     name: route.route_id.clone(),
+                    label_override: route.label_override.clone(),
                     supports_1m: route.supports_1m,
                 })
                 .collect::<Vec<_>>();
@@ -1102,6 +1169,7 @@ mod tests {
                 "claude-sonnet-4-6".to_string(),
                 ClaudeDesktopModelRoute {
                     model: "kimi-k2".to_string(),
+                    label_override: Some("Kimi K2".to_string()),
                     supports_1m: Some(true),
                 },
             )]),
@@ -1126,9 +1194,10 @@ mod tests {
             api_format: Some(api_format.to_string()),
             provider_type: Some(provider_type.to_string()),
             claude_desktop_model_routes: std::collections::HashMap::from([(
-                "claude-gpt-5-4".to_string(),
+                "claude-sonnet-4-6".to_string(),
                 ClaudeDesktopModelRoute {
                     model: "gpt-5.4".to_string(),
+                    label_override: Some("GPT-5.4".to_string()),
                     supports_1m: Some(false),
                 },
             )]),
@@ -1143,9 +1212,10 @@ mod tests {
             claude_desktop_mode: Some(ClaudeDesktopMode::Direct),
             api_format: Some("anthropic".to_string()),
             claude_desktop_model_routes: std::collections::HashMap::from([(
-                "claude-deepseek-chat".to_string(),
+                "claude-sonnet-4-6".to_string(),
                 ClaudeDesktopModelRoute {
-                    model: "claude-deepseek-chat".to_string(),
+                    model: "claude-sonnet-4-6".to_string(),
+                    label_override: None,
                     supports_1m: Some(true),
                 },
             )]),
@@ -1203,7 +1273,7 @@ mod tests {
         );
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-deepseek-chat", "supports1m": true }])
+            json!([{ "name": "claude-sonnet-4-6", "supports1m": true }])
         );
     }
 
@@ -1229,7 +1299,7 @@ mod tests {
             .starts_with("ccs-"));
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-sonnet-4-6", "supports1m": true }])
+            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true }])
         );
         assert!(!profile.to_string().contains("kimi-k2"));
     }
@@ -1253,7 +1323,10 @@ mod tests {
                 profile["inferenceGatewayBaseUrl"],
                 json!("http://127.0.0.1:15721/claude-desktop")
             );
-            assert_eq!(profile["inferenceModels"], json!(["claude-gpt-5-4"]));
+            assert_eq!(
+                profile["inferenceModels"],
+                json!([{ "name": "claude-sonnet-4-6", "labelOverride": "GPT-5.4" }])
+            );
         }
     }
 
@@ -1278,6 +1351,51 @@ mod tests {
     }
 
     #[test]
+    fn claude_desktop_proxy_repairs_legacy_unsafe_route_without_colliding() {
+        let mut provider = proxy_provider("proxy");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                (
+                    "claude-deepseek-v4-pro".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "deepseek-v4-pro".to_string(),
+                        label_override: None,
+                        supports_1m: Some(true),
+                    },
+                ),
+                (
+                    "claude-sonnet-4-6".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "claude-sonnet-4-6".to_string(),
+                        label_override: None,
+                        supports_1m: Some(false),
+                    },
+                ),
+            ]),
+            ..Default::default()
+        });
+
+        let routes = proxy_model_routes(&provider).expect("routes");
+        assert_eq!(routes.len(), 2);
+        let repaired = routes
+            .iter()
+            .find(|route| route.upstream_model == "deepseek-v4-pro")
+            .expect("repaired route");
+        assert_eq!(repaired.route_id, "claude-opus-4-7");
+        assert_eq!(repaired.label_override.as_deref(), Some("deepseek-v4-pro"));
+        assert!(repaired.supports_1m);
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-opus-4-7", "messages": []}),
+            &provider,
+        )
+        .expect("map repaired route");
+        assert_eq!(mapped["model"], json!("deepseek-v4-pro"));
+    }
+
+    #[test]
     fn claude_desktop_proxy_rejects_1m_suffix_route() {
         let provider = proxy_provider("proxy");
 
@@ -1293,6 +1411,11 @@ mod tests {
     fn claude_desktop_rejects_1m_suffix_as_model_id() {
         assert!(!is_claude_safe_model_id("claude-sonnet-4-6 [1m]"));
         assert!(!is_claude_safe_model_id("  claude-sonnet-4-6  [1M]  "));
+        assert!(!is_claude_safe_model_id("claude-deepseek-v4-pro"));
+        assert!(!is_claude_safe_model_id("claude-gpt-5-4"));
+        assert!(!is_claude_safe_model_id("claude-"));
+        assert!(!is_claude_safe_model_id("anthropic/claude-"));
+        assert!(!is_claude_safe_model_id("sonnet-"));
         assert!(is_claude_safe_model_id("  claude-sonnet-4-6  "));
     }
 
@@ -1433,47 +1556,5 @@ mod tests {
             None,
         );
         assert!(!is_compatible_direct_provider(&missing_bearer));
-    }
-
-    // === derive_desktop_route_id ===
-
-    #[test]
-    fn derive_basic_adds_prefix() {
-        assert_eq!(derive_desktop_route_id("MiniMax-M2"), "claude-MiniMax-M2");
-    }
-
-    #[test]
-    fn derive_strips_gemini_prefix() {
-        assert_eq!(
-            derive_desktop_route_id("models/gemini-2.0-flash"),
-            "claude-gemini-2.0-flash"
-        );
-    }
-
-    #[test]
-    fn derive_keeps_existing_claude_prefix() {
-        assert_eq!(
-            derive_desktop_route_id("claude-sonnet-4-5-20250929"),
-            "claude-sonnet-4-5-20250929"
-        );
-    }
-
-    #[test]
-    fn derive_strips_anthropic_claude_prefix_uses_claude() {
-        // 与前端 normalizeDesktopRouteSuffix 一致：剥离 anthropic/claude- 前缀后用 claude- 替代
-        assert_eq!(
-            derive_desktop_route_id("anthropic/claude-3-5-sonnet"),
-            "claude-3-5-sonnet"
-        );
-    }
-
-    #[test]
-    fn derive_replaces_whitespace_and_slash() {
-        assert_eq!(derive_desktop_route_id("my model/v2"), "claude-my-model-v2");
-    }
-
-    #[test]
-    fn derive_preserves_case_and_dot() {
-        assert_eq!(derive_desktop_route_id("GLM-4.6"), "claude-GLM-4.6");
     }
 }

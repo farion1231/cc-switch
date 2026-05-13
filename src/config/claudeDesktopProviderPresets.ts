@@ -20,8 +20,22 @@ export type ClaudeDesktopApiFormat =
 export interface ClaudeDesktopRoutePreset {
   routeId: string;
   upstreamModel: string;
+  labelOverride?: string;
   supports1m: boolean;
 }
+
+/**
+ * Claude Desktop 3P fail-all 校验只接受 `claude-(sonnet|opus|haiku)-*` 形式的
+ * routeId（1.6259.1+，实测 2026-05-13）。所有预设工厂、表单角色下拉、
+ * 后端 `next_catalog_safe_route_id` 都从此映射派生 routeId，避免散落硬编码。
+ */
+export const CLAUDE_DESKTOP_ROLE_ROUTE_IDS = {
+  sonnet: "claude-sonnet-4-6",
+  opus: "claude-opus-4-7",
+  haiku: "claude-haiku-4-5",
+} as const;
+
+export type ClaudeDesktopRoleId = keyof typeof CLAUDE_DESKTOP_ROLE_ROUTE_IDS;
 
 export interface ClaudeDesktopProviderPreset {
   name: string;
@@ -49,18 +63,18 @@ export interface ClaudeDesktopProviderPreset {
 
 const passthroughRoutes = (supports1m = false): ClaudeDesktopRoutePreset[] => [
   {
-    routeId: "claude-sonnet-4-6",
-    upstreamModel: "claude-sonnet-4-6",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+    upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
     supports1m,
   },
   {
-    routeId: "claude-opus-4-7",
-    upstreamModel: "claude-opus-4-7",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+    upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
     supports1m,
   },
   {
-    routeId: "claude-haiku-4-5",
-    upstreamModel: "claude-haiku-4-5",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+    upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
     supports1m,
   },
 ];
@@ -72,35 +86,25 @@ const mappedRoutes = (
   supports1m = false,
 ): ClaudeDesktopRoutePreset[] => [
   {
-    routeId: "claude-sonnet-4-6",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
     upstreamModel: sonnet,
     supports1m,
   },
   {
-    routeId: "claude-opus-4-7",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
     upstreamModel: opus,
     supports1m,
   },
   {
-    routeId: "claude-haiku-4-5",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
     upstreamModel: haiku,
     supports1m,
   },
 ];
 
-const routeIdFromModel = (model: string) => {
-  const trimmed = model.trim();
-  const lower = trimmed.toLowerCase();
-  if (lower.startsWith("claude-") || lower.startsWith("anthropic/claude-")) {
-    return trimmed;
-  }
-
-  return `claude-${trimmed.replace(/^models\//i, "").replace(/[/\\\s]+/g, "-")}`;
-};
-
 /**
- * 非 Claude 上游模型用此工厂：用 claude-* route ID 承载品牌化模型名，
- * 让 Claude Desktop 菜单能从 ID 看到接近上游模型的名称。
+ * 非 Claude 上游模型用此工厂：route ID 使用 Claude Desktop 能通过校验的
+ * Sonnet/Opus/Haiku 路由，真实品牌名只写入 labelOverride 和 upstreamModel。
  */
 const brandedRoutes = (
   sonnet: string,
@@ -108,18 +112,23 @@ const brandedRoutes = (
   haiku: string,
   supports1m = false,
 ): ClaudeDesktopRoutePreset[] => {
-  const seen = new Set<string>();
-  return [sonnet, opus, haiku]
-    .map((upstreamModel) => ({
-      routeId: routeIdFromModel(upstreamModel),
+  const seenUpstream = new Set<string>();
+  return [
+    { routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet, upstreamModel: sonnet },
+    { routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus, upstreamModel: opus },
+    { routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku, upstreamModel: haiku },
+  ]
+    .map(({ routeId, upstreamModel }) => ({
+      routeId,
       upstreamModel,
+      labelOverride: upstreamModel,
       supports1m,
     }))
     .filter((route) => {
-      if (seen.has(route.routeId)) {
+      if (seenUpstream.has(route.upstreamModel)) {
         return false;
       }
-      seen.add(route.routeId);
+      seenUpstream.add(route.upstreamModel);
       return true;
     });
 };
