@@ -1043,9 +1043,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor="usage-zenmux-api-key">
-                            API Key
-                          </Label>
+                          <Label htmlFor="usage-zenmux-api-key">API Key</Label>
                           <div className="relative">
                             <Input
                               id="usage-zenmux-api-key"
