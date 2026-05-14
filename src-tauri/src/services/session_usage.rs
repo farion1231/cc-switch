@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::usage_stats::{
-    effective_usage_log_filter, should_skip_session_insert, DedupKey,
+    effective_usage_log_filter, find_model_pricing, should_skip_session_insert, DedupKey,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -142,12 +142,7 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
-    let file_modified = metadata
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
     let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
@@ -321,6 +316,19 @@ pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64
     Ok(result.unwrap_or((0, 0)))
 }
 
+/// 返回文件 mtime 的纳秒时间戳。
+///
+/// `session_log_sync.last_modified` 旧数据是秒级时间戳；新写入纳秒值不需要
+/// schema 迁移，旧值会自然触发一次增量重扫，并继续依赖行 offset 避免重复导入。
+pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
 /// 更新 session_log_sync 表中某条目的同步进度。
 ///
 /// Shared by all session_usage_* parsers.
@@ -459,77 +467,7 @@ fn find_model_pricing_for_session(
     conn: &rusqlite::Connection,
     model_id: &str,
 ) -> Option<ModelPricing> {
-    // 精确匹配
-    if let Ok(Some(pricing)) = try_find_pricing(conn, model_id) {
-        return Some(pricing);
-    }
-
-    // 模糊匹配：去掉日期后缀
-    // 例如 "claude-opus-4-6-20260206" -> "claude-opus-4-6"
-    let parts: Vec<&str> = model_id.rsplitn(2, '-').collect();
-    if parts.len() == 2 {
-        if let Some(suffix) = parts.first() {
-            if suffix.len() == 8 && suffix.chars().all(|c| c.is_ascii_digit()) {
-                if let Ok(Some(pricing)) = try_find_pricing(conn, parts[1]) {
-                    return Some(pricing);
-                }
-            }
-        }
-    }
-
-    // 尝试 LIKE 匹配
-    let pattern = format!("{model_id}%");
-    let result = conn.query_row(
-        "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing WHERE model_id LIKE ?1 LIMIT 1",
-        rusqlite::params![pattern],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
-    );
-
-    match result {
-        Ok((input, output, cache_read, cache_creation)) => {
-            ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation).ok()
-        }
-        Err(_) => None,
-    }
-}
-
-fn try_find_pricing(
-    conn: &rusqlite::Connection,
-    model_id: &str,
-) -> Result<Option<ModelPricing>, AppError> {
-    let result = conn.query_row(
-        "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing WHERE model_id = ?1",
-        rusqlite::params![model_id],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
-    );
-
-    match result {
-        Ok((input, output, cache_read, cache_creation)) => {
-            ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation)
-                .map(Some)
-                .map_err(|e| AppError::Database(format!("解析定价失败: {e}")))
-        }
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(AppError::Database(format!("查询定价失败: {e}"))),
-    }
+    find_model_pricing(conn, model_id)
 }
 
 /// 查询数据来源分布统计

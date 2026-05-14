@@ -230,9 +230,9 @@ pub enum ClaudeDesktopMode {
 pub struct ClaudeDesktopModelRoute {
     /// 真实上游模型名，只保存在 CC Switch 内部，不写入 Claude Desktop profile。
     pub model: String,
-    /// Desktop /v1/models 中显示的名称。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
+    /// Claude Desktop 模型菜单显示名；写入 profile 的 `labelOverride`。
+    #[serde(rename = "labelOverride", skip_serializing_if = "Option::is_none")]
+    pub label_override: Option<String>,
     /// Claude Desktop 3P 识别的 1M 上下文能力标记。
     #[serde(rename = "supports1m", skip_serializing_if = "Option::is_none")]
     pub supports_1m: Option<bool>,
