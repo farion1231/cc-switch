@@ -540,6 +540,22 @@ export const providerPresets: ProviderPreset[] = [
     icon: "packycode",
   },
   {
+    name: "PatewayAI",
+    websiteUrl: "https://pateway.ai",
+    apiKeyUrl: "https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.pateway.ai",
+        ANTHROPIC_API_KEY: "",
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "patewayai",
+    icon: "pateway",
+  },
+  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",

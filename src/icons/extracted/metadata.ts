@@ -282,6 +282,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["packycode", "packy", "packyapi"],
     defaultColor: "currentColor",
   },
+  pateway: {
+    name: "pateway",
+    displayName: "PatewayAI",
+    category: "ai-provider",
+    keywords: ["pateway", "patewayai", "claude", "codex"],
+  },
   palm: {
     name: "palm",
     displayName: "palm",
