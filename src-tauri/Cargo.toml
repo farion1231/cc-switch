@@ -18,6 +18,8 @@ doctest = false
 [features]
 default = []
 test-hooks = []
+# 在托盘菜单中显示“打开官方网站”入口
+tray-official-website = []
 
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }
