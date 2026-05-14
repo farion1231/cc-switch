@@ -1248,7 +1248,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/anthropic",
       name: "CrazyRouter",
       options: {
-        baseURL: "https://crazyrouter.com",
+        baseURL: "https://cn.crazyrouter.com",
         apiKey: "",
         setCacheKey: true,
       },
@@ -1302,13 +1302,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "Micu",
       options: {
-        baseURL: "https://www.openclaudecode.cn/v1",
+        baseURL: "https://www.micuapi.ai/v1",
         apiKey: "",
         setCacheKey: true,
       },
