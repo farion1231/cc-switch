@@ -1561,10 +1561,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     settingsConfig: {
-      baseUrl: "https://www.openclaudecode.cn",
+      baseUrl: "https://www.micuapi.ai",
       apiKey: "",
       api: "anthropic-messages",
       models: [

@@ -896,11 +896,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     settingsConfig: {
       name: "micu",
-      base_url: "https://www.openclaudecode.cn",
+      base_url: "https://www.micuapi.ai",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [

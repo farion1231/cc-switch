@@ -710,15 +710,15 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://www.openclaudecode.cn",
+        ANTHROPIC_BASE_URL: "https://www.micuapi.ai",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
-    endpointCandidates: ["https://www.openclaudecode.cn"],
+    endpointCandidates: ["https://www.micuapi.ai"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "micu", // 促销信息 i18n key

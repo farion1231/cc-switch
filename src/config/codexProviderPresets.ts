@@ -337,15 +337,15 @@ requires_openai_auth = true`,
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "micu",
-      "https://www.openclaudecode.cn/v1",
+      "https://www.micuapi.ai/v1",
       "gpt-5.4",
     ),
-    endpointCandidates: ["https://www.openclaudecode.cn/v1"],
+    endpointCandidates: ["https://www.micuapi.ai/v1"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "micu", // 促销信息 i18n key
