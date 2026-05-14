@@ -943,30 +943,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "DDSHub",
-    websiteUrl: "https://www.ddshub.cc",
-    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
-    settingsConfig: {
-      name: "ddshub",
-      base_url: "https://www.ddshub.cc",
-      api_key: "",
-      api_mode: "anthropic_messages",
-      models: [
-        { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-        { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "ddshub",
-    icon: "dds",
-    iconColor: "#000000",
-    suggestedDefaults: {
-      model: { default: "claude-opus-4-7", provider: "ddshub" },
-    },
-  },
-  {
     name: "E-FlowCode",
     websiteUrl: "https://e-flowcode.cc",
     apiKeyUrl: "https://e-flowcode.cc",

@@ -742,22 +742,6 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "DDSHub",
-    websiteUrl: "https://www.ddshub.cc",
-    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://www.ddshub.cc",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ddshub", // 促销信息 i18n key
-    icon: "dds",
-    iconColor: "#000000",
-  },
-  {
     name: "E-FlowCode",
     websiteUrl: "https://e-flowcode.cc",
     apiKeyUrl: "https://e-flowcode.cc",
