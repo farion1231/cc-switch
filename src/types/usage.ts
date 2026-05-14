@@ -195,6 +195,14 @@ export function getFreshInputTokens(log: CacheNormalizableLog): number {
   return log.inputTokens;
 }
 
+export const NON_NEGATIVE_DECIMAL_REGEX = /^\d+(?:\.\d+)?$/;
+
+export function isNonNegativeDecimalString(value: string): boolean {
+  const trimmed = value.trim();
+  if (!NON_NEGATIVE_DECIMAL_REGEX.test(trimmed)) return false;
+  return Number.isFinite(Number(trimmed));
+}
+
 type UsageCostLog = Pick<
   RequestLog,
   | "inputTokens"
