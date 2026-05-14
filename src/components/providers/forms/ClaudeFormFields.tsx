@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +42,7 @@ import {
 } from "@/lib/api/copilot";
 import type { CopilotModel } from "@/lib/api/copilot";
 import {
+  fetchCodexOauthModels,
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
@@ -155,6 +156,7 @@ export function ClaudeFormFields({
   selectedGitHubAccountId,
   onGitHubAccountSelect,
   isCodexOauthPreset,
+  isCodexOauthAuthenticated,
   selectedCodexAccountId,
   onCodexAccountSelect,
   codexFastMode,
@@ -210,10 +212,27 @@ export function ClaudeFormFields({
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const copilotModelsRequestRef = useRef(0);
+
+  // Codex OAuth 可用模型列表
+  const [codexOauthModels, setCodexOauthModels] = useState<FetchedModel[]>([]);
+  const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
+  const codexOauthModelsRequestRef = useRef(0);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+
+  const showModelFetchResult = useCallback(
+    (count: number) => {
+      if (count === 0) {
+        toast.info(t("providerForm.fetchModelsEmpty"));
+      } else {
+        toast.success(t("providerForm.fetchModelsSuccess", { count }));
+      }
+    },
+    [t],
+  );
 
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
@@ -235,31 +254,27 @@ export function ClaudeFormFields({
     fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl)
       .then((models) => {
         setFetchedModels(models);
-        if (models.length === 0) {
-          toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
-          );
-        }
+        showModelFetchResult(models.length);
       })
       .catch((err) => {
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, isFullUrl, t]);
+  }, [baseUrl, apiKey, isFullUrl, showModelFetchResult, t]);
 
-  // 当 Copilot 预设且已认证时，加载可用模型
-  useEffect(() => {
-    // 如果不是 Copilot 预设或未认证，清空模型列表
-    if (!isCopilotPreset || !isCopilotAuthenticated) {
-      setCopilotModels([]);
-      setModelsLoading(false);
+  const handleFetchCopilotModels = useCallback(() => {
+    if (!isCopilotAuthenticated) {
+      toast.error(
+        t("copilot.loginRequired", {
+          defaultValue: "请先登录 GitHub Copilot",
+        }),
+      );
       return;
     }
 
-    let cancelled = false;
+    const requestId = copilotModelsRequestRef.current + 1;
+    copilotModelsRequestRef.current = requestId;
     setModelsLoading(true);
     const fetchModels = selectedGitHubAccountId
       ? copilotGetModelsForAccount(selectedGitHubAccountId)
@@ -267,25 +282,89 @@ export function ClaudeFormFields({
 
     fetchModels
       .then((models) => {
-        if (!cancelled) setCopilotModels(models);
+        if (copilotModelsRequestRef.current !== requestId) return;
+        setCopilotModels(models);
+        showModelFetchResult(models.length);
       })
       .catch((err) => {
+        if (copilotModelsRequestRef.current !== requestId) return;
         console.warn("[Copilot] Failed to fetch models:", err);
-        if (!cancelled) {
-          toast.error(
-            t("copilot.loadModelsFailed", {
-              defaultValue: "加载 Copilot 模型列表失败",
-            }),
-          );
-        }
+        toast.error(
+          t("copilot.loadModelsFailed", {
+            defaultValue: "加载 Copilot 模型列表失败",
+          }),
+        );
       })
       .finally(() => {
-        if (!cancelled) setModelsLoading(false);
+        if (copilotModelsRequestRef.current === requestId) {
+          setModelsLoading(false);
+        }
       });
-    return () => {
-      cancelled = true;
-    };
+  }, [
+    isCopilotAuthenticated,
+    selectedGitHubAccountId,
+    showModelFetchResult,
+    t,
+  ]);
+
+  const handleFetchCodexOauthModels = useCallback(() => {
+    if (!isCodexOauthAuthenticated) {
+      toast.error(
+        t("codexOauth.loginRequired", {
+          defaultValue: "请先登录 ChatGPT 账号",
+        }),
+      );
+      return;
+    }
+
+    const requestId = codexOauthModelsRequestRef.current + 1;
+    codexOauthModelsRequestRef.current = requestId;
+    setCodexOauthModelsLoading(true);
+    fetchCodexOauthModels(selectedCodexAccountId)
+      .then((models) => {
+        if (codexOauthModelsRequestRef.current !== requestId) return;
+        setCodexOauthModels(models);
+        showModelFetchResult(models.length);
+      })
+      .catch((err) => {
+        if (codexOauthModelsRequestRef.current !== requestId) return;
+        console.warn("[CodexOAuth] Failed to fetch models:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (codexOauthModelsRequestRef.current === requestId) {
+          setCodexOauthModelsLoading(false);
+        }
+      });
+  }, [
+    isCodexOauthAuthenticated,
+    selectedCodexAccountId,
+    showModelFetchResult,
+    t,
+  ]);
+
+  useEffect(() => {
+    copilotModelsRequestRef.current += 1;
+    setCopilotModels([]);
+    setModelsLoading(false);
   }, [isCopilotPreset, isCopilotAuthenticated, selectedGitHubAccountId]);
+
+  useEffect(() => {
+    codexOauthModelsRequestRef.current += 1;
+    setCodexOauthModels([]);
+    setCodexOauthModelsLoading(false);
+  }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
+
+  const modelFetchLoading = isCopilotPreset
+    ? modelsLoading
+    : isCodexOauthPreset
+      ? codexOauthModelsLoading
+      : isFetchingModels;
+  const handleModelFetchClick = isCopilotPreset
+    ? handleFetchCopilotModels
+    : isCodexOauthPreset
+      ? handleFetchCodexOauthModels
+      : handleFetchModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
@@ -297,6 +376,19 @@ export function ClaudeFormFields({
   ) => {
     const updateValue =
       onValueChange ?? ((next: string) => onModelChange(field, next));
+
+    if (isCodexOauthPreset) {
+      return (
+        <ModelInputWithFetch
+          id={id}
+          value={value}
+          onChange={updateValue}
+          placeholder={placeholder}
+          fetchedModels={codexOauthModels}
+          isLoading={codexOauthModelsLoading}
+        />
+      );
+    }
 
     if (isCopilotPreset && copilotModels.length > 0) {
       // 按 vendor 分组
@@ -368,7 +460,20 @@ export function ClaudeFormFields({
       );
     }
 
-    // 非 Copilot 供应商: 使用 ModelInputWithFetch（获取按钮在 section 标题旁）
+    if (isCopilotPreset) {
+      return (
+        <Input
+          id={id}
+          type="text"
+          value={value}
+          onChange={(e) => updateValue(e.target.value)}
+          placeholder={placeholder}
+          autoComplete="off"
+        />
+      );
+    }
+
+    // 普通供应商: 使用 ModelInputWithFetch（获取按钮在 section 标题旁）
     return (
       <ModelInputWithFetch
         id={id}
@@ -706,23 +811,21 @@ export function ClaudeFormFields({
                       defaultValue: "一键设置",
                     })}
                   </Button>
-                  {!isCopilotPreset && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleFetchModels}
-                      disabled={isFetchingModels}
-                      className="h-7 gap-1"
-                    >
-                      {isFetchingModels ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Download className="h-3.5 w-3.5" />
-                      )}
-                      {t("providerForm.fetchModels")}
-                    </Button>
-                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleModelFetchClick}
+                    disabled={modelFetchLoading}
+                    className="h-7 gap-1"
+                  >
+                    {modelFetchLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
+                    {t("providerForm.fetchModels")}
+                  </Button>
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
