@@ -1,7 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft } from "lucide-react";
+import { ArrowDown, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   isWindows,
@@ -17,6 +17,8 @@ interface FullScreenPanelProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  showScrollHint?: boolean;
+  scrollHintText?: string;
 }
 
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px - match App.tsx
@@ -33,6 +35,8 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   onClose,
   children,
   footer,
+  showScrollHint = false,
+  scrollHintText = "",
 }) => {
   React.useEffect(() => {
     if (isOpen) {
@@ -135,8 +139,16 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto scroll-overlay">
+          <div className="relative flex-1 overflow-y-auto scroll-overlay">
             <div className="px-6 py-6 space-y-6 w-full">{children}</div>
+            {showScrollHint && (
+              <div className="pointer-events-none absolute right-2 bottom-4 z-10 rounded-md border border-primary/30 bg-background/90 px-2 py-1 text-xs text-primary shadow-sm">
+                <span className="inline-flex items-center gap-1">
+                  <ArrowDown className="h-3.5 w-3.5 motion-safe:animate-bounce motion-reduce:animate-none" />
+                  {scrollHintText}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Footer */}
