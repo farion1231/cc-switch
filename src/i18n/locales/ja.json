@@ -173,6 +173,13 @@
       }
     }
   },
+  "claudeCode": {
+    "needsRouting": "ルーティングが必要",
+    "noRoutingSupport": "ルーティング非対応"
+  },
+  "codex": {
+    "noRoutingSupport": "ルーティング非対応"
+  },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop の公式プロバイダーは内蔵の 1P サインインを使用します。API キーやエンドポイントの設定は不要です。",
     "mode": "モデル処理方式",

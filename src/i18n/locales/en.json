@@ -173,6 +173,13 @@
       }
     }
   },
+  "claudeCode": {
+    "needsRouting": "Needs Routing",
+    "noRoutingSupport": "No Routing Support"
+  },
+  "codex": {
+    "noRoutingSupport": "No Routing Support"
+  },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop official providers use the built-in 1P sign-in. No API key or endpoint URL is required.",
     "mode": "Model handling",

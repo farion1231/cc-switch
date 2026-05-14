@@ -173,6 +173,13 @@
       }
     }
   },
+  "claudeCode": {
+    "needsRouting": "需要路由",
+    "noRoutingSupport": "不支持路由"
+  },
+  "codex": {
+    "noRoutingSupport": "不支持路由"
+  },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop 官方供应商使用应用内置的 1P 登录，无需配置 API Key 和接口地址。",
     "mode": "模型处理方式",
