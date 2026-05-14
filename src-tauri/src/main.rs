@@ -18,5 +18,12 @@ fn main() {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(exit_code) = cc_switch_lib::linux_cli::run_if_cli_args(std::env::args()) {
+            std::process::exit(exit_code);
+        }
+    }
+
     cc_switch_lib::run();
 }

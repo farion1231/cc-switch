@@ -16,6 +16,8 @@ pub mod hermes_config;
 mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
+pub mod linux_cli;
+#[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
 mod openclaw_config;
@@ -115,7 +117,7 @@ fn handle_deeplink_url(
 
     let redacted_url = redact_url_for_log(url_str);
     log::info!("✓ Deep link URL detected from {source}: {redacted_url}");
-    log::debug!("Deep link URL (raw) from {source}: {url_str}");
+    log::debug!("Deep link URL from {source}: {redacted_url}");
 
     match crate::deeplink::parse_deeplink_url(url_str) {
         Ok(request) => {
@@ -1407,7 +1409,8 @@ pub fn run() {
                 RunEvent::Opened { urls } => {
                     if let Some(url) = urls.first() {
                         let url_str = url.to_string();
-                        log::info!("RunEvent::Opened with URL: {url_str}");
+                        let redacted_url = redact_url_for_log(&url_str);
+                        log::info!("RunEvent::Opened with URL: {redacted_url}");
 
                         if url_str.starts_with("ccswitch://") {
                             if crate::lightweight::is_lightweight_mode() {
