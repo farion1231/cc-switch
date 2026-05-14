@@ -1812,6 +1812,51 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     iconColor: "#FF9900",
   },
 
+  {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/dashboard/keys",
+    settingsConfig: {
+      baseUrl: "https://api.coderplan.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-7",
+          name: "Claude Opus 4.7",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "coderplan",
+    iconColor: "#CBA6F7",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "coderplan/claude-opus-4-7",
+        fallbacks: ["coderplan/claude-sonnet-4-6"],
+      },
+      modelCatalog: {
+        "coderplan/claude-opus-4-7": { alias: "Opus" },
+        "coderplan/claude-sonnet-4-6": { alias: "Sonnet" },
+      },
+    },
+  },
+
   // ========== Custom Template ==========
   {
     name: "OpenAI Compatible",

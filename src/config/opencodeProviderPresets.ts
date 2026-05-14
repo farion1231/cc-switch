@@ -1539,6 +1539,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isCustomTemplate: true,
   },
   {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/dashboard/keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "CoderPlan",
+      options: {
+        baseURL: "https://api.coderplan.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-7": { name: "Claude Opus 4.7" },
+      },
+    },
+    category: "aggregator",
+    icon: "coderplan",
+    iconColor: "#CBA6F7",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Oh My OpenCode Slim",
     websiteUrl: "https://github.com/alvinunreal/oh-my-opencode-slim",
     settingsConfig: {
