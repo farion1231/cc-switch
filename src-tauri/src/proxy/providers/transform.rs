@@ -142,18 +142,15 @@ pub fn anthropic_to_openai_with_reasoning_content(
                 messages.push(json!({"role": "system", "content": text}));
             }
         } else if let Some(arr) = system.as_array() {
-            // 多个 system message — preserve cache_control for compatible proxies
+            // 多个 system message. Anthropic cache_control is not valid in
+            // OpenAI Chat messages; dropping it keeps strict compatible APIs happy.
             for msg in arr {
                 if let Some(text) = msg.get("text").and_then(|t| t.as_str()) {
                     let text = strip_leading_anthropic_billing_header(text);
                     if text.is_empty() {
                         continue;
                     }
-                    let mut sys_msg = json!({"role": "system", "content": text});
-                    if let Some(cc) = msg.get("cache_control") {
-                        sys_msg["cache_control"] = cc.clone();
-                    }
-                    messages.push(sys_msg);
+                    messages.push(json!({"role": "system", "content": text}));
                 }
             }
         }
@@ -207,7 +204,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
             .iter()
             .filter(|t| t.get("type").and_then(|v| v.as_str()) != Some("BatchTool"))
             .map(|t| {
-                let mut tool = json!({
+                let tool = json!({
                     "type": "function",
                     "function": {
                         "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
@@ -215,9 +212,6 @@ pub fn anthropic_to_openai_with_reasoning_content(
                         "parameters": clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})))
                     }
                 });
-                if let Some(cc) = t.get("cache_control") {
-                    tool["cache_control"] = cc.clone();
-                }
                 tool
             })
             .collect();
@@ -294,10 +288,6 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
     }
 
     let mut parts = Vec::new();
-    let mut inherited_cache_control: Option<Value> = None;
-    let mut cache_control_conflict = false;
-    let mut saw_cache_control = false;
-    let mut saw_missing_cache_control = false;
     messages.retain(|message| {
         if message.get("role").and_then(|value| value.as_str()) != Some("system") {
             return true;
@@ -318,27 +308,11 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
             _ => {}
         }
 
-        if let Some(cache_control) = message.get("cache_control") {
-            saw_cache_control = true;
-            match &inherited_cache_control {
-                None => inherited_cache_control = Some(cache_control.clone()),
-                Some(existing) if existing == cache_control => {}
-                Some(_) => cache_control_conflict = true,
-            }
-        } else {
-            saw_missing_cache_control = true;
-        }
-
         false
     });
 
     if !parts.is_empty() {
-        let mut merged = json!({"role": "system", "content": parts.join("\n")});
-        if !(cache_control_conflict || (saw_cache_control && saw_missing_cache_control)) {
-            if let Some(cache_control) = inherited_cache_control {
-                merged["cache_control"] = cache_control;
-            }
-        }
+        let merged = json!({"role": "system", "content": parts.join("\n")});
         messages.insert(0, merged);
     }
 }
@@ -379,11 +353,7 @@ fn convert_message_to_openai(
             match block_type {
                 "text" => {
                     if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                        let mut part = json!({"type": "text", "text": text});
-                        if let Some(cc) = block.get("cache_control") {
-                            part["cache_control"] = cc.clone();
-                        }
-                        content_parts.push(part);
+                        content_parts.push(json!({"type": "text", "text": text}));
                     }
                 }
                 "image" => {
@@ -450,14 +420,8 @@ fn convert_message_to_openai(
             if content_parts.is_empty() {
                 msg["content"] = Value::Null;
             } else if content_parts.len() == 1 {
-                // When cache_control is present, keep array format to preserve it
-                let has_cache_control = content_parts[0].get("cache_control").is_some();
-                if !has_cache_control {
-                    if let Some(text) = content_parts[0].get("text") {
-                        msg["content"] = text.clone();
-                    } else {
-                        msg["content"] = json!(content_parts);
-                    }
+                if let Some(text) = content_parts[0].get("text") {
+                    msg["content"] = text.clone();
                 } else {
                     msg["content"] = json!(content_parts);
                 }
@@ -491,8 +455,33 @@ fn convert_message_to_openai(
 }
 
 /// 清理 JSON schema（移除不支持的 format）
-pub fn clean_schema(mut schema: Value) -> Value {
+pub fn clean_schema(schema: Value) -> Value {
+    clean_schema_inner(schema, true)
+}
+
+fn clean_schema_inner(mut schema: Value, require_object_schema: bool) -> Value {
+    if !schema.is_object() {
+        return if require_object_schema {
+            json!({
+                "type": "object",
+                "properties": {}
+            })
+        } else {
+            schema
+        };
+    }
+
     if let Some(obj) = schema.as_object_mut() {
+        if require_object_schema && obj.get("type").and_then(|v| v.as_str()).is_none() {
+            obj.insert("type".to_string(), json!("object"));
+        }
+        if require_object_schema
+            && obj.get("type").and_then(|v| v.as_str()) == Some("object")
+            && !obj.contains_key("properties")
+        {
+            obj.insert("properties".to_string(), json!({}));
+        }
+
         // 移除 "format": "uri"
         if obj.get("format").and_then(|v| v.as_str()) == Some("uri") {
             obj.remove("format");
@@ -501,12 +490,12 @@ pub fn clean_schema(mut schema: Value) -> Value {
         // 递归清理嵌套 schema
         if let Some(properties) = obj.get_mut("properties").and_then(|v| v.as_object_mut()) {
             for (_, value) in properties.iter_mut() {
-                *value = clean_schema(value.clone());
+                *value = clean_schema_inner(value.clone(), false);
             }
         }
 
         if let Some(items) = obj.get_mut("items") {
-            *items = clean_schema(items.clone());
+            *items = clean_schema_inner(items.clone(), false);
         }
     }
     schema
@@ -821,7 +810,27 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_preserves_matching_system_cache_control_when_merging() {
+    fn test_anthropic_to_openai_tool_schema_null_defaults_to_object() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "tools": [{
+                "name": "web_search",
+                "description": "Search the web",
+                "input_schema": null
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"],
+            json!({"type": "object", "properties": {}})
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_drops_matching_system_cache_control_when_merging() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -839,7 +848,7 @@ mod tests {
             result["messages"][0]["content"],
             "You are Claude Code.\nBe concise."
         );
-        assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
+        assert!(result["messages"][0].get("cache_control").is_none());
         assert_eq!(result["messages"][1]["role"], "user");
     }
 
@@ -1171,7 +1180,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_cache_control_preserved() {
+    fn test_anthropic_to_openai_drops_cache_control() {
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
@@ -1193,19 +1202,9 @@ mod tests {
         });
 
         let result = anthropic_to_openai(input).unwrap();
-        // System message cache_control preserved
-        assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
-        // Text block cache_control preserved
-        assert_eq!(
-            result["messages"][1]["content"][0]["cache_control"]["type"],
-            "ephemeral"
-        );
-        assert_eq!(
-            result["messages"][1]["content"][0]["cache_control"]["ttl"],
-            "5m"
-        );
-        // Tool cache_control preserved
-        assert_eq!(result["tools"][0]["cache_control"]["type"], "ephemeral");
+        assert!(result["messages"][0].get("cache_control").is_none());
+        assert_eq!(result["messages"][1]["content"], "Hello");
+        assert!(result["tools"][0].get("cache_control").is_none());
     }
 
     #[test]
