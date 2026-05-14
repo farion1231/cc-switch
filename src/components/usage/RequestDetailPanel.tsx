@@ -6,7 +6,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useRequestDetail } from "@/lib/query/usage";
-import { getLocaleFromLanguage } from "@/lib/locale";
 import { getFreshInputTokens, isUnpricedUsage } from "@/types/usage";
 
 interface RequestDetailPanelProps {
@@ -20,9 +19,14 @@ export function RequestDetailPanel({
 }: RequestDetailPanelProps) {
   const { t, i18n } = useTranslation();
   const { data: request, isLoading } = useRequestDetail(requestId);
-  const dateLocale = getLocaleFromLanguage(
-    i18n.resolvedLanguage || i18n.language || "en",
-  );
+  const language = i18n.resolvedLanguage || i18n.language || "en";
+  const dateLocale = language.startsWith("zh")
+    ? "zh-CN"
+    : language.startsWith("ja")
+      ? "ja-JP"
+      : language.startsWith("ru")
+        ? "ru-RU"
+        : "en-US";
 
   if (isLoading) {
     return (
@@ -140,7 +144,7 @@ export function RequestDetailPanel({
                 <dd className="font-mono">
                   {freshInput.toLocaleString()}
                   {isCacheInclusive && (
-                    <span className="ml-2 font-normal text-xs text-muted-foreground/70">
+                    <span className="ml-2 text-xs text-muted-foreground/70 font-normal">
                       ({t("usage.rawInputLabel", "原始")}:{" "}
                       {request.inputTokens.toLocaleString()})
                     </span>

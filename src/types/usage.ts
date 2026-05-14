@@ -71,6 +71,15 @@ export interface UsageSummary {
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
   successRate: number;
+  /** input + output + cache_creation + cache_read, all cache-normalized */
+  realTotalTokens: number;
+  /** cache_read / (input + cache_creation + cache_read), range 0–1 */
+  cacheHitRate: number;
+}
+
+export interface UsageSummaryByApp {
+  appType: string;
+  summary: UsageSummary;
 }
 
 export interface DailyStats {
@@ -139,7 +148,7 @@ export interface UsageRangeSelection {
  */
 export type AppType = "claude" | "codex" | "gemini";
 
-export type AppTypeFilter = "all" | AppType | "hermes";
+export type AppTypeFilter = "all" | AppType;
 
 export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
@@ -151,7 +160,8 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
  * App types whose proxy uses an OpenAI-style protocol. Two consequences:
  *
  * 1. `inputTokens` already includes the cached portion (must subtract
- *    `cacheReadTokens` to get fresh-input semantics).
+ *    `cacheReadTokens` to get fresh-input semantics — see
+ *    [getFreshInputTokens]).
  * 2. The protocol does not report cache _creation_ separately, only cache
  *    _reads_. So `cacheCreationTokens` is always 0 for these app types and
  *    the UI should label it as N/A rather than 0.
