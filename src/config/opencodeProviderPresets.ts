@@ -863,6 +863,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "Xiaomi MiMo Token Plan",
+    websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Xiaomi MiMo Token Plan",
+      options: {
+        baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "mimo-v2.5-pro": { name: "MiMo V2.5 Pro" },
+        "mimo-v2.5": { name: "MiMo V2.5" },
+      },
+    },
+    category: "cn_official",
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "Token Plan API Key",
+        placeholder: "tp-...",
+        editorValue: "",
+      },
+    },
+  },
 
   {
     name: "AiHubMix",

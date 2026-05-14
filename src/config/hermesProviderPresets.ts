@@ -1106,4 +1106,25 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "mimo-v2-pro", provider: "xiaomi_mimo" },
     },
   },
+  {
+    name: "Xiaomi MiMo Token Plan",
+    websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
+    settingsConfig: {
+      name: "xiaomi_mimo_token_plan",
+      base_url: "https://token-plan-cn.xiaomimimo.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "mimo-v2.5-pro", name: "MiMo v2.5 Pro" },
+        { id: "mimo-v2.5", name: "MiMo v2.5" },
+      ],
+    },
+    category: "cn_official",
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+    suggestedDefaults: {
+      model: { default: "mimo-v2.5-pro", provider: "xiaomi_mimo_token_plan" },
+    },
+  },
 ];

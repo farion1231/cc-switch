@@ -815,4 +815,20 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "xiaomimimo",
     iconColor: "#000000",
   },
+  {
+    name: "Xiaomi MiMo Token Plan",
+    websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
+    category: "cn_official",
+    baseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "mimo-v2.5-pro",
+      "mimo-v2.5-pro",
+      "mimo-v2.5-pro",
+    ),
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+  },
 ];
