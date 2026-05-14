@@ -133,14 +133,23 @@ fn parse_provider_deeplink(
     let usage_enabled = params
         .get("usageEnabled")
         .and_then(|v| v.parse::<bool>().ok());
-    let usage_script = params.get("usageScript").cloned();
-    let usage_api_key = params.get("usageApiKey").cloned();
-    let usage_base_url = params.get("usageBaseUrl").cloned();
-    let usage_access_token = params.get("usageAccessToken").cloned();
-    let usage_user_id = params.get("usageUserId").cloned();
+    let usage_script = params.get("usageScript").cloned().filter(|v| !v.is_empty());
+    let usage_api_key = params.get("usageApiKey").cloned().filter(|v| !v.is_empty());
+    let usage_base_url = params
+        .get("usageBaseUrl")
+        .cloned()
+        .filter(|v| !v.is_empty());
+    let usage_access_token = params
+        .get("usageAccessToken")
+        .cloned()
+        .filter(|v| !v.is_empty());
+    let usage_user_id = params.get("usageUserId").cloned().filter(|v| !v.is_empty());
     let usage_auto_interval = params
         .get("usageAutoInterval")
         .and_then(|v| v.parse::<u64>().ok());
+
+    // Extract extra env variables (v3.10+)
+    let extra_env = params.get("extraEnv").cloned();
 
     Ok(DeepLinkImportRequest {
         version,
@@ -166,6 +175,7 @@ fn parse_provider_deeplink(
         config,
         config_format,
         config_url,
+        extra_env,
         usage_enabled,
         usage_script,
         usage_api_key,
@@ -236,6 +246,7 @@ fn parse_prompt_deeplink(
         config: None,
         config_format: None,
         config_url: None,
+        extra_env: None,
         usage_enabled: None,
         usage_script: None,
         usage_api_key: None,
@@ -301,6 +312,7 @@ fn parse_mcp_deeplink(
         directory: None,
         branch: None,
         config_url: None,
+        extra_env: None,
         usage_enabled: None,
         usage_script: None,
         usage_api_key: None,
@@ -356,6 +368,7 @@ fn parse_skill_deeplink(
         config: None,
         config_format: None,
         config_url: None,
+        extra_env: None,
         usage_enabled: None,
         usage_script: None,
         usage_api_key: None,
