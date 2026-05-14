@@ -50,6 +50,7 @@ import {
   hasApiKeyField,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
+import { isNonNegativeDecimalString } from "@/types/usage";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -346,8 +347,11 @@ function ProviderFormFull({
   const {
     claudeModel,
     defaultHaikuModel,
+    defaultHaikuModelName,
     defaultSonnetModel,
+    defaultSonnetModelName,
     defaultOpusModel,
+    defaultOpusModelName,
     handleModelChange,
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
@@ -809,6 +813,20 @@ function ProviderFormFull({
           defaultValue: "请填写供应商名称",
         }),
       );
+    }
+
+    const costMultiplier = pricingConfig.costMultiplier?.trim();
+    if (
+      pricingConfig.enabled &&
+      costMultiplier &&
+      !isNonNegativeDecimalString(costMultiplier)
+    ) {
+      toast.error(
+        t("settings.globalProxy.defaultCostMultiplierInvalid", {
+          defaultValue: "成本倍率必须为非负数",
+        }),
+      );
+      return;
     }
 
     // opencode / openclaw / hermes: providerKey 相关
@@ -1815,8 +1833,11 @@ function ProviderFormFull({
               shouldShowModelSelector={category !== "official"}
               claudeModel={claudeModel}
               defaultHaikuModel={defaultHaikuModel}
+              defaultHaikuModelName={defaultHaikuModelName}
               defaultSonnetModel={defaultSonnetModel}
+              defaultSonnetModelName={defaultSonnetModelName}
               defaultOpusModel={defaultOpusModel}
+              defaultOpusModelName={defaultOpusModelName}
               onModelChange={handleModelChange}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}

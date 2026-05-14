@@ -191,6 +191,8 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  const isClaudeThirdParty =
+    appId === "claude" && provider.category === "third_party";
 
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
@@ -467,7 +469,11 @@ export function ProviderCard({
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={
-                onTest && !isOfficial && !isCopilot && !isCodexOauth
+                onTest &&
+                !isOfficial &&
+                !isCopilot &&
+                !isCodexOauth &&
+                !isClaudeThirdParty
                   ? () => onTest(provider)
                   : undefined
               }

@@ -35,11 +35,52 @@ pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
     pub claude_api_format: Option<String>,
+    /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
+    /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
+    pub(crate) connection_guard: Option<ActiveConnectionGuard>,
 }
 
 pub struct ForwardError {
     pub error: ProxyError,
     pub provider: Option<Provider>,
+}
+
+/// 活跃连接 RAII guard
+///
+/// 构造时把 `ProxyStatus.active_connections` +1；Drop 时在 tokio runtime 上调度
+/// 一个异步任务执行 -1，从而支持把 guard move 进流式 body future（stream 自然结束
+/// 时 guard 与 future 一起 drop）。
+///
+/// 设计动机：之前在 `forward_with_retry` 出口处同步 -1，但流式响应的 body 实际
+/// 在 `create_logged_passthrough_stream` 内还会继续 yield 字节流，导致 UI 的
+/// `active_connections` 计数过早归零。RAII guard 让"减量"由 Rust 类型系统驱动，
+/// 不需要每条出口路径都手动调用。
+pub(crate) struct ActiveConnectionGuard {
+    status: Arc<RwLock<ProxyStatus>>,
+}
+
+impl ActiveConnectionGuard {
+    pub(crate) async fn acquire(status: Arc<RwLock<ProxyStatus>>) -> Self {
+        {
+            let mut s = status.write().await;
+            s.active_connections = s.active_connections.saturating_add(1);
+        }
+        Self { status }
+    }
+}
+
+impl Drop for ActiveConnectionGuard {
+    fn drop(&mut self) {
+        // Drop 不能 await：把减量操作调度到 tokio runtime
+        let status = self.status.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let mut s = status.write().await;
+                s.active_connections = s.active_connections.saturating_sub(1);
+            });
+        }
+        // 没有 runtime 时静默丢失计数（仅 UI 展示用，可接受最终一致性）
+    }
 }
 
 pub struct RequestForwarder {
@@ -68,6 +109,12 @@ pub struct RequestForwarder {
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
     streaming_first_byte_timeout: std::time::Duration,
+    /// 单个客户端请求最多尝试的 provider 数。
+    ///
+    /// 由 `AppProxyConfig.max_retries` (UI: "请求失败时的重试次数, 0-10") 派生：
+    /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
+    /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
+    max_attempts: usize,
 }
 
 impl RequestForwarder {
@@ -88,7 +135,11 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        max_retries: u32,
     ) -> Self {
+        // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
+        // saturating_add 防止 u32::MAX + 1 溢出。
+        let max_attempts = (max_retries as usize).saturating_add(1);
         Self {
             router,
             status,
@@ -106,6 +157,7 @@ impl RequestForwarder {
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
             ),
+            max_attempts,
         }
     }
 
@@ -143,17 +195,121 @@ impl RequestForwarder {
         });
     }
 
+    /// 整流（thinking signature 或 budget）重试失败后的统一收尾。
+    ///
+    /// `None` 表示已记录熔断器、累积 `last_error`/`last_provider`，
+    /// 调用方应 `continue` 让下一家 provider 继续故障转移；
+    /// `Some(ForwardError)` 表示是客户端错误，没有 provider 能修复，
+    /// 调用方应直接 `return` 把错误返回给客户端。
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_rectifier_retry_failure(
+        &self,
+        retry_err: ProxyError,
+        provider: &Provider,
+        app_type_str: &str,
+        used_half_open_permit: bool,
+        rectifier_label: &str,
+        last_error: &mut Option<ProxyError>,
+        last_provider: &mut Option<Provider>,
+    ) -> Option<ForwardError> {
+        // Provider 错误：本家上游/网络确实出问题，下一家 provider 可能可用 → 继续故障转移。
+        // 客户端错误：整流后请求仍违法，下一家也修不好 → 直接返回。
+        let is_provider_error = match &retry_err {
+            ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => true,
+            ProxyError::UpstreamError { status, .. } => *status >= 500,
+            _ => false,
+        };
+
+        if is_provider_error {
+            let _ = self
+                .router
+                .record_result(
+                    &provider.id,
+                    app_type_str,
+                    used_half_open_permit,
+                    false,
+                    Some(retry_err.to_string()),
+                )
+                .await;
+            {
+                let mut status = self.status.write().await;
+                status.last_error = Some(format!(
+                    "Provider {} {rectifier_label}重试失败: {}",
+                    provider.name, retry_err
+                ));
+            }
+            *last_error = Some(retry_err);
+            *last_provider = Some(provider.clone());
+            return None;
+        }
+
+        self.router
+            .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
+            .await;
+        let mut status = self.status.write().await;
+        status.failed_requests += 1;
+        status.last_error = Some(retry_err.to_string());
+        if status.total_requests > 0 {
+            status.success_rate =
+                (status.success_requests as f32 / status.total_requests as f32) * 100.0;
+        }
+        Some(ForwardError {
+            error: retry_err,
+            provider: Some(provider.clone()),
+        })
+    }
+
     /// 转发请求（带故障转移）
+    ///
+    /// 这是 thin wrapper：在客户端请求维度记一次 `total_requests` / 调整
+    /// `active_connections` / 刷新 `last_request_at`，无论 inner 走哪条出口路径，
+    /// 出口处都会把 `active_connections` 回收。Per-attempt 维度（成功/失败/熔断
+    /// 等）仍由 inner 内自行更新 `success_requests` / `failed_requests`。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn forward_with_retry(
+        &self,
+        app_type: &AppType,
+        method: http::Method,
+        endpoint: &str,
+        body: Value,
+        headers: axum::http::HeaderMap,
+        extensions: Extensions,
+        providers: Vec<Provider>,
+    ) -> Result<ForwardResult, ForwardError> {
+        let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
+        {
+            let mut s = self.status.write().await;
+            s.total_requests = s.total_requests.saturating_add(1);
+            s.last_request_at = Some(chrono::Utc::now().to_rfc3339());
+        }
+        let result = self
+            .forward_with_retry_inner(
+                app_type, method, endpoint, body, headers, extensions, providers,
+            )
+            .await;
+        // 把 guard 注入到 Ok 结果，让它随响应一起流转到 response_processor，
+        // 在流式 body 的 future 内才真正 drop。
+        // Err 路径：guard 在函数 scope 内随返回值落地时自动 drop。
+        result.map(|mut fr| {
+            fr.connection_guard = Some(guard);
+            fr
+        })
+    }
+
+    /// 实际转发逻辑（不包含客户端维度的入口/出口计数）
     ///
     /// # Arguments
     /// * `app_type` - 应用类型
+    /// * `method` - 客户端请求的 HTTP 方法（透传给上游，支持 GET/POST 等）
     /// * `endpoint` - API 端点
     /// * `body` - 请求体
     /// * `headers` - 请求头
     /// * `providers` - 已选择的 Provider 列表（由 RequestContext 提供，避免重复调用 select_providers）
-    pub async fn forward_with_retry(
+    #[allow(clippy::too_many_arguments)]
+    async fn forward_with_retry_inner(
         &self,
         app_type: &AppType,
+        method: http::Method,
         endpoint: &str,
         body: Value,
         headers: axum::http::HeaderMap,
@@ -175,15 +331,27 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
-        // 整流器重试标记：确保整流最多触发一次
-        let mut rectifier_retried = false;
-        let mut budget_rectifier_retried = false;
-
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
+            // 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
+            // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
+            let mut rectifier_retried = false;
+            let mut budget_rectifier_retried = false;
+
+            // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
+            // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
+            if attempted_providers >= self.max_attempts {
+                log::warn!(
+                    "[{app_type_str}] 已达最大尝试次数上限 ({}/{}), 停止故障转移",
+                    attempted_providers,
+                    self.max_attempts
+                );
+                break;
+            }
+
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
             // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
             let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
@@ -218,19 +386,22 @@ impl RequestForwarder {
 
             attempted_providers += 1;
 
-            // 更新状态中的当前Provider信息
+            // 更新状态中的当前 Provider 信息（per-attempt 维度的标识）
+            //
+            // total_requests / last_request_at / active_connections 已由
+            // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
+            // 新「正在尝试哪个 provider」的展示字段。
             {
                 let mut status = self.status.write().await;
                 status.current_provider = Some(provider.name.clone());
                 status.current_provider_id = Some(provider.id.clone());
-                status.total_requests += 1;
-                status.last_request_at = Some(chrono::Utc::now().to_rfc3339());
             }
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
                 .forward(
                     app_type,
+                    &method,
                     provider,
                     endpoint,
                     &provider_body,
@@ -288,6 +459,7 @@ impl RequestForwarder {
                         response,
                         provider: provider.clone(),
                         claude_api_format,
+                        connection_guard: None,
                     });
                 }
                 Err(e) => {
@@ -355,6 +527,7 @@ impl RequestForwarder {
                                 match self
                                     .forward(
                                         app_type,
+                                        &method,
                                         provider,
                                         endpoint,
                                         &provider_body,
@@ -419,59 +592,28 @@ impl RequestForwarder {
                                             response,
                                             provider: provider.clone(),
                                             claude_api_format,
+                                            connection_guard: None,
                                         });
                                     }
                                     Err(retry_err) => {
-                                        // 整流重试仍失败：区分错误类型决定是否记录熔断器
                                         log::warn!(
                                             "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
                                         );
-
-                                        // 区分错误类型：Provider 问题记录失败，客户端问题仅释放 permit
-                                        let is_provider_error = match &retry_err {
-                                            ProxyError::Timeout(_)
-                                            | ProxyError::ForwardFailed(_) => true,
-                                            ProxyError::UpstreamError { status, .. } => {
-                                                *status >= 500
-                                            }
-                                            _ => false,
-                                        };
-
-                                        if is_provider_error {
-                                            // Provider 问题：记录失败到熔断器
-                                            let _ = self
-                                                .router
-                                                .record_result(
-                                                    &provider.id,
-                                                    app_type_str,
-                                                    used_half_open_permit,
-                                                    false,
-                                                    Some(retry_err.to_string()),
-                                                )
-                                                .await;
-                                        } else {
-                                            // 客户端问题：仅释放 permit，不记录熔断器
-                                            self.router
-                                                .release_permit_neutral(
-                                                    &provider.id,
-                                                    app_type_str,
-                                                    used_half_open_permit,
-                                                )
-                                                .await;
+                                        if let Some(err) = self
+                                            .handle_rectifier_retry_failure(
+                                                retry_err,
+                                                provider,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                                "整流",
+                                                &mut last_error,
+                                                &mut last_provider,
+                                            )
+                                            .await
+                                        {
+                                            return Err(err);
                                         }
-
-                                        let mut status = self.status.write().await;
-                                        status.failed_requests += 1;
-                                        status.last_error = Some(retry_err.to_string());
-                                        if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests as f32
-                                                / status.total_requests as f32)
-                                                * 100.0;
-                                        }
-                                        return Err(ForwardError {
-                                            error: retry_err,
-                                            provider: Some(provider.clone()),
-                                        });
+                                        continue;
                                     }
                                 }
                             }
@@ -550,6 +692,7 @@ impl RequestForwarder {
                             match self
                                 .forward(
                                     app_type,
+                                    &method,
                                     provider,
                                     endpoint,
                                     &provider_body,
@@ -608,54 +751,28 @@ impl RequestForwarder {
                                         response,
                                         provider: provider.clone(),
                                         claude_api_format,
+                                        connection_guard: None,
                                     });
                                 }
                                 Err(retry_err) => {
                                     log::warn!(
                                         "[{app_type_str}] [RECT-012] budget 整流重试仍失败: {retry_err}"
                                     );
-
-                                    let is_provider_error = match &retry_err {
-                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => {
-                                            true
-                                        }
-                                        ProxyError::UpstreamError { status, .. } => *status >= 500,
-                                        _ => false,
-                                    };
-
-                                    if is_provider_error {
-                                        let _ = self
-                                            .router
-                                            .record_result(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                                false,
-                                                Some(retry_err.to_string()),
-                                            )
-                                            .await;
-                                    } else {
-                                        self.router
-                                            .release_permit_neutral(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                            )
-                                            .await;
+                                    if let Some(err) = self
+                                        .handle_rectifier_retry_failure(
+                                            retry_err,
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            "budget 整流",
+                                            &mut last_error,
+                                            &mut last_provider,
+                                        )
+                                        .await
+                                    {
+                                        return Err(err);
                                     }
-
-                                    let mut status = self.status.write().await;
-                                    status.failed_requests += 1;
-                                    status.last_error = Some(retry_err.to_string());
-                                    if status.total_requests > 0 {
-                                        status.success_rate = (status.success_requests as f32
-                                            / status.total_requests as f32)
-                                            * 100.0;
-                                    }
-                                    return Err(ForwardError {
-                                        error: retry_err,
-                                        provider: Some(provider.clone()),
-                                    });
+                                    continue;
                                 }
                             }
                         }
@@ -683,24 +800,25 @@ impl RequestForwarder {
                         });
                     }
 
-                    // 失败：记录失败并更新熔断器
-                    let _ = self
-                        .router
-                        .record_result(
-                            &provider.id,
-                            app_type_str,
-                            used_half_open_permit,
-                            false,
-                            Some(e.to_string()),
-                        )
-                        .await;
-
-                    // 分类错误
+                    // 先分类错误，决定是否计入 provider 健康度
+                    // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
+                    //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
                     let category = self.categorize_proxy_error(&e);
 
                     match category {
                         ErrorCategory::Retryable => {
-                            // 可重试：更新错误信息，继续尝试下一个供应商
+                            // 可重试：真正的 provider 故障 → 记录失败并更新熔断器/DB 健康度
+                            let _ = self
+                                .router
+                                .record_result(
+                                    &provider.id,
+                                    app_type_str,
+                                    used_half_open_permit,
+                                    false,
+                                    Some(e.to_string()),
+                                )
+                                .await;
+
                             {
                                 let mut status = self.status.write().await;
                                 status.last_error =
@@ -721,7 +839,14 @@ impl RequestForwarder {
                             continue;
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
-                            // 不可重试：直接返回错误
+                            // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
+                            self.router
+                                .release_permit_neutral(
+                                    &provider.id,
+                                    app_type_str,
+                                    used_half_open_permit,
+                                )
+                                .await;
                             {
                                 let mut status = self.status.write().await;
                                 status.failed_requests += 1;
@@ -787,6 +912,7 @@ impl RequestForwarder {
     async fn forward(
         &self,
         app_type: &AppType,
+        method: &http::Method,
         provider: &Provider,
         endpoint: &str,
         body: &Value,
@@ -803,6 +929,14 @@ impl RequestForwarder {
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
 
+        // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
+        let is_copilot = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("github_copilot")
+            || base_url.contains("githubcopilot.com");
+
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
@@ -818,20 +952,14 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
-        // 确定有效端点
-        // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
-        let is_copilot = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("github_copilot")
-            || base_url.contains("githubcopilot.com");
-
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
             self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
                 .await;
+        } else {
+            mapped_body =
+                super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
         }
 
         // --- Copilot 优化器：分类 + 请求体优化（在格式转换之前执行） ---
@@ -1149,7 +1277,7 @@ impl RequestForwarder {
                 }
             }
 
-            adapter.get_auth_headers(&auth)
+            adapter.get_auth_headers(&auth)?
         } else {
             Vec::new()
         };
@@ -1414,9 +1542,15 @@ impl RequestForwarder {
             ordered_headers.insert(name, value);
         }
 
-        // 序列化请求体
-        let body_bytes = serde_json::to_vec(&filtered_body)
-            .map_err(|e| ProxyError::Internal(format!("Failed to serialize request body: {e}")))?;
+        // 序列化请求体。GET/HEAD 是 idempotent/safe 方法，按 HTTP 语义不应携带 body；
+        // 强行附带 JSON body 会让某些上游（如 Google Gemini 的 models.list）拒绝请求。
+        let body_bytes = if matches!(method, &http::Method::GET | &http::Method::HEAD) {
+            Vec::new()
+        } else {
+            serde_json::to_vec(&filtered_body).map_err(|e| {
+                ProxyError::Internal(format!("Failed to serialize request body: {e}"))
+            })?
+        };
 
         // 确保 content-type 存在
         if !ordered_headers.contains_key(http::header::CONTENT_TYPE) {
@@ -1474,7 +1608,7 @@ impl RequestForwarder {
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
             let client = super::http_client::get();
-            let mut request = client.post(&url);
+            let mut request = client.request(method.clone(), &url);
             let request_is_streaming =
                 is_streaming_request(&effective_endpoint, &filtered_body, headers);
             if request_is_streaming {
@@ -1515,7 +1649,7 @@ impl RequestForwarder {
                 .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
             super::hyper_client::send_request(
                 uri,
-                http::Method::POST,
+                method.clone(),
                 ordered_headers,
                 extensions.clone(),
                 body_bytes,
@@ -1652,10 +1786,22 @@ impl RequestForwarder {
             ProxyError::Timeout(_) => ErrorCategory::Retryable,
             ProxyError::ForwardFailed(_) => ErrorCategory::Retryable,
             ProxyError::ProviderUnhealthy(_) => ErrorCategory::Retryable,
-            // 上游 HTTP 错误：无论状态码如何，都尝试下一个供应商
-            // 原因：不同供应商有不同的限制和认证，一个供应商的 4xx 错误
-            // 不代表其他供应商也会失败
-            ProxyError::UpstreamError { .. } => ErrorCategory::Retryable,
+            // 上游 HTTP 错误：按状态码分桶。
+            //
+            // 客户端请求自身有问题的状态码无论换哪个 provider 都会被拒绝，
+            // 继续轮询只会放大错误率、污染熔断器健康度、浪费配额：
+            //   400 Bad Request / 422 Unprocessable Entity   ← 请求体格式或语义错误
+            //   405 Method Not Allowed / 406 Not Acceptable  ← 方法或 Accept 错误
+            //   413 Payload Too Large / 414 URI Too Long     ← 客户端构造超限
+            //   415 Unsupported Media Type                    ← Content-Type 错误
+            //   501 Not Implemented                           ← 上游协议确实不支持
+            //
+            // 其他 4xx（401/403/404/408/409/429/451 等）和全部 5xx 都保留
+            // Retryable —— 换一家 provider 可能持有不同的 key、配额、地域或模型映射。
+            ProxyError::UpstreamError { status, .. } => match *status {
+                400 | 405 | 406 | 413 | 414 | 415 | 422 | 501 => ErrorCategory::NonRetryable,
+                _ => ErrorCategory::Retryable,
+            },
             // Provider 级配置/转换问题：换一个 Provider 可能就能成功
             ProxyError::ConfigError(_) => ErrorCategory::Retryable,
             ProxyError::TransformError(_) => ErrorCategory::Retryable,

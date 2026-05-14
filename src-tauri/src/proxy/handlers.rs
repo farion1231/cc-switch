@@ -9,6 +9,7 @@
 
 use super::{
     error_mapper::{get_error_message, map_proxy_error_to_status},
+    forwarder::ActiveConnectionGuard,
     handler_config::{
         claude_stream_usage_event_filter, CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG,
         GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
@@ -32,6 +33,7 @@ use super::{
     ProxyError,
 };
 use crate::app_config::AppType;
+use crate::database::PRICING_SOURCE_REQUEST;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -115,6 +117,7 @@ async fn handle_messages_for_app(
     strip_prefix: Option<&'static str>,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -144,9 +147,10 @@ async fn handle_messages_for_app(
 
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &app_type,
+            method,
             endpoint,
             body.clone(),
             headers,
@@ -165,6 +169,7 @@ async fn handle_messages_for_app(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let api_format = result
         .claude_api_format
@@ -179,12 +184,27 @@ async fn handle_messages_for_app(
 
     // Claude 特有：格式转换处理
     if needs_transform {
-        return handle_claude_transform(response, &ctx, &state, &body, is_stream, &api_format)
-            .await;
+        return handle_claude_transform(
+            response,
+            &ctx,
+            &state,
+            &body,
+            is_stream,
+            &api_format,
+            connection_guard,
+        )
+        .await;
     }
 
     // 通用响应处理（透传模式）
-    process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &CLAUDE_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 fn validate_claude_desktop_gateway_auth(
@@ -224,6 +244,7 @@ async fn handle_claude_transform(
     original_body: &Value,
     is_stream: bool,
     api_format: &str,
+    connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
     let is_codex_oauth = ctx
@@ -324,6 +345,7 @@ async fn handle_claude_transform(
             "Claude/OpenRouter",
             usage_collector,
             timeout_config,
+            connection_guard,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -453,6 +475,7 @@ pub async fn handle_chat_completions(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -474,9 +497,10 @@ pub async fn handle_chat_completions(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
+            method,
             &endpoint,
             body,
             headers,
@@ -495,10 +519,18 @@ pub async fn handle_chat_completions(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &OPENAI_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
@@ -507,6 +539,7 @@ pub async fn handle_responses(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -528,9 +561,10 @@ pub async fn handle_responses(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
+            method,
             &endpoint,
             body,
             headers,
@@ -549,10 +583,18 @@ pub async fn handle_responses(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &CODEX_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
@@ -561,6 +603,7 @@ pub async fn handle_responses_compact(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -582,9 +625,10 @@ pub async fn handle_responses_compact(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
+            method,
             &endpoint,
             body,
             headers,
@@ -603,10 +647,18 @@ pub async fn handle_responses_compact(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &CODEX_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 // ============================================================================
@@ -620,6 +672,7 @@ pub async fn handle_gemini(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let headers = parts.headers;
     let extensions = parts.extensions;
     let body_bytes = req_body
@@ -627,8 +680,14 @@ pub async fn handle_gemini(
         .await
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
-        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    // GET 类只读端点（/v1beta/models、/v1beta/models/<model> 等）没有请求体，
+    // 不能强制 parse 为 JSON —— 否则空 body 会被拒绝。
+    let body: Value = if body_bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&body_bytes)
+            .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
+    };
 
     // Gemini 的模型名称在 URI 中
     let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
@@ -647,9 +706,10 @@ pub async fn handle_gemini(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Gemini,
+            method,
             endpoint,
             body,
             headers,
@@ -668,10 +728,18 @@ pub async fn handle_gemini(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &GEMINI_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &GEMINI_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 fn should_use_claude_transform_streaming(
@@ -813,7 +881,7 @@ async fn log_usage(
 
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;
-    let pricing_model = if pricing_model_source == "request" {
+    let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
         request_model
     } else {
         model

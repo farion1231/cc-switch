@@ -12,7 +12,7 @@ use crate::proxy::types::*;
 use crate::services::provider::{
     build_effective_settings_with_common_config, write_live_with_common_config,
 };
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::Emitter;
@@ -23,17 +23,27 @@ const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 /// 代理接管模式下需要从 Claude Live 配置中移除的"模型覆盖"字段。
 ///
-/// 原因：接管模式切换供应商时不会写回 Live 配置，如果保留这些字段，
-/// Claude Code 会继续以旧模型名发起请求，导致新供应商不支持时失败。
-const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 6] = [
+/// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
+/// 再由本地代理映射到当前供应商真实模型；`*_MODEL_NAME` 也需要同步接管，
+/// 否则 Claude Code 模型菜单会残留上一个供应商的显示名称。
+const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 9] = [
     "ANTHROPIC_MODEL",
     "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
     // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
     "ANTHROPIC_SMALL_FAST_MODEL",
 ];
+
+const CLAUDE_TAKEOVER_HAIKU_MODEL: &str = "claude-haiku-4-5";
+const CLAUDE_TAKEOVER_SONNET_MODEL: &str = "claude-sonnet-4-6";
+const CLAUDE_TAKEOVER_OPUS_MODEL: &str = "claude-opus-4-7";
+// 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
+const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 
 #[derive(Clone)]
 pub struct ProxyService {
@@ -59,32 +69,10 @@ impl ProxyService {
         }
     }
 
-    /// 清理接管模式下 Claude Live 配置中的模型覆盖字段。
-    ///
-    /// 这可以避免"接管开启后切换供应商仍使用旧模型"的问题。
-    /// 注意：此方法不会修改 Token/Base URL 的接管占位符，仅移除模型字段。
-    pub fn cleanup_claude_model_overrides_in_live(&self) -> Result<(), String> {
-        let mut config = self.read_claude_live()?;
-
-        let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) else {
-            return Ok(());
-        };
-
-        let mut changed = false;
-        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
-            if env.remove(key).is_some() {
-                changed = true;
-            }
-        }
-
-        if changed {
-            self.write_claude_live(&config)?;
-        }
-
-        Ok(())
-    }
-
     fn apply_claude_takeover_fields(config: &mut Value, proxy_url: &str) {
+        // 必须在 remove/insert 前 snapshot：避免读到自己刚写入的接管别名。
+        let takeover_model_fields = Self::build_claude_takeover_model_fields(config);
+
         if !config.is_object() {
             *config = json!({});
         }
@@ -104,6 +92,10 @@ impl ProxyService {
 
         for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
             env.remove(key);
+        }
+
+        for (key, value) in takeover_model_fields {
+            env.insert(key.to_string(), Value::String(value));
         }
 
         let token_keys = [
@@ -127,6 +119,101 @@ impl ProxyService {
                 json!(PROXY_TOKEN_PLACEHOLDER),
             );
         }
+    }
+
+    fn build_claude_takeover_model_fields(config: &Value) -> Vec<(&'static str, String)> {
+        let Some(env) = config.get("env").and_then(Value::as_object) else {
+            return Vec::new();
+        };
+
+        let default_model = Self::claude_env_string(env, "ANTHROPIC_MODEL");
+        let small_fast_model = Self::claude_env_string(env, "ANTHROPIC_SMALL_FAST_MODEL");
+        let haiku_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+            .or(small_fast_model)
+            .or(default_model);
+        let sonnet_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_SONNET_MODEL")
+            .or(default_model)
+            .or(small_fast_model);
+        let opus_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_OPUS_MODEL")
+            .or(default_model)
+            .or(small_fast_model);
+
+        let mut fields = Vec::with_capacity(6);
+        Self::push_claude_takeover_role_fields(
+            &mut fields,
+            env,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            CLAUDE_TAKEOVER_HAIKU_MODEL,
+            false,
+            haiku_model,
+        );
+        Self::push_claude_takeover_role_fields(
+            &mut fields,
+            env,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            CLAUDE_TAKEOVER_SONNET_MODEL,
+            true,
+            sonnet_model,
+        );
+        Self::push_claude_takeover_role_fields(
+            &mut fields,
+            env,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            CLAUDE_TAKEOVER_OPUS_MODEL,
+            true,
+            opus_model,
+        );
+        fields
+    }
+
+    fn push_claude_takeover_role_fields(
+        fields: &mut Vec<(&'static str, String)>,
+        env: &Map<String, Value>,
+        model_key: &'static str,
+        name_key: &'static str,
+        takeover_model: &'static str,
+        supports_one_m: bool,
+        upstream_model: Option<&str>,
+    ) {
+        let Some(upstream_model) = upstream_model else {
+            return;
+        };
+
+        let mut client_model = takeover_model.to_string();
+        if supports_one_m && Self::has_claude_one_m_marker(upstream_model) {
+            client_model.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
+        }
+        fields.push((model_key, client_model));
+
+        let display_name = Self::claude_env_string(env, name_key)
+            .map(str::to_string)
+            .unwrap_or_else(|| Self::strip_claude_one_m_marker(upstream_model));
+        if !display_name.is_empty() {
+            fields.push((name_key, display_name));
+        }
+    }
+
+    fn claude_env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+        env.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn has_claude_one_m_marker(model: &str) -> bool {
+        model
+            .trim_end()
+            .to_ascii_lowercase()
+            .ends_with(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
+    }
+
+    fn strip_claude_one_m_marker(model: &str) -> String {
+        crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model)
+            .trim()
+            .to_string()
     }
 
     pub async fn sync_claude_live_from_provider_while_proxy_active(
@@ -327,12 +414,15 @@ impl ProxyService {
                 };
                 let live_taken_over = self.detect_takeover_in_live_config_for_app(&app);
 
-                if has_backup || live_taken_over {
+                // 必须 backup AND live 占位符同时存在才算真接管。
+                // 只看其一会出现「UI 显示已接管但 Live 已被恢复」或「Live 仍是占位符但备份丢失」
+                // 两种脏角落，下面的重建分支会把这些情况修复成一致状态。
+                if has_backup && live_taken_over {
                     return Ok(());
                 }
 
                 log::warn!(
-                    "{app_type_str} 标记为已接管，但缺少备份或占位符，正在重新接管并补齐备份"
+                    "{app_type_str} 标记为已接管，但 backup={has_backup} live_taken_over={live_taken_over}，正在重新接管并补齐备份"
                 );
             }
 
@@ -411,7 +501,11 @@ impl ProxyService {
         }
 
         // 1) 恢复 Live 配置
-        self.restore_live_config_for_app(&app).await?;
+        //
+        // 必须走 with_fallback 版本：备份 → SSOT → 清理占位符 的三层兜底。
+        // 简版 restore_live_config_for_app 在备份缺失时会静默 Ok(())，
+        // 留下接管时写入的占位符（代理地址/PROXY_MANAGED token），客户端无法工作。
+        self.restore_live_config_for_app_with_fallback(&app).await?;
 
         // 2) 删除该 app 的备份（避免长期存储敏感 Token）
         self.db
@@ -1559,9 +1653,6 @@ impl ProxyService {
             if matches!(app_type_enum, AppType::Claude) {
                 self.sync_claude_live_from_provider_while_proxy_active(&provider)
                     .await?;
-                if let Err(e) = self.cleanup_claude_model_overrides_in_live() {
-                    log::warn!("清理 Claude Live 模型字段失败（不影响热切换结果）: {e}");
-                }
             }
         }
 
@@ -2240,7 +2331,12 @@ model = "gpt-5.1-codex"
                 "env": {
                     "ANTHROPIC_API_KEY": "b-key",
                     "ANTHROPIC_BASE_URL": "https://api.b.example",
-                    "ANTHROPIC_MODEL": "claude-new"
+                    "ANTHROPIC_MODEL": "claude-new",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "DeepSeek V4 Flash",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "DeepSeek V4 Pro",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-ultra [1m]"
                 },
                 "permissions": { "allow": ["Read"] }
             }),
@@ -2266,7 +2362,8 @@ model = "gpt-5.1-codex"
                 "env": {
                     "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
                     "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
-                    "ANTHROPIC_MODEL": "stale-model"
+                    "ANTHROPIC_MODEL": "stale-model",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet"
                 },
                 "permissions": { "allow": ["Bash"] }
             }))
@@ -2301,7 +2398,53 @@ model = "gpt-5.1-codex"
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_MODEL"))
                 .is_none(),
-            "Claude model override fields should be removed in takeover mode"
+            "fallback model override should be removed in takeover mode"
+        );
+        let live_env = live
+            .get("env")
+            .and_then(|env| env.as_object())
+            .expect("live env");
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-haiku-4-5"),
+            "takeover mode should expose a stable Haiku role model"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("DeepSeek V4 Flash"),
+            "model menu should show the current provider Haiku display name"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-sonnet-4-6[1M]"),
+            "Sonnet role should carry the local 1M declaration for Claude Code"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("DeepSeek V4 Pro"),
+            "stale model display names should be replaced during hot switch"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-opus-4-7[1M]"),
+            "Opus role should preserve the current provider 1M capability marker"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("deepseek-v4-ultra"),
+            "implicit display names should strip the local 1M marker"
         );
 
         let backup = db

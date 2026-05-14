@@ -131,13 +131,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://ddshub.short.gy/ccswitch"><img src="assets/partners/logos/dds.png" alt="DDS" width="150"></a></td>
-<td>本プロジェクトのスポンサーである DDS に感謝いたします！ DDS（呆呆獣 / DDS Hub）は、Claude に特化した信頼性とパフォーマンスの高い API プロキシサービスです。個人および企業ユーザーの皆様に、圧倒的なコストパフォーマンスを誇る Claude 直結アクセラレーションサービスを提供しています。Claude Haiku / Opus / Sonnet などのフルスペックモデルを完全サポートし、安定した低遅延のアクセスを実現します。
-1,000人民元以上のチャージで領収書（発票）の発行が可能です。さらに、企業のお客様にはカスタマイズされたグループ管理や専用テクニカルサポートをご提供しています。
-CC Switch ユーザー限定特典： 専用リンクからご<a href="https://ddshub.short.gy/ccswitch">登録</a>いただくと、初回チャージ時に 10% の追加ボーナスクレジット をプレゼントいたします！（※チャージ完了後、グループ管理人へご連絡の上お受け取りください。）</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://claudecn.top"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
 <td>本プロジェクトのスポンサーである ClaudeCN に感謝いたします！ClaudeCN は、実体のある企業によって運営されるエンタープライズ向け AI ゲートウェイプラットフォームです。Claude、GPT、DeepSeek など主要モデルへの高可用な商用 API アクセスを提供し、企業の調達プロセスにも対応 — 法人振込や正式契約に対応し、コンプライアンス面でも安心してご利用いただけます。<a href="https://claudecn.top">こちら</a>からご登録ください！</td>
 </tr>

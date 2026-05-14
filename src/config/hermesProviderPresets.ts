@@ -808,7 +808,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
     settingsConfig: {
       name: "crazyrouter",
-      base_url: "https://crazyrouter.com",
+      base_url: "https://cn.crazyrouter.com",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -896,11 +896,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     settingsConfig: {
       name: "micu",
-      base_url: "https://www.openclaudecode.cn",
+      base_url: "https://www.micuapi.ai",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -940,30 +940,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "claude-opus-4-7", provider: "ctok" },
-    },
-  },
-  {
-    name: "DDSHub",
-    websiteUrl: "https://www.ddshub.cc",
-    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
-    settingsConfig: {
-      name: "ddshub",
-      base_url: "https://www.ddshub.cc",
-      api_key: "",
-      api_mode: "anthropic_messages",
-      models: [
-        { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-        { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "ddshub",
-    icon: "dds",
-    iconColor: "#000000",
-    suggestedDefaults: {
-      model: { default: "claude-opus-4-7", provider: "ddshub" },
     },
   },
   {

@@ -638,11 +638,11 @@ export const providerPresets: ProviderPreset[] = [
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://crazyrouter.com",
+        ANTHROPIC_BASE_URL: "https://cn.crazyrouter.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
-    endpointCandidates: ["https://crazyrouter.com"],
+    endpointCandidates: ["https://cn.crazyrouter.com"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "crazyrouter", // 促销信息 i18n key
@@ -710,15 +710,15 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://www.openclaudecode.cn",
+        ANTHROPIC_BASE_URL: "https://www.micuapi.ai",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
-    endpointCandidates: ["https://www.openclaudecode.cn"],
+    endpointCandidates: ["https://www.micuapi.ai"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "micu", // 促销信息 i18n key
@@ -739,22 +739,6 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "ctok", // 促销信息 i18n key
     icon: "ctok",
-    iconColor: "#000000",
-  },
-  {
-    name: "DDSHub",
-    websiteUrl: "https://www.ddshub.cc",
-    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://www.ddshub.cc",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ddshub", // 促销信息 i18n key
-    icon: "dds",
     iconColor: "#000000",
   },
   {
