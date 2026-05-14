@@ -233,10 +233,13 @@ impl OmoService {
     fn build_config(v: &OmoVariant, profile_data: Option<&OmoProfileData>) -> Value {
         let mut result = Map::new();
 
-        // Read existing config file to preserve any agent/category entries
-        // not managed by the current provider config. This prevents data loss
-        // when the provider config is missing certain agent keys (e.g. sisyphus
-        // not being updated alongside other agents during provider switching).
+        // Read existing config file to preserve top-level keys (e.g. $schema,
+        // disabled_agents) that the provider's otherFields may not cover.
+        // NOTE: We intentionally do NOT merge agents or categories from the
+        // existing file. The provider config is the source of truth for those
+        // sections — merging would resurrect keys the user explicitly removed
+        // in the OMO form UI (e.g. deleting an agent via `delete next[key]`
+        // in OmoFormFields.tsx). See PR #2766 review discussion.
         let existing_obj = Self::config_path(v)
             .exists()
             .then(|| Self::read_jsonc_object(&Self::config_path(v)))
@@ -247,51 +250,28 @@ impl OmoService {
         if let Some((agents, categories, other_fields)) = profile_data {
             Self::insert_object_entries(&mut result, other_fields.as_ref());
 
-            // Merge agents: provider config takes precedence, existing file fills gaps
-            if let Some(provider_agents) = agents {
-                let mut merged_agents = provider_agents
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
-                if let Some(ref existing) = existing_obj {
-                    if let Some(existing_agents) =
-                        existing.get("agents").and_then(|a| a.as_object())
-                    {
-                        for (key, value) in existing_agents {
-                            if !merged_agents.contains_key(key) {
-                                merged_agents.insert(key.clone(), value.clone());
-                            }
-                        }
+            // Gap-fill top-level keys from existing file that are absent from
+            // the provider's otherFields (e.g. $schema added by another tool).
+            if let Some(ref existing) = existing_obj {
+                for (key, value) in existing {
+                    if key != "agents" && key != "categories" && !result.contains_key(key) {
+                        result.insert(key.clone(), value.clone());
                     }
                 }
+            }
+
+            if let Some(provider_agents) = agents {
                 result.insert(
                     "agents".to_string(),
-                    Value::Object(merged_agents),
+                    provider_agents.as_object().cloned().unwrap_or_default().into(),
                 );
             }
 
             if v.has_categories {
-                // Merge categories: same preservation logic as agents
                 if let Some(provider_categories) = categories {
-                    let mut merged_categories = provider_categories
-                        .as_object()
-                        .cloned()
-                        .unwrap_or_default();
-                    if let Some(ref existing) = existing_obj {
-                        if let Some(existing_categories) = existing
-                            .get("categories")
-                            .and_then(|c| c.as_object())
-                        {
-                            for (key, value) in existing_categories {
-                                if !merged_categories.contains_key(key) {
-                                    merged_categories.insert(key.clone(), value.clone());
-                                }
-                            }
-                        }
-                    }
                     result.insert(
                         "categories".to_string(),
-                        Value::Object(merged_categories),
+                        provider_categories.as_object().cloned().unwrap_or_default().into(),
                     );
                 }
             }
