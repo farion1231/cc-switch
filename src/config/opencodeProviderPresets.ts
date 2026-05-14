@@ -1551,4 +1551,32 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     iconColor: "#6366F1",
     isCustomTemplate: true,
   },
+  {
+    name: "BurnCloud",
+    websiteUrl: "https://ai.burncloud.com",
+    apiKeyUrl: "https://ai.burncloud.com/register?aff=V2Zt",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "BurnCloud",
+      options: {
+        baseURL: "https://ai.burncloud.com",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+      },
+    },
+    category: "aggregator",
+    icon: "burncloud",
+    iconColor: "#ed6e19",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-or-...",
+        editorValue: "",
+      },
+    },
+  },
 ];

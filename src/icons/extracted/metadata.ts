@@ -443,6 +443,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["stepfun", "step", "jieyue", "阶跃星辰"],
     defaultColor: "#005AFF",
   },
+  burncloud: {
+    name: "burncloud",
+    displayName: "BurnCloud",
+    category: "ai-provider",
+    keywords: ["burncloud"],
+    defaultColor: "#ed6e19",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

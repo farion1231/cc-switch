@@ -1106,4 +1106,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "mimo-v2-pro", provider: "xiaomi_mimo" },
     },
   },
+  {
+    name: "BurnCloud",
+    websiteUrl: "https://ai.burncloud.com",
+    apiKeyUrl: "https://ai.burncloud.com/register?aff=V2Zt",
+    settingsConfig: {
+      name: "burncloud",
+      base_url: "https://ai.burncloud.com",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
+        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "burncloud",
+    suggestedDefaults: {
+      model: { default: "claude-opus-4-7", provider: "burncloud" },
+    },
+  },
 ];

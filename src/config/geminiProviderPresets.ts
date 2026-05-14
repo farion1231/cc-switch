@@ -348,6 +348,23 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://api.therouter.ai"],
   },
   {
+    name: "BurnCloud",
+    websiteUrl: "https://ai.burncloud.com",
+    apiKeyUrl: "https://ai.burncloud.com/register?aff=V2Zt",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://ai.burncloud.com",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://ai.burncloud.com",
+    model: "gemini-3.1-pro",
+    description: "BurnCloud",
+    category: "aggregator",
+    icon: "burncloud",
+    iconColor: "#ed6e19",
+  },
+  {
     name: "自定义",
     websiteUrl: "",
     settingsConfig: {
