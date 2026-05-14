@@ -13,6 +13,7 @@ export const settingsSchema = z.object({
   minimizeToTrayOnClose: z.boolean(),
   enableClaudePluginIntegration: z.boolean().optional(),
   skipClaudeOnboarding: z.boolean().optional(),
+  keepConversationHistory: z.boolean().optional(),
   launchOnStartup: z.boolean().optional(),
   enableLocalProxy: z.boolean().optional(),
   language: z.enum(["en", "zh", "ja"]).optional(),

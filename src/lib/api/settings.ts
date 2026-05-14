@@ -90,6 +90,18 @@ export const settingsApi = {
     return await invoke("clear_claude_onboarding_skip");
   },
 
+  async applyTranscriptProtection(): Promise<boolean> {
+    return await invoke("apply_transcript_protection");
+  },
+
+  async clearTranscriptProtection(): Promise<boolean> {
+    return await invoke("clear_transcript_protection");
+  },
+
+  async getTranscriptProtection(): Promise<boolean> {
+    return await invoke("get_transcript_protection");
+  },
+
   async saveFileDialog(defaultName: string): Promise<string | null> {
     return await invoke("save_file_dialog", { defaultName });
   },

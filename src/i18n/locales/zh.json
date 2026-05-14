@@ -232,6 +232,7 @@
     "syncClaudePluginFailed": "同步 Claude 插件失败",
     "skipClaudeOnboardingFailed": "跳过 Claude Code 初次安装确认失败",
     "clearClaudeOnboardingSkipFailed": "恢复 Claude Code 初次安装确认失败",
+    "keepConversationHistoryFailed": "更新对话历史保护失败",
     "updateSuccess": "供应商更新成功",
     "updateFailed": "更新供应商失败：{{error}}",
     "deleteSuccess": "供应商已删除",
@@ -552,6 +553,8 @@
     "enableClaudePluginIntegrationDescription": "开启后 Vscode Claude Code 插件的供应商将随本软件切换",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "开启后跳过 Claude Code 初次安装确认",
+    "keepConversationHistory": "保留对话历史",
+    "keepConversationHistoryDescription": "防止 Claude Code 自动删除对话记录（默认 30 天清理）",
     "appVisibility": {
       "title": "主页面显示",
       "description": "选择在主页面显示的应用",

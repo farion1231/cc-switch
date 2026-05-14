@@ -1093,6 +1093,9 @@ pub fn run() {
             commands::is_claude_plugin_applied,
             commands::apply_claude_onboarding_skip,
             commands::clear_claude_onboarding_skip,
+            commands::apply_transcript_protection,
+            commands::clear_transcript_protection,
+            commands::get_transcript_protection,
             // Claude MCP management
             commands::get_claude_mcp_status,
             commands::read_claude_mcp_config,
