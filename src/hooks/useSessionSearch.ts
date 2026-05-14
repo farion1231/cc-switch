@@ -23,9 +23,7 @@ export function useSessionSearch({
 }: UseSessionSearchOptions): UseSessionSearchResult {
   const filteredByProject = useMemo(() => {
     if (!projectFilter) return sessions;
-    return sessions.filter(
-      (s) => s.projectDir === projectFilter,
-    );
+    return sessions.filter((s) => s.projectDir === projectFilter);
   }, [sessions, projectFilter]);
 
   const filteredByProvider = useMemo(() => {

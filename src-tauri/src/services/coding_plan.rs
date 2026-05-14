@@ -191,7 +191,7 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
 /// 仅一条 TOKENS_LIMIT 时，按距下次重置的时间判断桶类型：
 /// - 距重置 > 12 小时 → 每周桶（`weekly_limit`）
 /// - 距重置 ≤ 12 小时（含已过期） → 五小时桶（`five_hour`）
-/// 根据 Zhipu API 的 `unit`/`number` 字段确定 tier 类型。
+///   根据 Zhipu API 的 `unit`/`number` 字段确定 tier 类型。
 /// - `unit=3, number=5` → 5 小时桶 (TIER_FIVE_HOUR)
 /// - `unit=6, number=1` → 周桶 (TIER_WEEKLY_LIMIT)
 fn classify_zhipu_tier(unit: Option<i64>, number: Option<i64>) -> Option<&'static str> {

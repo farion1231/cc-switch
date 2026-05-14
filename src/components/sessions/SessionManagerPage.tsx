@@ -523,17 +523,14 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               className="text-sm font-medium whitespace-nowrap cursor-pointer hover:text-foreground/80 transition-colors flex items-center gap-1 max-w-[200px] truncate text-left"
                             >
                               {projectFilter
-                                ? projectList.find(
+                                ? (projectList.find(
                                     (p) => p.projectDir === projectFilter,
-                                  )?.projectName ?? projectFilter
+                                  )?.projectName ?? projectFilter)
                                 : t("sessionManager.sessionList")}
                               <ChevronDown className="size-3 shrink-0" />
                             </button>
                           </PopoverTrigger>
-                          <PopoverContent
-                            className="w-64 p-1"
-                            align="start"
-                          >
+                          <PopoverContent className="w-64 p-1" align="start">
                             <div className="max-h-60 overflow-y-auto">
                               <button
                                 type="button"
