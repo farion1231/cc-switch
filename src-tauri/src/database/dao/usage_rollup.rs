@@ -339,6 +339,7 @@ mod tests {
             let conn = crate::database::lock_conn!(db.conn);
             let date_str = chrono::DateTime::from_timestamp(old_ts, 0)
                 .unwrap()
+                .with_timezone(&Local)
                 .format("%Y-%m-%d")
                 .to_string();
             conn.execute(
