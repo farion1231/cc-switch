@@ -575,7 +575,7 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
         .collect::<std::collections::HashSet<_>>();
     let mut result = Vec::new();
     let mut entries = routes.iter().collect::<Vec<_>>();
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries.sort_by_key(|(left, _)| *left);
     for (route_id, route) in entries {
         let supports_1m = route.supports_1m.unwrap_or(false);
         let route_id = route_id.trim();

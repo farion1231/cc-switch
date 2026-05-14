@@ -175,10 +175,9 @@ impl RequestContext {
     /// Gemini API 的模型名称在 URI 中，格式如：
     /// `/v1beta/models/gemini-pro:generateContent`
     pub fn with_model_from_uri(mut self, uri: &axum::http::Uri) -> Self {
-        let endpoint = uri
-            .path_and_query()
-            .map(|pq| pq.as_str())
-            .unwrap_or(uri.path());
+        // 用 path() 而不是 path_and_query()：模型名必须从路径段中解析，
+        // 否则 GET /v1beta/models/<id>?key=... 会把 query 拼到 request_model 上。
+        let endpoint = uri.path();
 
         self.request_model =
             extract_gemini_model_from_path(endpoint).unwrap_or_else(|| "unknown".to_string());
@@ -285,6 +284,8 @@ pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
         .iter()
         .position(|s| *s == "models")
         .and_then(|i| segments.get(i + 1).copied())
+        // 防御性裁剪：即便调用方传入带 ? 或 :action 的字符串，也只保留 model id 本身
+        .map(|s| s.split('?').next().unwrap_or(s))
         .map(|s| s.split(':').next().unwrap_or(s))
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
@@ -346,5 +347,24 @@ mod tests {
     fn extract_model_trailing_models_segment() {
         // `/v1beta/models` (list endpoint) has no following segment → None.
         assert_eq!(extract_gemini_model_from_path("/v1beta/models"), None);
+    }
+
+    #[test]
+    fn extract_model_get_with_query_only() {
+        // GET /v1beta/models/<id>?key=... 无 action verb，仅靠 ':' 拆分会把 query 带进 model 名。
+        // 修复后应该把 query 剥掉。
+        assert_eq!(
+            extract_gemini_model_from_path("/v1beta/models/gemini-pro?key=abc").as_deref(),
+            Some("gemini-pro"),
+        );
+    }
+
+    #[test]
+    fn extract_model_get_with_proxy_prefix_and_query() {
+        assert_eq!(
+            extract_gemini_model_from_path("/gemini/v1beta/models/gemini-2.0-flash?key=abc")
+                .as_deref(),
+            Some("gemini-2.0-flash"),
+        );
     }
 }
