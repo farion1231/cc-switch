@@ -1852,6 +1852,14 @@
     "updateAll": "Update All ({{count}})",
     "updatingAll": "Updating...",
     "updateAllSuccess": "Successfully updated {{count}} skill(s)",
+    "syncAll": {
+      "button": "Sync All CLIs",
+      "syncing": "Syncing...",
+      "success": "Synced {{skillCount}} skill(s) to {{appCount}} CLI(s)",
+      "partial": "Some skills failed to sync",
+      "partialDescription": "{{failed}} sync task(s) failed. First error: {{firstError}}",
+      "failed": "Failed to sync all CLIs"
+    },
     "error": {
       "skillNotFound": "Skill not found: {{directory}}",
       "missingRepoInfo": "Missing repository info (owner or name)",

@@ -281,6 +281,26 @@ pub struct ImportSkillSelection {
     pub apps: SkillApps,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSyncAllResult {
+    pub skill_count: usize,
+    pub app_count: usize,
+    pub synced_count: usize,
+    pub skipped_count: usize,
+    pub failures: Vec<SkillSyncFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSyncFailure {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub directory: String,
+    pub app: String,
+    pub error: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct LegacySkillMigrationRow {
     directory: String,
@@ -450,6 +470,16 @@ impl SkillService {
         Self
     }
 
+    fn supported_skill_apps() -> [AppType; 5] {
+        [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+            AppType::Hermes,
+        ]
+    }
+
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
     fn build_skill_doc_url(owner: &str, repo: &str, branch: &str, doc_path: &str) -> String {
         format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
@@ -538,11 +568,7 @@ impl SkillService {
         }
 
         // 默认路径：回退到用户主目录下的标准位置
-        let home = dirs::home_dir().context(format_skill_error(
-            "GET_HOME_DIR_FAILED",
-            &[],
-            Some("checkPermission"),
-        ))?;
+        let home = crate::config::get_home_dir();
 
         Ok(match app {
             AppType::Claude => home.join(".claude").join("skills"),
@@ -1375,6 +1401,52 @@ impl SkillService {
         log::info!("Skill {} 的 {:?} 状态已更新为 {}", skill.name, app, enabled);
 
         Ok(())
+    }
+
+    /// Enable every installed Skill for every CLI that supports Skills.
+    pub fn sync_all_to_supported_apps(db: &Arc<Database>) -> Result<SkillSyncAllResult> {
+        let mut skills = db.get_all_installed_skills()?;
+        let supported_apps = Self::supported_skill_apps();
+        let mut synced_count = 0usize;
+        let mut skipped_count = 0usize;
+        let mut failures = Vec::new();
+
+        for skill in skills.values_mut() {
+            let mut updated_apps = skill.apps.clone();
+
+            for app in &supported_apps {
+                if skill.apps.is_enabled_for(app) {
+                    skipped_count += 1;
+                }
+
+                match Self::sync_to_app_dir(&skill.directory, app) {
+                    Ok(()) => {
+                        updated_apps.set_enabled_for(app, true);
+                        synced_count += 1;
+                    }
+                    Err(err) => failures.push(SkillSyncFailure {
+                        skill_id: skill.id.clone(),
+                        skill_name: skill.name.clone(),
+                        directory: skill.directory.clone(),
+                        app: app.as_str().to_string(),
+                        error: err.to_string(),
+                    }),
+                }
+            }
+
+            if updated_apps != skill.apps {
+                db.update_skill_apps(&skill.id, &updated_apps)?;
+                skill.apps = updated_apps;
+            }
+        }
+
+        Ok(SkillSyncAllResult {
+            skill_count: skills.len(),
+            app_count: supported_apps.len(),
+            synced_count,
+            skipped_count,
+            failures,
+        })
     }
 
     /// 扫描未管理的 Skills
