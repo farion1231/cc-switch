@@ -76,22 +76,12 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             std::fs::read_to_string(path).map_err(|e| format!("Failed to read session: {e}"))?;
         let value: Value = serde_json::from_str(&data)
             .map_err(|e| format!("Failed to parse session JSON: {e}"))?;
-        value
-            .get("messages")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                value
-                    .get("messages")
-                    .and_then(|v| v.as_array().map(|_| "array"))
-            }) // dummy check
-            .map(|_| ()) // dummy
-            .ok_or_else(|| "No messages found".to_string())?; // This was wrong anyway, fixed below
 
         value
             .get("messages")
             .and_then(Value::as_array)
             .cloned()
-            .ok_or_else(|| "No messages array found".to_string())?
+            .ok_or_else(|| "No messages array found in session JSON".to_string())?
     };
 
     let mut result = Vec::new();
