@@ -364,6 +364,7 @@ export function ProviderCard({
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}
+                  isHealthy={health.is_healthy}
                 />
               )}
 
