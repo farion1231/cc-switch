@@ -78,6 +78,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["claudeapi", "claude", "anthropic", "bedrock"],
   },
+  claudecn: {
+    name: "claudecn",
+    displayName: "ClaudeCN",
+    category: "ai-provider",
+    keywords: ["claudecn", "claude", "enterprise"],
+  },
   cloudflare: {
     name: "cloudflare",
     displayName: "Cloudflare",
