@@ -1798,12 +1798,15 @@ impl ProviderService {
             // Auth
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
-            // Models (4 fields + 1 legacy)
+            // Models and Claude Code model-menu display names
             "ANTHROPIC_MODEL",
             "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
             // Endpoint
             "ANTHROPIC_BASE_URL",
         ];
