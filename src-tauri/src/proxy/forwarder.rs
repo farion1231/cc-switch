@@ -154,6 +154,70 @@ impl RequestForwarder {
         });
     }
 
+    /// 整流（thinking signature 或 budget）重试失败后的统一收尾。
+    ///
+    /// `None` 表示已记录熔断器、累积 `last_error`/`last_provider`，
+    /// 调用方应 `continue` 让下一家 provider 继续故障转移；
+    /// `Some(ForwardError)` 表示是客户端错误，没有 provider 能修复，
+    /// 调用方应直接 `return` 把错误返回给客户端。
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_rectifier_retry_failure(
+        &self,
+        retry_err: ProxyError,
+        provider: &Provider,
+        app_type_str: &str,
+        used_half_open_permit: bool,
+        rectifier_label: &str,
+        last_error: &mut Option<ProxyError>,
+        last_provider: &mut Option<Provider>,
+    ) -> Option<ForwardError> {
+        // Provider 错误：本家上游/网络确实出问题，下一家 provider 可能可用 → 继续故障转移。
+        // 客户端错误：整流后请求仍违法，下一家也修不好 → 直接返回。
+        let is_provider_error = match &retry_err {
+            ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => true,
+            ProxyError::UpstreamError { status, .. } => *status >= 500,
+            _ => false,
+        };
+
+        if is_provider_error {
+            let _ = self
+                .router
+                .record_result(
+                    &provider.id,
+                    app_type_str,
+                    used_half_open_permit,
+                    false,
+                    Some(retry_err.to_string()),
+                )
+                .await;
+            {
+                let mut status = self.status.write().await;
+                status.last_error = Some(format!(
+                    "Provider {} {rectifier_label}重试失败: {}",
+                    provider.name, retry_err
+                ));
+            }
+            *last_error = Some(retry_err);
+            *last_provider = Some(provider.clone());
+            return None;
+        }
+
+        self.router
+            .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
+            .await;
+        let mut status = self.status.write().await;
+        status.failed_requests += 1;
+        status.last_error = Some(retry_err.to_string());
+        if status.total_requests > 0 {
+            status.success_rate =
+                (status.success_requests as f32 / status.total_requests as f32) * 100.0;
+        }
+        Some(ForwardError {
+            error: retry_err,
+            provider: Some(provider.clone()),
+        })
+    }
+
     /// 转发请求（带故障转移）
     ///
     /// 这是 thin wrapper：在客户端请求维度记一次 `total_requests` / 调整
@@ -486,67 +550,24 @@ impl RequestForwarder {
                                         });
                                     }
                                     Err(retry_err) => {
-                                        // 整流重试仍失败：区分错误类型
                                         log::warn!(
                                             "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
                                         );
-
-                                        // Provider 错误 vs 客户端错误：Provider 错误说明本家
-                                        // 上游有问题，下一家 provider 可能可用，应当继续故障转移；
-                                        // 客户端错误说明整流后的请求本身就有问题，下一家也修不好。
-                                        let is_provider_error = match &retry_err {
-                                            ProxyError::Timeout(_)
-                                            | ProxyError::ForwardFailed(_) => true,
-                                            ProxyError::UpstreamError { status, .. } => {
-                                                *status >= 500
-                                            }
-                                            _ => false,
-                                        };
-
-                                        if is_provider_error {
-                                            // Provider 问题：记录熔断器后继续轮询下一家
-                                            let _ = self
-                                                .router
-                                                .record_result(
-                                                    &provider.id,
-                                                    app_type_str,
-                                                    used_half_open_permit,
-                                                    false,
-                                                    Some(retry_err.to_string()),
-                                                )
-                                                .await;
-                                            {
-                                                let mut status = self.status.write().await;
-                                                status.last_error = Some(format!(
-                                                    "Provider {} 整流重试失败: {}",
-                                                    provider.name, retry_err
-                                                ));
-                                            }
-                                            last_error = Some(retry_err);
-                                            last_provider = Some(provider.clone());
-                                            continue;
-                                        }
-
-                                        // 客户端问题：释放 permit 后直接返回，不再尝试其它 provider
-                                        self.router
-                                            .release_permit_neutral(
-                                                &provider.id,
+                                        if let Some(err) = self
+                                            .handle_rectifier_retry_failure(
+                                                retry_err,
+                                                provider,
                                                 app_type_str,
                                                 used_half_open_permit,
+                                                "整流",
+                                                &mut last_error,
+                                                &mut last_provider,
                                             )
-                                            .await;
-                                        let mut status = self.status.write().await;
-                                        status.failed_requests += 1;
-                                        status.last_error = Some(retry_err.to_string());
-                                        if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests as f32
-                                                / status.total_requests as f32)
-                                                * 100.0;
+                                            .await
+                                        {
+                                            return Err(err);
                                         }
-                                        return Err(ForwardError {
-                                            error: retry_err,
-                                            provider: Some(provider.clone()),
-                                        });
+                                        continue;
                                     }
                                 }
                             }
@@ -690,59 +711,21 @@ impl RequestForwarder {
                                     log::warn!(
                                         "[{app_type_str}] [RECT-012] budget 整流重试仍失败: {retry_err}"
                                     );
-
-                                    // 与 signature 整流分支保持一致：provider 错误继续故障转移，
-                                    // 客户端错误直接返回。
-                                    let is_provider_error = match &retry_err {
-                                        ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => {
-                                            true
-                                        }
-                                        ProxyError::UpstreamError { status, .. } => *status >= 500,
-                                        _ => false,
-                                    };
-
-                                    if is_provider_error {
-                                        let _ = self
-                                            .router
-                                            .record_result(
-                                                &provider.id,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                                false,
-                                                Some(retry_err.to_string()),
-                                            )
-                                            .await;
-                                        {
-                                            let mut status = self.status.write().await;
-                                            status.last_error = Some(format!(
-                                                "Provider {} budget 整流重试失败: {}",
-                                                provider.name, retry_err
-                                            ));
-                                        }
-                                        last_error = Some(retry_err);
-                                        last_provider = Some(provider.clone());
-                                        continue;
-                                    }
-
-                                    self.router
-                                        .release_permit_neutral(
-                                            &provider.id,
+                                    if let Some(err) = self
+                                        .handle_rectifier_retry_failure(
+                                            retry_err,
+                                            provider,
                                             app_type_str,
                                             used_half_open_permit,
+                                            "budget 整流",
+                                            &mut last_error,
+                                            &mut last_provider,
                                         )
-                                        .await;
-                                    let mut status = self.status.write().await;
-                                    status.failed_requests += 1;
-                                    status.last_error = Some(retry_err.to_string());
-                                    if status.total_requests > 0 {
-                                        status.success_rate = (status.success_requests as f32
-                                            / status.total_requests as f32)
-                                            * 100.0;
+                                        .await
+                                    {
+                                        return Err(err);
                                     }
-                                    return Err(ForwardError {
-                                        error: retry_err,
-                                        provider: Some(provider.clone()),
-                                    });
+                                    continue;
                                 }
                             }
                         }
