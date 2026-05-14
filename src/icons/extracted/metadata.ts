@@ -72,6 +72,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["anthropic"],
     defaultColor: "#D4915D",
   },
+  claudeapi: {
+    name: "claudeapi",
+    displayName: "ClaudeAPI",
+    category: "ai-provider",
+    keywords: ["claudeapi", "claude", "anthropic", "bedrock"],
+  },
   cloudflare: {
     name: "cloudflare",
     displayName: "Cloudflare",
