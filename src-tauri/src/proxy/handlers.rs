@@ -33,6 +33,7 @@ use super::{
     ProxyError,
 };
 use crate::app_config::AppType;
+use crate::database::PRICING_SOURCE_REQUEST;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -880,7 +881,7 @@ async fn log_usage(
 
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;
-    let pricing_model = if pricing_model_source == "request" {
+    let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
         request_model
     } else {
         model

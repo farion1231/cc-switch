@@ -6,7 +6,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useRequestDetail } from "@/lib/query/usage";
-import { getFreshInputTokens } from "@/types/usage";
+import { getFreshInputTokens, isUnpricedUsage } from "@/types/usage";
 
 interface RequestDetailPanelProps {
   requestId: string;
@@ -53,6 +53,7 @@ export function RequestDetailPanel({
 
   const freshInput = getFreshInputTokens(request);
   const isCacheInclusive = request.inputTokens !== freshInput;
+  const unpriced = isUnpricedUsage(request);
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -255,8 +256,14 @@ export function RequestDetailPanel({
                       </span>
                     )}
                 </dt>
-                <dd className="text-lg font-semibold text-primary">
-                  ${parseFloat(request.totalCostUsd).toFixed(6)}
+                <dd
+                  className={`text-lg font-semibold ${
+                    unpriced ? "text-muted-foreground" : "text-primary"
+                  }`}
+                >
+                  {unpriced
+                    ? t("usage.unpriced", "未定价")
+                    : `$${parseFloat(request.totalCostUsd).toFixed(6)}`}
                 </dd>
               </div>
             </dl>

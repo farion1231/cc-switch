@@ -195,6 +195,50 @@ export function getFreshInputTokens(log: CacheNormalizableLog): number {
   return log.inputTokens;
 }
 
+export const NON_NEGATIVE_DECIMAL_REGEX = /^\d+(?:\.\d+)?$/;
+
+export function isNonNegativeDecimalString(value: string): boolean {
+  const trimmed = value.trim();
+  if (!NON_NEGATIVE_DECIMAL_REGEX.test(trimmed)) return false;
+  return Number.isFinite(Number(trimmed));
+}
+
+type UsageCostLog = Pick<
+  RequestLog,
+  | "inputTokens"
+  | "outputTokens"
+  | "cacheReadTokens"
+  | "cacheCreationTokens"
+  | "totalCostUsd"
+  | "statusCode"
+> &
+  Partial<Pick<RequestLog, "costMultiplier">>;
+
+export function hasUsageTokens(log: UsageCostLog): boolean {
+  return (
+    log.inputTokens > 0 ||
+    log.outputTokens > 0 ||
+    log.cacheReadTokens > 0 ||
+    log.cacheCreationTokens > 0
+  );
+}
+
+export function isUnpricedUsage(log: UsageCostLog): boolean {
+  const totalCost = Number.parseFloat(log.totalCostUsd);
+  const multiplier =
+    log.costMultiplier == null
+      ? undefined
+      : Number.parseFloat(log.costMultiplier);
+  return (
+    log.statusCode >= 200 &&
+    log.statusCode < 300 &&
+    hasUsageTokens(log) &&
+    Number.isFinite(totalCost) &&
+    (!Number.isFinite(multiplier) || multiplier !== 0) &&
+    totalCost === 0
+  );
+}
+
 export interface StatsFilters {
   timeRange: UsageRangePreset;
   providerId?: string;

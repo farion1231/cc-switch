@@ -3,6 +3,8 @@
 use crate::error::AppError;
 use crate::services::usage_stats::*;
 use crate::store::AppState;
+use rust_decimal::Decimal;
+use std::str::FromStr;
 use tauri::State;
 
 /// 获取使用量汇总
@@ -149,23 +151,67 @@ pub fn update_model_pricing(
     cache_creation_cost: String,
 ) -> Result<(), AppError> {
     let db = state.db.clone();
-    let conn = crate::database::lock_conn!(db.conn);
+    let model_id = model_id.trim().to_string();
+    let display_name = display_name.trim().to_string();
+    if model_id.is_empty() {
+        return Err(AppError::localized(
+            "usage.modelIdRequired",
+            "模型 ID 不能为空",
+            "Model ID is required",
+        ));
+    }
+    if display_name.is_empty() {
+        return Err(AppError::localized(
+            "usage.displayNameRequired",
+            "显示名称不能为空",
+            "Display name is required",
+        ));
+    }
 
-    conn.execute(
-        "INSERT OR REPLACE INTO model_pricing (
-            model_id, display_name, input_cost_per_million, output_cost_per_million,
-            cache_read_cost_per_million, cache_creation_cost_per_million
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![
-            model_id,
-            display_name,
-            input_cost,
-            output_cost,
-            cache_read_cost,
-            cache_creation_cost
-        ],
-    )
-    .map_err(|e| AppError::Database(format!("更新模型定价失败: {e}")))?;
+    for (label, value) in [
+        ("input_cost", &input_cost),
+        ("output_cost", &output_cost),
+        ("cache_read_cost", &cache_read_cost),
+        ("cache_creation_cost", &cache_creation_cost),
+    ] {
+        let parsed = Decimal::from_str(value.trim()).map_err(|e| {
+            AppError::localized(
+                "usage.invalidPrice",
+                format!("{label} 价格无效: {value} - {e}"),
+                format!("{label} price is invalid: {value} - {e}"),
+            )
+        })?;
+        if parsed < Decimal::ZERO {
+            return Err(AppError::localized(
+                "usage.invalidPrice",
+                format!("{label} 价格必须为非负数: {value}"),
+                format!("{label} price must be non-negative: {value}"),
+            ));
+        }
+    }
+
+    {
+        let conn = crate::database::lock_conn!(db.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing (
+                model_id, display_name, input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                model_id,
+                display_name,
+                input_cost.trim(),
+                output_cost.trim(),
+                cache_read_cost.trim(),
+                cache_creation_cost.trim()
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("更新模型定价失败: {e}")))?;
+    }
+
+    if let Err(e) = db.backfill_missing_usage_costs_for_model(&model_id) {
+        log::warn!("模型定价更新后回填历史用量成本失败 (model_id={model_id}): {e}");
+    }
 
     Ok(())
 }

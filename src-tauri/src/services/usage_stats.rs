@@ -4,6 +4,7 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::fresh_input_sql;
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -1455,27 +1456,49 @@ impl Database {
     /// Recalculate stored zero-cost usage rows once pricing becomes available.
     pub(crate) fn backfill_missing_usage_costs(&self) -> Result<u64, AppError> {
         let conn = lock_conn!(self.conn);
-        Self::backfill_missing_usage_costs_on_conn(&conn)
+        Self::backfill_missing_usage_costs_on_conn(&conn, None)
     }
 
-    fn backfill_missing_usage_costs_on_conn(conn: &Connection) -> Result<u64, AppError> {
-        let mut logs = {
-            let mut stmt = conn.prepare(
-                "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
+    /// 仅回填指定 model_id 相关的零成本行；用于单条定价更新后的精准回填。
+    pub(crate) fn backfill_missing_usage_costs_for_model(
+        &self,
+        model_id: &str,
+    ) -> Result<u64, AppError> {
+        let conn = lock_conn!(self.conn);
+        Self::backfill_missing_usage_costs_on_conn(&conn, Some(model_id))
+    }
+
+    fn backfill_missing_usage_costs_on_conn(
+        conn: &Connection,
+        only_model_id: Option<&str>,
+    ) -> Result<u64, AppError> {
+        const BASE_SQL: &str =
+            "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
                         cost_multiplier,
                         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                         input_cost_usd, output_cost_usd, cache_read_cost_usd,
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
                         first_token_ms, duration_ms, status_code, error_message, created_at,
                         data_source
-                 FROM proxy_request_logs
-                 WHERE CAST(total_cost_usd AS REAL) <= 0
-                   AND (input_tokens > 0 OR output_tokens > 0
-                        OR cache_read_tokens > 0 OR cache_creation_tokens > 0)",
-            )?;
+             FROM proxy_request_logs
+             WHERE CAST(total_cost_usd AS REAL) <= 0
+               AND (input_tokens > 0 OR output_tokens > 0
+                    OR cache_read_tokens > 0 OR cache_creation_tokens > 0)";
 
-            let rows = stmt.query_map([], row_to_request_log_detail)?;
-            rows.collect::<Result<Vec<_>, _>>()?
+        let mut logs = {
+            match only_model_id {
+                Some(model) => {
+                    let sql = format!("{BASE_SQL} AND (model = ?1 OR request_model = ?1)");
+                    let mut stmt = conn.prepare(&sql)?;
+                    let rows = stmt.query_map([model], row_to_request_log_detail)?;
+                    rows.collect::<Result<Vec<_>, _>>()?
+                }
+                None => {
+                    let mut stmt = conn.prepare(BASE_SQL)?;
+                    let rows = stmt.query_map([], row_to_request_log_detail)?;
+                    rows.collect::<Result<Vec<_>, _>>()?
+                }
+            }
         };
 
         if logs.is_empty() {
@@ -1638,6 +1661,15 @@ impl Database {
     }
 }
 
+pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<ModelPricing> {
+    find_model_pricing_row(conn, model_id)
+        .ok()
+        .flatten()
+        .and_then(|(input, output, cache_read, cache_creation)| {
+            ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation).ok()
+        })
+}
+
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
@@ -1739,6 +1771,9 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
             queue.push(stripped);
         }
         if let Some(stripped) = strip_bedrock_model_version_suffix(&candidate) {
+            queue.push(stripped);
+        }
+        if let Some(stripped) = strip_model_date_suffix(&candidate) {
             queue.push(stripped);
         }
         if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
@@ -1854,6 +1889,27 @@ fn strip_bedrock_model_version_suffix(model_id: &str) -> Option<String> {
         .then(|| base.to_string())
 }
 
+fn strip_model_date_suffix(model_id: &str) -> Option<String> {
+    let bytes = model_id.as_bytes();
+    if bytes.len() > 11 {
+        let start = bytes.len() - 11;
+        let suffix = &bytes[start..];
+        let is_iso_date = suffix[0] == b'-'
+            && suffix[1..5].iter().all(|b| b.is_ascii_digit())
+            && suffix[5] == b'-'
+            && suffix[6..8].iter().all(|b| b.is_ascii_digit())
+            && suffix[8] == b'-'
+            && suffix[9..11].iter().all(|b| b.is_ascii_digit());
+        if is_iso_date {
+            return Some(model_id[..start].to_string());
+        }
+    }
+
+    let (base, suffix) = model_id.rsplit_once('-')?;
+    (!base.is_empty() && suffix.len() == 8 && suffix.chars().all(|c| c.is_ascii_digit()))
+        .then(|| base.to_string())
+}
+
 fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
     for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
         if let Some(stripped) = model_id.strip_suffix(suffix) {
@@ -1866,7 +1922,33 @@ fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
 }
 
 fn should_try_pricing_prefix_match(model_id: &str) -> bool {
-    model_id.starts_with("claude-") && model_id.matches('-').count() >= 3
+    let dash_count = model_id.matches('-').count();
+
+    if model_id.starts_with("claude-") {
+        return dash_count >= 3;
+    }
+
+    if ["o1", "o3", "o4", "o5"]
+        .iter()
+        .any(|prefix| model_id.starts_with(prefix))
+    {
+        return dash_count >= 1;
+    }
+
+    const PREFIX_MATCH_FAMILIES: &[&str] = &[
+        "gpt-",
+        "gemini-",
+        "deepseek-",
+        "qwen-",
+        "glm-",
+        "kimi-",
+        "minimax-",
+    ];
+
+    PREFIX_MATCH_FAMILIES
+        .iter()
+        .any(|prefix| model_id.starts_with(prefix))
+        && dash_count >= 2
 }
 
 #[cfg(test)]
@@ -3031,6 +3113,40 @@ mod tests {
     }
 
     #[test]
+    fn test_strip_model_date_suffix_is_utf8_safe() {
+        assert_eq!(
+            strip_model_date_suffix("模型-2026-05-14").as_deref(),
+            Some("模型")
+        );
+        assert_eq!(strip_model_date_suffix("abc🚀12345678"), None);
+    }
+
+    #[test]
+    fn test_prefix_pricing_does_not_match_short_base_model_to_variant() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        conn.execute("DELETE FROM model_pricing WHERE model_id LIKE 'gpt-5%'", [])?;
+        for (model_id, display_name) in [("gpt-5-mini", "GPT-5 Mini"), ("gpt-5-pro", "GPT-5 Pro")] {
+            conn.execute(
+                "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                ) VALUES (?1, ?2, '1', '2', '0', '0')",
+                params![model_id, display_name],
+            )?;
+        }
+
+        let result = find_model_pricing_row(&conn, "gpt-5")?;
+        assert!(
+            result.is_none(),
+            "缺少 gpt-5 基础定价时，不应前缀误匹配到 gpt-5-mini/gpt-5-pro"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_model_pricing_matching() -> Result<(), AppError> {
         let db = Database::memory()?;
         let conn = lock_conn!(db.conn);
@@ -3080,6 +3196,16 @@ mod tests {
         assert!(
             result.is_some(),
             "大小写混合的 GPT-5.5 模型应能归一化匹配到 gpt-5.5-high"
+        );
+        let result = find_model_pricing_row(&conn, "OpenAI/GPT-5.5-2026-05-14")?;
+        assert!(
+            result.is_some(),
+            "OpenAI 日期后缀模型应能回退到 gpt-5.5 基础定价"
+        );
+        let result = find_model_pricing_row(&conn, "google/gemini-3-pro-preview-20260514")?;
+        assert!(
+            result.is_some(),
+            "Gemini 日期后缀模型应能回退到 gemini-3-pro-preview 基础定价"
         );
 
         // Claude Desktop route 短 ID：应通过前缀匹配到带日期的定价

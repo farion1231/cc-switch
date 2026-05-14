@@ -12,6 +12,7 @@ use super::{
     usage::parser::TokenUsage,
     ProxyError,
 };
+use crate::database::PRICING_SOURCE_REQUEST;
 use axum::http::{header::HeaderMap, HeaderName};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -372,6 +373,7 @@ pub struct SseUsageCollector {
 struct SseUsageCollectorInner {
     events: Mutex<Vec<Value>>,
     first_event_time: Mutex<Option<std::time::Instant>>,
+    first_event_set: AtomicBool,
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
     should_collect: Option<StreamUsageEventFilter>,
@@ -390,6 +392,7 @@ impl SseUsageCollector {
             inner: Arc::new(SseUsageCollectorInner {
                 events: Mutex::new(Vec::new()),
                 first_event_time: Mutex::new(None),
+                first_event_set: AtomicBool::new(false),
                 start_time,
                 on_complete,
                 should_collect,
@@ -405,15 +408,21 @@ impl SseUsageCollector {
             .unwrap_or(true)
     }
 
+    /// 标记首个被收集的 SSE 事件时间，沿用 `first_token_ms` 的既有近似语义。
+    async fn mark_first_collected_event_time(&self) {
+        if self.inner.first_event_set.load(Ordering::Acquire) {
+            return;
+        }
+        let mut first_time = self.inner.first_event_time.lock().await;
+        if first_time.is_none() {
+            *first_time = Some(std::time::Instant::now());
+            self.inner.first_event_set.store(true, Ordering::Release);
+        }
+    }
+
     /// 推送 SSE 事件
     pub async fn push(&self, event: Value) {
-        // 记录首个事件时间
-        {
-            let mut first_time = self.inner.first_event_time.lock().await;
-            if first_time.is_none() {
-                *first_time = Some(std::time::Instant::now());
-            }
-        }
+        self.mark_first_collected_event_time().await;
         let mut events = self.inner.events.lock().await;
         events.push(event);
     }
@@ -435,6 +444,36 @@ impl SseUsageCollector {
         };
 
         (self.inner.on_complete)(events, first_token_ms);
+    }
+}
+
+struct SseUsageFinishGuard {
+    collector: Option<SseUsageCollector>,
+}
+
+impl SseUsageFinishGuard {
+    fn new(collector: SseUsageCollector) -> Self {
+        Self {
+            collector: Some(collector),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.collector = None;
+    }
+}
+
+impl Drop for SseUsageFinishGuard {
+    fn drop(&mut self) {
+        if let Some(collector) = self.collector.take() {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    collector.finish().await;
+                });
+            } else {
+                log::warn!("SSE 用量收尾保护触发时 Tokio runtime 不可用，跳过异步 finish");
+            }
+        }
     }
 }
 
@@ -598,7 +637,7 @@ async fn log_usage_internal(
     let logger = UsageLogger::new(&state.db);
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;
-    let pricing_model = if pricing_model_source == "request" {
+    let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
         request_model
     } else {
         model
@@ -648,6 +687,7 @@ pub fn create_logged_passthrough_stream(
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
+        let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
             collector.is_some() || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
@@ -752,6 +792,9 @@ pub fn create_logged_passthrough_stream(
 
         if let Some(c) = collector.take() {
             c.finish().await;
+        }
+        if let Some(guard) = &mut finish_guard {
+            guard.disarm();
         }
     }
 }
