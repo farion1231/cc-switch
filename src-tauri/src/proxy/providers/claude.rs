@@ -593,13 +593,10 @@ impl ProviderAdapter for ClaudeAdapter {
         &self,
         auth: &AuthInfo,
     ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
+        use super::adapter::auth_header_value as hv;
         use http::{HeaderName, HeaderValue};
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
         let bearer = format!("Bearer {}", auth.api_key);
-        let hv = |s: &str| -> Result<HeaderValue, ProxyError> {
-            HeaderValue::from_str(s)
-                .map_err(|e| ProxyError::AuthError(format!("invalid auth header value: {e}")))
-        };
         Ok(match auth.strategy {
             AuthStrategy::Anthropic => {
                 vec![(HeaderName::from_static("x-api-key"), hv(&auth.api_key)?)]

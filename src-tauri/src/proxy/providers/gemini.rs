@@ -232,11 +232,8 @@ impl ProviderAdapter for GeminiAdapter {
         &self,
         auth: &AuthInfo,
     ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
+        use super::adapter::auth_header_value as hv;
         use http::{HeaderName, HeaderValue};
-        let hv = |s: &str| -> Result<HeaderValue, ProxyError> {
-            HeaderValue::from_str(s)
-                .map_err(|e| ProxyError::AuthError(format!("invalid auth header value: {e}")))
-        };
         Ok(match auth.strategy {
             AuthStrategy::GoogleOAuth => {
                 let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);

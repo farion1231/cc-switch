@@ -55,3 +55,15 @@ pub trait ProviderAdapter: Send + Sync {
         Ok(body)
     }
 }
+
+/// Build an HTTP `HeaderValue` from a credential / token string.
+///
+/// Returns `ProxyError::AuthError` when the string contains characters that
+/// cannot live in an HTTP header value (control bytes, CR/LF, non-ASCII).
+/// Adapters call this for every header value derived from user-pasted
+/// material so a malformed key surfaces as a 401 instead of panicking
+/// the worker via `HeaderValue::from_str(...).unwrap()`.
+pub fn auth_header_value(s: &str) -> Result<http::HeaderValue, ProxyError> {
+    http::HeaderValue::from_str(s)
+        .map_err(|e| ProxyError::AuthError(format!("invalid auth header value: {e}")))
+}
