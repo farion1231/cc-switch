@@ -1190,6 +1190,8 @@
     "baseCost": "Base",
     "costMultiplier": "Cost Multiplier",
     "withMultiplier": "with multiplier",
+    "rawInputLabel": "Raw",
+    "unpriced": "Unpriced",
     "requestDetail": "Request Detail",
     "requestNotFound": "Request not found",
     "basicInfo": "Basic Info",

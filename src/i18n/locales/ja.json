@@ -1190,6 +1190,8 @@
     "baseCost": "基本",
     "costMultiplier": "コスト倍率",
     "withMultiplier": "倍率込み",
+    "rawInputLabel": "元の",
+    "unpriced": "未定価",
     "requestDetail": "リクエスト詳細",
     "requestNotFound": "リクエストが見つかりません",
     "basicInfo": "基本情報",

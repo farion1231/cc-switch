@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { useRequestDetail } from "@/lib/query/usage";
 import { getLocaleFromLanguage } from "@/lib/locale";
+import { getFreshInputTokens, isUnpricedUsage } from "@/types/usage";
 
 interface RequestDetailPanelProps {
   requestId: string;
@@ -47,6 +48,10 @@ export function RequestDetailPanel({
       </Dialog>
     );
   }
+
+  const freshInput = getFreshInputTokens(request);
+  const isCacheInclusive = request.inputTokens !== freshInput;
+  const unpriced = isUnpricedUsage(request);
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -133,7 +138,13 @@ export function RequestDetailPanel({
                   {t("usage.inputTokens", "输入 Tokens")}
                 </dt>
                 <dd className="font-mono">
-                  {request.inputTokens.toLocaleString()}
+                  {freshInput.toLocaleString()}
+                  {isCacheInclusive && (
+                    <span className="ml-2 font-normal text-xs text-muted-foreground/70">
+                      ({t("usage.rawInputLabel", "原始")}:{" "}
+                      {request.inputTokens.toLocaleString()})
+                    </span>
+                  )}
                 </dd>
               </div>
               <div>
@@ -165,9 +176,7 @@ export function RequestDetailPanel({
                   {t("usage.totalTokens", "总计")}
                 </dt>
                 <dd className="text-lg font-semibold">
-                  {(
-                    request.inputTokens + request.outputTokens
-                  ).toLocaleString()}
+                  {(freshInput + request.outputTokens).toLocaleString()}
                 </dd>
               </div>
             </dl>
@@ -245,8 +254,14 @@ export function RequestDetailPanel({
                       </span>
                     )}
                 </dt>
-                <dd className="text-lg font-semibold text-primary">
-                  ${parseFloat(request.totalCostUsd).toFixed(6)}
+                <dd
+                  className={`text-lg font-semibold ${
+                    unpriced ? "text-muted-foreground" : "text-primary"
+                  }`}
+                >
+                  {unpriced
+                    ? t("usage.unpriced", "未定价")
+                    : `$${parseFloat(request.totalCostUsd).toFixed(6)}`}
                 </dd>
               </div>
             </dl>

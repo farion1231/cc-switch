@@ -1190,6 +1190,8 @@
     "baseCost": "Базовая",
     "costMultiplier": "Коэффициент стоимости",
     "withMultiplier": "с коэффициентом",
+    "rawInputLabel": "Исходные",
+    "unpriced": "Без цены",
     "requestDetail": "Детали запроса",
     "requestNotFound": "Запрос не найден",
     "basicInfo": "Основная информация",

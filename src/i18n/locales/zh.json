@@ -1190,6 +1190,8 @@
     "baseCost": "基础",
     "costMultiplier": "成本倍率",
     "withMultiplier": "含倍率",
+    "rawInputLabel": "原始",
+    "unpriced": "未定价",
     "requestDetail": "请求详情",
     "requestNotFound": "请求未找到",
     "basicInfo": "基本信息",
