@@ -812,6 +812,40 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "Astraflow",
+    websiteUrl: "https://www.umodelverse.ai",
+    apiKeyUrl: "https://www.umodelverse.ai",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api-us-ca.umodelverse.ai/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://api-us-ca.umodelverse.ai/v1"],
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    description: "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint)",
+  },
+  {
+    name: "Astraflow CN",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl: "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.modelverse.cn/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://api.modelverse.cn/v1"],
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    description: "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (China endpoint)",
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",
