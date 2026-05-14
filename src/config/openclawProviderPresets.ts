@@ -1392,7 +1392,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://www.crazyrouter.com",
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
     settingsConfig: {
-      baseUrl: "https://crazyrouter.com/v1",
+      baseUrl: "https://cn.crazyrouter.com/v1",
       apiKey: "",
       api: "anthropic-messages",
       models: [

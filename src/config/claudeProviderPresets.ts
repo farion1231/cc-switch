@@ -638,11 +638,11 @@ export const providerPresets: ProviderPreset[] = [
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://crazyrouter.com",
+        ANTHROPIC_BASE_URL: "https://cn.crazyrouter.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
-    endpointCandidates: ["https://crazyrouter.com"],
+    endpointCandidates: ["https://cn.crazyrouter.com"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "crazyrouter", // 促销信息 i18n key

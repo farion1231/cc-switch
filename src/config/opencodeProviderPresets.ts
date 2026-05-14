@@ -1248,7 +1248,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/anthropic",
       name: "CrazyRouter",
       options: {
-        baseURL: "https://crazyrouter.com",
+        baseURL: "https://cn.crazyrouter.com",
         apiKey: "",
         setCacheKey: true,
       },

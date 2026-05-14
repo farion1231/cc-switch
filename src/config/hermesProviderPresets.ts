@@ -808,7 +808,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
     settingsConfig: {
       name: "crazyrouter",
-      base_url: "https://crazyrouter.com",
+      base_url: "https://cn.crazyrouter.com",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
