@@ -316,6 +316,9 @@ pub struct ProviderMeta {
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
     #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
     pub codex_fast_mode: Option<bool>,
+    /// Custom User-Agent for local proxy routing.
+    #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
+    pub custom_user_agent: Option<String>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]

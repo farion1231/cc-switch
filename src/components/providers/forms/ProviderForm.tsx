@@ -259,6 +259,7 @@ function ProviderFormFull({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -408,6 +409,9 @@ function ProviderFormFull({
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
+  );
+  const [customUserAgent, setCustomUserAgent] = useState<string>(
+    () => initialData?.meta?.customUserAgent ?? "",
   );
 
   const {
@@ -1218,6 +1222,10 @@ function ProviderFormFull({
           ? selectedGitHubAccountId
           : undefined,
       codexFastMode: isCodexOauthProvider ? codexFastMode : undefined,
+      customUserAgent:
+        (appId === "claude" || appId === "codex") && category !== "official"
+          ? customUserAgent.trim() || undefined
+          : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
@@ -1846,6 +1854,8 @@ function ProviderFormFull({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              customUserAgent={customUserAgent}
+              onCustomUserAgentChange={setCustomUserAgent}
             />
           )}
 
@@ -1875,6 +1885,8 @@ function ProviderFormFull({
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}
               speedTestEndpoints={speedTestEndpoints}
+              customUserAgent={customUserAgent}
+              onCustomUserAgentChange={setCustomUserAgent}
             />
           )}
 

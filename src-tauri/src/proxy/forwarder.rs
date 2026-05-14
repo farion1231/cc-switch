@@ -1296,6 +1296,15 @@ impl RequestForwarder {
                 Vec::new()
             };
 
+        let custom_user_agent = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.custom_user_agent.as_deref())
+            .map(str::trim)
+            .filter(|ua| !ua.is_empty())
+            .filter(|_| !is_copilot)
+            .and_then(|ua| http::HeaderValue::from_str(ua).ok());
+
         // --- Copilot 优化器：动态 header 注入 ---
         if let Some((ref classification, ref det_request_id, ref interaction_id)) =
             copilot_optimization
@@ -1390,6 +1399,7 @@ impl RequestForwarder {
         let mut ordered_headers = http::HeaderMap::new();
         let mut saw_auth = false;
         let mut saw_accept_encoding = false;
+        let mut saw_user_agent = false;
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
 
@@ -1470,6 +1480,19 @@ impl RequestForwarder {
                 continue;
             }
 
+            // --- user-agent: provider-level override for local proxy routing ---
+            if !is_copilot && key_str.eq_ignore_ascii_case("user-agent") {
+                if !saw_user_agent {
+                    saw_user_agent = true;
+                    if let Some(ref ua) = custom_user_agent {
+                        ordered_headers.append(http::header::USER_AGENT, ua.clone());
+                    } else {
+                        ordered_headers.append(key.clone(), value.clone());
+                    }
+                }
+                continue;
+            }
+
             // --- anthropic-beta — 用重建值替换（确保含 claude-code 标记） ---
             if key_str.eq_ignore_ascii_case("anthropic-beta") {
                 if !saw_anthropic_beta {
@@ -1517,6 +1540,12 @@ impl RequestForwarder {
                 http::header::ACCEPT_ENCODING,
                 http::HeaderValue::from_static("identity"),
             );
+        }
+
+        if !saw_user_agent {
+            if let Some(ref ua) = custom_user_agent {
+                ordered_headers.append(http::header::USER_AGENT, ua.clone());
+            }
         }
 
         // 如果原始请求中没有 anthropic-beta 且有值需要添加，追加
