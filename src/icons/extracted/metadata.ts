@@ -58,6 +58,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  huoshan: {
+    name: "huoshan",
+    displayName: "火山方舟",
+    category: "ai-provider",
+    keywords: ["huoshan", "volcengine", "ark", "agentplan", "byteplus"],
+    defaultColor: "#3370FF",
+  },
   chatglm: {
     name: "chatglm",
     displayName: "chatglm",

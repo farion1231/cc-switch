@@ -5,6 +5,7 @@ import _claudeapi from "./ClaudeApi.png";
 import _claudecn from "./claudecn.png";
 import _eflowcode from "./eflowcode.png";
 import _hermes from "./hermes.png";
+import _huoshan from "./huoshan.png";
 import _lemondata from "./lemondata.png";
 import _pateway from "./pateway.jpg";
 import _pipellm from "./pipellm.png";
@@ -89,6 +90,7 @@ export const iconUrls: Record<string, string> = {
   claudecn: _claudecn,
   eflowcode: _eflowcode,
   hermes: _hermes,
+  huoshan: _huoshan,
   lemondata: _lemondata,
   pateway: _pateway,
   pipellm: _pipellm,
