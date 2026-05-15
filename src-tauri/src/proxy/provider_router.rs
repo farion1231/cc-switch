@@ -6,7 +6,8 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig, CircuitState};
+use crate::proxy::failover_switch::FailoverSwitchManager;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -18,6 +19,8 @@ pub struct ProviderRouter {
     db: Arc<Database>,
     /// 熔断器管理器 - key 格式: "app_type:provider_id"
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
+    /// 自动回切管理器（由 ProxyServer 构造时注入）
+    failover_switch_manager: Arc<RwLock<Option<Arc<FailoverSwitchManager>>>>,
 }
 
 impl ProviderRouter {
@@ -26,7 +29,16 @@ impl ProviderRouter {
         Self {
             db,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            failover_switch_manager: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// 异步设置自动回切管理器
+    ///
+    /// 等写入完成后返回，消除 fire-and-forget 竞态。
+    /// caller 必须 await 此方法后再让 proxy 处理请求。
+    pub async fn set_failover_switch_manager(&self, mgr: Arc<FailoverSwitchManager>) {
+        *self.failover_switch_manager.write().await = Some(mgr);
     }
 
     /// 选择可用的供应商（支持故障转移）
@@ -143,6 +155,9 @@ impl ProviderRouter {
 
         if success {
             breaker.record_success(used_half_open_permit).await;
+
+            // [FO-BACK] 自动回切：当前用的是 P2+，且 P1 已从熔断恢复
+            self.trigger_failback_if_needed(provider_id, app_type).await;
         } else {
             breaker.record_failure(used_half_open_permit).await;
         }
@@ -216,6 +231,79 @@ impl ProviderRouter {
         } else {
             None
         }
+    }
+
+    /// 检查是否需要触发自动回切并在后台执行
+    ///
+    /// 当当前使用 P2+，且 P1 熔断器已恢复为 Closed 时，
+    /// 异步触发切换到 P1。Failback 失败仅记录日志，不向上传播。
+    async fn trigger_failback_if_needed(&self, provider_id: &str, app_type: &str) {
+        let Some(ref mgr) = *self.failover_switch_manager.read().await else {
+            return;
+        };
+
+        // [P1-A] 故障转移总开关关闭时跳过回切
+        let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(config) => config.auto_failover_enabled,
+            Err(_) => {
+                log::warn!("[FO-BACK] 读取 proxy_config 失败，跳过本次回切");
+                return;
+            }
+        };
+        if !auto_failover_enabled {
+            return;
+        }
+
+        let Ok(ordered_ids) = self.db.get_failover_queue(app_type) else {
+            log::warn!("[FO-BACK] 读取 failover_queue 失败，跳过本次回切");
+            return;
+        };
+        let Some(p1_id) = ordered_ids.first().map(|item| &item.provider_id) else {
+            return;
+        };
+
+        // 已在 P1，无需回切
+        if provider_id == p1_id {
+            return;
+        }
+
+        // 检查 P1 熔断器状态
+        let p1_circuit_key = format!("{app_type}:{p1_id}");
+        let p1_breaker = self.get_or_create_circuit_breaker(&p1_circuit_key).await;
+        // [P1-B] 必须同时满足：P1 从 Open/HalfOpen 恢复到 Closed（而非从未失败过）
+        if p1_breaker.get_state().await != CircuitState::Closed || !p1_breaker.has_been_open() {
+            return;
+        }
+
+        let Ok(all) = self.db.get_all_providers(app_type) else {
+            log::warn!("[FO-BACK] 读取 providers 失败，跳过本次回切");
+            return;
+        };
+        let Some(p1) = all.get(p1_id) else {
+            return;
+        };
+
+        log::info!(
+            "[FO-BACK] P1 {} 恢复为 Closed（当前: {}），触发自动回切",
+            p1.name,
+            provider_id
+        );
+
+        let fm = mgr.clone();
+        let at = app_type.to_string();
+        let pid = p1.id.clone();
+        let pname = p1.name.clone();
+        tokio::spawn(async move {
+            match fm.try_switch(&at, &pid, &pname).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    log::debug!("[FO-BACK] 切换已跳过（可能在进行中或已就绪）");
+                }
+                Err(e) => {
+                    log::error!("[FO-BACK] try_switch 失败: {}", e);
+                }
+            }
+        });
     }
 
     /// 获取或创建熔断器

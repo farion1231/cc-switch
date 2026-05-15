@@ -277,7 +277,8 @@ impl ProxyService {
 
         // 4. 创建并启动服务器
         let app_handle = self.app_handle.read().await.clone();
-        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let mut server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        server.settle_join.take().unwrap().await;
         let info = server
             .start()
             .await
@@ -1928,7 +1929,8 @@ impl ProxyService {
             }
 
             let app_handle = self.app_handle.read().await.clone();
-            let new_server = ProxyServer::new(new_config, self.db.clone(), app_handle);
+            let mut new_server = ProxyServer::new(new_config.clone(), self.db.clone(), app_handle.clone());
+            new_server.settle_join.take().unwrap().await;
             new_server
                 .start()
                 .await

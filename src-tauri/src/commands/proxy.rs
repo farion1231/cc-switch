@@ -377,10 +377,12 @@ pub async fn reset_circuit_breaker(
                         .unwrap_or_else(|| provider_id.clone());
 
                     // 创建故障转移切换管理器并执行切换
-                    let switch_manager =
-                        crate::proxy::failover_switch::FailoverSwitchManager::new(db.clone());
+                    let switch_manager = crate::proxy::failover_switch::FailoverSwitchManager::new(
+                        db.clone(),
+                        Some(app_handle),
+                    );
                     if let Err(e) = switch_manager
-                        .try_switch(Some(&app_handle), &app_type, &provider_id, &provider_name)
+                        .try_switch(&app_type, &provider_id, &provider_name)
                         .await
                     {
                         log::error!("[Recovery] 自动切换失败: {e}");
