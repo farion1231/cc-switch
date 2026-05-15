@@ -1714,6 +1714,104 @@ mod tests {
 
     #[test]
     #[serial]
+    fn rollback_claude_legacy_removes_new_configured_default_settings() {
+        with_test_home(|state, home| {
+            let previous_profile_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&previous_profile_dir).expect("create previous profile dir");
+            write_json_file(
+                &previous_profile_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "profile-token",
+                        "ANTHROPIC_BASE_URL": "https://profile.example"
+                    }
+                }),
+            )
+            .expect("seed previous profile settings");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &previous_profile_dir.to_string_lossy(),
+            ))
+            .expect("set previous profile override");
+
+            let configured_legacy_dir = home.join(".configured-claude");
+            fs::create_dir_all(&configured_legacy_dir).expect("create configured legacy dir");
+            let mut settings = crate::settings::get_settings();
+            settings.claude_config_dir = Some(configured_legacy_dir.to_string_lossy().to_string());
+            crate::settings::update_settings(settings).expect("set configured legacy dir");
+
+            let configured_settings_path = configured_legacy_dir.join("settings.json");
+            let legacy_provider = claude_provider(
+                "claude-legacy",
+                "Claude Legacy",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+            let plan = ProviderService::claude_switch_plan(&legacy_provider);
+            let rollback = ProviderService::capture_claude_rollback_state(state, Some(&plan))
+                .expect("capture rollback");
+
+            ProviderService::apply_claude_switch_plan(&plan).expect("apply legacy plan");
+            write_json_file(
+                &configured_settings_path,
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "failed-legacy-token",
+                        "ANTHROPIC_BASE_URL": "https://failed-legacy.example"
+                    }
+                }),
+            )
+            .expect("simulate failed legacy switch creating configured settings");
+
+            ProviderService::rollback_claude_switch(state, &rollback).expect("rollback switch");
+
+            assert!(
+                !configured_settings_path.exists(),
+                "rollback should remove settings created in the configured legacy Claude dir"
+            );
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(previous_profile_dir.as_path()),
+                "rollback should restore the previously active profile override"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_claude_legacy_clears_stale_provider_profile_override() {
+        with_test_home(|_state, home| {
+            let stale_profile_dir = home.join(".claude-profiles").join("stale");
+            fs::create_dir_all(&stale_profile_dir).expect("create stale profile dir");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &stale_profile_dir.to_string_lossy(),
+            ))
+            .expect("seed stale profile override");
+
+            let legacy_provider = claude_provider(
+                "claude-legacy",
+                "Claude Legacy",
+                "legacy-token",
+                "https://legacy.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(stale_profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::Legacy),
+                    ..Default::default()
+                }),
+            );
+
+            let plan = ProviderService::claude_switch_plan(&legacy_provider);
+            ProviderService::apply_claude_switch_plan(&plan).expect("apply legacy plan");
+
+            assert!(
+                crate::settings::get_claude_override_dir().is_none(),
+                "legacy activation should clear any stale provider profile override"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn startup_sync_rejects_missing_profile_only_directory() {
         with_test_home(|state, home| {
             let broken_provider = claude_provider(
@@ -2464,13 +2562,17 @@ impl ProviderService {
             .as_ref()
             .and_then(|meta| meta.claude_activation_mode.clone())
             .unwrap_or(ClaudeActivationMode::Legacy);
-        let override_dir = provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.claude_profile_dir.as_ref())
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .map(|value| value.to_string());
+        let override_dir = if matches!(activation_mode, ClaudeActivationMode::Legacy) {
+            None
+        } else {
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.claude_profile_dir.as_ref())
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string())
+        };
 
         ClaudeSwitchPlan {
             activation_mode,
@@ -2513,10 +2615,29 @@ impl ProviderService {
         settings
     }
 
+    fn claude_legacy_settings_path(settings: &crate::settings::AppSettings) -> PathBuf {
+        let legacy_dir = settings
+            .claude_config_dir
+            .as_deref()
+            .map(Self::resolve_claude_override_path)
+            .unwrap_or_else(|| crate::config::get_home_dir().join(".claude"));
+        Self::claude_settings_path_for_dir(&legacy_dir)
+    }
+
+    fn resolve_claude_override_path(raw: &str) -> PathBuf {
+        if raw == "~" {
+            return crate::config::get_home_dir();
+        }
+        if let Some(stripped) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+            return crate::config::get_home_dir().join(stripped);
+        }
+        PathBuf::from(raw)
+    }
+
     fn claude_live_settings_path_for_plan(plan: &ClaudeSwitchPlan) -> Option<PathBuf> {
         match plan.activation_mode {
-            ClaudeActivationMode::Legacy => Some(Self::claude_settings_path_for_dir(
-                &crate::config::get_home_dir().join(".claude"),
+            ClaudeActivationMode::Legacy => Some(Self::claude_legacy_settings_path(
+                &crate::settings::get_settings(),
             )),
             ClaudeActivationMode::ProfileOnly => None,
             ClaudeActivationMode::ProfileAndConfig => plan
