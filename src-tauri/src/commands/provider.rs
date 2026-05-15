@@ -682,3 +682,35 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
 // ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================
+
+// ============================================================================
+// CLI → GUI IPC signal
+// ============================================================================
+
+#[tauri::command]
+pub fn check_cli_switch_signal() -> Result<Option<crate::linux_cli::CliSwitchSignal>, String> {
+    let config_dir = crate::config::get_app_config_dir();
+    if config_dir.as_os_str().is_empty() {
+        return Ok(None);
+    }
+    let signal_path = config_dir.join(crate::linux_cli::CLI_SWITCH_SIGNAL_FILE);
+
+    if !signal_path.exists() {
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(&signal_path).map_err(|e| e.to_string())?;
+    // Remove the file immediately so we don't re-process it
+    let _ = std::fs::remove_file(&signal_path);
+
+    let signal: crate::linux_cli::CliSwitchSignal =
+        serde_json::from_str(&content).map_err(|e| e.to_string())?;
+
+    log::info!(
+        "CLI switch signal detected: app={}, provider={}",
+        signal.app_type,
+        signal.provider_id
+    );
+
+    Ok(Some(signal))
+}

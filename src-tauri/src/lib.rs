@@ -1346,6 +1346,8 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // CLI → GUI IPC
+            commands::check_cli_switch_signal,
         ]);
 
     let app = builder

@@ -5,6 +5,17 @@ use crate::database::Database;
 use crate::services::{ProviderService, SwitchResult};
 use crate::store::AppState;
 
+/// Signal file name used for CLI → GUI IPC.
+pub(crate) const CLI_SWITCH_SIGNAL_FILE: &str = ".cli-switch-signal";
+
+/// Payload written by the CLI after a successful switch, read by the GUI to refresh.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliSwitchSignal {
+    pub app_type: String,
+    pub provider_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     List {
@@ -378,6 +389,7 @@ pub fn run_cli_command(state: &AppState, command: CliCommand) -> CliOutput {
             json,
         } => match execute_switch(state, app.clone(), &provider_id) {
             Ok(result) => {
+                write_cli_switch_signal(&app, &provider_id);
                 let formatted = if json {
                     format_switch_json(&app, &provider_id, &result.warnings)
                 } else {
@@ -435,6 +447,48 @@ fn ensure_trailing_newline(mut output: String) -> String {
         output.push('\n');
     }
     output
+}
+
+/// Write a signal file so the running GUI can detect the CLI switch and refresh.
+/// Best-effort: silently ignores errors since the GUI will eventually see the change
+/// via other mechanisms (restart, etc.).
+fn write_cli_switch_signal(app_type: &AppType, provider_id: &str) {
+    let config_dir = match crate::config::get_app_config_dir() {
+        dir if dir.as_os_str().is_empty() => return,
+        dir => dir,
+    };
+
+    let signal = CliSwitchSignal {
+        app_type: app_type.as_str().to_string(),
+        provider_id: provider_id.to_string(),
+    };
+    let content = match serde_json::to_string(&signal) {
+        Ok(c) => c,
+        Err(e) => {
+            log::debug!("Failed to serialize CLI switch signal: {e}");
+            return;
+        }
+    };
+
+    let target = config_dir.join(CLI_SWITCH_SIGNAL_FILE);
+    let tmp = config_dir.join(format!("{CLI_SWITCH_SIGNAL_FILE}.tmp"));
+
+    // Ensure config dir exists (may not on fresh test environments)
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        log::debug!("Failed to create config dir for CLI switch signal: {e}");
+        return;
+    }
+
+    // Atomic write: write to tmp then rename
+    if let Err(e) = std::fs::write(&tmp, &content) {
+        log::debug!("Failed to write CLI switch signal tmp file: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        log::debug!("Failed to rename CLI switch signal file: {e}");
+    } else {
+        log::debug!("CLI switch signal written for GUI refresh");
+    }
 }
 
 fn sanitize_text_output(value: &str) -> String {
@@ -1279,5 +1333,44 @@ mod tests {
             serde_json::from_str(output.stderr.trim()).expect("stderr should be valid json");
         assert_eq!(parsed["ok"], false);
         assert_eq!(parsed["code"], "usage");
+    }
+
+    #[test]
+    #[serial]
+    fn write_cli_switch_signal_creates_readable_file() {
+        let _guard = settings_test_guard();
+        let _home = TempHome::new();
+
+        write_cli_switch_signal(&AppType::Claude, "test-provider");
+
+        let config_dir = crate::config::get_app_config_dir();
+        let signal_path = config_dir.join(CLI_SWITCH_SIGNAL_FILE);
+        assert!(signal_path.exists(), "signal file should exist after write");
+
+        let content = std::fs::read_to_string(&signal_path).expect("read signal file");
+        let signal: CliSwitchSignal =
+            serde_json::from_str(&content).expect("parse signal file");
+        assert_eq!(signal.app_type, "claude");
+        assert_eq!(signal.provider_id, "test-provider");
+
+        // Clean up
+        let _ = std::fs::remove_file(&signal_path);
+    }
+
+    #[test]
+    #[serial]
+    fn write_cli_switch_signal_is_atomic_no_tmp_left() {
+        let _guard = settings_test_guard();
+        let _home = TempHome::new();
+
+        write_cli_switch_signal(&AppType::Codex, "p1");
+
+        let config_dir = crate::config::get_app_config_dir();
+        let tmp_path = config_dir.join(format!("{CLI_SWITCH_SIGNAL_FILE}.tmp"));
+        assert!(!tmp_path.exists(), "tmp file should not linger after write");
+
+        // Clean up
+        let signal_path = config_dir.join(CLI_SWITCH_SIGNAL_FILE);
+        let _ = std::fs::remove_file(&signal_path);
     }
 }

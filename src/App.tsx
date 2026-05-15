@@ -380,6 +380,32 @@ function App() {
     };
   }, [queryClient]);
 
+  // Poll for CLI switch signal (cc-switch switch from terminal)
+  useEffect(() => {
+    let active = true;
+
+    const poll = async () => {
+      if (!active) return;
+      try {
+        const signal = await providersApi.checkCliSwitchSignal();
+        if (signal && active) {
+          const { invalidateProviderSwitchCaches } = await import(
+            "@/lib/query/mutations"
+          );
+          await invalidateProviderSwitchCaches(queryClient, signal.appType);
+        }
+      } catch {
+        // signal check failure is non-critical
+      }
+    };
+
+    const interval = setInterval(poll, 2000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [queryClient]);
+
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
     let active = true;

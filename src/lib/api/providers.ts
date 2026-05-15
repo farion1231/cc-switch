@@ -112,6 +112,17 @@ export const providersApi = {
     return await invoke("update_tray_menu");
   },
 
+  /**
+   * Check for a CLI switch signal file left by `cc-switch switch`.
+   * Returns the signal data if found (and deletes the file), or null.
+   */
+  async checkCliSwitchSignal(): Promise<{
+    appType: string;
+    providerId: string;
+  } | null> {
+    return await invoke("check_cli_switch_signal");
+  },
+
   async updateSortOrder(
     updates: ProviderSortUpdate[],
     appId: AppId,
