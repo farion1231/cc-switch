@@ -2190,6 +2190,7 @@ fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::Head
         .unwrap_or(false)
 }
 
+#[cfg(test)]
 fn should_force_identity_encoding(
     endpoint: &str,
     body: &Value,
