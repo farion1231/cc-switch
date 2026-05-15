@@ -149,6 +149,96 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "火山Agentplan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      name: "ark_agentplan",
+      base_url: "https://ark.cn-beijing.volces.com/api/coding",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    suggestedDefaults: {
+      model: {
+        default: "ark-code-latest",
+        provider: "ark_agentplan",
+      },
+    },
+  },
+  {
+    name: "BytePlus",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      name: "byteplus",
+      base_url: "https://ark.ap-southeast.bytepluses.com/api/coding",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "byteplus",
+    icon: "byteplus",
+    iconColor: "#3370FF",
+    suggestedDefaults: {
+      model: {
+        default: "ark-code-latest",
+        provider: "byteplus",
+      },
+    },
+  },
+  {
+    name: "DouBaoSeed",
+    websiteUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      name: "doubao_seed",
+      base_url: "https://ark.cn-beijing.volces.com/api/compatible",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "doubao-seed-2-0-code-preview-latest",
+          name: "Doubao Seed 2.0 Code Preview",
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "doubaoseed",
+    icon: "doubao",
+    iconColor: "#3370FF",
+    suggestedDefaults: {
+      model: {
+        default: "doubao-seed-2-0-code-preview-latest",
+        provider: "doubao_seed",
+      },
+    },
+  },
+  {
     name: "OpenRouter",
     nameKey: "providerForm.presets.openrouter",
     websiteUrl: "https://openrouter.ai",
@@ -529,96 +619,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#FF6B6B",
     suggestedDefaults: {
       model: { default: "MiniMax-M2.7", provider: "minimax_en" },
-    },
-  },
-  {
-    name: "DouBaoSeed",
-    websiteUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
-    apiKeyUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
-    settingsConfig: {
-      name: "doubao_seed",
-      base_url: "https://ark.cn-beijing.volces.com/api/compatible",
-      api_key: "",
-      api_mode: "anthropic_messages",
-      models: [
-        {
-          id: "doubao-seed-2-0-code-preview-latest",
-          name: "Doubao Seed 2.0 Code Preview",
-        },
-      ],
-    },
-    category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "doubaoseed",
-    icon: "doubao",
-    iconColor: "#3370FF",
-    suggestedDefaults: {
-      model: {
-        default: "doubao-seed-2-0-code-preview-latest",
-        provider: "doubao_seed",
-      },
-    },
-  },
-  {
-    name: "火山Agentplan",
-    websiteUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
-    apiKeyUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
-    settingsConfig: {
-      name: "ark_agentplan",
-      base_url: "https://ark.cn-beijing.volces.com/api/coding",
-      api_key: "",
-      api_mode: "anthropic_messages",
-      models: [
-        {
-          id: "ark-code-latest",
-          name: "Ark Code Latest",
-        },
-      ],
-    },
-    category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "volcengine_agentplan",
-    icon: "huoshan",
-    iconColor: "#3370FF",
-    suggestedDefaults: {
-      model: {
-        default: "ark-code-latest",
-        provider: "ark_agentplan",
-      },
-    },
-  },
-  {
-    name: "BytePlus",
-    websiteUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
-    apiKeyUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
-    settingsConfig: {
-      name: "byteplus",
-      base_url: "https://ark.ap-southeast.bytepluses.com/api/coding",
-      api_key: "",
-      api_mode: "anthropic_messages",
-      models: [
-        {
-          id: "ark-code-latest",
-          name: "Ark Code Latest",
-        },
-      ],
-    },
-    category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "byteplus",
-    icon: "byteplus",
-    iconColor: "#3370FF",
-    suggestedDefaults: {
-      model: {
-        default: "ark-code-latest",
-        provider: "byteplus",
-      },
     },
   },
   {
