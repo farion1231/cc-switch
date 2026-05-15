@@ -707,29 +707,6 @@ async fn handle_deepseek_response(
                         }
                     }
 
-                    // Strategy 2: Try ALL entries from REASONING_CACHE as last resort.
-                    if !injected {
-                        if let Ok(cache) = REASONING_CACHE.lock() {
-                            for (_key, cached_reasoning) in cache.iter() {
-                                if !cached_reasoning.is_empty() {
-                                    log::info!(
-                                        "[DeepSeek] Last-resort: injected reasoning from REASONING_CACHE into msg[{}] ({} chars)",
-                                        idx,
-                                        cached_reasoning.len()
-                                    );
-                                    if let Some(obj) = assistant_msg.as_object_mut() {
-                                        obj.insert(
-                                            "reasoning_content".to_string(),
-                                            json!(cached_reasoning),
-                                        );
-                                    }
-                                    injected = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
                     if !injected {
                         log::warn!(
                             "[DeepSeek] msg[{}]: assistant with tool_calls but NO cached reasoning found to inject",

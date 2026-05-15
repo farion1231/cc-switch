@@ -406,14 +406,16 @@ fn convert_responses_to_chat(body: Value, model_override: Option<&str>) -> Value
         .or_else(|| body.get("model").and_then(|v| v.as_str()))
         .unwrap_or("deepseek-chat");
 
+    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(true);
+
     let mut chat_req = json!({
         "model": model,
         "messages": messages,
-        "stream": true,
-        "stream_options": {
-            "include_usage": true
-        }
+        "stream": is_streaming,
     });
+    if is_streaming {
+        chat_req["stream_options"] = json!({ "include_usage": true });
+    }
 
     // 5. Convert tools from Responses format → Chat format
     //    Responses: { type: "function", name: "bash", description: "...", parameters: {...}, strict: true }
