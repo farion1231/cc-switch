@@ -548,6 +548,74 @@ mod tests {
         });
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_codex_only_relabels_threads_from_previous_provider() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let home = PathBuf::from(std::env::var("CC_SWITCH_TEST_HOME").expect("test home"));
+
+        let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+        let api_provider = codex_provider(
+            "codex-api",
+            "Codex API",
+            "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+        );
+        let other_provider = codex_provider(
+            "codex-other",
+            "Codex Other",
+            "model_provider = \"azure\"\nmodel = \"gpt-5.4\"\n",
+        );
+
+        db.save_provider(AppType::Codex.as_str(), &official_provider)
+            .expect("save official provider");
+        db.save_provider(AppType::Codex.as_str(), &api_provider)
+            .expect("save api provider");
+        db.save_provider(AppType::Codex.as_str(), &other_provider)
+            .expect("save other provider");
+        db.set_current_provider(AppType::Codex.as_str(), "codex-official")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("codex-official"))
+            .expect("set local current provider");
+        seed_codex_thread_rows(
+            &home,
+            &[
+                ("official-thread", "openai"),
+                ("api-thread", "OpenAI"),
+                ("other-thread", "azure"),
+            ],
+        );
+        db.save_live_backup("codex", "{}")
+            .await
+            .expect("seed codex takeover backup");
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        ProviderService::switch(&state, AppType::Codex, "codex-api")
+            .expect("hot switch to api codex provider");
+
+        assert_eq!(
+            codex_thread_providers(&home),
+            vec![("OpenAI".to_string(), 2), ("azure".to_string(), 1)],
+            "hot-switching from official to API should not relabel unrelated provider history"
+        );
+        assert_eq!(
+            codex_rollout_providers(&home),
+            vec![
+                ("api-thread".to_string(), Some("OpenAI".to_string())),
+                ("official-thread".to_string(), Some("OpenAI".to_string())),
+                ("other-thread".to_string(), Some("azure".to_string())),
+            ],
+            "hot-switch rollout metadata should only move previous-provider sessions"
+        );
+    }
+
     #[test]
     #[serial]
     fn sync_current_claude_profile_env_preserves_external_override_without_active_provider() {
@@ -901,6 +969,84 @@ mod tests {
                 default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
                 Value::String("default-live-token".to_string()),
                 "profile-and-config add should not mutate the default live settings"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_current_claude_profile_only_applies_profile_without_overwriting_live() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let official_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&official_dir).expect("create official profile dir");
+            write_json_file(
+                &official_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed official profile settings");
+
+            let legacy_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &legacy_provider)
+                .expect("save legacy provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-current")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-current"))
+                .expect("set local current provider");
+
+            let updated_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "provider-token-should-not-write",
+                "https://provider-should-not-write.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(official_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            ProviderService::update(state, AppType::Claude, None, updated_provider)
+                .expect("update current provider to profile-only");
+
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(official_dir.as_path()),
+                "updating the current Claude provider should apply the selected profile dir"
+            );
+            let default_live: Value =
+                read_json_file(&default_dir.join("settings.json")).expect("read default profile");
+            assert_eq!(
+                default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("default-live-token".to_string()),
+                "profile-only current-provider update should not overwrite default live settings"
             );
         });
     }
@@ -2634,6 +2780,17 @@ impl ProviderService {
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
 
         if is_current {
+            let claude_switch_plan =
+                matches!(app_type, AppType::Claude).then(|| Self::claude_switch_plan(&provider));
+            let claude_rollback = if matches!(app_type, AppType::Claude) {
+                Some(Self::capture_claude_rollback_state(
+                    state,
+                    claude_switch_plan.as_ref(),
+                )?)
+            } else {
+                None
+            };
+
             // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
             // - 不直接走普通 Live 写入逻辑
             // - 改为更新 Live 备份，并在 Claude 下同步代理安全的 Live 配置
@@ -2648,26 +2805,53 @@ impl ProviderService {
                 .detect_takeover_in_live_config_for_app(&app_type);
             let should_sync_via_proxy = is_proxy_running && (has_live_backup || live_taken_over);
 
-            if should_sync_via_proxy {
-                futures::executor::block_on(
-                    state
-                        .proxy_service
-                        .update_live_backup_from_provider(app_type.as_str(), &provider),
-                )
-                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            let update_result = (|| -> Result<(), AppError> {
+                if let Some(plan) = claude_switch_plan.as_ref() {
+                    Self::validate_claude_runtime_switch_plan(plan)?;
+                    Self::apply_claude_switch_plan(plan)?;
+                }
 
-                if matches!(app_type, AppType::Claude) {
+                if should_sync_via_proxy {
                     futures::executor::block_on(
                         state
                             .proxy_service
-                            .sync_claude_live_from_provider_while_proxy_active(&provider),
+                            .update_live_backup_from_provider(app_type.as_str(), &provider),
                     )
-                    .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
+                    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+
+                    if matches!(app_type, AppType::Claude) {
+                        futures::executor::block_on(
+                            state
+                                .proxy_service
+                                .sync_claude_live_from_provider_while_proxy_active(&provider),
+                        )
+                        .map_err(|e| {
+                            AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
+                        })?;
+                    }
+                } else if !matches!(
+                    claude_switch_plan
+                        .as_ref()
+                        .map(|plan| &plan.activation_mode),
+                    Some(ClaudeActivationMode::ProfileOnly)
+                ) {
+                    write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                    // Sync MCP
+                    McpService::sync_all_enabled(state)?;
                 }
-            } else {
-                write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                // Sync MCP
-                McpService::sync_all_enabled(state)?;
+
+                Ok(())
+            })();
+
+            if let Err(err) = update_result {
+                if let Some(rollback) = claude_rollback.as_ref() {
+                    if let Err(rollback_err) = Self::rollback_claude_switch(state, rollback) {
+                        return Err(AppError::Message(format!(
+                            "{err}; additionally failed to roll back Claude switch state: {rollback_err}"
+                        )));
+                    }
+                }
+                return Err(err);
             }
         }
 
@@ -2863,6 +3047,15 @@ impl ProviderService {
         }
 
         if should_hot_switch {
+            let codex_source_provider = if matches!(app_type, AppType::Codex) {
+                crate::settings::get_effective_current_provider(&state.db, &app_type)?
+                    .as_deref()
+                    .and_then(|id| providers.get(id))
+                    .and_then(|provider| Self::codex_desktop_provider_key(provider).ok())
+            } else {
+                None
+            };
+
             // Proxy takeover mode: hot-switch only, don't write Live config
             log::info!(
                 "代理接管模式：热切换 {} 的目标供应商为 {}",
@@ -2881,7 +3074,11 @@ impl ProviderService {
             // The proxy server will route requests to the new provider via is_current
             let mut result = SwitchResult::default();
             if matches!(app_type, AppType::Codex) {
-                Self::sync_codex_desktop_threads_after_switch(_provider, None, &mut result);
+                Self::sync_codex_desktop_threads_after_switch(
+                    _provider,
+                    codex_source_provider.as_deref(),
+                    &mut result,
+                );
             }
             return Ok(result);
         }
