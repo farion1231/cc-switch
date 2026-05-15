@@ -719,7 +719,11 @@ function ProviderFormFull({
           ? parsedSettingsConfig.api
           : openclawForm.openclawApi,
     };
-  }, [watchedSettingsConfig, opencodeForm.opencodeNpm, openclawForm.openclawApi]);
+  }, [
+    watchedSettingsConfig,
+    opencodeForm.opencodeNpm,
+    openclawForm.openclawApi,
+  ]);
   const supportsFullUrl = useMemo(
     () =>
       supportsFullUrlMode({
