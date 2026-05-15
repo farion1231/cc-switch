@@ -349,6 +349,42 @@ mod tests {
         seed_codex_thread_rows(home, &[("thread-1", provider), ("thread-2", provider)]);
     }
 
+    fn seed_codex_thread_rows_nullable(home: &Path, rows: &[(&str, Option<&str>)]) {
+        let codex_dir = home.join(".codex");
+        let rollout_dir = codex_dir
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("24");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::create_dir_all(&rollout_dir).expect("create rollout dir");
+        let conn = rusqlite::Connection::open(codex_dir.join("state_5.sqlite"))
+            .expect("open codex state db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NULL, rollout_path TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads table");
+        for (id, provider) in rows {
+            let path = rollout_dir.join(format!("rollout-{id}.jsonl"));
+            let provider_json = provider
+                .map(|provider| format!(r#","model_provider":"{provider}""#))
+                .unwrap_or_default();
+            fs::write(
+                &path,
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\"{provider_json}}}}}\n{{\"type\":\"event_msg\",\"payload\":{{}}}}\n"
+                ),
+            )
+            .expect("write rollout metadata");
+            conn.execute(
+                "INSERT INTO threads (id, model_provider, rollout_path) VALUES (?1, ?2, ?3)",
+                rusqlite::params![id, provider, path.to_string_lossy()],
+            )
+            .expect("seed thread");
+        }
+    }
+
     fn codex_rollout_providers(home: &Path) -> Vec<(String, Option<String>)> {
         let conn = rusqlite::Connection::open(home.join(".codex").join("state_5.sqlite"))
             .expect("open codex state db");
@@ -544,6 +580,69 @@ mod tests {
                     ("other-thread".to_string(), Some("azure".to_string())),
                 ],
                 "rollout metadata should only move previous-provider sessions"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_updates_null_rollout_metadata_when_scoped_to_previous_provider() {
+        with_test_home(|state, home| {
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let other_provider = codex_provider(
+                "codex-other",
+                "Codex Other",
+                "model_provider = \"azure\"\nmodel = \"gpt-5.4\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &other_provider)
+                .expect("save other provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-official"))
+                .expect("set local current provider");
+            seed_codex_thread_rows_nullable(
+                home,
+                &[
+                    ("old-null-thread", None),
+                    ("official-thread", Some("openai")),
+                    ("other-thread", Some("azure")),
+                ],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to api codex provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("OpenAI".to_string(), 2), ("azure".to_string(), 1)],
+                "null provider rows selected by the scoped SQL should move to the target provider"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("official-thread".to_string(), Some("OpenAI".to_string())),
+                    ("old-null-thread".to_string(), Some("OpenAI".to_string())),
+                    ("other-thread".to_string(), Some("azure".to_string())),
+                ],
+                "rollout metadata with a missing provider should stay consistent with relabeled null rows"
             );
         });
     }
@@ -757,6 +856,93 @@ mod tests {
                 live["env"]["ANTHROPIC_BASE_URL"],
                 Value::String("https://official-live.example".to_string()),
                 "profile-only mode should keep the existing base URL"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_away_from_claude_profile_only_does_not_backfill_external_profile_settings() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let profile_dir = home.join(".claude-profiles").join("external");
+            fs::create_dir_all(&profile_dir).expect("create profile dir");
+            write_json_file(
+                &profile_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "external-profile-token",
+                        "ANTHROPIC_BASE_URL": "https://external-profile.example"
+                    }
+                }),
+            )
+            .expect("seed external profile settings");
+
+            let profile_only_provider = claude_provider(
+                "claude-profile-only",
+                "Claude Profile Only",
+                "stored-profile-provider-token",
+                "https://stored-profile-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+            let legacy_provider = claude_provider(
+                "claude-legacy",
+                "Claude Legacy",
+                "legacy-provider-token",
+                "https://legacy-provider.example",
+                None,
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &profile_only_provider)
+                .expect("save profile-only provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &legacy_provider)
+                .expect("save legacy provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-profile-only")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-profile-only"))
+                .expect("set local current provider");
+            crate::settings::set_claude_provider_override_dir(Some(&profile_dir.to_string_lossy()))
+                .expect("set profile override");
+
+            ProviderService::switch(state, AppType::Claude, "claude-legacy")
+                .expect("switch away from profile-only provider");
+
+            let stored = state
+                .db
+                .get_provider_by_id("claude-profile-only", AppType::Claude.as_str())
+                .expect("load stored profile-only provider")
+                .expect("stored profile-only provider");
+            assert_eq!(
+                stored.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("stored-profile-provider-token".to_string()),
+                "profile-only switch-away should not import external profile auth into provider storage"
+            );
+            assert_eq!(
+                stored.settings_config["env"]["ANTHROPIC_BASE_URL"],
+                Value::String("https://stored-profile-provider.example".to_string()),
+                "profile-only switch-away should keep stored provider config unchanged"
             );
         });
     }
@@ -2543,7 +2729,8 @@ impl ProviderService {
         };
         let current_provider = payload.get("model_provider").and_then(Value::as_str);
         if current_provider == Some(target_provider)
-            || source_provider.is_some_and(|source| current_provider != Some(source))
+            || source_provider
+                .is_some_and(|source| current_provider.is_some_and(|current| current != source))
         {
             return Ok(false);
         }
@@ -3330,22 +3517,34 @@ impl ProviderService {
                 // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
                 if !app_type.is_additive_mode() {
                     // Only backfill when switching to a different provider
-                    if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                        if let Some(mut current_provider) = providers.get(current_id).cloned() {
-                            current_provider.settings_config =
-                                strip_common_config_from_live_settings(
-                                    state.db.as_ref(),
-                                    &app_type,
-                                    &current_provider,
-                                    live_config,
-                                );
-                            if let Err(e) =
-                                state.db.save_provider(app_type.as_str(), &current_provider)
-                            {
-                                log::warn!("Backfill failed: {e}");
-                                result
-                                    .warnings
-                                    .push(format!("backfill_failed:{current_id}"));
+                    if let Some(mut current_provider) = providers.get(current_id).cloned() {
+                        let skip_backfill = matches!(
+                            (
+                                &app_type,
+                                current_provider
+                                    .meta
+                                    .as_ref()
+                                    .and_then(|meta| meta.claude_activation_mode.as_ref())
+                            ),
+                            (AppType::Claude, Some(ClaudeActivationMode::ProfileOnly))
+                        );
+                        if !skip_backfill {
+                            if let Ok(live_config) = read_live_settings(app_type.clone()) {
+                                current_provider.settings_config =
+                                    strip_common_config_from_live_settings(
+                                        state.db.as_ref(),
+                                        &app_type,
+                                        &current_provider,
+                                        live_config,
+                                    );
+                                if let Err(e) =
+                                    state.db.save_provider(app_type.as_str(), &current_provider)
+                                {
+                                    log::warn!("Backfill failed: {e}");
+                                    result
+                                        .warnings
+                                        .push(format!("backfill_failed:{current_id}"));
+                                }
                             }
                         }
                     }
