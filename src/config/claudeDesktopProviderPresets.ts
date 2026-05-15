@@ -564,7 +564,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    icon: "claude",
+    icon: "relaxcode",
   },
   {
     name: "Cubence",

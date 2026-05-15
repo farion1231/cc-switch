@@ -611,7 +611,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "third_party",
-    icon: "claude",
+    icon: "relaxcode",
   },
   {
     name: "Cubence",

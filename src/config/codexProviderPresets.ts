@@ -227,7 +227,7 @@ requires_openai_auth = true`,
       "https://www.relaxycode.com/v1",
       "gpt-5.5",
     ),
-    icon: "claude",
+    icon: "relaxcode",
   },
   {
     name: "Cubence",

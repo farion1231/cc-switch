@@ -397,6 +397,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["runapi", "run", "aggregator", "gateway"],
   },
+  relaxcode: {
+    name: "relaxcode",
+    displayName: "RelaxyCode",
+    category: "ai-provider",
+    keywords: ["relaxycode", "relaxcode", "relax"],
+  },
   eflowcode: {
     name: "eflowcode",
     displayName: "E-FlowCode",
