@@ -1113,6 +1113,86 @@ mod tests {
 
     #[test]
     #[serial]
+    fn sync_current_claude_profile_and_config_applies_profile_before_live_write() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let stale_profile_dir = home.join(".claude-profiles").join("stale");
+            fs::create_dir_all(&stale_profile_dir).expect("create stale profile dir");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &stale_profile_dir.to_string_lossy(),
+            ))
+            .expect("seed stale override");
+
+            let api_dir = home.join(".claude-profiles").join("api");
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-api"))
+                .expect("set local current provider");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::Claude)
+                .expect("sync current claude provider");
+
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(api_dir.as_path()),
+                "sync-current should select the profile-and-config provider profile before writing live settings"
+            );
+
+            let api_live: Value =
+                read_json_file(&api_dir.join("settings.json")).expect("read api profile");
+            assert_eq!(
+                api_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("api-provider-token".to_string()),
+                "sync-current should write provider settings into the selected target profile"
+            );
+
+            assert!(
+                !stale_profile_dir.join("settings.json").exists(),
+                "sync-current must not write provider settings into the previously selected profile"
+            );
+
+            let default_live: Value =
+                read_json_file(&default_dir.join("settings.json")).expect("read default profile");
+            assert_eq!(
+                default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("default-live-token".to_string()),
+                "sync-current profile-and-config should not mutate the default live settings"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn add_first_claude_profile_only_sets_profile_without_overwriting_default_live() {
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");
@@ -4022,6 +4102,7 @@ impl ProviderService {
 
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
+        Self::sync_current_claude_profile_env(state)?;
         sync_current_to_live(state)
     }
 
@@ -4067,6 +4148,12 @@ impl ProviderService {
             )
             .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
             return Ok(());
+        }
+
+        if matches!(app_type, AppType::Claude) {
+            let plan = Self::claude_switch_plan(provider);
+            Self::validate_claude_runtime_switch_plan(&plan)?;
+            Self::apply_claude_switch_plan(&plan)?;
         }
 
         sync_current_provider_for_app_to_live(state, &app_type)
