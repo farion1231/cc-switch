@@ -3,7 +3,7 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
-use crate::proxy::error::ProxyError;
+use crate::proxy::{error::ProxyError, json_canonical::canonical_json_string};
 use serde_json::{json, Value};
 
 const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
@@ -424,7 +424,7 @@ fn convert_message_to_openai(
                         "type": "function",
                         "function": {
                             "name": name,
-                            "arguments": serde_json::to_string(&input).unwrap_or_default()
+                            "arguments": canonical_json_string(&input)
                         }
                     }));
                 }
@@ -1009,6 +1009,48 @@ mod tests {
         assert!(msg.get("tool_calls").is_some());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
         assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_canonicalizes_arguments() {
+        let left = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_123",
+                    "name": "read_file",
+                    "input": {"z": 1, "a": {"b": 2, "a": 1}}
+                }]
+            }]
+        });
+        let right = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_123",
+                    "name": "read_file",
+                    "input": {"a": {"a": 1, "b": 2}, "z": 1}
+                }]
+            }]
+        });
+
+        let left = anthropic_to_openai(left).expect("transform left");
+        let right = anthropic_to_openai(right).expect("transform right");
+        let left_args = left["messages"][0]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .expect("left arguments");
+        let right_args = right["messages"][0]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .expect("right arguments");
+
+        assert_eq!(left_args, right_args);
+        assert_eq!(left_args, "{\"a\":{\"a\":1,\"b\":2},\"z\":1}");
     }
 
     #[test]
