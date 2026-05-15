@@ -737,6 +737,36 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "RunAPI",
+    websiteUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co",
+    settingsConfig: {
+      name: "runapi",
+      base_url: "https://runapi.co",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
+        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "runapi",
+    icon: "runapi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { default: "claude-sonnet-4-6", provider: "runapi" },
+    },
+  },
+  {
     name: "AIGoCode",
     websiteUrl: "https://aigocode.com",
     apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",

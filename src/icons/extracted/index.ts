@@ -8,6 +8,7 @@ import _hermes from "./hermes.png";
 import _lemondata from "./lemondata.png";
 import _pateway from "./pateway.jpg";
 import _pipellm from "./pipellm.png";
+import _runapi from "./runapi.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
 
 export const icons: Record<string, string> = {
@@ -90,6 +91,7 @@ export const iconUrls: Record<string, string> = {
   lemondata: _lemondata,
   pateway: _pateway,
   pipellm: _pipellm,
+  runapi: _runapi,
   shengsuanyun: _shengsuanyun,
 };
 

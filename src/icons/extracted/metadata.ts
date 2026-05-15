@@ -391,6 +391,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["pipellm", "pipe"],
     defaultColor: "currentColor",
   },
+  runapi: {
+    name: "runapi",
+    displayName: "RunAPI",
+    category: "ai-provider",
+    keywords: ["runapi", "run", "aggregator", "gateway"],
+  },
   eflowcode: {
     name: "eflowcode",
     displayName: "E-FlowCode",

@@ -1241,6 +1241,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "RunAPI",
+    websiteUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "RunAPI",
+      options: {
+        baseURL: "https://runapi.co",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-7": { name: "Claude Opus 4.7" },
+        "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "runapi",
+    icon: "runapi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "AICoding",
     websiteUrl: "https://aicoding.sh",
     apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",

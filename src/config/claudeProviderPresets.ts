@@ -586,6 +586,21 @@ export const providerPresets: ProviderPreset[] = [
     icon: "claudecn",
   },
   {
+    name: "RunAPI",
+    websiteUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://runapi.co",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "runapi",
+    icon: "runapi",
+  },
+  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
