@@ -680,15 +680,43 @@ export function ProviderForm({
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
+  const watchedSettingsConfig = form.watch("settingsConfig");
+  const currentFullUrlSupportInputs = useMemo(() => {
+    let parsedSettingsConfig: Record<string, unknown> | null = null;
+
+    try {
+      parsedSettingsConfig = JSON.parse(
+        watchedSettingsConfig || "{}",
+      ) as Record<string, unknown>;
+    } catch {
+      parsedSettingsConfig = null;
+    }
+
+    return {
+      opencodeNpm:
+        typeof parsedSettingsConfig?.npm === "string"
+          ? parsedSettingsConfig.npm
+          : opencodeForm.opencodeNpm,
+      openclawApi:
+        typeof parsedSettingsConfig?.api === "string"
+          ? parsedSettingsConfig.api
+          : openclawForm.openclawApi,
+    };
+  }, [watchedSettingsConfig, opencodeForm.opencodeNpm, openclawForm.openclawApi]);
   const supportsFullUrl = useMemo(
     () =>
       supportsFullUrlMode({
         appId,
         category,
-        opencodeNpm: opencodeForm.opencodeNpm,
-        openclawApi: openclawForm.openclawApi,
+        opencodeNpm: currentFullUrlSupportInputs.opencodeNpm,
+        openclawApi: currentFullUrlSupportInputs.openclawApi,
       }),
-    [appId, category, opencodeForm.opencodeNpm, openclawForm.openclawApi],
+    [
+      appId,
+      category,
+      currentFullUrlSupportInputs.openclawApi,
+      currentFullUrlSupportInputs.opencodeNpm,
+    ],
   );
   const effectiveIsFullUrl = supportsFullUrl && localIsFullUrl;
   const {

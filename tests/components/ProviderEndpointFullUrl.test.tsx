@@ -202,6 +202,63 @@ describe("Provider endpoint full URL wiring", () => {
     );
   });
 
+  it("OpenCode hides the full URL toggle and fetches with full URL disabled after JSON editor changes npm to unsupported", async () => {
+    fetchModelsForConfigMock.mockResolvedValueOnce([]);
+
+    renderProviderForm("opencode", {
+      name: "OpenCode Drift",
+      category: "custom",
+      settingsConfig: {
+        npm: "@ai-sdk/openai-compatible",
+        options: {
+          baseURL: "https://example.com/v1",
+          apiKey: "sk-test",
+        },
+        models: {},
+      },
+      meta: {
+        isFullUrl: true,
+      },
+    });
+
+    expect(screen.getByLabelText("完整 URL")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("settings config"), {
+      target: {
+        value: JSON.stringify(
+          {
+            npm: "@ai-sdk/google",
+            options: {
+              baseURL: "https://example.com/v1beta",
+              apiKey: "sk-test",
+            },
+            models: {},
+          },
+          null,
+          2,
+        ),
+      },
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByLabelText("完整 URL")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "providerForm.fetchModels",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(fetchModelsForConfigMock).toHaveBeenCalledWith(
+        "https://example.com/v1",
+        "sk-test",
+        false,
+      ),
+    );
+  });
+
   it("OpenCode hides the full URL toggle for unsupported npm packages and fetches with full URL disabled", async () => {
     fetchModelsForConfigMock.mockResolvedValueOnce([]);
 
@@ -233,6 +290,59 @@ describe("Provider endpoint full URL wiring", () => {
       expect(fetchModelsForConfigMock).toHaveBeenCalledWith(
         "https://example.com/v1beta",
         "sk-test",
+        false,
+      ),
+    );
+  });
+
+  it("OpenClaw hides the full URL toggle and fetches with full URL disabled after JSON editor changes protocol to unsupported", async () => {
+    fetchModelsForConfigMock.mockResolvedValueOnce([]);
+
+    renderProviderForm("openclaw", {
+      name: "OpenClaw Drift",
+      category: "custom",
+      settingsConfig: {
+        baseUrl: "https://example.com/anthropic",
+        apiKey: "sk-openclaw",
+        api: "anthropic-messages",
+        models: [],
+      },
+      meta: {
+        isFullUrl: true,
+      },
+    });
+
+    expect(screen.getByLabelText("完整 URL")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("settings config"), {
+      target: {
+        value: JSON.stringify(
+          {
+            baseUrl: "https://example.com/google",
+            apiKey: "sk-openclaw",
+            api: "google-generative-ai",
+            models: [],
+          },
+          null,
+          2,
+        ),
+      },
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByLabelText("完整 URL")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "providerForm.fetchModels",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(fetchModelsForConfigMock).toHaveBeenCalledWith(
+        "https://example.com/anthropic",
+        "sk-openclaw",
         false,
       ),
     );
