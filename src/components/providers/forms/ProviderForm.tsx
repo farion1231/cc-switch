@@ -15,6 +15,7 @@ import type {
   ProviderTestConfig,
   ClaudeApiFormat,
   ClaudeApiKeyField,
+  ClaudeModelRouting,
 } from "@/types";
 import {
   providerPresets,
@@ -92,7 +93,12 @@ import {
   useCodexOauth,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { useSettingsQuery } from "@/lib/query";
+import {
+  useProvidersQuery,
+  useProxyStatus,
+  useProxyTakeoverStatus,
+  useSettingsQuery,
+} from "@/lib/query";
 import {
   CLAUDE_DEFAULT_CONFIG,
   CODEX_DEFAULT_CONFIG,
@@ -116,6 +122,16 @@ type PresetEntry = {
     | OpenClawProviderPreset
     | HermesProviderPreset;
 };
+
+function hasClaudeModelRoutingValues(routing?: ClaudeModelRouting | null): boolean {
+  if (!routing) return false;
+  return [
+    routing.defaultProviderId,
+    routing.haikuProviderId,
+    routing.sonnetProviderId,
+    routing.opusProviderId,
+  ].some((value) => typeof value === "string" && value.trim().length > 0);
+}
 
 export interface ProviderFormProps {
   appId: AppId;
@@ -357,6 +373,63 @@ function ProviderFormFull({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
   });
+
+  const [claudeModelRouting, setClaudeModelRouting] =
+    useState<ClaudeModelRouting>(() => {
+      if (appId !== "claude") return {};
+      return initialData?.meta?.claudeModelRouting ?? {};
+    });
+  const [claudeModelRoutingEnabled, setClaudeModelRoutingEnabled] =
+    useState<boolean>(() => {
+      if (appId !== "claude") return false;
+      return hasClaudeModelRoutingValues(initialData?.meta?.claudeModelRouting);
+    });
+
+  const handleClaudeModelRoutingChange = useCallback(
+    (
+      field:
+        | "defaultProviderId"
+        | "haikuProviderId"
+        | "sonnetProviderId"
+        | "opusProviderId",
+      value: string,
+    ) => {
+      setClaudeModelRouting((prev) => ({
+        ...prev,
+        [field]: value ? value : undefined,
+      }));
+    },
+    [],
+  );
+
+  const { data: providersData } = useProvidersQuery(appId);
+  const claudeRoutingProviderOptions = useMemo(() => {
+    if (appId !== "claude") return [];
+    const providers = providersData?.providers ?? {};
+    return Object.values(providers)
+      .filter((provider) => provider.id !== providerId)
+      .map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+      }));
+  }, [appId, providersData?.providers, providerId]);
+  const { data: proxyStatusData } = useProxyStatus();
+  const { data: proxyTakeoverStatusData } = useProxyTakeoverStatus();
+  const { data: rectifierConfig } = useQuery({
+    queryKey: ["rectifierConfig"],
+    queryFn: () => settingsApi.getRectifierConfig(),
+    enabled: appId === "claude",
+  });
+
+  useEffect(() => {
+    setClaudeModelRouting(
+      appId === "claude" ? (initialData?.meta?.claudeModelRouting ?? {}) : {},
+    );
+    setClaudeModelRoutingEnabled(
+      appId === "claude" &&
+        hasClaudeModelRoutingValues(initialData?.meta?.claudeModelRouting),
+    );
+  }, [appId, initialData?.meta?.claudeModelRouting]);
 
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
     if (appId !== "claude") return "anthropic";
@@ -1023,6 +1096,39 @@ function ProviderFormFull({
       }
     }
 
+    if (appId === "claude") {
+      const hasClaudeRouting =
+        claudeModelRoutingEnabled &&
+        hasClaudeModelRoutingValues(claudeModelRouting);
+
+      if (hasClaudeRouting) {
+        if (!proxyStatusData?.running) {
+          issues.push(
+            t("providerForm.claudeRoutingProxyNotRunning", {
+              defaultValue:
+                "已配置“模型路由供应商”，但本地路由服务未启动；保存后暂不会生效。",
+            }),
+          );
+        } else if (!proxyTakeoverStatusData?.claude) {
+          issues.push(
+            t("providerForm.claudeRoutingTakeoverNotEnabled", {
+              defaultValue:
+                "已配置“模型路由供应商”，但 Claude 接管未开启；保存后暂不会生效。",
+            }),
+          );
+        }
+
+        if (rectifierConfig && (!rectifierConfig.enabled || !rectifierConfig.requestToolUseId)) {
+          issues.push(
+            t("providerForm.claudeRoutingRectifierSuggested", {
+              defaultValue:
+                "已配置“模型路由供应商”；跨供应商继续历史对话时，建议在设置中开启整流器和 Tool Use ID 整流。",
+            }),
+          );
+        }
+      }
+    }
+
     if (issues.length > 0) {
       // 弹确认框让用户决定是否仍要保存
       setSoftIssues(issues);
@@ -1181,6 +1287,20 @@ function ProviderFormFull({
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
 
+    const normalizedClaudeModelRouting: ClaudeModelRouting | undefined =
+      appId === "claude" && claudeModelRoutingEnabled
+        ? (() => {
+            const normalized: ClaudeModelRouting = {
+              defaultProviderId: claudeModelRouting.defaultProviderId?.trim(),
+              haikuProviderId: claudeModelRouting.haikuProviderId?.trim(),
+              sonnetProviderId: claudeModelRouting.sonnetProviderId?.trim(),
+              opusProviderId: claudeModelRouting.opusProviderId?.trim(),
+            };
+            const hasAny = hasClaudeModelRoutingValues(normalized);
+            return hasAny ? normalized : undefined;
+          })()
+        : undefined;
+
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType =
       templatePreset?.providerType || initialData?.meta?.providerType;
@@ -1230,6 +1350,7 @@ function ProviderFormFull({
         appId === "claude" && category !== "official"
           ? localApiFormat
           : undefined,
+      claudeModelRouting: normalizedClaudeModelRouting,
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&
@@ -1846,6 +1967,15 @@ function ProviderFormFull({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              claudeModelRouting={claudeModelRouting}
+              claudeModelRoutingEnabled={claudeModelRoutingEnabled}
+              onClaudeModelRoutingEnabledChange={setClaudeModelRoutingEnabled}
+              onClaudeModelRoutingChange={handleClaudeModelRoutingChange}
+              routingProviderOptions={claudeRoutingProviderOptions}
+              proxyRunning={proxyStatusData?.running ?? false}
+              claudeTakeoverEnabled={proxyTakeoverStatusData?.claude ?? false}
+              rectifierEnabled={rectifierConfig?.enabled}
+              toolUseIdRectifierEnabled={rectifierConfig?.requestToolUseId}
             />
           )}
 

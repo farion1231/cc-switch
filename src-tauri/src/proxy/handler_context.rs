@@ -65,6 +65,10 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 是否命中 Claude 模型路由（用于抑制 current provider 回写）
+    model_route_applied: bool,
+    /// 路由命中时预映射的模型名（来自当前供应商 env），None 表示未命中不需要
+    mapped_model: Option<String>,
 }
 
 impl RequestContext {
@@ -126,9 +130,9 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
+        let (providers, model_route_applied, mapped_model) = state
             .provider_router
-            .select_providers(app_type_str)
+            .select_providers_for_request(app_type_str, body)
             .await
             .map_err(|e| match e {
                 crate::error::AppError::AllProvidersCircuitOpen => {
@@ -167,6 +171,8 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            model_route_applied,
+            mapped_model,
         })
     }
 
@@ -226,6 +232,8 @@ impl RequestContext {
             state.failover_manager.clone(),
             state.app_handle.clone(),
             self.current_provider_id.clone(),
+            self.model_route_applied,
+            self.mapped_model.clone(),
             self.session_id.clone(),
             self.session_client_provided,
             first_byte_timeout,

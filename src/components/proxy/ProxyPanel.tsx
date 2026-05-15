@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Activity,
   Clock,
@@ -18,6 +18,7 @@ import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { toast } from "sonner";
 import { useFailoverQueue } from "@/lib/query/failover";
+import { useProvidersQuery } from "@/lib/query";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { useProviderHealth } from "@/lib/query/failover";
 import {
@@ -72,7 +73,32 @@ export function ProxyPanel({
   const { data: codexQueue = [] } = useFailoverQueue("codex");
   const { data: geminiQueue = [] } = useFailoverQueue("gemini");
 
+  // 检查是否有 Claude 供应商配置了模型路由（用于关闭接管时的反向校验）
+  const { data: claudeProvidersData } = useProvidersQuery("claude");
+  const anyClaudeProviderHasRouting = useMemo(() => {
+    const providers = claudeProvidersData?.providers ?? {};
+    return Object.values(providers).some((provider) => {
+      const routing = provider.meta?.claudeModelRouting;
+      if (!routing) return false;
+      return [
+        routing.defaultProviderId,
+        routing.haikuProviderId,
+        routing.sonnetProviderId,
+        routing.opusProviderId,
+      ].some((v) => typeof v === "string" && v.trim().length > 0);
+    });
+  }, [claudeProvidersData?.providers]);
+
   const handleTakeoverChange = async (appType: string, enabled: boolean) => {
+    if (appType === "claude" && !enabled && anyClaudeProviderHasRouting) {
+      toast.warning(
+        t("proxy.takeover.claudeRoutingWarning", {
+          defaultValue:
+            "当前有 Claude 供应商配置了「模型路由供应商」，关闭接管后路由将不再生效。",
+        }),
+        { closeButton: true },
+      );
+    }
     try {
       await setTakeoverForApp.mutateAsync({ appType, enabled });
       toast.success(
