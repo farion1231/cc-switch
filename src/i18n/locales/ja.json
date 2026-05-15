@@ -186,7 +186,7 @@
     "modeDirect": "直結",
     "modeProxy": "ルーティング必要",
     "modelMappingToggle": "モデルマッピングが必要",
-    "modelMappingOffHint": "プロバイダーが Anthropic Messages で claude-* / anthropic/claude-* のモデル ID を公開し、そのまま受け付ける場合に使います。Claude Desktop はプロバイダーへ直接接続します。",
+    "modelMappingOffHint": "プロバイダーがネイティブの Claude シリーズモデルを提供していない場合は、このスイッチを有効にしてください。",
     "modelMappingOnHint": "Claude Desktop は現在モデル ID を制限しています。お使いのプロバイダーが Claude 系列以外のモデルを提供する場合、このスイッチを有効にし、使用中はローカルルーティングを起動したままにしてください。",
     "routeMapTitle": "モデルマッピング",
     "routeMapHint": "モデル役割を選ぶと、CC Switch が Claude Desktop 互換ルートを自動生成します。DeepSeek や Kimi などのブランド名はメニュー表示名に入れ、実際のリクエストモデルは右側の入力どおりに送信されます。",

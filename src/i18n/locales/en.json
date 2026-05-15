@@ -186,7 +186,7 @@
     "modeDirect": "Direct",
     "modeProxy": "Requires routing",
     "modelMappingToggle": "Needs model mapping",
-    "modelMappingOffHint": "Use this when the provider already exposes and accepts claude-* / anthropic/claude-* model IDs through Anthropic Messages. Claude Desktop connects to the provider directly.",
+    "modelMappingOffHint": "If your provider does not offer native Claude series models, please enable this switch.",
     "modelMappingOnHint": "Claude Desktop currently restricts model IDs. If your provider offers non-Claude models, enable this switch and keep local routing running while in use.",
     "routeMapTitle": "Model mapping",
     "routeMapHint": "Choose a model role and CC Switch will generate a Claude Desktop-compatible route automatically. Use the menu display name for branded models such as DeepSeek or Kimi; requested model IDs are sent upstream exactly as entered.",
