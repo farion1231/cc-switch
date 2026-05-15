@@ -2459,6 +2459,228 @@ base_url = "http://localhost:8080"
         );
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn switch_claude_profile_only_applies_profile_during_proxy_hot_switch() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let profile_dir = crate::config::get_home_dir()
+            .join(".claude-profiles")
+            .join("official");
+        fs::create_dir_all(&profile_dir).expect("create profile dir");
+        write_json_file(
+            &profile_dir.join("settings.json"),
+            &json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                    "ANTHROPIC_BASE_URL": "https://official-live.example"
+                }
+            }),
+        )
+        .expect("seed profile settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let legacy = claude_provider(
+            "legacy",
+            "Claude Legacy",
+            "legacy-token",
+            "https://legacy.example",
+            None,
+        );
+        let profile_only = claude_provider(
+            "profile-only",
+            "Claude Profile",
+            "provider-token-should-not-write",
+            "https://provider-should-not-write.example",
+            Some(ProviderMeta {
+                claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                ..Default::default()
+            }),
+        );
+        db.save_provider("claude", &legacy)
+            .expect("save legacy provider");
+        db.save_provider("claude", &profile_only)
+            .expect("save profile-only provider");
+        db.set_current_provider("claude", "legacy")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("legacy"))
+            .expect("set local current provider");
+
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&legacy.settings_config).expect("serialize legacy provider"),
+        )
+        .await
+        .expect("seed live backup");
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 15731,
+            ..Default::default()
+        })
+        .await
+        .expect("set proxy test port");
+        let default_live_path = get_claude_settings_path();
+        write_json_file(
+            &default_live_path,
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": "PROXY_MANAGED"
+                }
+            }),
+        )
+        .expect("seed taken-over live file");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        ProviderService::switch(&state, AppType::Claude, "profile-only")
+            .expect("hot-switch to profile-only provider");
+
+        assert_eq!(
+            crate::settings::get_claude_override_dir().as_deref(),
+            Some(profile_dir.as_path()),
+            "profile-only hot-switch should apply the selected Claude profile"
+        );
+        assert_eq!(
+            crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                .expect("read claude config dir")
+                .as_deref(),
+            Some(profile_dir.to_string_lossy().as_ref()),
+            "profile-only hot-switch should update the persisted Claude env"
+        );
+
+        let profile_live: Value =
+            read_json_file(&profile_dir.join("settings.json")).expect("read profile settings");
+        assert_eq!(
+            profile_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+            Value::String("official-live-token".to_string()),
+            "profile-only hot-switch should not overwrite the selected profile file"
+        );
+
+        let default_live: Value =
+            read_json_file(&default_live_path).expect("read default live settings");
+        assert_eq!(
+            default_live["env"]["ANTHROPIC_API_KEY"],
+            Value::String("PROXY_MANAGED".to_string()),
+            "profile-only hot-switch should not write provider credentials into proxy live config"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn switch_claude_profile_and_config_applies_profile_before_proxy_hot_switch() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let profile_dir = crate::config::get_home_dir()
+            .join(".claude-profiles")
+            .join("api");
+        fs::create_dir_all(&profile_dir).expect("create profile dir");
+        let default_live_path = get_claude_settings_path();
+        write_json_file(
+            &default_live_path,
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": "PROXY_MANAGED"
+                }
+            }),
+        )
+        .expect("seed default live file");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let legacy = claude_provider(
+            "legacy",
+            "Claude Legacy",
+            "legacy-token",
+            "https://legacy.example",
+            None,
+        );
+        let profile_and_config = claude_provider(
+            "profile-and-config",
+            "Claude API",
+            "api-provider-token",
+            "https://api-provider.example",
+            Some(ProviderMeta {
+                claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                ..Default::default()
+            }),
+        );
+        db.save_provider("claude", &legacy)
+            .expect("save legacy provider");
+        db.save_provider("claude", &profile_and_config)
+            .expect("save profile-and-config provider");
+        db.set_current_provider("claude", "legacy")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("legacy"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&legacy.settings_config).expect("serialize legacy provider"),
+        )
+        .await
+        .expect("seed live backup");
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 15732,
+            ..Default::default()
+        })
+        .await
+        .expect("set proxy test port");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        ProviderService::switch(&state, AppType::Claude, "profile-and-config")
+            .expect("hot-switch to profile-and-config provider");
+
+        assert_eq!(
+            crate::settings::get_claude_override_dir().as_deref(),
+            Some(profile_dir.as_path()),
+            "profile-and-config hot-switch should apply the selected Claude profile"
+        );
+        assert_eq!(
+            crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                .expect("read claude config dir")
+                .as_deref(),
+            Some(profile_dir.to_string_lossy().as_ref()),
+            "profile-and-config hot-switch should update the persisted Claude env"
+        );
+
+        let profile_live: Value =
+            read_json_file(&profile_dir.join("settings.json")).expect("read profile settings");
+        assert_eq!(
+            profile_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+            Value::String("PROXY_MANAGED".to_string()),
+            "profile-and-config hot-switch should write proxy-managed auth into the selected profile"
+        );
+        assert_eq!(
+            profile_live["env"]["ANTHROPIC_BASE_URL"],
+            Value::String("http://127.0.0.1:15732".to_string()),
+            "profile-and-config hot-switch should keep the proxy endpoint in the selected profile"
+        );
+
+        let default_live: Value =
+            read_json_file(&default_live_path).expect("read default live settings");
+        assert_eq!(
+            default_live["env"]["ANTHROPIC_API_KEY"],
+            Value::String("PROXY_MANAGED".to_string()),
+            "profile-and-config hot-switch should not write provider credentials into the previous default profile"
+        );
+    }
+
     #[test]
     #[serial]
     fn rename_rejects_missing_original_provider() {
@@ -3095,6 +3317,15 @@ impl ProviderService {
         }
 
         Ok(())
+    }
+
+    fn apply_claude_provider_switch_plan(
+        provider: &Provider,
+    ) -> Result<ClaudeSwitchPlan, AppError> {
+        let plan = Self::claude_switch_plan(provider);
+        Self::validate_claude_runtime_switch_plan(&plan)?;
+        Self::apply_claude_switch_plan(&plan)?;
+        Ok(plan)
     }
 
     pub(crate) fn prepare_claude_profile_terminal_launch(
@@ -3953,6 +4184,11 @@ impl ProviderService {
         }
 
         if should_hot_switch {
+            let claude_switch_plan = if matches!(app_type, AppType::Claude) {
+                Some(Self::apply_claude_provider_switch_plan(_provider)?)
+            } else {
+                None
+            };
             let codex_source_provider = if matches!(app_type, AppType::Codex) {
                 crate::settings::get_effective_current_provider(&state.db, &app_type)?
                     .as_deref()
@@ -3969,12 +4205,22 @@ impl ProviderService {
                 id
             );
 
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .hot_switch_provider(app_type.as_str(), id),
-            )
-            .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
+            if !matches!(
+                claude_switch_plan
+                    .as_ref()
+                    .map(|plan| &plan.activation_mode),
+                Some(ClaudeActivationMode::ProfileOnly)
+            ) {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .hot_switch_provider(app_type.as_str(), id),
+                )
+                .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
+            } else {
+                state.db.set_current_provider(app_type.as_str(), id)?;
+                crate::settings::set_current_provider(&app_type, Some(id))?;
+            }
 
             // Note: No Live config write, no MCP sync
             // The proxy server will route requests to the new provider via is_current
