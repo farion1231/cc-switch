@@ -1053,6 +1053,73 @@ mod tests {
 
     #[test]
     #[serial]
+    fn update_current_claude_profile_only_rejects_missing_dir_before_saving() {
+        with_test_home(|state, home| {
+            let legacy_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &legacy_provider)
+                .expect("save legacy provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-current")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-current"))
+                .expect("set local current provider");
+
+            let updated_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "provider-token-should-not-save",
+                "https://provider-should-not-save.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(
+                        home.join(".claude-profiles")
+                            .join("missing-official")
+                            .to_string_lossy()
+                            .to_string(),
+                    ),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            let err = ProviderService::update(state, AppType::Claude, None, updated_provider)
+                .expect_err("missing profile-only dir should reject update");
+            assert!(
+                err.to_string().contains("profile"),
+                "expected profile validation error, got {err:?}"
+            );
+
+            let stored = state
+                .db
+                .get_provider_by_id("claude-current", AppType::Claude.as_str())
+                .expect("query stored provider")
+                .expect("stored provider exists");
+            assert!(
+                stored
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.claude_activation_mode.as_ref())
+                    .is_none(),
+                "failed current-provider update must not persist invalid profile activation"
+            );
+            assert_eq!(
+                stored.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("legacy-token".to_string()),
+                "failed current-provider update must leave previous settings in DB"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn terminal_launch_profile_and_config_syncs_selected_provider_without_switching_current() {
         with_test_home(|state, home| {
             let api_dir = home.join(".claude-profiles").join("api");
@@ -2771,13 +2838,17 @@ impl ProviderService {
             return Ok(true);
         }
 
-        // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
-
         // For other apps: Check if this is current provider (use effective current, not just DB)
         let effective_current =
             crate::settings::get_effective_current_provider(&state.db, &app_type)?;
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
+        if is_current && matches!(app_type, AppType::Claude) {
+            let plan = Self::claude_switch_plan(&provider);
+            Self::validate_claude_runtime_switch_plan(&plan)?;
+        }
+
+        // Save to database only after current-provider runtime validation succeeds.
+        state.db.save_provider(app_type.as_str(), &provider)?;
 
         if is_current {
             let claude_switch_plan =
