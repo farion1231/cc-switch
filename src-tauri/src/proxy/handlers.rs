@@ -26,6 +26,7 @@ use super::{
         strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
         usage_logging_enabled, SseUsageCollector,
     },
+    error::map_proxy_error_to_anthropic,
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     types::*,
@@ -165,6 +166,12 @@ async fn handle_messages_for_app(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error);
+
+            let adapter = get_adapter(&app_type);
+            let needs_transform = adapter.needs_transform(&ctx.provider);
+            if needs_transform {
+                return Err(map_proxy_error_to_anthropic(err.error));
+            }
             return Err(err.error);
         }
     };
