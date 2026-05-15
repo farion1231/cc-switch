@@ -175,12 +175,18 @@ impl RequestContext {
     /// Gemini API 的模型名称在 URI 中，格式如：
     /// `/v1beta/models/gemini-pro:generateContent`
     pub fn with_model_from_uri(mut self, uri: &axum::http::Uri) -> Self {
-        // 用 path() 而不是 path_and_query()：模型名必须从路径段中解析，
-        // 否则 GET /v1beta/models/<id>?key=... 会把 query 拼到 request_model 上。
-        let endpoint = uri.path();
+        let endpoint = uri
+            .path_and_query()
+            .map(|pq| pq.as_str())
+            .unwrap_or(uri.path());
 
-        self.request_model =
-            extract_gemini_model_from_path(endpoint).unwrap_or_else(|| "unknown".to_string());
+        self.request_model = endpoint
+            .split('/')
+            .find(|s| s.starts_with("models/"))
+            .and_then(|s| s.strip_prefix("models/"))
+            .map(|s| s.split(':').next().unwrap_or(s))
+            .unwrap_or("unknown")
+            .to_string();
 
         self
     }
@@ -270,101 +276,5 @@ impl RequestContext {
                 idle_timeout: 0,
             }
         }
-    }
-}
-
-/// Pull the Gemini model name out of an API path.
-///
-/// Accepts forms like `/v1beta/models/gemini-pro:generateContent`,
-/// `/v1/models/gemini-1.5-flash`, `gemini/v1beta/models/<model>:streamGenerateContent`.
-/// Returns `None` when no `models/<name>` segment is present.
-pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
-    let segments: Vec<&str> = endpoint.split('/').collect();
-    segments
-        .iter()
-        .position(|s| *s == "models")
-        .and_then(|i| segments.get(i + 1).copied())
-        // 防御性裁剪：即便调用方传入带 ? 或 :action 的字符串，也只保留 model id 本身
-        .map(|s| s.split('?').next().unwrap_or(s))
-        .map(|s| s.split(':').next().unwrap_or(s))
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::extract_gemini_model_from_path;
-
-    #[test]
-    fn extract_model_with_action() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-pro:generateContent").as_deref(),
-            Some("gemini-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_with_dotted_version() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-1.5-flash:streamGenerateContent")
-                .as_deref(),
-            Some("gemini-1.5-flash"),
-        );
-    }
-
-    #[test]
-    fn extract_model_without_action() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1/models/gemini-1.5-pro").as_deref(),
-            Some("gemini-1.5-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_with_proxy_prefix() {
-        assert_eq!(
-            extract_gemini_model_from_path("/gemini/v1beta/models/gemini-2.0-flash:countTokens")
-                .as_deref(),
-            Some("gemini-2.0-flash"),
-        );
-    }
-
-    #[test]
-    fn extract_model_with_query_string() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-pro:generateContent?key=abc")
-                .as_deref(),
-            Some("gemini-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_missing_segment() {
-        assert_eq!(extract_gemini_model_from_path("/v1beta/operations"), None);
-    }
-
-    #[test]
-    fn extract_model_trailing_models_segment() {
-        // `/v1beta/models` (list endpoint) has no following segment → None.
-        assert_eq!(extract_gemini_model_from_path("/v1beta/models"), None);
-    }
-
-    #[test]
-    fn extract_model_get_with_query_only() {
-        // GET /v1beta/models/<id>?key=... 无 action verb，仅靠 ':' 拆分会把 query 带进 model 名。
-        // 修复后应该把 query 剥掉。
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-pro?key=abc").as_deref(),
-            Some("gemini-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_get_with_proxy_prefix_and_query() {
-        assert_eq!(
-            extract_gemini_model_from_path("/gemini/v1beta/models/gemini-2.0-flash?key=abc")
-                .as_deref(),
-            Some("gemini-2.0-flash"),
-        );
     }
 }

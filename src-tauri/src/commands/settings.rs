@@ -42,8 +42,6 @@ pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<boo
 /// 重启应用程序（当 app_config_dir 变更后使用）
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
-    crate::save_window_state_before_exit(&app);
-
     // 在后台延迟重启，让函数有时间返回响应
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -87,15 +85,13 @@ mod tests {
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
-        let existing = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.example.com".to_string(),
-                username: "alice".to_string(),
-                password: "secret".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+            ..WebDavSyncSettings::default()
+        });
 
         let incoming = AppSettings::default();
         let merged = merge_settings_for_save(incoming, &existing);
@@ -109,25 +105,21 @@ mod tests {
 
     #[test]
     fn save_settings_should_keep_incoming_webdav_when_present() {
-        let existing = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.old.example.com".to_string(),
-                username: "old".to_string(),
-                password: "old-pass".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.old.example.com".to_string(),
+            username: "old".to_string(),
+            password: "old-pass".to_string(),
+            ..WebDavSyncSettings::default()
+        });
 
-        let incoming = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.new.example.com".to_string(),
-                username: "new".to_string(),
-                password: "new-pass".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
+        let mut incoming = AppSettings::default();
+        incoming.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.new.example.com".to_string(),
+            username: "new".to_string(),
+            password: "new-pass".to_string(),
+            ..WebDavSyncSettings::default()
+        });
 
         let merged = merge_settings_for_save(incoming, &existing);
 
@@ -143,26 +135,22 @@ mod tests {
     /// must NOT overwrite the existing one.
     #[test]
     fn save_settings_should_preserve_password_when_incoming_has_empty_password() {
-        let existing = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.example.com".to_string(),
-                username: "alice".to_string(),
-                password: "secret".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+            ..WebDavSyncSettings::default()
+        });
 
         // Simulate frontend sending settings with cleared password
-        let incoming = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.example.com".to_string(),
-                username: "alice".to_string(),
-                password: "".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
+        let mut incoming = AppSettings::default();
+        incoming.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "".to_string(),
+            ..WebDavSyncSettings::default()
+        });
 
         let merged = merge_settings_for_save(incoming, &existing);
 
@@ -177,25 +165,21 @@ mod tests {
     /// work without panicking and keep the empty state.
     #[test]
     fn save_settings_should_handle_both_empty_passwords() {
-        let existing = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.example.com".to_string(),
-                username: "alice".to_string(),
-                password: "".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "".to_string(),
+            ..WebDavSyncSettings::default()
+        });
 
-        let incoming = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.example.com".to_string(),
-                username: "alice".to_string(),
-                password: "".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
+        let mut incoming = AppSettings::default();
+        incoming.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "".to_string(),
+            ..WebDavSyncSettings::default()
+        });
 
         let merged = merge_settings_for_save(incoming, &existing);
 

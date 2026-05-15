@@ -112,9 +112,6 @@ impl McpService {
             AppType::Claude => {
                 mcp::sync_single_server_to_claude(&Default::default(), &server.id, &server.server)?;
             }
-            AppType::ClaudeDesktop => {
-                log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
-            }
             AppType::Codex => {
                 // Codex uses TOML format, must use the correct function
                 mcp::sync_single_server_to_codex(&Default::default(), &server.id, &server.server)?;
@@ -157,9 +154,6 @@ impl McpService {
     fn remove_server_from_app(_state: &AppState, id: &str, app: &AppType) -> Result<(), AppError> {
         match app {
             AppType::Claude => mcp::remove_server_from_claude(id)?,
-            AppType::ClaudeDesktop => {
-                log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
-            }
             AppType::Codex => mcp::remove_server_from_codex(id)?,
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
             AppType::OpenCode => {
@@ -181,7 +175,7 @@ impl McpService {
         let servers = Self::get_all_servers(state)?;
 
         for app in AppType::all() {
-            if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
+            if matches!(app, AppType::OpenClaw) {
                 continue;
             }
 
@@ -274,8 +268,8 @@ impl McpService {
                     state.db.save_mcp_server(&to_save)?;
                     existing.insert(to_save.id.clone(), to_save.clone());
 
-                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
-                    // 显式编辑、启用/禁用或手动同步时再执行写回。
+                    // 同步到对应应用 live 配置
+                    Self::sync_server_to_apps(state, &to_save)?;
                 }
             }
         }
@@ -312,8 +306,8 @@ impl McpService {
                     state.db.save_mcp_server(&to_save)?;
                     existing.insert(to_save.id.clone(), to_save.clone());
 
-                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
-                    // 显式编辑、启用/禁用或手动同步时再执行写回。
+                    // 同步到对应应用 live 配置
+                    Self::sync_server_to_apps(state, &to_save)?;
                 }
             }
         }
@@ -350,8 +344,8 @@ impl McpService {
                     state.db.save_mcp_server(&to_save)?;
                     existing.insert(to_save.id.clone(), to_save.clone());
 
-                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
-                    // 显式编辑、启用/禁用或手动同步时再执行写回。
+                    // 同步到对应应用 live 配置
+                    Self::sync_server_to_apps(state, &to_save)?;
                 }
             }
         }
@@ -388,8 +382,8 @@ impl McpService {
                     state.db.save_mcp_server(&to_save)?;
                     existing.insert(to_save.id.clone(), to_save.clone());
 
-                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
-                    // 显式编辑、启用/禁用或手动同步时再执行写回。
+                    // 同步到对应应用 live 配置
+                    Self::sync_server_to_apps(state, &to_save)?;
                 }
             }
         }
@@ -426,8 +420,8 @@ impl McpService {
                     state.db.save_mcp_server(&to_save)?;
                     existing.insert(to_save.id.clone(), to_save.clone());
 
-                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
-                    // 显式编辑、启用/禁用或手动同步时再执行写回。
+                    // 同步到对应应用 live 配置
+                    Self::sync_server_to_apps(state, &to_save)?;
                 }
             }
         }

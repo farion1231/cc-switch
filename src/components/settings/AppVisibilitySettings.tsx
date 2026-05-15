@@ -16,12 +16,7 @@ const APP_CONFIG: Array<{
   icon: string;
   nameKey: string;
 }> = [
-  { id: "claude", icon: "claude", nameKey: "apps.claudeCode" },
-  {
-    id: "claude-desktop",
-    icon: "claude",
-    nameKey: "apps.claudeDesktop",
-  },
+  { id: "claude", icon: "claude", nameKey: "apps.claude" },
   { id: "codex", icon: "openai", nameKey: "apps.codex" },
   { id: "gemini", icon: "gemini", nameKey: "apps.gemini" },
   { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
@@ -37,7 +32,6 @@ export function AppVisibilitySettings({
 
   const visibleApps: VisibleApps = settings.visibleApps ?? {
     claude: true,
-    "claude-desktop": true,
     codex: true,
     gemini: true,
     opencode: true,
@@ -120,7 +114,7 @@ function AppButton({
       size="sm"
       variant={active ? "default" : "ghost"}
       className={cn(
-        "min-w-[90px] w-auto gap-1.5 px-3",
+        "w-[90px] gap-1.5",
         active
           ? "shadow-sm"
           : "text-muted-foreground hover:text-foreground hover:bg-muted",

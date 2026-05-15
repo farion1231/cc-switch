@@ -2,55 +2,11 @@
 //!
 //! 处理代理配置、Provider健康状态和使用统计的数据库操作
 
-use std::str::FromStr;
-
 use crate::error::AppError;
 use crate::proxy::types::*;
 use rust_decimal::Decimal;
 
 use super::super::{lock_conn, Database};
-
-pub(crate) const PRICING_SOURCE_RESPONSE: &str = "response";
-pub(crate) const PRICING_SOURCE_REQUEST: &str = "request";
-
-pub(crate) fn validate_cost_multiplier(value: &str) -> Result<Decimal, AppError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::localized(
-            "error.multiplierEmpty",
-            "倍率不能为空",
-            "Multiplier cannot be empty",
-        ));
-    }
-    let parsed = Decimal::from_str(trimmed).map_err(|e| {
-        AppError::localized(
-            "error.invalidMultiplier",
-            format!("无效倍率: {value} - {e}"),
-            format!("Invalid multiplier: {value} - {e}"),
-        )
-    })?;
-    if parsed < Decimal::ZERO {
-        return Err(AppError::localized(
-            "error.invalidMultiplier",
-            format!("无效倍率: {value} - 倍率不能为负数"),
-            format!("Invalid multiplier: {value} - multiplier cannot be negative"),
-        ));
-    }
-    Ok(parsed)
-}
-
-pub(crate) fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
-    let trimmed = value.trim();
-    if trimmed == PRICING_SOURCE_RESPONSE || trimmed == PRICING_SOURCE_REQUEST {
-        Ok(trimmed)
-    } else {
-        Err(AppError::localized(
-            "error.invalidPricingMode",
-            format!("无效计费模式: {value}"),
-            format!("Invalid pricing mode: {value}"),
-        ))
-    }
-}
 
 impl Database {
     // ==================== Global Proxy Config ====================
@@ -147,8 +103,21 @@ impl Database {
         app_type: &str,
         value: &str,
     ) -> Result<(), AppError> {
-        validate_cost_multiplier(value)?;
         let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::localized(
+                "error.multiplierEmpty",
+                "倍率不能为空",
+                "Multiplier cannot be empty",
+            ));
+        }
+        trimmed.parse::<Decimal>().map_err(|e| {
+            AppError::localized(
+                "error.invalidMultiplier",
+                format!("无效倍率: {value} - {e}"),
+                format!("Invalid multiplier: {value} - {e}"),
+            )
+        })?;
 
         // 确保行存在
         self.ensure_proxy_config_row_exists(app_type)?;
@@ -181,7 +150,7 @@ impl Database {
             Ok(value) => Ok(value),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 self.init_proxy_config_rows().await?;
-                Ok(PRICING_SOURCE_RESPONSE.to_string())
+                Ok("response".to_string())
             }
             Err(e) => Err(AppError::Database(e.to_string())),
         }
@@ -193,7 +162,14 @@ impl Database {
         app_type: &str,
         value: &str,
     ) -> Result<(), AppError> {
-        let trimmed = validate_pricing_source(value)?;
+        let trimmed = value.trim();
+        if !matches!(trimmed, "response" | "request") {
+            return Err(AppError::localized(
+                "error.invalidPricingMode",
+                format!("无效计费模式: {value}"),
+                format!("Invalid pricing mode: {value}"),
+            ));
+        }
 
         // 确保行存在
         self.ensure_proxy_config_row_exists(app_type)?;
@@ -931,18 +907,6 @@ mod tests {
             err,
             AppError::Localized {
                 key: "error.invalidPricingMode",
-                ..
-            }
-        ));
-
-        let err = db
-            .set_default_cost_multiplier("claude", "-0.5")
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            AppError::Localized {
-                key: "error.invalidMultiplier",
                 ..
             }
         ));

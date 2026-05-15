@@ -17,7 +17,7 @@ mod claude;
 mod codex;
 pub mod codex_oauth_auth;
 pub mod copilot_auth;
-pub mod copilot_model_map;
+pub mod deepseek;
 mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
@@ -41,6 +41,7 @@ pub use claude::{
     transform_claude_request_for_api_format, ClaudeAdapter,
 };
 pub use codex::CodexAdapter;
+pub use deepseek::DeepSeekAdapter;
 pub use gemini::GeminiAdapter;
 
 /// 供应商类型枚举
@@ -66,6 +67,8 @@ pub enum ProviderType {
     GitHubCopilot,
     /// OpenAI Codex (ChatGPT Plus/Pro OAuth，需要 Anthropic ↔ Responses API 转换)
     CodexOAuth,
+    /// DeepSeek (Responses API ↔ Chat Completions 转换)
+    DeepSeek,
 }
 
 impl ProviderType {
@@ -79,6 +82,7 @@ impl ProviderType {
         match self {
             ProviderType::GitHubCopilot => true,
             ProviderType::CodexOAuth => true,
+            ProviderType::DeepSeek => true,
             ProviderType::OpenRouter => false,
             _ => false,
         }
@@ -96,6 +100,7 @@ impl ProviderType {
             ProviderType::OpenRouter => "https://openrouter.ai/api",
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
             ProviderType::CodexOAuth => "https://chatgpt.com/backend-api/codex",
+            ProviderType::DeepSeek => "https://api.deepseek.com",
         }
     }
 
@@ -105,7 +110,7 @@ impl ProviderType {
     #[allow(dead_code)]
     pub fn from_app_type_and_config(app_type: &AppType, provider: &Provider) -> Self {
         match app_type {
-            AppType::Claude | AppType::ClaudeDesktop => {
+            AppType::Claude => {
                 if get_claude_api_format(provider) == "gemini_native" {
                     let adapter = ClaudeAdapter::new();
                     return match adapter.extract_auth(provider).map(|auth| auth.strategy) {
@@ -158,7 +163,13 @@ impl ProviderType {
                 }
                 ProviderType::Claude
             }
-            AppType::Codex => ProviderType::Codex,
+            AppType::Codex => {
+                if deepseek::DeepSeekAdapter::is_deepseek_provider(provider) {
+                    ProviderType::DeepSeek
+                } else {
+                    ProviderType::Codex
+                }
+            }
             AppType::Gemini => {
                 // 检测是否为 CLI 模式（OAuth）
                 let adapter = GeminiAdapter::new();
@@ -193,6 +204,7 @@ impl ProviderType {
             ProviderType::OpenRouter => "openrouter",
             ProviderType::GitHubCopilot => "github_copilot",
             ProviderType::CodexOAuth => "codex_oauth",
+            ProviderType::DeepSeek => "deepseek",
         }
     }
 }
@@ -218,6 +230,7 @@ impl std::str::FromStr for ProviderType {
                 Ok(ProviderType::GitHubCopilot)
             }
             "codex_oauth" | "codex-oauth" | "codexoauth" => Ok(ProviderType::CodexOAuth),
+            "deepseek" => Ok(ProviderType::DeepSeek),
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -226,7 +239,7 @@ impl std::str::FromStr for ProviderType {
 /// 根据 AppType 获取对应的适配器
 pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
     match app_type {
-        AppType::Claude | AppType::ClaudeDesktop => Box::new(ClaudeAdapter::new()),
+        AppType::Claude => Box::new(ClaudeAdapter::new()),
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
@@ -247,6 +260,16 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         | ProviderType::CodexOAuth => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
+        ProviderType::DeepSeek => Box::new(DeepSeekAdapter::new()),
+    }
+}
+
+/// 根据 Codex app type 的 provider 配置获取合适的适配器
+pub fn get_adapter_for_codex_provider(provider: &Provider) -> Box<dyn ProviderAdapter> {
+    if DeepSeekAdapter::is_deepseek_provider(provider) {
+        Box::new(DeepSeekAdapter::new())
+    } else {
+        Box::new(CodexAdapter::new())
     }
 }
 

@@ -104,7 +104,6 @@
     "noProvidersDescription": "If you already have a config, click \"Import Current Config\" — all data will be safely saved in a default provider",
     "noProvidersDescriptionSnippet": "Settings other than API key and endpoint (e.g. plugins) will be saved to a common config snippet for sharing across providers",
     "importCurrent": "Import Current Config",
-    "importFromClaude": "Import existing providers from Claude Code",
     "importCurrentDescription": "Import current live config as default provider",
     "currentlyUsing": "Currently Using",
     "enable": "Enable",
@@ -173,52 +172,11 @@
       }
     }
   },
-  "claudeDesktop": {
-    "officialNotice": "Claude Desktop official providers use the built-in 1P sign-in. No API key or endpoint URL is required.",
-    "mode": "Model handling",
-    "modeDirect": "Direct",
-    "modeProxy": "Requires routing",
-    "modelMappingToggle": "Needs model mapping",
-    "modelMappingOffHint": "Use this when the provider already exposes and accepts claude-* / anthropic/claude-* model IDs through Anthropic Messages. Claude Desktop connects to the provider directly.",
-    "modelMappingOnHint": "Claude Desktop currently restricts model IDs. If your provider offers non-Claude models, enable this switch and keep local routing running while in use.",
-    "routeMapTitle": "Model mapping",
-    "routeMapHint": "Choose a model role and CC Switch will generate a Claude Desktop-compatible route automatically. Use the menu display name for branded models such as DeepSeek or Kimi; requested model IDs are sent upstream exactly as entered.",
-    "routeModelLabel": "Model role",
-    "routeRoleSonnet": "Sonnet",
-    "routeRoleOpus": "Opus",
-    "routeRoleHaiku": "Haiku",
-    "labelOverrideLabel": "Menu display name",
-    "upstreamModelLabel": "Requested model",
-    "supports1mLabel": "Declare 1M",
-    "supports1mShort": "1M",
-    "directModelListTitle": "Manually specify Claude Desktop models (advanced, optional)",
-    "directModelListCollapsedHint": "Native Claude model providers usually do not need this. Claude Desktop will fetch /v1/models automatically.",
-    "directModelListHint": "Only fill this when the provider's /v1/models is unavailable or does not return Claude Desktop-safe claude-* model IDs. Checking 1M declares 1M context support to Claude Desktop.",
-    "directModelInvalid": "Direct models must use claude-* / anthropic/claude-* model IDs",
-    "addModel": "Add model",
-    "addRoute": "Add model",
-    "routeInvalid": "Choose a model role and enter the requested model",
-    "routesRequired": "At least one model mapping is required",
-    "statusTitle": "Claude Desktop configuration needs attention",
-    "statusUnsupported": "This platform does not support writing Claude Desktop 3P configuration yet.",
-    "statusStaleRawModels": "The Claude Desktop profile contains non-claude-* model IDs. Newer Claude Desktop versions may reject it; switch to the current provider again to repair it.",
-    "statusMissingRouteMappings": "The current provider has model mapping enabled but no valid routes. Edit the provider and add at least one mapping.",
-    "statusGatewayTokenMissing": "The local routing token has not been generated yet. Switching to this provider again will write a new local token.",
-    "statusBaseUrlMismatch": "The Claude Desktop profile points to a different URL than the current provider. Current: {{actual}}; expected: {{expected}}. Switch to the current provider again to repair it.",
-    "route": {
-      "tooltip": {
-        "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
-        "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}"
-      }
-    }
-  },
   "notifications": {
     "providerAdded": "Provider added",
     "providerSaved": "Provider configuration saved",
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",
-    "claudeDesktopRestartRequired": "Switched successfully. Restart Claude Desktop to apply changes.",
-    "claudeDesktopProxyRestartRequired": "Switched successfully. Keep CC Switch running and restart Claude Desktop to apply changes.",
     "addToConfigSuccess": "Added to config",
     "removeFromConfigSuccess": "Removed from config",
     "switchFailedTitle": "Switch failed",
@@ -591,8 +549,7 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
-          "kaku": "Kaku",
-          "warp": "Warp"
+          "kaku": "Kaku"
         },
         "windows": {
           "cmd": "Command Prompt",
@@ -649,7 +606,6 @@
     "releaseNotes": "Release Notes",
     "viewReleaseNotes": "View release notes for this version",
     "viewCurrentReleaseNotes": "View current version release notes",
-    "officialWebsite": "Official Website",
     "oneClickInstall": "One-click Install",
     "oneClickInstallHint": "Install Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "Local environment check",
@@ -704,9 +660,6 @@
   },
   "apps": {
     "claude": "Claude",
-    "claudeCode": "Claude Code",
-    "claudeDesktop": "Claude Desktop",
-    "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
@@ -842,13 +795,13 @@
       "ucloud": "Compshare offers an exclusive bonus for CC Switch users — register via this link to get ¥5 platform trial credit!",
       "micu": "Micu is an official partner of CC Switch",
       "ctok": "Join the CTok community on the official website and subscribe to a plan.",
+      "ddshub": "DDSHub offers a special bonus for CC Switch users — register via this link and get 10% extra credit on your first top-up (contact group admin to claim)!",
       "lionccapi": "LionCCAPI offers exclusive benefits for CC Switch users. After registration, add WeChat HSQBJ088888888 and mention 'cc-switch' to receive $10 free credits!",
       "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!",
       "lemondata": "Lemon Code offers a special promotion for CC Switch users. Sign up via this link to receive $1 in free credits."
     },
     "presets": {
       "ucloud": "Compshare",
-      "ucloudCoding": "Compshare Coding Plan",
       "shengsuanyun": "Shengsuanyun",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
@@ -870,11 +823,6 @@
     "fillTemplateValue": "Please fill in {{label}}",
     "endpointRequired": "API endpoint is required for non-official providers",
     "apiKeyRequired": "API Key is required for non-official providers",
-    "softValidation": {
-      "title": "Configuration has the following issues",
-      "hint": "Save anyway? Switching to this provider may fail; you can fill these in later.",
-      "saveAnyway": "Save anyway"
-    },
     "configJsonError": "Config JSON format error, please check syntax",
     "authJsonRequired": "auth.json must be a JSON object",
     "authJsonError": "auth.json format error, please check JSON syntax",
@@ -907,20 +855,9 @@
     "haikuModelPlaceholder": "",
     "modelHelper": "Optional: Specify default Claude model to use, leave blank to use system default.",
     "modelMappingLabel": "Model Mapping",
-    "modelMappingHint": "Display names only affect the /model menu; 1M is only a Claude Code context-capability declaration.",
-    "modelRoleLabel": "Model role",
-    "modelRoleSonnet": "Sonnet",
-    "modelRoleOpus": "Opus",
-    "modelRoleHaiku": "Haiku",
-    "modelDisplayNameLabel": "Display name",
-    "modelDisplayNamePlaceholder": "e.g. DeepSeek V4 Pro",
-    "requestModelLabel": "Requested model",
-    "modelOneMHeader": "Declare 1M",
-    "modelOneMLabel": "1M",
-    "fallbackModelLabel": "Default fallback model",
-    "fallbackModelHint": "Used only when a Claude Code request does not clearly map to Sonnet, Opus, or Haiku. Usually safe to leave blank.",
+    "modelMappingHint": "Usually not needed if the provider natively serves Claude models. Only configure when you need to map requests to different model names.",
     "quickSetModels": "Quick Set",
-    "quickSetSuccess": "Model name applied to all roles",
+    "quickSetSuccess": "Model name applied to all fields",
     "advancedOptionsToggle": "Advanced Options",
     "advancedOptionsHint": "Includes API format, auth field, and model mapping. Defaults work for most use cases.",
     "categoryOfficial": "Official",
@@ -937,7 +874,6 @@
     "fetchModelsNeedConfig": "Please fill in API endpoint and API Key first",
     "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
     "fetchModelsNotSupported": "This provider does not support fetching model list",
-    "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
     "fetchModelsTimeout": "Request timed out, please check network connection"
   },
   "copilot": {
@@ -1149,13 +1085,8 @@
     "rangeToday": "Last 24 hours (hourly)",
     "rangeLast7Days": "Last 7 days",
     "rangeLast30Days": "Last 30 days",
-    "totalTokens": "New Tokens (Input+Output)",
+    "totalTokens": "Total Tokens",
     "cacheTokens": "Cache Tokens",
-    "realTotal": "Tokens Processed",
-    "realTotalHint": "Input + Output + Cache Write + Cache Read",
-    "tokensSuffix": "tokens",
-    "freshInput": "Fresh Input",
-    "cacheHitRate": "Cache Hit Rate",
     "requestLogs": "Request Logs",
     "providerStats": "Provider Stats",
     "modelStats": "Model Stats",
@@ -1184,7 +1115,6 @@
       "codex": "Codex",
       "gemini": "Gemini"
     },
-    "rawInputLabel": "Raw",
     "dataSources": "Data Sources",
     "dataSource": {
       "proxy": "Routing",
@@ -1245,8 +1175,6 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "Creation",
-    "cacheWriteNotReported": "OpenAI protocol doesn't distinguish cache creation; only cache hits are reported",
-    "cacheWritePartial": "Some protocols (e.g. OpenAI) don't report cache creation; the value may be incomplete",
     "cacheRead": "Hit",
     "baseCost": "Base",
     "costMultiplier": "Cost Multiplier",
@@ -2195,7 +2123,7 @@
         "saveFailed": "Save failed: {{error}}"
       },
       "invalidPort": "Invalid port, please enter a number between 1024-65535",
-      "invalidAddress": "Invalid address. Enter an IPv4 (e.g. 127.0.0.1), IPv6 (e.g. ::1), or localhost",
+      "invalidAddress": "Invalid address, please enter a valid IP address (e.g. 127.0.0.1) or localhost",
       "configSaved": "Routing configuration saved",
       "configSaveFailed": "Failed to save configuration",
       "restartRequired": "Restart routing service for address or port changes to take effect"
@@ -2302,8 +2230,6 @@
     "error": "{{providerName}} check error: {{error}}",
     "modelNotFound": "{{providerName}} test model {{model}} does not exist or has been deprecated",
     "modelNotFoundHint": "This model may have been retired by the provider. Update the default test model in \"Model Test Config\".",
-    "quotaExceeded": "{{providerName}} Coding Plan quota has been exceeded",
-    "quotaExceededHint": "Baidu Qianfan returned a Coding Plan quota-limit error. Wait for the 5-hour, weekly, or monthly quota refresh, or adjust the plan in the Qianfan console.",
     "httpHint": {
       "400": "Provider rejected request format. Health check probe may differ from actual usage.",
       "401": "API key may be invalid, or provider uses OAuth auth. Check failure doesn't mean it's unusable.",
@@ -2358,9 +2284,6 @@
     }
   },
   "universalProvider": {
-    "duplicate": "Duplicate",
-    "duplicatedAndSynced": "Universal provider duplicated and synced",
-    "duplicateError": "Failed to duplicate universal provider",
     "title": "Universal Provider",
     "description": "Universal providers manage Claude, Codex, and Gemini configurations simultaneously. Changes are automatically synced to all enabled apps.",
     "add": "Add Universal Provider",
