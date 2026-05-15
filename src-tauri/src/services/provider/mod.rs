@@ -97,6 +97,28 @@ mod tests {
         original_test_home: Option<String>,
     }
 
+    struct UserEnvVarGuard {
+        name: &'static str,
+        original: Option<String>,
+    }
+
+    impl UserEnvVarGuard {
+        fn new(name: &'static str) -> Self {
+            Self {
+                name,
+                original: crate::services::env_manager::get_user_env_var(name)
+                    .expect("capture user env var"),
+            }
+        }
+    }
+
+    impl Drop for UserEnvVarGuard {
+        fn drop(&mut self) {
+            let _ =
+                crate::services::env_manager::set_user_env_var(self.name, self.original.as_deref());
+        }
+    }
+
     impl TempHome {
         fn new() -> Self {
             let dir = TempDir::new().expect("failed to create temp home");
@@ -856,6 +878,68 @@ mod tests {
                 live["env"]["ANTHROPIC_BASE_URL"],
                 Value::String("https://official-live.example".to_string()),
                 "profile-only mode should keep the existing base URL"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn sync_current_claude_profile_only_preserves_profile_live_settings() {
+        with_test_home(|state, home| {
+            let official_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&official_dir).expect("create official profile dir");
+            write_json_file(
+                &official_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed official profile settings");
+
+            let official_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token-should-not-write",
+                "https://provider-should-not-write.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(official_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-official"))
+                .expect("set local current provider");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &official_dir.to_string_lossy(),
+            ))
+            .expect("set active profile override");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::Claude)
+                .expect("sync current profile-only provider");
+
+            let live: Value =
+                read_json_file(&official_dir.join("settings.json")).expect("read official profile");
+            assert_eq!(
+                live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("official-live-token".to_string()),
+                "sync-current should not overwrite profile-only auth profile contents"
+            );
+            assert_eq!(
+                live["env"]["ANTHROPIC_BASE_URL"],
+                Value::String("https://official-live.example".to_string()),
+                "sync-current should keep the profile-only base URL"
             );
         });
     }
@@ -1812,6 +1896,51 @@ mod tests {
 
     #[test]
     #[serial]
+    fn apply_claude_legacy_preserves_configured_dir_env() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        with_test_home(|_state, home| {
+            let stale_profile_dir = home.join(".claude-profiles").join("stale");
+            fs::create_dir_all(&stale_profile_dir).expect("create stale profile dir");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &stale_profile_dir.to_string_lossy(),
+            ))
+            .expect("seed stale profile override");
+
+            let configured_legacy_dir = home.join(".configured-claude");
+            fs::create_dir_all(&configured_legacy_dir).expect("create configured legacy dir");
+            let configured_legacy_dir = configured_legacy_dir.to_string_lossy().to_string();
+            let mut settings = crate::settings::get_settings();
+            settings.claude_config_dir = Some(configured_legacy_dir.clone());
+            crate::settings::update_settings(settings).expect("set configured legacy dir");
+
+            let legacy_provider = claude_provider(
+                "claude-legacy",
+                "Claude Legacy",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+
+            let plan = ProviderService::claude_switch_plan(&legacy_provider);
+            ProviderService::apply_claude_switch_plan(&plan).expect("apply legacy plan");
+
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(Path::new(configured_legacy_dir.as_str())),
+                "legacy activation should clear the stale provider profile override and reveal the configured legacy dir"
+            );
+            assert_eq!(
+                crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                    .expect("read claude config env")
+                    .as_deref(),
+                Some(configured_legacy_dir.as_str()),
+                "legacy activation should point Claude CLI at the configured legacy dir"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn startup_sync_rejects_missing_profile_only_directory() {
         with_test_home(|state, home| {
             let broken_provider = claude_provider(
@@ -2676,10 +2805,12 @@ impl ProviderService {
 
     fn apply_claude_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
         crate::settings::set_claude_provider_override_dir(plan.override_dir.as_deref())?;
+        let settings = crate::settings::get_settings();
+        let legacy_config_dir = settings.claude_config_dir.as_deref();
         crate::services::env_manager::set_user_env_var(
             "CLAUDE_CONFIG_DIR",
             match plan.activation_mode {
-                ClaudeActivationMode::Legacy => None,
+                ClaudeActivationMode::Legacy => legacy_config_dir,
                 ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig => {
                     plan.override_dir.as_deref()
                 }

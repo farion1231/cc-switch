@@ -15,7 +15,7 @@ use crate::codex_config::{
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
-use crate::provider::Provider;
+use crate::provider::{ClaudeActivationMode, Provider};
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
@@ -923,7 +923,9 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            if !is_claude_profile_only(app_type, provider) {
+                write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            }
         }
     }
 
@@ -955,7 +957,9 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
             let providers = state.db.get_all_providers(app_type.as_str())?;
             if let Some(provider) = providers.get(&current_id) {
-                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+                if !is_claude_profile_only(&app_type, provider) {
+                    write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+                }
             }
             // Note: get_effective_current_provider already validates existence,
             // so providers.get() should always succeed here
@@ -974,6 +978,19 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+fn is_claude_profile_only(app_type: &AppType, provider: &Provider) -> bool {
+    matches!(
+        (
+            app_type,
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.claude_activation_mode.as_ref())
+        ),
+        (AppType::Claude, Some(ClaudeActivationMode::ProfileOnly))
+    )
 }
 
 /// Read current live settings for an app type
