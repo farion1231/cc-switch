@@ -35,6 +35,44 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
+/// Merge incoming settings into an existing file, preserving unrelated fields.
+/// - `env` (and any other top-level object) is deep-merged (nested keys are preserved).
+/// - All other fields are overwritten by the incoming value.
+fn merge_into_file(path: &std::path::Path, incoming: Value) -> Result<(), AppError> {
+    let mut current: Value = if path.exists() {
+        read_json_file(path).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+
+    if let Some(cur_obj) = current.as_object_mut() {
+        if let Some(incoming_obj) = incoming.as_object() {
+            for (key, incoming_val) in incoming_obj {
+                if key == "env" {
+                    // Deep merge env: only overwrite existing keys, don't erase user's other env vars
+                    if let Some(cur_env) = cur_obj.get_mut("env").and_then(|v| v.as_object_mut()) {
+                        if let Some(incoming_env) = incoming_val.as_object() {
+                            for (env_key, env_val) in incoming_env {
+                                cur_env.insert(env_key.clone(), env_val.clone());
+                            }
+                            continue;
+                        }
+                    }
+                    // If no existing env, just insert the whole env object
+                    cur_obj.insert(key.clone(), incoming_val.clone());
+                } else {
+                    // All other fields: overwrite with incoming value
+                    cur_obj.insert(key.clone(), incoming_val.clone());
+                }
+            }
+        }
+    } else {
+        current = incoming;
+    }
+
+    write_json_file(path, &current)
+}
+
 pub(crate) fn provider_exists_in_live_config(
     app_type: &AppType,
     provider_id: &str,
@@ -656,10 +694,9 @@ impl LiveSnapshot {
             LiveSnapshot::Claude { settings } => {
                 let path = get_claude_settings_path();
                 if let Some(value) = settings {
-                    write_json_file(&path, value)?;
-                } else if path.exists() {
-                    delete_file(&path)?;
+                    merge_into_file(&path, value)?;
                 }
+                // If settings is None, preserve the existing file (it may contain plugins, etc.)
             }
             LiveSnapshot::Codex { auth, config } => {
                 let auth_path = get_codex_auth_path();
@@ -710,8 +747,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-            write_json_file(&path, &settings)?;
+            let incoming = sanitize_claude_settings_for_live(&provider.settings_config);
+            merge_into_file(&path, incoming)?;
         }
         AppType::ClaudeDesktop => {
             return Err(AppError::localized(
