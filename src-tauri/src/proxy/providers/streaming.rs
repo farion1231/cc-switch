@@ -102,11 +102,7 @@ const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
 fn build_anthropic_usage_json(usage: &Usage) -> Value {
     // OpenAI prompt_tokens 含缓存，Anthropic input_tokens 不含，需减去
     let cached = extract_cache_read_tokens(usage).unwrap_or(0);
-    let input_tokens = if usage.prompt_tokens > cached {
-        usage.prompt_tokens - cached
-    } else {
-        usage.prompt_tokens
-    };
+    let input_tokens = usage.prompt_tokens.saturating_sub(cached);
     let mut usage_json = json!({
         "input_tokens": input_tokens,
         "output_tokens": usage.completion_tokens
@@ -231,11 +227,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             });
                                             if let Some(u) = &chunk.usage {
                                                 let cached = extract_cache_read_tokens(u).unwrap_or(0);
-                                                let input = if u.prompt_tokens > cached {
-                                                    u.prompt_tokens - cached
-                                                } else {
-                                                    u.prompt_tokens
-                                                };
+                                                let input = u.prompt_tokens.saturating_sub(cached);
                                                 start_usage["input_tokens"] = json!(input);
                                                 if cached > 0 {
                                                     start_usage["cache_read_input_tokens"] = json!(cached);
