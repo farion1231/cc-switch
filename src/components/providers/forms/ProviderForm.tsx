@@ -1554,9 +1554,7 @@ function ProviderFormFull({
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
     if (appId === "claude") {
-      setClaudeActivationMode(
-        preset.category === "official" ? "legacy" : "profile-and-config",
-      );
+      setClaudeActivationMode("legacy");
       setClaudeProfileDir("");
     }
 
