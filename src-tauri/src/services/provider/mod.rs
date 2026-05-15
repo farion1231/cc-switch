@@ -451,6 +451,36 @@ mod tests {
             .collect()
     }
 
+    fn rewrite_codex_thread_provider(home: &Path, id: &str, provider: &str) {
+        let conn = rusqlite::Connection::open(home.join(".codex").join("state_5.sqlite"))
+            .expect("open codex state db");
+        let rollout_path: String = conn
+            .query_row(
+                "SELECT rollout_path FROM threads WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .expect("query rollout path");
+        conn.execute(
+            "UPDATE threads SET model_provider = ?1 WHERE id = ?2",
+            rusqlite::params![provider, id],
+        )
+        .expect("rewrite thread provider");
+
+        let path = PathBuf::from(rollout_path);
+        let text = fs::read_to_string(&path).expect("read rollout");
+        let Some(first_newline) = text.find('\n') else {
+            panic!("rollout should contain a first line");
+        };
+        let first_line = &text[..first_newline];
+        let rest = &text[first_newline..];
+        let mut value: serde_json::Value =
+            serde_json::from_str(first_line).expect("parse rollout metadata");
+        value["payload"]["model_provider"] = serde_json::Value::String(provider.to_string());
+        let first_line = serde_json::to_string(&value).expect("serialize rollout metadata");
+        fs::write(path, format!("{first_line}{rest}")).expect("rewrite rollout");
+    }
+
     #[test]
     #[serial]
     fn switch_codex_to_official_syncs_desktop_threads_to_openai_provider() {
@@ -602,6 +632,62 @@ mod tests {
                     ("other-thread".to_string(), Some("azure".to_string())),
                 ],
                 "rollout metadata should only move previous-provider sessions"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_settles_previous_provider_rewrite_race() {
+        with_test_home(|state, home| {
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-official"))
+                .expect("set local current provider");
+            seed_codex_thread_rows(
+                home,
+                &[("official-thread", "openai"), ("racing-thread", "openai")],
+            );
+
+            let home_for_race = home.to_path_buf();
+            let race = std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                rewrite_codex_thread_provider(&home_for_race, "racing-thread", "openai");
+            });
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to api codex provider");
+            race.join().expect("race writer should finish");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("OpenAI".to_string(), 2)],
+                "switch should settle stale writes from the previous Codex provider"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("official-thread".to_string(), Some("OpenAI".to_string())),
+                    ("racing-thread".to_string(), Some("OpenAI".to_string())),
+                ],
+                "rollout metadata should also settle stale previous-provider writes"
             );
         });
     }
@@ -3263,7 +3349,16 @@ impl ProviderService {
         result: &mut SwitchResult,
     ) {
         match Self::sync_codex_desktop_threads(provider, source_provider) {
-            Ok(updated) => {
+            Ok(mut updated) => {
+                if source_provider.is_some() {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    match Self::sync_codex_desktop_threads(provider, source_provider) {
+                        Ok(settled) => updated += settled,
+                        Err(err) => log::warn!(
+                            "Codex desktop thread model_provider settle sync failed: {err}"
+                        ),
+                    }
+                }
                 log::info!("Codex desktop thread model_provider sync updated {updated} rows");
             }
             Err(err) => {
