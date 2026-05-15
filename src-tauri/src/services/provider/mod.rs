@@ -60,6 +60,8 @@ struct ClaudeRollbackState {
     previous_local_current: Option<String>,
     previous_db_current: Option<String>,
     previous_live_settings: Option<Value>,
+    target_live_path: Option<PathBuf>,
+    target_live_settings: Option<Value>,
     previous_config_env: Option<String>,
 }
 
@@ -309,7 +311,7 @@ mod tests {
         }
     }
 
-    fn seed_codex_threads(home: &Path, provider: &str) {
+    fn seed_codex_thread_rows(home: &Path, rows: &[(&str, &str)]) {
         let codex_dir = home.join(".codex");
         let rollout_dir = codex_dir
             .join("sessions")
@@ -325,22 +327,25 @@ mod tests {
             [],
         )
         .expect("create threads table");
-        let rollout_1 = rollout_dir.join("rollout-thread-1.jsonl");
-        let rollout_2 = rollout_dir.join("rollout-thread-2.jsonl");
-        for (id, path) in [("thread-1", &rollout_1), ("thread-2", &rollout_2)] {
+        for (id, provider) in rows {
+            let path = rollout_dir.join(format!("rollout-{id}.jsonl"));
             fs::write(
-                path,
+                &path,
                 format!(
                     "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"model_provider\":\"{provider}\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{}}}}\n"
                 ),
             )
             .expect("write rollout metadata");
+            conn.execute(
+                "INSERT INTO threads (id, model_provider, rollout_path) VALUES (?1, ?2, ?3)",
+                rusqlite::params![id, provider, path.to_string_lossy()],
+            )
+            .expect("seed thread");
         }
-        conn.execute(
-            "INSERT INTO threads (id, model_provider, rollout_path) VALUES ('thread-1', ?1, ?2), ('thread-2', ?1, ?3)",
-            rusqlite::params![provider, rollout_1.to_string_lossy(), rollout_2.to_string_lossy()],
-        )
-        .expect("seed threads");
+    }
+
+    fn seed_codex_threads(home: &Path, provider: &str) {
+        seed_codex_thread_rows(home, &[("thread-1", provider), ("thread-2", provider)]);
     }
 
     fn codex_rollout_providers(home: &Path) -> Vec<(String, Option<String>)> {
@@ -475,6 +480,69 @@ mod tests {
                     ("thread-2".to_string(), Some("OpenAI".to_string())),
                 ],
                 "API login should update Codex rollout session metadata"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_only_relabels_threads_from_previous_provider() {
+        with_test_home(|state, home| {
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let other_provider = codex_provider(
+                "codex-other",
+                "Codex Other",
+                "model_provider = \"azure\"\nmodel = \"gpt-5.4\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &other_provider)
+                .expect("save other provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-official"))
+                .expect("set local current provider");
+            seed_codex_thread_rows(
+                home,
+                &[
+                    ("official-thread", "openai"),
+                    ("api-thread", "OpenAI"),
+                    ("other-thread", "azure"),
+                ],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to api codex provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("OpenAI".to_string(), 2), ("azure".to_string(), 1)],
+                "switching from official to API should not relabel unrelated provider history"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("api-thread".to_string(), Some("OpenAI".to_string())),
+                    ("official-thread".to_string(), Some("OpenAI".to_string())),
+                    ("other-thread".to_string(), Some("azure".to_string())),
+                ],
+                "rollout metadata should only move previous-provider sessions"
             );
         });
     }
@@ -996,6 +1064,82 @@ mod tests {
                 live["env"]["ANTHROPIC_AUTH_TOKEN"],
                 Value::String("default-live-token".to_string()),
                 "failed switch should leave default live settings untouched"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rollback_claude_profile_and_config_restores_target_profile_settings() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let api_dir = home.join(".claude-profiles").join("api");
+            fs::create_dir_all(&api_dir).expect("create api profile dir");
+            write_json_file(
+                &api_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "api-original-token",
+                        "ANTHROPIC_BASE_URL": "https://api-original.example"
+                    }
+                }),
+            )
+            .expect("seed api profile settings");
+
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+            let plan = ProviderService::claude_switch_plan(&api_provider);
+            let rollback = ProviderService::capture_claude_rollback_state(state, Some(&plan))
+                .expect("capture rollback");
+
+            ProviderService::apply_claude_switch_plan(&plan).expect("apply profile plan");
+            write_json_file(
+                &api_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "failed-switch-token",
+                        "ANTHROPIC_BASE_URL": "https://failed-switch.example"
+                    }
+                }),
+            )
+            .expect("simulate failed switch writing target profile");
+
+            ProviderService::rollback_claude_switch(state, &rollback).expect("rollback switch");
+
+            let api_live: Value =
+                read_json_file(&api_dir.join("settings.json")).expect("read api profile");
+            assert_eq!(
+                api_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("api-original-token".to_string()),
+                "rollback should restore the target profile file changed by profile-and-config"
+            );
+            let default_live: Value =
+                read_json_file(&default_dir.join("settings.json")).expect("read default profile");
+            assert_eq!(
+                default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("default-live-token".to_string()),
+                "rollback should preserve the previous default profile snapshot"
             );
         });
     }
@@ -1787,15 +1931,45 @@ impl ProviderService {
         Ok(())
     }
 
-    fn capture_claude_rollback_state(state: &AppState) -> Result<ClaudeRollbackState, AppError> {
+    fn claude_live_settings_path_for_plan(plan: &ClaudeSwitchPlan) -> Option<PathBuf> {
+        if !matches!(plan.activation_mode, ClaudeActivationMode::ProfileAndConfig) {
+            return None;
+        }
+
+        plan.override_dir.as_deref().map(|dir| {
+            let dir = Path::new(dir);
+            let settings = dir.join("settings.json");
+            if settings.exists() {
+                return settings;
+            }
+
+            let legacy = dir.join("claude.json");
+            if legacy.exists() {
+                return legacy;
+            }
+
+            settings
+        })
+    }
+
+    fn capture_claude_rollback_state(
+        state: &AppState,
+        plan: Option<&ClaudeSwitchPlan>,
+    ) -> Result<ClaudeRollbackState, AppError> {
         let settings = crate::settings::get_settings();
         let previous_live_settings = read_live_settings(AppType::Claude).ok();
+        let target_live_path = plan.and_then(Self::claude_live_settings_path_for_plan);
+        let target_live_settings = target_live_path
+            .as_ref()
+            .and_then(|path| crate::config::read_json_file(path).ok());
 
         Ok(ClaudeRollbackState {
             previous_provider_override_dir: settings.claude_provider_config_dir,
             previous_local_current: crate::settings::get_current_provider(&AppType::Claude),
             previous_db_current: state.db.get_current_provider(AppType::Claude.as_str())?,
             previous_live_settings,
+            target_live_path,
+            target_live_settings,
             previous_config_env: crate::services::env_manager::get_user_env_var(
                 "CLAUDE_CONFIG_DIR",
             )
@@ -1882,6 +2056,12 @@ impl ProviderService {
         if let Some(previous_live_settings) = rollback.previous_live_settings.as_ref() {
             write_json_file(&get_claude_settings_path(), previous_live_settings)?;
         }
+        if let (Some(target_live_path), Some(target_live_settings)) = (
+            rollback.target_live_path.as_ref(),
+            rollback.target_live_settings.as_ref(),
+        ) {
+            write_json_file(target_live_path, target_live_settings)?;
+        }
 
         Ok(())
     }
@@ -1939,6 +2119,7 @@ impl ProviderService {
 
     fn sync_codex_rollout_session_meta(
         rollout_path: &Path,
+        source_provider: Option<&str>,
         target_provider: &str,
     ) -> Result<bool, AppError> {
         let text = match std::fs::read_to_string(rollout_path) {
@@ -1964,7 +2145,10 @@ impl ProviderService {
         let Some(payload) = value.get_mut("payload").and_then(Value::as_object_mut) else {
             return Ok(false);
         };
-        if payload.get("model_provider").and_then(Value::as_str) == Some(target_provider) {
+        let current_provider = payload.get("model_provider").and_then(Value::as_str);
+        if current_provider == Some(target_provider)
+            || source_provider.is_some_and(|source| current_provider != Some(source))
+        {
             return Ok(false);
         }
 
@@ -1984,7 +2168,10 @@ impl ProviderService {
         Ok(true)
     }
 
-    fn sync_codex_desktop_threads(provider: &Provider) -> Result<usize, AppError> {
+    fn sync_codex_desktop_threads(
+        provider: &Provider,
+        source_provider: Option<&str>,
+    ) -> Result<usize, AppError> {
         let target_provider = Self::codex_desktop_provider_key(provider)?;
         let db_path = crate::codex_config::get_codex_config_dir().join("state_5.sqlite");
         if !db_path.exists() {
@@ -2007,26 +2194,44 @@ impl ProviderService {
         }
 
         let rollout_paths = if Self::codex_threads_have_rollout_path(&conn)? {
-            let mut stmt = conn.prepare(
-                "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider <> ?1",
-            )?;
-            let rows = stmt.query_map(rusqlite::params![target_provider.as_str()], |row| {
-                row.get(0)
-            })?;
-            rows.collect::<Result<Vec<String>, _>>()?
+            if let Some(source_provider) = source_provider {
+                let mut stmt = conn.prepare(
+                    "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider = ?1",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![source_provider], |row| row.get(0))?;
+                rows.collect::<Result<Vec<String>, _>>()?
+            } else {
+                let mut stmt = conn.prepare(
+                    "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider <> ?1",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![target_provider.as_str()], |row| {
+                    row.get(0)
+                })?;
+                rows.collect::<Result<Vec<String>, _>>()?
+            }
         } else {
             Vec::new()
         };
 
-        let updated = conn.execute(
-            "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider <> ?1",
-            rusqlite::params![target_provider.as_str()],
-        )?;
+        let updated = if let Some(source_provider) = source_provider {
+            conn.execute(
+                "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider = ?2",
+                rusqlite::params![target_provider.as_str(), source_provider],
+            )?
+        } else {
+            conn.execute(
+                "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider <> ?1",
+                rusqlite::params![target_provider.as_str()],
+            )?
+        };
 
         let mut rollout_updated = 0usize;
         for rollout_path in rollout_paths {
-            match Self::sync_codex_rollout_session_meta(Path::new(&rollout_path), &target_provider)
-            {
+            match Self::sync_codex_rollout_session_meta(
+                Path::new(&rollout_path),
+                source_provider,
+                &target_provider,
+            ) {
                 Ok(true) => rollout_updated += 1,
                 Ok(false) => {}
                 Err(err) => log::warn!(
@@ -2042,8 +2247,12 @@ impl ProviderService {
         Ok(updated)
     }
 
-    fn sync_codex_desktop_threads_after_switch(provider: &Provider, result: &mut SwitchResult) {
-        match Self::sync_codex_desktop_threads(provider) {
+    fn sync_codex_desktop_threads_after_switch(
+        provider: &Provider,
+        source_provider: Option<&str>,
+        result: &mut SwitchResult,
+    ) {
+        match Self::sync_codex_desktop_threads(provider, source_provider) {
             Ok(updated) => {
                 log::info!("Codex desktop thread model_provider sync updated {updated} rows");
             }
@@ -2158,7 +2367,7 @@ impl ProviderService {
         if current.is_none() {
             if matches!(app_type, AppType::Claude) {
                 let plan = Self::claude_switch_plan(&provider);
-                let rollback = Self::capture_claude_rollback_state(state)?;
+                let rollback = Self::capture_claude_rollback_state(state, Some(&plan))?;
 
                 let activate_result = (|| -> Result<(), AppError> {
                     Self::validate_claude_runtime_switch_plan(&plan)?;
@@ -2600,7 +2809,7 @@ impl ProviderService {
             // The proxy server will route requests to the new provider via is_current
             let mut result = SwitchResult::default();
             if matches!(app_type, AppType::Codex) {
-                Self::sync_codex_desktop_threads_after_switch(_provider, &mut result);
+                Self::sync_codex_desktop_threads_after_switch(_provider, None, &mut result);
             }
             return Ok(result);
         }
@@ -2643,7 +2852,10 @@ impl ProviderService {
         let claude_switch_plan =
             matches!(app_type, AppType::Claude).then(|| Self::claude_switch_plan(provider));
         let claude_rollback = if matches!(app_type, AppType::Claude) {
-            Some(Self::capture_claude_rollback_state(state)?)
+            Some(Self::capture_claude_rollback_state(
+                state,
+                claude_switch_plan.as_ref(),
+            )?)
         } else {
             None
         };
@@ -2652,14 +2864,14 @@ impl ProviderService {
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
 
-        if let Some(current_id) = current_id {
+        if let Some(current_id) = current_id.as_deref() {
             if current_id != id {
                 // Additive mode apps - all providers coexist in the same file,
                 // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
                 if !app_type.is_additive_mode() {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                        if let Some(mut current_provider) = providers.get(current_id).cloned() {
                             current_provider.settings_config =
                                 strip_common_config_from_live_settings(
                                     state.db.as_ref(),
@@ -2782,7 +2994,15 @@ impl ProviderService {
         }
 
         if matches!(app_type, AppType::Codex) {
-            Self::sync_codex_desktop_threads_after_switch(provider, &mut result);
+            let source_provider = current_id
+                .as_deref()
+                .and_then(|id| providers.get(id))
+                .and_then(|provider| Self::codex_desktop_provider_key(provider).ok());
+            Self::sync_codex_desktop_threads_after_switch(
+                provider,
+                source_provider.as_deref(),
+                &mut result,
+            );
         }
 
         Ok(result)
