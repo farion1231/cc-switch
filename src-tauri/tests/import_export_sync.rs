@@ -608,6 +608,40 @@ url = "https://example.com"
 }
 
 #[test]
+fn import_from_codex_infers_sse_for_url_only_mcp_server() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+    fs::write(
+        &path,
+        r#"[mcp_servers.pycharm]
+url = "http://127.0.0.1:64342/stream"
+"#,
+    )
+    .expect("write codex config");
+
+    let mut config = MultiAppConfig::default();
+    let changed = cc_switch_lib::import_from_codex(&mut config).expect("import codex");
+    assert_eq!(changed, 1, "url-only MCP server should be imported");
+
+    let servers = config
+        .mcp
+        .servers
+        .as_ref()
+        .expect("unified servers should exist");
+    let pycharm = servers.get("pycharm").expect("pycharm server");
+    let spec = pycharm.server.as_object().expect("server spec");
+    assert_eq!(spec.get("type").and_then(|v| v.as_str()), Some("sse"));
+    assert_eq!(
+        spec.get("url").and_then(|v| v.as_str()),
+        Some("http://127.0.0.1:64342/stream")
+    );
+}
+
+#[test]
 fn import_from_codex_merges_into_existing_entries() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
