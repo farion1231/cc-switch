@@ -706,6 +706,138 @@ mod tests {
 
     #[test]
     #[serial]
+    fn add_first_claude_profile_only_sets_profile_without_overwriting_default_live() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let official_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&official_dir).expect("create official profile dir");
+            write_json_file(
+                &official_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed official profile settings");
+
+            let official_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token-should-not-write",
+                "https://provider-should-not-write.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(official_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            ProviderService::add(state, AppType::Claude, official_provider, true)
+                .expect("add first profile-only provider");
+
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .as_deref(),
+                Some("claude-official"),
+                "first added provider should become current"
+            );
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(official_dir.as_path()),
+                "profile-only add should set the selected profile dir"
+            );
+
+            let default_live: Value =
+                read_json_file(&default_dir.join("settings.json")).expect("read default profile");
+            assert_eq!(
+                default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("default-live-token".to_string()),
+                "profile-only add should not overwrite the default live settings"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_first_claude_profile_and_config_writes_to_target_profile() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let api_dir = home.join(".claude-profiles").join("api");
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            ProviderService::add(state, AppType::Claude, api_provider, true)
+                .expect("add first profile-and-config provider");
+
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .as_deref(),
+                Some("claude-api"),
+                "first added provider should become current"
+            );
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(api_dir.as_path()),
+                "profile-and-config add should set the selected profile dir"
+            );
+
+            let api_live: Value =
+                read_json_file(&api_dir.join("settings.json")).expect("read api profile");
+            assert_eq!(
+                api_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("api-provider-token".to_string()),
+                "profile-and-config add should write provider settings into the target profile"
+            );
+
+            let default_live: Value =
+                read_json_file(&default_dir.join("settings.json")).expect("read default profile");
+            assert_eq!(
+                default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("default-live-token".to_string()),
+                "profile-and-config add should not mutate the default live settings"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn terminal_launch_profile_and_config_syncs_selected_provider_without_switching_current() {
         with_test_home(|state, home| {
             let api_dir = home.join(".claude-profiles").join("api");
@@ -2024,6 +2156,36 @@ impl ProviderService {
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
         let current = state.db.get_current_provider(app_type.as_str())?;
         if current.is_none() {
+            if matches!(app_type, AppType::Claude) {
+                let plan = Self::claude_switch_plan(&provider);
+                let rollback = Self::capture_claude_rollback_state(state)?;
+
+                let activate_result = (|| -> Result<(), AppError> {
+                    Self::validate_claude_runtime_switch_plan(&plan)?;
+                    Self::apply_claude_switch_plan(&plan)?;
+                    crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+                    state
+                        .db
+                        .set_current_provider(app_type.as_str(), &provider.id)?;
+
+                    if !matches!(plan.activation_mode, ClaudeActivationMode::ProfileOnly) {
+                        write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                    }
+
+                    Ok(())
+                })();
+
+                if let Err(err) = activate_result {
+                    if let Err(rollback_err) = Self::rollback_claude_switch(state, &rollback) {
+                        return Err(AppError::Message(format!(
+                            "{err}; additionally failed to roll back Claude switch state: {rollback_err}"
+                        )));
+                    }
+                    return Err(err);
+                }
+
+                return Ok(true);
+            }
             // No current provider, set as current and sync
             state
                 .db
