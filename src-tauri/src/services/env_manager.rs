@@ -34,7 +34,11 @@ pub fn get_user_env_var(name: &str) -> Result<Option<String>, String> {
 
 #[cfg(not(target_os = "windows"))]
 pub fn get_user_env_var(name: &str) -> Result<Option<String>, String> {
-    Ok(std::env::var(name).ok())
+    if let Ok(value) = std::env::var(name) {
+        return Ok(Some(value));
+    }
+
+    get_persisted_unix_user_env_var(name)
 }
 
 #[cfg(target_os = "windows")]
@@ -142,7 +146,16 @@ fn persist_unix_user_env_var(name: &str, value: Option<&str>) -> Result<(), Stri
         .map_err(|e| format!("创建 Unix 用户环境变量目录失败 {}: {e}", env_dir.display()))?;
 
     let env_file = env_dir.join("env.sh");
-    let current = fs::read_to_string(&env_file).unwrap_or_default();
+    let current = match fs::read_to_string(&env_file) {
+        Ok(current) => current,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => {
+            return Err(format!(
+                "读取 Unix 用户环境变量文件失败 {}: {err}",
+                env_file.display()
+            ))
+        }
+    };
     fs::write(
         &env_file,
         upsert_unix_env_file_content(&current, name, value),
@@ -156,7 +169,16 @@ fn persist_unix_user_env_var(name: &str, value: Option<&str>) -> Result<(), Stri
 fn ensure_unix_shell_startup_sources_env(home: &std::path::Path) -> Result<(), String> {
     for rc_name in [".profile", ".bashrc", ".zshrc"] {
         let path = home.join(rc_name);
-        let current = fs::read_to_string(&path).unwrap_or_default();
+        let current = match fs::read_to_string(&path) {
+            Ok(current) => current,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(err) => {
+                return Err(format!(
+                    "读取 Unix shell 启动文件失败 {}: {err}",
+                    path.display()
+                ))
+            }
+        };
         if current.contains("# cc-switch env") || current.contains(".cc-switch/env.sh") {
             continue;
         }
@@ -172,6 +194,55 @@ fn ensure_unix_shell_startup_sources_env(home: &std::path::Path) -> Result<(), S
     }
 
     Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_persisted_unix_user_env_var(name: &str) -> Result<Option<String>, String> {
+    if !is_valid_env_name(name) {
+        return Err(format!("Invalid environment variable name: {name}"));
+    }
+
+    let env_file = crate::config::get_home_dir()
+        .join(".cc-switch")
+        .join("env.sh");
+    let content = match fs::read_to_string(&env_file) {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(format!(
+                "读取 Unix 用户环境变量文件失败 {}: {err}",
+                env_file.display()
+            ))
+        }
+    };
+
+    Ok(parse_unix_env_file_var(&content, name))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn parse_unix_env_file_var(content: &str, name: &str) -> Option<String> {
+    let export_prefix = format!("export {name}=");
+    let unset_line = format!("unset {name}");
+    let mut current = None;
+
+    for line in content.lines().map(str::trim) {
+        if line == unset_line {
+            current = None;
+        } else if let Some(value) = line.strip_prefix(&export_prefix) {
+            current = Some(parse_shell_single_quoted_value(value));
+        }
+    }
+
+    current
+}
+
+#[cfg(not(target_os = "windows"))]
+fn parse_shell_single_quoted_value(value: &str) -> String {
+    if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
+        value[1..value.len() - 1].replace("'\\''", "'")
+    } else {
+        value.to_string()
+    }
 }
 
 fn upsert_unix_env_file_content(current: &str, name: &str, value: Option<&str>) -> String {
@@ -513,5 +584,64 @@ mod tests {
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
         std::env::remove_var(name);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn get_user_env_var_reads_persisted_unix_shell_env_file() {
+        let temp_home = tempfile::tempdir().expect("temp home");
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+
+        let name = "CC_SWITCH_TEST_UNIX_ENV";
+        set_user_env_var(name, Some("  /tmp/claude profile's dir  "))
+            .expect("persist unix user env var");
+        std::env::remove_var(name);
+
+        assert_eq!(
+            get_user_env_var(name)
+                .expect("read persisted unix user env var")
+                .as_deref(),
+            Some("/tmp/claude profile's dir"),
+            "unix user env lookup should fall back to the persisted env file"
+        );
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        std::env::remove_var(name);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn set_user_env_var_preserves_undecodable_unix_rc_files() {
+        let temp_home = tempfile::tempdir().expect("temp home");
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+
+        let rc_path = temp_home.path().join(".profile");
+        let original = vec![
+            0xff, b'e', b'x', b'p', b'o', b'r', b't', b' ', b'O', b'L', b'D',
+        ];
+        fs::write(&rc_path, &original).expect("seed undecodable rc file");
+
+        let err = set_user_env_var("CC_SWITCH_TEST_UNIX_ENV", Some("/tmp/claude"))
+            .expect_err("undecodable rc file should abort startup source update");
+        assert!(
+            err.contains("读取 Unix shell 启动文件失败"),
+            "expected rc read failure, got {err}"
+        );
+        assert_eq!(
+            fs::read(&rc_path).expect("read rc file bytes"),
+            original,
+            "undecodable rc file should remain byte-for-byte unchanged"
+        );
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        std::env::remove_var("CC_SWITCH_TEST_UNIX_ENV");
     }
 }
