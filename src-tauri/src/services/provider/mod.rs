@@ -911,6 +911,46 @@ mod tests {
 
     #[test]
     #[serial]
+    fn add_first_claude_profile_only_rejects_missing_dir_before_saving() {
+        with_test_home(|state, home| {
+            let missing_dir = home.join(".claude-profiles").join("missing-official");
+            let broken_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token-should-not-save",
+                "https://provider-should-not-save.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(missing_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            let err = ProviderService::add(state, AppType::Claude, broken_provider, true)
+                .expect_err("missing profile-only dir should reject first add");
+            assert!(
+                err.to_string().contains("profile"),
+                "expected profile validation error, got {err:?}"
+            );
+            assert!(
+                state
+                    .db
+                    .get_provider_by_id("claude-official", AppType::Claude.as_str())
+                    .expect("query provider")
+                    .is_none(),
+                "failed first add must not persist invalid provider"
+            );
+            assert!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .is_none(),
+                "failed first add must not set current provider"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn add_first_claude_profile_and_config_writes_to_target_profile() {
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");
@@ -1418,6 +1458,70 @@ mod tests {
                 default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
                 Value::String("default-live-token".to_string()),
                 "rollback should preserve the previous default profile snapshot"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rollback_claude_legacy_removes_new_default_settings() {
+        with_test_home(|state, home| {
+            let profile_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&profile_dir).expect("create profile dir");
+            write_json_file(
+                &profile_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "profile-token",
+                        "ANTHROPIC_BASE_URL": "https://profile.example"
+                    }
+                }),
+            )
+            .expect("seed profile settings");
+            crate::settings::set_claude_provider_override_dir(Some(&profile_dir.to_string_lossy()))
+                .expect("set previous profile override");
+
+            let default_settings_path = home.join(".claude").join("settings.json");
+            let legacy_provider = claude_provider(
+                "claude-legacy",
+                "Claude Legacy",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+            let plan = ProviderService::claude_switch_plan(&legacy_provider);
+            let rollback = ProviderService::capture_claude_rollback_state(state, Some(&plan))
+                .expect("capture rollback");
+
+            ProviderService::apply_claude_switch_plan(&plan).expect("apply legacy plan");
+            write_json_file(
+                &default_settings_path,
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "failed-legacy-token",
+                        "ANTHROPIC_BASE_URL": "https://failed-legacy.example"
+                    }
+                }),
+            )
+            .expect("simulate failed legacy switch creating default settings");
+
+            ProviderService::rollback_claude_switch(state, &rollback).expect("rollback switch");
+
+            assert!(
+                !default_settings_path.exists(),
+                "rollback should remove default Claude settings created by a failed legacy switch"
+            );
+            let profile_live: Value =
+                read_json_file(&profile_dir.join("settings.json")).expect("read profile settings");
+            assert_eq!(
+                profile_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("profile-token".to_string()),
+                "rollback should restore the previously active profile settings"
+            );
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(profile_dir.as_path()),
+                "rollback should restore previous Claude profile override"
             );
         });
     }
@@ -2209,25 +2313,32 @@ impl ProviderService {
         Ok(())
     }
 
-    fn claude_live_settings_path_for_plan(plan: &ClaudeSwitchPlan) -> Option<PathBuf> {
-        if !matches!(plan.activation_mode, ClaudeActivationMode::ProfileAndConfig) {
-            return None;
+    fn claude_settings_path_for_dir(dir: &Path) -> PathBuf {
+        let settings = dir.join("settings.json");
+        if settings.exists() {
+            return settings;
         }
 
-        plan.override_dir.as_deref().map(|dir| {
-            let dir = Path::new(dir);
-            let settings = dir.join("settings.json");
-            if settings.exists() {
-                return settings;
-            }
+        let legacy = dir.join("claude.json");
+        if legacy.exists() {
+            return legacy;
+        }
 
-            let legacy = dir.join("claude.json");
-            if legacy.exists() {
-                return legacy;
-            }
+        settings
+    }
 
-            settings
-        })
+    fn claude_live_settings_path_for_plan(plan: &ClaudeSwitchPlan) -> Option<PathBuf> {
+        match plan.activation_mode {
+            ClaudeActivationMode::Legacy => Some(Self::claude_settings_path_for_dir(
+                &crate::config::get_home_dir().join(".claude"),
+            )),
+            ClaudeActivationMode::ProfileOnly => None,
+            ClaudeActivationMode::ProfileAndConfig => plan
+                .override_dir
+                .as_deref()
+                .map(Path::new)
+                .map(Self::claude_settings_path_for_dir),
+        }
     }
 
     fn capture_claude_rollback_state(
@@ -2627,6 +2738,16 @@ impl ProviderService {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
 
+        let current = if app_type.is_additive_mode() {
+            None
+        } else {
+            state.db.get_current_provider(app_type.as_str())?
+        };
+        if current.is_none() && matches!(app_type, AppType::Claude) {
+            let plan = Self::claude_switch_plan(&provider);
+            Self::validate_claude_runtime_switch_plan(&plan)?;
+        }
+
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
@@ -2648,7 +2769,6 @@ impl ProviderService {
         }
 
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
-        let current = state.db.get_current_provider(app_type.as_str())?;
         if current.is_none() {
             if matches!(app_type, AppType::Claude) {
                 let plan = Self::claude_switch_plan(&provider);
