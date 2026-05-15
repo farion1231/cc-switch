@@ -2198,6 +2198,101 @@ base_url = "http://localhost:8080"
         );
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_profile_only_skips_proxy_live_write_during_takeover() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let profile_dir = crate::config::get_home_dir()
+            .join(".claude-profiles")
+            .join("official");
+        fs::create_dir_all(&profile_dir).expect("create profile dir");
+        write_json_file(
+            &profile_dir.join("settings.json"),
+            &json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                    "ANTHROPIC_BASE_URL": "https://official-live.example"
+                },
+                "permissions": { "allow": ["Bash"] }
+            }),
+        )
+        .expect("seed profile settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let original = claude_provider("p1", "Claude A", "token-a", "https://api.a.example", None);
+        db.save_provider("claude", &original)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        write_json_file(
+            &get_claude_settings_path(),
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": "PROXY_MANAGED"
+                }
+            }),
+        )
+        .expect("seed taken-over live file");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        let updated = claude_provider(
+            "p1",
+            "Claude A",
+            "provider-token-should-not-write",
+            "https://provider-should-not-write.example",
+            Some(ProviderMeta {
+                claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                ..Default::default()
+            }),
+        );
+
+        ProviderService::update(&state, AppType::Claude, None, updated)
+            .expect("update current provider to profile-only during takeover");
+
+        let live: Value =
+            read_json_file(&profile_dir.join("settings.json")).expect("read profile settings");
+        assert_eq!(
+            live["env"]["ANTHROPIC_AUTH_TOKEN"],
+            Value::String("official-live-token".to_string()),
+            "profile-only proxy sync should not overwrite the external profile auth"
+        );
+        assert_eq!(
+            live["env"]["ANTHROPIC_BASE_URL"],
+            Value::String("https://official-live.example".to_string()),
+            "profile-only proxy sync should not overwrite the external profile base URL"
+        );
+    }
+
     #[test]
     #[serial]
     fn rename_rejects_missing_original_provider() {
@@ -3449,7 +3544,13 @@ impl ProviderService {
                     )
                     .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
 
-                    if matches!(app_type, AppType::Claude) {
+                    let is_claude_profile_only = matches!(
+                        claude_switch_plan
+                            .as_ref()
+                            .map(|plan| &plan.activation_mode),
+                        Some(ClaudeActivationMode::ProfileOnly)
+                    );
+                    if matches!(app_type, AppType::Claude) && !is_claude_profile_only {
                         futures::executor::block_on(
                             state
                                 .proxy_service
