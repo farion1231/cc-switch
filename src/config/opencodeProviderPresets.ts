@@ -338,8 +338,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
-        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-chat": { name: "DeepSeek V3.2" },
+        "deepseek-reasoner": { name: "DeepSeek R1" },
       },
     },
     category: "cn_official",
@@ -485,7 +485,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
-    websiteUrl: "https://www.kimi.com/code/docs/",
+    websiteUrl: "https://www.kimi.com/coding/docs/",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
@@ -1248,7 +1248,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/anthropic",
       name: "CrazyRouter",
       options: {
-        baseURL: "https://cn.crazyrouter.com",
+        baseURL: "https://crazyrouter.com",
         apiKey: "",
         setCacheKey: true,
       },
@@ -1302,13 +1302,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.micuapi.ai",
-    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
+    websiteUrl: "https://www.openclaudecode.cn",
+    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "Micu",
       options: {
-        baseURL: "https://www.micuapi.ai/v1",
+        baseURL: "https://www.openclaudecode.cn/v1",
         apiKey: "",
         setCacheKey: true,
       },

@@ -297,7 +297,6 @@ export function ProviderAdvancedConfig({
                   id="cost-multiplier"
                   type="number"
                   step="0.01"
-                  min="0"
                   inputMode="decimal"
                   value={pricingConfig.costMultiplier || ""}
                   onChange={(e) =>

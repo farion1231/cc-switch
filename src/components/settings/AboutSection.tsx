@@ -3,7 +3,6 @@ import {
   Download,
   Copy,
   ExternalLink,
-  Globe,
   Info,
   Loader2,
   RefreshCw,
@@ -361,16 +360,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => settingsApi.openExternal("https://ccswitch.io")}
-              className="h-8 gap-1.5 text-xs"
-            >
-              <Globe className="h-3.5 w-3.5" />
-              {t("settings.officialWebsite")}
-            </Button>
             <Button
               type="button"
               variant="outline"

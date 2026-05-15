@@ -205,14 +205,14 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         {
-          id: "deepseek-v4-pro",
-          name: "DeepSeek V4 Pro",
-          context_length: 1000000,
+          id: "deepseek-chat",
+          name: "DeepSeek V3.2",
+          context_length: 128000,
         },
         {
-          id: "deepseek-v4-flash",
-          name: "DeepSeek V4 Flash",
-          context_length: 1000000,
+          id: "deepseek-reasoner",
+          name: "DeepSeek R1",
+          context_length: 128000,
         },
       ],
     },
@@ -220,7 +220,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "deepseek",
     iconColor: "#4D6BFE",
     suggestedDefaults: {
-      model: { default: "deepseek-v4-flash", provider: "deepseek" },
+      model: { default: "deepseek-chat", provider: "deepseek" },
     },
   },
   {
@@ -392,7 +392,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
-    websiteUrl: "https://www.kimi.com/code/docs/",
+    websiteUrl: "https://www.kimi.com/coding/docs/",
     settingsConfig: {
       name: "kimi_coding",
       base_url: "https://api.kimi.com/coding/",
@@ -808,7 +808,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
     settingsConfig: {
       name: "crazyrouter",
-      base_url: "https://cn.crazyrouter.com",
+      base_url: "https://crazyrouter.com",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -873,34 +873,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "Compshare Coding Plan",
-    nameKey: "providerForm.presets.ucloudCoding",
-    websiteUrl: "https://www.compshare.cn",
-    apiKeyUrl:
-      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
-    settingsConfig: {
-      name: "compshare_coding",
-      base_url: "https://cp.compshare.cn/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "ucloud",
-    icon: "ucloud",
-    iconColor: "#000000",
-    suggestedDefaults: {
-      model: { default: "gpt-5.4", provider: "compshare_coding" },
-    },
-  },
-  {
     name: "Micu",
-    websiteUrl: "https://www.micuapi.ai",
-    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
+    websiteUrl: "https://www.openclaudecode.cn",
+    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
     settingsConfig: {
       name: "micu",
-      base_url: "https://www.micuapi.ai",
+      base_url: "https://www.openclaudecode.cn",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -940,6 +918,30 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "claude-opus-4-7", provider: "ctok" },
+    },
+  },
+  {
+    name: "DDSHub",
+    websiteUrl: "https://www.ddshub.cc",
+    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
+    settingsConfig: {
+      name: "ddshub",
+      base_url: "https://www.ddshub.cc",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
+        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "ddshub",
+    icon: "dds",
+    iconColor: "#000000",
+    suggestedDefaults: {
+      model: { default: "claude-opus-4-7", provider: "ddshub" },
     },
   },
   {

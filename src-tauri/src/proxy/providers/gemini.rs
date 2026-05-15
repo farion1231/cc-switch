@@ -228,19 +228,15 @@ impl ProviderAdapter for GeminiAdapter {
         url
     }
 
-    fn get_auth_headers(
-        &self,
-        auth: &AuthInfo,
-    ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
-        use super::adapter::auth_header_value as hv;
+    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
         use http::{HeaderName, HeaderValue};
-        Ok(match auth.strategy {
+        match auth.strategy {
             AuthStrategy::GoogleOAuth => {
                 let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
                 vec![
                     (
                         HeaderName::from_static("authorization"),
-                        hv(&format!("Bearer {token}"))?,
+                        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
                     ),
                     (
                         HeaderName::from_static("x-goog-api-client"),
@@ -250,9 +246,9 @@ impl ProviderAdapter for GeminiAdapter {
             }
             _ => vec![(
                 HeaderName::from_static("x-goog-api-key"),
-                hv(&auth.api_key)?,
+                HeaderValue::from_str(&auth.api_key).unwrap(),
             )],
-        })
+        }
     }
 }
 

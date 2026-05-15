@@ -104,7 +104,6 @@
     "noProvidersDescription": "如果你已有配置，请点击\"导入当前配置\"，所有数据将安全保存在 default 供应商中",
     "noProvidersDescriptionSnippet": "除 Key 和请求地址外的数据（如插件配置）会被保存到通用配置片段，用于在不同供应商之间共享",
     "importCurrent": "导入当前配置",
-    "importFromClaude": "将 Claude Code 中已有的供应商导入",
     "importCurrentDescription": "将当前正在使用的配置导入为默认供应商",
     "currentlyUsing": "当前使用",
     "enable": "启用",
@@ -173,52 +172,11 @@
       }
     }
   },
-  "claudeDesktop": {
-    "officialNotice": "Claude Desktop 官方供应商使用应用内置的 1P 登录，无需配置 API Key 和接口地址。",
-    "mode": "模型处理方式",
-    "modeDirect": "直连",
-    "modeProxy": "需要路由",
-    "modelMappingToggle": "需要模型映射",
-    "modelMappingOffHint": "适合供应商已经暴露并接受 claude-* / anthropic/claude-* 模型名的 Anthropic Messages API；请求会由 Claude Desktop 直连供应商。",
-    "modelMappingOnHint": "Claude Desktop 目前对模型 ID 进行了限制，如果您的供应商提供的模型不是 Claude 系列模型，则需要打开本开关，并在使用过程中保持本地路由开启。",
-    "routeMapTitle": "模型映射",
-    "routeMapHint": "选择模型角色后，CC Switch 会自动生成 Claude Desktop 兼容路由；菜单显示名可以写 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
-    "routeModelLabel": "模型角色",
-    "routeRoleSonnet": "Sonnet",
-    "routeRoleOpus": "Opus",
-    "routeRoleHaiku": "Haiku",
-    "labelOverrideLabel": "菜单显示名",
-    "upstreamModelLabel": "实际请求模型",
-    "supports1mLabel": "声明支持 1M",
-    "supports1mShort": "1M",
-    "directModelListTitle": "手动指定 Claude Desktop 模型列表（高级，可选）",
-    "directModelListCollapsedHint": "原生 Claude 模型供应商通常不用填写，Claude Desktop 会自动读取 /v1/models。",
-    "directModelListHint": "仅当供应商的 /v1/models 不可用或没有返回 Claude Desktop 可识别的 claude-* 模型名时填写；勾选 1M 会向 Claude Desktop 声明支持 1M 上下文。",
-    "directModelInvalid": "直连模型必须使用 claude-* / anthropic/claude-* 模型名",
-    "addModel": "添加模型",
-    "addRoute": "添加模型",
-    "routeInvalid": "请选择模型角色并填写实际请求模型",
-    "routesRequired": "至少填写一个模型映射",
-    "statusTitle": "Claude Desktop 配置需要检查",
-    "statusUnsupported": "当前平台暂不支持 Claude Desktop 3P 配置写入。",
-    "statusStaleRawModels": "Claude Desktop profile 中存在非 claude-* 模型名，新版 Claude Desktop 可能拒绝加载；重新切换当前供应商可修复。",
-    "statusMissingRouteMappings": "当前供应商启用了模型映射，但没有有效路由；请编辑供应商并补全至少一个模型映射。",
-    "statusGatewayTokenMissing": "当前本地路由 token 尚未生成；重新切换该供应商会写入新的本地 token。",
-    "statusBaseUrlMismatch": "Claude Desktop profile 指向的地址与当前供应商不一致；当前为 {{actual}}，应为 {{expected}}。重新切换当前供应商可修复。",
-    "route": {
-      "tooltip": {
-        "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
-        "inactive": "开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：{{address}}:{{port}}"
-      }
-    }
-  },
   "notifications": {
     "providerAdded": "供应商已添加",
     "providerSaved": "供应商配置已保存",
     "providerDeleted": "供应商删除成功",
     "switchSuccess": "切换成功！",
-    "claudeDesktopRestartRequired": "切换成功，重启 Claude Desktop 后生效",
-    "claudeDesktopProxyRestartRequired": "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效",
     "addToConfigSuccess": "已添加到配置",
     "removeFromConfigSuccess": "已从配置移除",
     "switchFailedTitle": "切换失败",
@@ -591,8 +549,7 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
-          "kaku": "Kaku",
-          "warp": "Warp"
+          "kaku": "Kaku"
         },
         "windows": {
           "cmd": "命令提示符",
@@ -649,7 +606,6 @@
     "releaseNotes": "更新日志",
     "viewReleaseNotes": "查看该版本更新日志",
     "viewCurrentReleaseNotes": "查看当前版本更新日志",
-    "officialWebsite": "官方网站",
     "oneClickInstall": "一键安装",
     "oneClickInstallHint": "安装 Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "本地环境检查",
@@ -704,9 +660,6 @@
   },
   "apps": {
     "claude": "Claude",
-    "claudeCode": "Claude Code",
-    "claudeDesktop": "Claude Desktop",
-    "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
@@ -842,13 +795,13 @@
       "ucloud": "优云智算为CC Switch 的用户提供了特殊优惠，通过此链接注册，可以获得五元平台体验金！",
       "micu": "Micu 是 CC Switch 的官方合作伙伴",
       "ctok": "官网加入CTok社群，订阅套餐。",
+      "ddshub": "呆呆兽为CC Switch 的用户提供了特别福利，通过此链接注册后，首单充值可额外赠送 10% 额度（联系群主领取）！",
       "lionccapi": "LionCCAPI 为 CC Switch 的用户提供了特别福利，注册后添加客服微信HSQBJ088888888，发暗号cc-switch备注即可送10美金额度！",
       "shengsuanyun": "胜算云为 CC Switch 的用户提供了特别福利，使用此链接注册的新用户可获 10 元模力及首充 10% 赠送！",
       "lemondata": "Lemon Code 为 CC Switch 的用户提供了特别优惠。使用此链接注册可以获得1美元免费额度。"
     },
     "presets": {
       "ucloud": "优云智算",
-      "ucloudCoding": "优云智算Coding Plan",
       "shengsuanyun": "胜算云",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
@@ -870,11 +823,6 @@
     "fillTemplateValue": "请填写 {{label}}",
     "endpointRequired": "非官方供应商请填写 API 端点",
     "apiKeyRequired": "非官方供应商请填写 API Key",
-    "softValidation": {
-      "title": "配置存在以下问题",
-      "hint": "仍要保存吗？保存后切换此供应商时可能失败，可以之后再补全。",
-      "saveAnyway": "仍要保存"
-    },
     "configJsonError": "配置JSON格式错误，请检查语法",
     "authJsonRequired": "auth.json 必须是 JSON 对象",
     "authJsonError": "auth.json 格式错误，请检查JSON语法",
@@ -907,20 +855,9 @@
     "haikuModelPlaceholder": "",
     "modelHelper": "可选：指定默认使用的 Claude 模型，留空则使用系统默认。",
     "modelMappingLabel": "模型映射",
-    "modelMappingHint": "显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明。",
-    "modelRoleLabel": "模型角色",
-    "modelRoleSonnet": "Sonnet",
-    "modelRoleOpus": "Opus",
-    "modelRoleHaiku": "Haiku",
-    "modelDisplayNameLabel": "显示名称",
-    "modelDisplayNamePlaceholder": "例如 DeepSeek V4 Pro",
-    "requestModelLabel": "实际请求模型",
-    "modelOneMHeader": "声明支持 1M",
-    "modelOneMLabel": "1M",
-    "fallbackModelLabel": "默认兜底模型",
-    "fallbackModelHint": "仅在 Claude Code 请求没有明确落到 Sonnet、Opus 或 Haiku 角色时使用；通常可以留空。",
+    "modelMappingHint": "如果供应商原生提供 Claude 系列模型，通常无需配置。仅在需要将请求映射到不同模型名称时填写。",
     "quickSetModels": "一键设置",
-    "quickSetSuccess": "已将模型名称应用到所有角色",
+    "quickSetSuccess": "已将模型名称应用到所有字段",
     "advancedOptionsToggle": "高级选项",
     "advancedOptionsHint": "包含 API 格式、认证字段、模型映射等配置。大多数场景下保持默认即可。",
     "categoryOfficial": "官方",
@@ -937,7 +874,6 @@
     "fetchModelsNeedConfig": "请先填写 API 端点和 API Key",
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
-    "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
     "fetchModelsTimeout": "请求超时，请检查网络连接"
   },
   "copilot": {
@@ -1149,13 +1085,8 @@
     "rangeToday": "过去 24 小时 (按小时)",
     "rangeLast7Days": "过去 7 天",
     "rangeLast30Days": "过去 30 天",
-    "totalTokens": "新生成 Token (Input+Output)",
+    "totalTokens": "总 Token 数",
     "cacheTokens": "缓存 Token",
-    "realTotal": "真实消耗 Tokens",
-    "realTotalHint": "Input + Output + 缓存写入 + 缓存命中",
-    "tokensSuffix": "tokens",
-    "freshInput": "新增输入",
-    "cacheHitRate": "缓存命中率",
     "requestLogs": "请求日志",
     "providerStats": "Provider 统计",
     "modelStats": "模型统计",
@@ -1184,7 +1115,6 @@
       "codex": "Codex",
       "gemini": "Gemini"
     },
-    "rawInputLabel": "原始",
     "dataSources": "数据来源",
     "dataSource": {
       "proxy": "路由",
@@ -1245,8 +1175,6 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "创建",
-    "cacheWriteNotReported": "OpenAI 协议不区分缓存写入，仅上报缓存命中",
-    "cacheWritePartial": "部分协议（如 OpenAI）不上报缓存写入，数值可能偏低",
     "cacheRead": "命中",
     "baseCost": "基础",
     "costMultiplier": "成本倍率",
@@ -2195,7 +2123,7 @@
         "saveFailed": "保存失败: {{error}}"
       },
       "invalidPort": "端口无效，请输入 1024-65535 之间的数字",
-      "invalidAddress": "地址无效，请输入 IPv4（如 127.0.0.1）、IPv6（如 ::1）或 localhost",
+      "invalidAddress": "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
       "configSaved": "路由配置已保存",
       "configSaveFailed": "保存配置失败",
       "restartRequired": "修改地址或端口后需要重启路由服务才能生效"
@@ -2302,8 +2230,6 @@
     "error": "{{providerName}} 检查出错: {{error}}",
     "modelNotFound": "{{providerName}} 测试模型 {{model}} 不存在或已下架",
     "modelNotFoundHint": "该模型可能已被供应商弃用。请在\"模型测试配置\"中更新默认测试模型。",
-    "quotaExceeded": "{{providerName}} Coding Plan 额度已用尽",
-    "quotaExceededHint": "百度千帆返回了 Coding Plan 超额错误。请等待 5 小时/每周/每月额度刷新，或在千帆控制台切换套餐。",
     "httpHint": {
       "400": "供应商拒绝了请求格式。健康检查的探测格式可能与实际使用不同。",
       "401": "API Key 可能无效，或供应商使用 OAuth 等认证方式。检查失败不代表实际不可用。",
@@ -2358,9 +2284,6 @@
     }
   },
   "universalProvider": {
-    "duplicate": "复制",
-    "duplicatedAndSynced": "统一供应商已复制并同步",
-    "duplicateError": "复制统一供应商失败",
     "title": "统一供应商",
     "description": "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
     "add": "添加统一供应商",

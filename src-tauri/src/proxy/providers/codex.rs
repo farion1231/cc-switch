@@ -173,16 +173,12 @@ impl ProviderAdapter for CodexAdapter {
         url
     }
 
-    fn get_auth_headers(
-        &self,
-        auth: &AuthInfo,
-    ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
-        use super::adapter::auth_header_value;
+    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
         let bearer = format!("Bearer {}", auth.api_key);
-        Ok(vec![(
+        vec![(
             http::HeaderName::from_static("authorization"),
-            auth_header_value(&bearer)?,
-        )])
+            http::HeaderValue::from_str(&bearer).unwrap(),
+        )]
     }
 }
 

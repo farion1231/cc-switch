@@ -1,6 +1,7 @@
 // Auto-generated icon index
 // Do not edit manually
 
+import _dds from "./dds.svg?url";
 import _eflowcode from "./eflowcode.png";
 import _hermes from "./hermes.png";
 import _lemondata from "./lemondata.png";
@@ -80,6 +81,7 @@ export const icons: Record<string, string> = {
 };
 
 export const iconUrls: Record<string, string> = {
+  dds: _dds,
   eflowcode: _eflowcode,
   hermes: _hermes,
   lemondata: _lemondata,

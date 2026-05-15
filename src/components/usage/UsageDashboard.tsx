@@ -1,15 +1,11 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { UsageHero } from "./UsageHero";
+import { UsageSummaryCards } from "./UsageSummaryCards";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
-import {
-  KNOWN_APP_TYPES,
-  type AppTypeFilter,
-  type UsageRangeSelection,
-} from "@/types/usage";
+import type { AppTypeFilter, UsageRangeSelection } from "@/types/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
@@ -34,7 +30,12 @@ import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
+const APP_FILTER_OPTIONS: AppTypeFilter[] = [
+  "all",
+  "claude",
+  "codex",
+  "gemini",
+];
 
 export function UsageDashboard() {
   const { t, i18n } = useTranslation();
@@ -126,9 +127,9 @@ export function UsageDashboard() {
         </div>
       </div>
 
-      <UsageHero
+      <UsageSummaryCards
         range={range}
-        appType={appType === "all" ? undefined : appType}
+        appType={appType}
         refreshIntervalMs={refreshIntervalMs}
       />
 
