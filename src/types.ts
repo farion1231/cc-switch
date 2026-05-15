@@ -138,7 +138,7 @@ export interface AuthBinding {
 
 export interface ClaudeDesktopModelRoute {
   model: string;
-  displayName?: string;
+  labelOverride?: string;
   supports1m?: boolean;
 }
 

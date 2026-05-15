@@ -228,7 +228,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
     }
 
     if let Some(v) = body.get("tool_choice") {
-        if let Some(tool_choice) = convert_tool_choice_to_openai(v) {
+        if let Some(tool_choice) = map_tool_choice_to_chat(v) {
             result["tool_choice"] = tool_choice;
             if disables_parallel_tool_use(v) {
                 result["parallel_tool_calls"] = json!(false);
@@ -247,13 +247,30 @@ fn disables_parallel_tool_use(value: &Value) -> bool {
         == Some(true)
 }
 
-fn convert_tool_choice_to_openai(value: &Value) -> Option<Value> {
+/// Translate an Anthropic `tool_choice` into the OpenAI Chat Completions form.
+///
+/// Anthropic forms:
+///   "auto" / "any" / "none"           (string enum)
+///   {"type": "auto" | "any" | "none"}
+///   {"type": "tool", "name": "<X>"}
+///
+/// OpenAI Chat forms:
+///   "auto" / "none" / "required"      (note: no "any" - use "required")
+///   {"type": "function", "function": {"name": "<X>"}}
+///
+/// The Responses API uses a flatter `{"type":"function","name":"X"}` selector,
+/// so it has a sibling `map_tool_choice_to_responses` in `transform_responses.rs`.
+/// Keep the two in sync.
+fn map_tool_choice_to_chat(value: &Value) -> Option<Value> {
     if value.is_null() {
         return None;
     }
 
-    if value.as_str().is_some() {
-        return Some(value.clone());
+    if let Some(choice) = value.as_str() {
+        return Some(match choice {
+            "any" => json!("required"),
+            _ => json!(choice),
+        });
     }
 
     let obj = value.as_object()?;
@@ -920,6 +937,13 @@ mod tests {
         let mut string = base.clone();
         string["tool_choice"] = json!("auto");
         assert_eq!(anthropic_to_openai(string).unwrap()["tool_choice"], "auto");
+
+        let mut string_any = base.clone();
+        string_any["tool_choice"] = json!("any");
+        assert_eq!(
+            anthropic_to_openai(string_any).unwrap()["tool_choice"],
+            "required"
+        );
 
         let mut null_choice = base.clone();
         null_choice["tool_choice"] = Value::Null;

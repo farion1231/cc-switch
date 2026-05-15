@@ -230,9 +230,9 @@ pub enum ClaudeDesktopMode {
 pub struct ClaudeDesktopModelRoute {
     /// 真实上游模型名，只保存在 CC Switch 内部，不写入 Claude Desktop profile。
     pub model: String,
-    /// Desktop /v1/models 中显示的名称。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
+    /// Claude Desktop 模型菜单显示名；写入 profile 的 `labelOverride`。
+    #[serde(rename = "labelOverride", skip_serializing_if = "Option::is_none")]
+    pub label_override: Option<String>,
     /// Claude Desktop 3P 识别的 1M 上下文能力标记。
     #[serde(rename = "supports1m", skip_serializing_if = "Option::is_none")]
     pub supports_1m: Option<bool>,
@@ -309,8 +309,8 @@ pub struct ProviderMeta {
     pub is_full_url: Option<bool>,
     /// Prompt cache key for OpenAI Responses-compatible endpoints.
     /// When set, injected into converted Responses requests to improve cache hit rate.
-    /// If not set, Codex OAuth uses the current session ID; other Claude -> Responses
-    /// conversions fall back to provider ID.
+    /// If not set, Claude -> Responses conversions use a client-provided session/thread
+    /// identity when available; generated session IDs are not sent upstream.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.

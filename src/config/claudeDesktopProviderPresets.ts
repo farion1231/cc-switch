@@ -3,8 +3,8 @@
  *
  * 形态与 Claude Code 预设不同：
  * - baseUrl 是顶级字段，而不是 settingsConfig.env.ANTHROPIC_BASE_URL
- * - 模型信息以"请求模型 → 上游模型 → 显示模型"三段式表达，
- *   对应后端 ClaudeDesktopModelRoute 的 routeId / model / displayName
+ * - 模型信息以"Desktop 可见模型 ID → 上游模型"表达，
+ *   对应后端 ClaudeDesktopModelRoute 的 routeId / model
  *
  * 翻译来源：src/config/claudeProviderPresets.ts（排除 OAuth 与不兼容预设）
  */
@@ -20,9 +20,22 @@ export type ClaudeDesktopApiFormat =
 export interface ClaudeDesktopRoutePreset {
   routeId: string;
   upstreamModel: string;
-  displayName: string;
+  labelOverride?: string;
   supports1m: boolean;
 }
+
+/**
+ * Claude Desktop 3P fail-all 校验只接受 `claude-(sonnet|opus|haiku)-*` 形式的
+ * routeId（1.6259.1+，实测 2026-05-13）。所有预设工厂、表单角色下拉、
+ * 后端 `next_catalog_safe_route_id` 都从此映射派生 routeId，避免散落硬编码。
+ */
+export const CLAUDE_DESKTOP_ROLE_ROUTE_IDS = {
+  sonnet: "claude-sonnet-4-6",
+  opus: "claude-opus-4-7",
+  haiku: "claude-haiku-4-5",
+} as const;
+
+export type ClaudeDesktopRoleId = keyof typeof CLAUDE_DESKTOP_ROLE_ROUTE_IDS;
 
 export interface ClaudeDesktopProviderPreset {
   name: string;
@@ -39,6 +52,8 @@ export interface ClaudeDesktopProviderPreset {
   mode: "direct" | "proxy";
   apiFormat?: ClaudeDesktopApiFormat;
   modelRoutes?: ClaudeDesktopRoutePreset[];
+  providerType?: "github_copilot" | "codex_oauth";
+  requiresOAuth?: boolean;
 
   endpointCandidates?: string[];
   theme?: PresetTheme;
@@ -48,21 +63,18 @@ export interface ClaudeDesktopProviderPreset {
 
 const passthroughRoutes = (supports1m = false): ClaudeDesktopRoutePreset[] => [
   {
-    routeId: "claude-sonnet-4-6",
-    upstreamModel: "claude-sonnet-4-6",
-    displayName: "Sonnet",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+    upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
     supports1m,
   },
   {
-    routeId: "claude-opus-4-7",
-    upstreamModel: "claude-opus-4-7",
-    displayName: "Opus",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+    upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
     supports1m,
   },
   {
-    routeId: "claude-haiku-4-5",
-    upstreamModel: "claude-haiku-4-5",
-    displayName: "Haiku",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+    upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
     supports1m,
   },
 ];
@@ -74,54 +86,52 @@ const mappedRoutes = (
   supports1m = false,
 ): ClaudeDesktopRoutePreset[] => [
   {
-    routeId: "claude-sonnet-4-6",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
     upstreamModel: sonnet,
-    displayName: "Sonnet",
     supports1m,
   },
   {
-    routeId: "claude-opus-4-7",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
     upstreamModel: opus,
-    displayName: "Opus",
     supports1m,
   },
   {
-    routeId: "claude-haiku-4-5",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
     upstreamModel: haiku,
-    displayName: "Haiku",
     supports1m,
   },
 ];
 
 /**
- * 非 Claude 上游模型用此工厂：displayName 直接等于 upstreamModel，
- * 让用户在 Claude Desktop 看到的就是实际请求的模型 ID（如 "deepseek-v4-pro"）。
+ * 非 Claude 上游模型用此工厂：route ID 使用 Claude Desktop 能通过校验的
+ * Sonnet/Opus/Haiku 路由，真实品牌名只写入 labelOverride 和 upstreamModel。
  */
 const brandedRoutes = (
   sonnet: string,
   opus: string,
   haiku: string,
   supports1m = false,
-): ClaudeDesktopRoutePreset[] => [
-  {
-    routeId: "claude-sonnet-4-6",
-    upstreamModel: sonnet,
-    displayName: sonnet,
-    supports1m,
-  },
-  {
-    routeId: "claude-opus-4-7",
-    upstreamModel: opus,
-    displayName: opus,
-    supports1m,
-  },
-  {
-    routeId: "claude-haiku-4-5",
-    upstreamModel: haiku,
-    displayName: haiku,
-    supports1m,
-  },
-];
+): ClaudeDesktopRoutePreset[] => {
+  const seenUpstream = new Set<string>();
+  return [
+    { routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet, upstreamModel: sonnet },
+    { routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus, upstreamModel: opus },
+    { routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku, upstreamModel: haiku },
+  ]
+    .map(({ routeId, upstreamModel }) => ({
+      routeId,
+      upstreamModel,
+      labelOverride: upstreamModel,
+      supports1m,
+    }))
+    .filter((route) => {
+      if (seenUpstream.has(route.upstreamModel)) {
+        return false;
+      }
+      seenUpstream.add(route.upstreamModel);
+      return true;
+    });
+};
 
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
@@ -155,6 +165,36 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://generativelanguage.googleapis.com"],
     icon: "gemini",
     iconColor: "#4285F4",
+  },
+  {
+    name: "GitHub Copilot",
+    websiteUrl: "https://github.com/features/copilot",
+    category: "third_party",
+    baseUrl: "https://api.githubcopilot.com",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    providerType: "github_copilot",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes(
+      "claude-sonnet-4.6",
+      "claude-sonnet-4.6",
+      "claude-haiku-4.5",
+    ),
+    icon: "github",
+    iconColor: "#000000",
+  },
+  {
+    name: "Codex",
+    websiteUrl: "https://openai.com/chatgpt/pricing",
+    category: "third_party",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+    mode: "proxy",
+    apiFormat: "openai_responses",
+    providerType: "codex_oauth",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes("gpt-5.4", "gpt-5.4", "gpt-5.4-mini"),
+    icon: "openai",
+    iconColor: "#000000",
   },
   {
     name: "DeepSeek",
@@ -550,11 +590,11 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://www.crazyrouter.com",
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
     category: "third_party",
-    baseUrl: "https://crazyrouter.com",
+    baseUrl: "https://cn.crazyrouter.com",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://crazyrouter.com"],
+    endpointCandidates: ["https://cn.crazyrouter.com"],
     isPartner: true,
     partnerPromotionKey: "crazyrouter",
     icon: "crazyrouter",
@@ -615,14 +655,14 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     category: "third_party",
-    baseUrl: "https://www.openclaudecode.cn",
+    baseUrl: "https://www.micuapi.ai",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://www.openclaudecode.cn"],
+    endpointCandidates: ["https://www.micuapi.ai"],
     isPartner: true,
     partnerPromotionKey: "micu",
     icon: "micu",
@@ -640,20 +680,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "ctok",
     icon: "ctok",
-    iconColor: "#000000",
-  },
-  {
-    name: "DDSHub",
-    websiteUrl: "https://www.ddshub.cc",
-    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
-    category: "third_party",
-    baseUrl: "https://www.ddshub.cc",
-    mode: "proxy",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
-    isPartner: true,
-    partnerPromotionKey: "ddshub",
-    icon: "dds",
     iconColor: "#000000",
   },
   {

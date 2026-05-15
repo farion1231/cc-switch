@@ -1,20 +1,33 @@
 import { act, renderHook } from "@testing-library/react";
-
-import { useModelState } from "@/components/providers/forms/hooks/useModelState";
+import { describe, expect, it, vi } from "vitest";
+import {
+  hasClaudeOneMMarker,
+  setClaudeOneMMarker,
+  stripClaudeOneMMarker,
+  useModelState,
+} from "@/components/providers/forms/hooks/useModelState";
 
 describe("useModelState", () => {
   it("removes deprecated reasoning model env when model fields are saved", () => {
-    const onConfigChange = vi.fn();
-    const settingsConfig = JSON.stringify({
+    let latestConfig = JSON.stringify({
       env: {
         ANTHROPIC_MODEL: "claude-sonnet-4-20250514",
         ANTHROPIC_REASONING_MODEL: "claude-3-7-sonnet-20250219",
         ANTHROPIC_SMALL_FAST_MODEL: "claude-3-5-haiku-20241022",
       },
     });
+    const onConfigChange = vi.fn((config: string) => {
+      latestConfig = config;
+    });
 
     const { result } = renderHook(() =>
-      useModelState({ settingsConfig, onConfigChange }),
+      useModelState({ settingsConfig: latestConfig, onConfigChange }),
+    );
+
+    expect(result.current.claudeModel).toBe("claude-sonnet-4-20250514");
+    expect(result.current.reasoningModel).toBe("claude-3-7-sonnet-20250219");
+    expect(result.current.defaultHaikuModel).toBe(
+      "claude-3-5-haiku-20241022",
     );
 
     act(() => {
@@ -24,12 +37,109 @@ describe("useModelState", () => {
       );
     });
 
-    expect(onConfigChange).toHaveBeenCalledTimes(1);
-    const updated = JSON.parse(onConfigChange.mock.calls[0][0]);
-    expect(updated.env).toMatchObject({
-      ANTHROPIC_MODEL: "claude-opus-4-1-20250805",
-    });
+    const updated = JSON.parse(latestConfig);
+    expect(updated.env.ANTHROPIC_MODEL).toBe("claude-opus-4-1-20250805");
     expect(updated.env).not.toHaveProperty("ANTHROPIC_REASONING_MODEL");
     expect(updated.env).not.toHaveProperty("ANTHROPIC_SMALL_FAST_MODEL");
+  });
+
+  it("hydrates role models and display names from Claude Code env", () => {
+    const settingsConfig = JSON.stringify({
+      env: {
+        ANTHROPIC_MODEL: "fallback-model",
+        ANTHROPIC_SMALL_FAST_MODEL: "legacy-small",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "DeepSeek V4 Pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2",
+        ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: "Kimi K2",
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useModelState({
+        settingsConfig,
+        onConfigChange: vi.fn(),
+      }),
+    );
+
+    expect(result.current.claudeModel).toBe("fallback-model");
+    expect(result.current.defaultSonnetModel).toBe("deepseek-v4-pro");
+    expect(result.current.defaultSonnetModelName).toBe("DeepSeek V4 Pro");
+    expect(result.current.defaultOpusModel).toBe("kimi-k2");
+    expect(result.current.defaultOpusModelName).toBe("Kimi K2");
+    expect(result.current.defaultHaikuModel).toBe("legacy-small");
+    expect(result.current.defaultHaikuModelName).toBe("legacy-small");
+  });
+
+  it("writes and clears role display-name env fields without changing model mapping", () => {
+    let latestConfig = JSON.stringify({
+      env: {
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro",
+      },
+    });
+    const onConfigChange = vi.fn((config: string) => {
+      latestConfig = config;
+    });
+
+    const { result } = renderHook(() =>
+      useModelState({
+        settingsConfig: latestConfig,
+        onConfigChange,
+      }),
+    );
+
+    act(() => {
+      result.current.handleModelChange(
+        "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+        "DeepSeek V4 Pro",
+      );
+    });
+
+    let env = JSON.parse(latestConfig).env;
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("deepseek-v4-pro");
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME).toBe("DeepSeek V4 Pro");
+
+    act(() => {
+      result.current.handleModelChange(
+        "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+        "",
+      );
+    });
+
+    env = JSON.parse(latestConfig).env;
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("deepseek-v4-pro");
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME).toBeUndefined();
+  });
+
+  it("keeps the 1M marker on request models but strips it from fallback display names", () => {
+    const settingsConfig = JSON.stringify({
+      env: {
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro[1M]",
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useModelState({
+        settingsConfig,
+        onConfigChange: vi.fn(),
+      }),
+    );
+
+    expect(result.current.defaultSonnetModel).toBe("deepseek-v4-pro[1M]");
+    expect(result.current.defaultSonnetModelName).toBe("deepseek-v4-pro");
+  });
+
+  it("normalizes Claude Code 1M markers for UI toggles", () => {
+    expect(hasClaudeOneMMarker("deepseek-v4-pro[1m]")).toBe(true);
+    expect(hasClaudeOneMMarker("deepseek-v4-pro [1M]  ")).toBe(true);
+    expect(stripClaudeOneMMarker("deepseek-v4-pro [1M]  ")).toBe(
+      "deepseek-v4-pro",
+    );
+    expect(setClaudeOneMMarker("deepseek-v4-pro [1M]", false)).toBe(
+      "deepseek-v4-pro",
+    );
+    expect(setClaudeOneMMarker("deepseek-v4-pro", true)).toBe(
+      "deepseek-v4-pro[1M]",
+    );
   });
 });
