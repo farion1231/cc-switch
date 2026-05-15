@@ -592,6 +592,36 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "BytePlus",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      name: "byteplus",
+      base_url: "https://ark.ap-southeast.bytepluses.com/api/coding",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "byteplus",
+    icon: "byteplus",
+    iconColor: "#3370FF",
+    suggestedDefaults: {
+      model: {
+        default: "ark-code-latest",
+        provider: "byteplus",
+      },
+    },
+  },
+  {
     name: "BaiLing",
     websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
     settingsConfig: {

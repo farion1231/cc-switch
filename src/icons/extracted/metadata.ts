@@ -65,6 +65,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["huoshan", "volcengine", "ark", "agentplan", "byteplus"],
     defaultColor: "#3370FF",
   },
+  byteplus: {
+    name: "byteplus",
+    displayName: "BytePlus",
+    category: "ai-provider",
+    keywords: ["byteplus", "volcengine", "ark", "modelark"],
+    defaultColor: "#3370FF",
+  },
   chatglm: {
     name: "chatglm",
     displayName: "chatglm",

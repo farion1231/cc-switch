@@ -641,7 +641,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "ark-code-latest",
           name: "Ark Code Latest",
-          contextWindow: 128000,
+          contextWindow: 256000,
         },
       ],
     },
@@ -661,6 +661,43 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       model: { primary: "ark_agentplan/ark-code-latest" },
       modelCatalog: {
         "ark_agentplan/ark-code-latest": { alias: "Ark Code" },
+      },
+    },
+  },
+  {
+    name: "BytePlus",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "byteplus",
+    icon: "byteplus",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "byteplus/ark-code-latest" },
+      modelCatalog: {
+        "byteplus/ark-code-latest": { alias: "Ark Code" },
       },
     },
   },

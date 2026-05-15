@@ -857,7 +857,8 @@
       "shengsuanyun": "胜算云はCC Switchユーザーに特別特典を提供しています。このリンクから登録すると、10元分の無料クレジットと初回チャージ10%ボーナスがもらえます！",
       "lemondata": "Lemon Code は CC Switch ユーザー向けの特別オファーを提供しています。このリンクから登録すると 1 ドル分の無料クレジットがもらえます。",
       "doubaoseed": "豆包大モデルは CC Switch ユーザーに専属特典を提供しています：このリンクから登録すると、豆包全テキストモデル50万トークンの推論クレジットおよびSeedance2.0の500万トークン無料クレジットがもらえます。",
-      "volcengine_agentplan": "火山方舟 Agent Plan は CC Switch ユーザーに専属特典を提供しています：このリンクから方舟AgentPlanを購読すると、新規のお客様は初月40元から利用できます。"
+      "volcengine_agentplan": "火山方舟 Agent Plan は CC Switch ユーザーに専属特典を提供しています：このリンクから方舟AgentPlanを購読すると、新規のお客様は初月40元から利用できます。",
+      "byteplus": "このリンクから登録すると、各モデルごとに50万トークンの無料推論クォータがもらえます。"
     },
     "presets": {
       "ucloud": "Compshare",

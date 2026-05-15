@@ -439,6 +439,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     partnerPromotionKey: "volcengine_agentplan",
   },
   {
+    name: "BytePlus",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    category: "cn_official",
+    baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "ark-code-latest",
+      "ark-code-latest",
+      "ark-code-latest",
+    ),
+    icon: "byteplus",
+    iconColor: "#3370FF",
+    isPartner: true,
+    partnerPromotionKey: "byteplus",
+  },
+  {
     name: "BaiLing",
     websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
     category: "cn_official",

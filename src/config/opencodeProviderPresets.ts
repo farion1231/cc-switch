@@ -850,6 +850,39 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "BytePlus",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "BytePlus",
+      options: {
+        baseURL: "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "ark-code-latest": {
+          name: "Ark Code Latest",
+        },
+      },
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "byteplus",
+    icon: "byteplus",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "BaiLing",
     websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
     settingsConfig: {
