@@ -601,6 +601,19 @@ export const providerPresets: ProviderPreset[] = [
     icon: "runapi",
   },
   {
+    name: "RelaxyCode",
+    websiteUrl: "https://www.relaxycode.com",
+    apiKeyUrl: "https://www.relaxycode.com/register",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://www.relaxycode.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "third_party",
+    icon: "claude",
+  },
+  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
