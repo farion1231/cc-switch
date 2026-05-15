@@ -11,6 +11,7 @@ use indexmap::IndexMap;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::app_config::AppType;
@@ -1146,6 +1147,70 @@ mod tests {
 
     #[test]
     #[serial]
+    fn rollback_claude_profile_and_config_removes_new_target_profile_settings() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let api_dir = home.join(".claude-profiles").join("api");
+            fs::create_dir_all(&api_dir).expect("create api profile dir");
+            let api_settings_path = api_dir.join("settings.json");
+
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+            let plan = ProviderService::claude_switch_plan(&api_provider);
+            let rollback = ProviderService::capture_claude_rollback_state(state, Some(&plan))
+                .expect("capture rollback");
+
+            ProviderService::apply_claude_switch_plan(&plan).expect("apply profile plan");
+            write_json_file(
+                &api_settings_path,
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "failed-switch-token",
+                        "ANTHROPIC_BASE_URL": "https://failed-switch.example"
+                    }
+                }),
+            )
+            .expect("simulate failed switch creating target profile settings");
+
+            ProviderService::rollback_claude_switch(state, &rollback).expect("rollback switch");
+
+            assert!(
+                !api_settings_path.exists(),
+                "rollback should remove a target profile settings file created by a failed profile-and-config switch"
+            );
+            let default_live: Value =
+                read_json_file(&default_dir.join("settings.json")).expect("read default profile");
+            assert_eq!(
+                default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("default-live-token".to_string()),
+                "rollback should preserve the previous default profile snapshot"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn startup_sync_rejects_missing_profile_only_directory() {
         with_test_home(|state, home| {
             let broken_provider = claude_provider(
@@ -2056,11 +2121,18 @@ impl ProviderService {
         if let Some(previous_live_settings) = rollback.previous_live_settings.as_ref() {
             write_json_file(&get_claude_settings_path(), previous_live_settings)?;
         }
-        if let (Some(target_live_path), Some(target_live_settings)) = (
+        match (
             rollback.target_live_path.as_ref(),
             rollback.target_live_settings.as_ref(),
         ) {
-            write_json_file(target_live_path, target_live_settings)?;
+            (Some(target_live_path), Some(target_live_settings)) => {
+                write_json_file(target_live_path, target_live_settings)?;
+            }
+            (Some(target_live_path), None) if target_live_path.exists() => {
+                fs::remove_file(target_live_path)
+                    .map_err(|err| AppError::io(target_live_path, err))?;
+            }
+            _ => {}
         }
 
         Ok(())
