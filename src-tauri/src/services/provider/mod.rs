@@ -4140,6 +4140,12 @@ impl ProviderService {
             .proxy_service
             .detect_takeover_in_live_config_for_app(&app_type);
 
+        if matches!(app_type, AppType::Claude) {
+            let plan = Self::claude_switch_plan(provider);
+            Self::validate_claude_runtime_switch_plan(&plan)?;
+            Self::apply_claude_switch_plan(&plan)?;
+        }
+
         if takeover_enabled && (has_live_backup || live_taken_over) {
             futures::executor::block_on(
                 state
@@ -4148,12 +4154,6 @@ impl ProviderService {
             )
             .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
             return Ok(());
-        }
-
-        if matches!(app_type, AppType::Claude) {
-            let plan = Self::claude_switch_plan(provider);
-            Self::validate_claude_runtime_switch_plan(&plan)?;
-            Self::apply_claude_switch_plan(&plan)?;
         }
 
         sync_current_provider_for_app_to_live(state, &app_type)
