@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Save, Plus } from "lucide-react";
+import { Save, Plus, Copy } from "lucide-react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ interface PricingEditModalProps {
   open: boolean;
   model: ModelPricing;
   isNew?: boolean;
+  isCopying?: boolean;
   onClose: () => void;
 }
 
@@ -20,6 +21,7 @@ export function PricingEditModal({
   open,
   model,
   isNew = false,
+  isCopying = false,
   onClose,
 }: PricingEditModalProps) {
   const { t } = useTranslation();
@@ -34,11 +36,14 @@ export function PricingEditModal({
     cacheCreationCost: model.cacheCreationCostPerMillion,
   });
 
+  // 复制模式时 modelId 可编辑（类似新增）
+  const editableModelId = isNew || isCopying;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // 验证模型 ID
-    if (isNew && !formData.modelId.trim()) {
+    if (editableModelId && !formData.modelId.trim()) {
       toast.error(t("usage.modelIdRequired", "模型 ID 不能为空"));
       return;
     }
@@ -60,7 +65,7 @@ export function PricingEditModal({
 
     try {
       await updatePricing.mutateAsync({
-        modelId: isNew ? formData.modelId : model.modelId,
+        modelId: editableModelId ? formData.modelId : model.modelId,
         displayName: formData.displayName,
         inputCost: formData.inputCost,
         outputCost: formData.outputCost,
@@ -70,7 +75,9 @@ export function PricingEditModal({
 
       toast.success(
         isNew
-          ? t("usage.pricingAdded", "定价已添加")
+          ? isCopying
+            ? t("usage.pricingCopied", "定价已复制")
+            : t("usage.pricingAdded", "定价已添加")
           : t("usage.pricingUpdated", "定价已更新"),
         { closeButton: true },
       );
@@ -85,9 +92,11 @@ export function PricingEditModal({
     <FullScreenPanel
       isOpen={open}
       title={
-        isNew
-          ? t("usage.addPricing", "新增定价")
-          : `${t("usage.editPricing", "编辑定价")} - ${model.modelId}`
+        isCopying
+          ? t("usage.copyPricing", "复制定价")
+          : isNew
+            ? t("usage.addPricing", "新增定价")
+            : `${t("usage.editPricing", "编辑定价")} - ${model.modelId}`
       }
       onClose={onClose}
       footer={
@@ -96,21 +105,25 @@ export function PricingEditModal({
           form="pricing-form"
           disabled={updatePricing.isPending}
         >
-          {isNew ? (
+          {isCopying ? (
+            <Copy className="h-4 w-4 mr-2" />
+          ) : isNew ? (
             <Plus className="h-4 w-4 mr-2" />
           ) : (
             <Save className="h-4 w-4 mr-2" />
           )}
           {updatePricing.isPending
             ? t("common.saving", "保存中...")
-            : isNew
-              ? t("common.add", "新增")
-              : t("common.save", "保存")}
+            : isCopying
+              ? t("common.copy", "复制")
+              : isNew
+                ? t("common.add", "新增")
+                : t("common.save", "保存")}
         </Button>
       }
     >
       <form id="pricing-form" onSubmit={handleSubmit} className="space-y-6">
-        {isNew && (
+        {editableModelId && (
           <div className="space-y-2">
             <Label htmlFor="modelId">{t("usage.modelId", "模型 ID")}</Label>
             <Input

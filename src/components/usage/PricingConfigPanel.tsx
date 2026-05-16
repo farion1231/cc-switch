@@ -29,7 +29,7 @@ import {
 import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
 import { PricingEditModal } from "./PricingEditModal";
 import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
-import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
 
@@ -50,6 +50,7 @@ export function PricingConfigPanel() {
   const deleteMutation = useDeleteModelPricing();
   const [editingModel, setEditingModel] = useState<ModelPricing | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
+  const [isCopying, setIsCopying] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   // 三个应用的配置状态
@@ -187,6 +188,7 @@ export function PricingConfigPanel() {
 
   const handleAddNew = () => {
     setIsAddingNew(true);
+    setIsCopying(false);
     setEditingModel({
       modelId: "",
       displayName: "",
@@ -194,6 +196,15 @@ export function PricingConfigPanel() {
       outputCostPerMillion: "0",
       cacheReadCostPerMillion: "0",
       cacheCreationCostPerMillion: "0",
+    });
+  };
+
+  const handleCopy = (model: ModelPricing) => {
+    setIsCopying(true);
+    setIsAddingNew(true);
+    setEditingModel({
+      ...model,
+      modelId: "",
     });
   };
 
@@ -410,11 +421,20 @@ export function PricingConfigPanel() {
                             size="icon"
                             onClick={() => {
                               setIsAddingNew(false);
+                              setIsCopying(false);
                               setEditingModel(model);
                             }}
                             title={t("common.edit")}
                           >
                             <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleCopy(model)}
+                            title={t("common.copy")}
+                          >
+                            <Copy className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -441,9 +461,11 @@ export function PricingConfigPanel() {
           open={!!editingModel}
           model={editingModel}
           isNew={isAddingNew}
+          isCopying={isCopying}
           onClose={() => {
             setEditingModel(null);
             setIsAddingNew(false);
+            setIsCopying(false);
           }}
         />
       )}
