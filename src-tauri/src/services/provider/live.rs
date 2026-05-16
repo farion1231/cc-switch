@@ -569,7 +569,13 @@ pub(crate) fn strip_common_config_from_live_settings(
         live_settings
     };
 
-    restore_live_settings_for_provider_backfill(app_type, provider, backfill_settings)
+    let restored =
+        restore_live_settings_for_provider_backfill(app_type, provider, backfill_settings);
+
+    // Keep only keys that exist in the provider's original settings_config.
+    // The live config may contain extra fields (e.g. permissions, autoCompact)
+    // added by the target app itself — these should not pollute the provider record.
+    intersect_with_original_settings(app_type, provider, restored)
 }
 
 fn restore_live_settings_for_provider_backfill(
@@ -593,6 +599,85 @@ fn restore_live_settings_for_provider_backfill(
     }
 
     settings
+}
+
+/// During backfill, keep only top-level keys that exist in the provider's original
+/// `settings_config`. The live config may accumulate extra fields added by the target
+/// app (permissions, autoCompact, etc.) that should not be saved into the provider record.
+///
+/// Additionally, provider-identity fields (API keys, base URLs) are never overwritten
+/// from the live config during backfill. These fields define which provider the config
+/// belongs to, so accepting a different value from the live file would corrupt the record.
+fn intersect_with_original_settings(
+    app_type: &AppType,
+    provider: &Provider,
+    backfill: Value,
+) -> Value {
+    // Additive-mode apps manage their own live config structure; skip intersection.
+    if app_type.is_additive_mode() {
+        return backfill;
+    }
+
+    let (Some(original_map), Some(backfill_map)) =
+        (provider.settings_config.as_object(), backfill.as_object())
+    else {
+        return backfill;
+    };
+
+    let protected_keys = protected_env_keys(app_type);
+
+    let mut result = serde_json::Map::new();
+    for (key, original_value) in original_map {
+        if let Some(backfill_value) = backfill_map.get(key) {
+            // For nested objects (e.g. "env"), recursively intersect
+            if let (Some(orig_inner), Some(backfill_inner)) =
+                (original_value.as_object(), backfill_value.as_object())
+            {
+                let mut inner = serde_json::Map::new();
+                for (k, v) in orig_inner {
+                    // Protected keys (API keys, base URLs) always keep the original value
+                    if protected_keys.contains(&k.as_str()) {
+                        inner.insert(k.clone(), v.clone());
+                    } else if let Some(bv) = backfill_inner.get(k) {
+                        inner.insert(k.clone(), bv.clone());
+                    } else {
+                        inner.insert(k.clone(), v.clone());
+                    }
+                }
+                result.insert(key.clone(), Value::Object(inner));
+            } else {
+                result.insert(key.clone(), backfill_value.clone());
+            }
+        } else {
+            result.insert(key.clone(), original_value.clone());
+        }
+    }
+
+    Value::Object(result)
+}
+
+/// Environment variable keys that define a provider's identity.
+/// These are never overwritten from the live config during backfill,
+/// because doing so would corrupt the provider record with another
+/// provider's credentials or endpoint.
+fn protected_env_keys(app_type: &AppType) -> &'static [&'static str] {
+    match app_type {
+        AppType::Claude => &[
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+        ],
+        AppType::Codex => &[
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+        ],
+        AppType::Gemini => &[
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_GEMINI_BASE_URL",
+        ],
+        _ => &[],
+    }
 }
 
 pub(crate) fn normalize_provider_common_config_for_storage(
@@ -1623,5 +1708,128 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    // --- intersect_with_original_settings tests ---
+
+    fn test_provider(id: &str, settings: Value) -> Provider {
+        Provider::with_id(id.to_string(), id.to_string(), settings, None)
+    }
+
+    #[test]
+    fn intersect_protects_api_key_and_base_url() {
+        let provider = test_provider("p1", json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-original",
+                "ANTHROPIC_BASE_URL": "https://original.example.com",
+                "ANTHROPIC_MODEL": "claude-sonnet-4-6",
+            }
+        }));
+        // Live config from a DIFFERENT provider (different key/url/model)
+        let backfill = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-other",
+                "ANTHROPIC_BASE_URL": "https://other.example.com",
+                "ANTHROPIC_MODEL": "claude-opus-4-5",
+            }
+        });
+
+        let result = intersect_with_original_settings(&AppType::Claude, &provider, backfill);
+
+        // Protected keys must keep original values
+        assert_eq!(result["env"]["ANTHROPIC_API_KEY"], "sk-original");
+        assert_eq!(result["env"]["ANTHROPIC_BASE_URL"], "https://original.example.com");
+        // Non-protected keys are updated from backfill
+        assert_eq!(result["env"]["ANTHROPIC_MODEL"], "claude-opus-4-5");
+    }
+
+    #[test]
+    fn intersect_drops_extra_top_level_keys() {
+        let provider = test_provider("p1", json!({
+            "env": { "ANTHROPIC_API_KEY": "sk-test" }
+        }));
+        // Live config has extra fields added by the target app
+        let backfill = json!({
+            "env": { "ANTHROPIC_API_KEY": "sk-test" },
+            "permissions": { "allow": ["tool1"] },
+            "autoCompact": true
+        });
+
+        let result = intersect_with_original_settings(&AppType::Claude, &provider, backfill);
+
+        assert!(result.get("permissions").is_none(), "extra keys should be dropped");
+        assert!(result.get("autoCompact").is_none(), "extra keys should be dropped");
+        assert_eq!(result["env"]["ANTHROPIC_API_KEY"], "sk-test");
+    }
+
+    #[test]
+    fn intersect_preserves_original_keys_missing_from_backfill() {
+        let provider = test_provider("p1", json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-test",
+                "MY_CUSTOM_VAR": "original"
+            }
+        }));
+        let backfill = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-other"
+            }
+        });
+
+        let result = intersect_with_original_settings(&AppType::Claude, &provider, backfill);
+
+        // API_KEY is protected, keeps original
+        assert_eq!(result["env"]["ANTHROPIC_API_KEY"], "sk-test");
+        // Missing from backfill, keeps original
+        assert_eq!(result["env"]["MY_CUSTOM_VAR"], "original");
+    }
+
+    #[test]
+    fn intersect_passthrough_for_additive_mode() {
+        let provider = test_provider("p1", json!({"env": {"KEY": "val"}}));
+        let backfill = json!({"env": {"KEY": "changed"}, "extra": true});
+        let expected = backfill.clone();
+
+        let result = intersect_with_original_settings(&AppType::OpenCode, &provider, backfill);
+
+        // Additive mode should return backfill as-is
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn intersect_handles_null_settings_config() {
+        let mut provider = test_provider("p1", json!(null));
+        provider.settings_config = Value::Null;
+        let backfill = json!({"env": {"KEY": "val"}});
+        let expected = backfill.clone();
+
+        let result = intersect_with_original_settings(&AppType::Claude, &provider, backfill);
+
+        // Null config should passthrough
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn intersect_handles_gemini_base_url_protection() {
+        let provider = test_provider("p1", json!({
+            "env": {
+                "GEMINI_API_KEY": "key-original",
+                "GOOGLE_GEMINI_BASE_URL": "https://original.example.com",
+                "MY_SETTING": "old"
+            }
+        }));
+        let backfill = json!({
+            "env": {
+                "GEMINI_API_KEY": "key-other",
+                "GOOGLE_GEMINI_BASE_URL": "https://other.example.com",
+                "MY_SETTING": "new"
+            }
+        });
+
+        let result = intersect_with_original_settings(&AppType::Gemini, &provider, backfill);
+
+        assert_eq!(result["env"]["GEMINI_API_KEY"], "key-original");
+        assert_eq!(result["env"]["GOOGLE_GEMINI_BASE_URL"], "https://original.example.com");
+        assert_eq!(result["env"]["MY_SETTING"], "new");
     }
 }

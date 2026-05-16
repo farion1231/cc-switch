@@ -712,5 +712,11 @@ pub fn check_cli_switch_signal() -> Result<Option<crate::linux_cli::CliSwitchSig
         signal.provider_id
     );
 
+    // Reload settings from disk so the in-process SETTINGS_STORE picks up
+    // the current_provider_xxx value that the CLI just wrote.
+    if let Err(e) = crate::settings::reload_settings() {
+        log::warn!("[CLI Signal] Failed to reload settings: {e}");
+    }
+
     Ok(Some(signal))
 }

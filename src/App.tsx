@@ -393,6 +393,9 @@ function App() {
             "@/lib/query/mutations"
           );
           await invalidateProviderSwitchCaches(queryClient, signal.appType);
+          if (signal.appType === activeApp) {
+            await refetch();
+          }
         }
       } catch {
         // signal check failure is non-critical
@@ -404,7 +407,7 @@ function App() {
       active = false;
       clearInterval(interval);
     };
-  }, [queryClient]);
+  }, [queryClient, activeApp, refetch]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
