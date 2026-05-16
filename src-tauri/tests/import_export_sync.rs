@@ -52,15 +52,25 @@ fn sync_claude_provider_writes_live_settings() {
         settings_path.display()
     );
 
+    let expected_live_config = json!({
+        "env": {
+            "ANTHROPIC_AUTH_TOKEN": "test-key",
+            "ANTHROPIC_BASE_URL": "https://api.test",
+            "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+        },
+        "ui": {
+            "displayName": "Test Provider"
+        }
+    });
     let live_value: serde_json::Value = read_json_file(&settings_path).expect("read live file");
-    assert_eq!(live_value, provider_config);
+    assert_eq!(live_value, expected_live_config);
 
     // 确认 SSOT 中的供应商也同步了最新内容
     let updated = config
         .get_manager(&AppType::Claude)
         .and_then(|m| m.providers.get("prov-1"))
         .expect("provider in config");
-    assert_eq!(updated.settings_config, provider_config);
+    assert_eq!(updated.settings_config, expected_live_config);
 
     // 额外确认写入位置位于测试 HOME 下
     assert!(
