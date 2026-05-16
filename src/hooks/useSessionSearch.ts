@@ -5,6 +5,7 @@ import type { SessionMeta } from "@/types";
 interface UseSessionSearchOptions {
   sessions: SessionMeta[];
   providerFilter: string;
+  projectFilter?: string | null;
 }
 
 interface UseSessionSearchResult {
@@ -18,11 +19,17 @@ interface UseSessionSearchResult {
 export function useSessionSearch({
   sessions,
   providerFilter,
+  projectFilter = null,
 }: UseSessionSearchOptions): UseSessionSearchResult {
+  const filteredByProject = useMemo(() => {
+    if (!projectFilter) return sessions;
+    return sessions.filter((s) => s.projectDir === projectFilter);
+  }, [sessions, projectFilter]);
+
   const filteredByProvider = useMemo(() => {
-    if (providerFilter === "all") return sessions;
-    return sessions.filter((s) => s.providerId === providerFilter);
-  }, [sessions, providerFilter]);
+    if (providerFilter === "all") return filteredByProject;
+    return filteredByProject.filter((s) => s.providerId === providerFilter);
+  }, [filteredByProject, providerFilter]);
 
   const index = useMemo(() => {
     const nextIndex = new FlexSearch.Index({

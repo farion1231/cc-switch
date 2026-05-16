@@ -728,6 +728,8 @@
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",
     "sessionList": "Sessions",
+    "allProjects": "All Projects",
+    "clearProjectFilter": "Clear project filter",
     "manageBatchTooltip": "Enter batch management",
     "exitBatchModeTooltip": "Exit batch management",
     "batchModeHint": "Select sessions to delete",

@@ -185,19 +185,38 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
 
 /// 把智谱 `data` 里的 `limits[]` 解析成 tier 列表。
 ///
-/// 按 `nextResetTime` 升序后：第 0 条 = 五小时桶（`five_hour`）、
-/// 第 1 条 = 每周桶（`weekly_limit`）。老套餐（2026-02-12 前订阅）只回 1 条
-/// `TOKENS_LIMIT`，自然降级为仅展示 `five_hour`；新套餐回 2 条。
-/// 缺失 `nextResetTime` 时按 `i64::MAX` 排到末位。
+/// 两条 TOKENS_LIMIT 时按 `nextResetTime` 升序：第 0 条 = 五小时桶（`five_hour`）、
+/// 第 1 条 = 每周桶（`weekly_limit`）。缺失 `nextResetTime` 按 `i64::MAX` 排末位。
+///
+/// 仅一条 TOKENS_LIMIT 时，按距下次重置的时间判断桶类型：
+/// - 距重置 > 12 小时 → 每周桶（`weekly_limit`）
+/// - 距重置 ≤ 12 小时（含已过期） → 五小时桶（`five_hour`）
+///   根据 Zhipu API 的 `unit`/`number` 字段确定 tier 类型。
+/// - `unit=3, number=5` → 5 小时桶 (TIER_FIVE_HOUR)
+/// - `unit=6, number=1` → 周桶 (TIER_WEEKLY_LIMIT)
+fn classify_zhipu_tier(unit: Option<i64>, number: Option<i64>) -> Option<&'static str> {
+    match (unit, number) {
+        (Some(3), Some(5)) => Some(TIER_FIVE_HOUR),
+        (Some(6), Some(1)) => Some(TIER_WEEKLY_LIMIT),
+        _ => None,
+    }
+}
+
 fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
-    let mut token_limits: Vec<(i64, f64, Option<String>)> = Vec::new();
+    struct RawLimit {
+        tier_name: Option<&'static str>,
+        percentage: f64,
+        reset_ms: i64,
+        resets_at: Option<String>,
+    }
+
+    let mut raw_limits: Vec<RawLimit> = Vec::new();
     if let Some(limits) = data.get("limits").and_then(|v| v.as_array()) {
         for limit_item in limits {
             let limit_type = limit_item
                 .get("type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            // 大小写不敏感比较：上游若把 "TOKENS_LIMIT" 改成小写或驼峰，依然能识别
             if !limit_type.eq_ignore_ascii_case("TOKENS_LIMIT") {
                 continue;
             }
@@ -209,29 +228,77 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
                 .get("nextResetTime")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(i64::MAX);
-            let reset_iso = if reset_ms == i64::MAX {
+            let resets_at = if reset_ms == i64::MAX {
                 None
             } else {
                 millis_to_iso8601(reset_ms)
             };
-            token_limits.push((reset_ms, percentage, reset_iso));
+            let unit = limit_item.get("unit").and_then(|v| v.as_i64());
+            let number = limit_item.get("number").and_then(|v| v.as_i64());
+            let tier_name = classify_zhipu_tier(unit, number);
+            raw_limits.push(RawLimit {
+                tier_name,
+                percentage,
+                reset_ms,
+                resets_at,
+            });
         }
     }
-    token_limits.sort_by_key(|(reset, _, _)| *reset);
 
-    token_limits
+    if raw_limits.is_empty() {
+        return vec![];
+    }
+
+    // 主路径：所有 TOKENS_LIMIT 条目都有 unit/number → 直接分类
+    let all_classified = raw_limits.iter().all(|r| r.tier_name.is_some());
+    if all_classified {
+        let mut tiers: Vec<QuotaTier> = raw_limits
+            .into_iter()
+            .map(|raw| QuotaTier {
+                name: raw.tier_name.unwrap().to_string(),
+                utilization: raw.percentage,
+                resets_at: raw.resets_at,
+            })
+            .collect();
+        // 固定输出顺序：five_hour 在前，weekly_limit 在后
+        tiers.sort_by_key(|t| if t.name == TIER_FIVE_HOUR { 0 } else { 1 });
+        return tiers;
+    }
+
+    // 兜底路径：无 unit/number → 兼容老套餐接口
+    raw_limits.sort_by_key(|r| r.reset_ms);
+
+    // 仅一条 TOKENS_LIMIT：按距下次重置的时间判断是每周桶还是五小时桶。
+    // 部分老套餐只有周限没有五小时桶，若盲目分配 five_hour 会导致标签错误。
+    if raw_limits.len() == 1 {
+        let raw = raw_limits.into_iter().next().unwrap();
+        let now = now_millis();
+        let is_weekly = raw.reset_ms.saturating_sub(now) > 43_200_000; // 12 小时
+        return vec![QuotaTier {
+            name: (if is_weekly {
+                TIER_WEEKLY_LIMIT
+            } else {
+                TIER_FIVE_HOUR
+            })
+            .to_string(),
+            utilization: raw.percentage,
+            resets_at: raw.resets_at,
+        }];
+    }
+
+    raw_limits
         .into_iter()
         .enumerate()
-        .filter_map(|(idx, (_, percentage, resets_at))| {
+        .filter_map(|(idx, raw)| {
             let name = match idx {
                 0 => TIER_FIVE_HOUR,
                 1 => TIER_WEEKLY_LIMIT,
-                _ => return None, // 智谱当前最多两条 TOKENS_LIMIT，多余的忽略
+                _ => return None,
             };
             Some(QuotaTier {
                 name: name.to_string(),
-                utilization: percentage,
-                resets_at,
+                utilization: raw.percentage,
+                resets_at: raw.resets_at,
             })
         })
         .collect()
@@ -485,14 +552,14 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn zhipu_new_plan_two_tiers_sorted_by_reset_time() {
-        // 新套餐：两条 TOKENS_LIMIT，nextResetTime 较近的归 five_hour、较远的归 weekly_limit。
-        // 故意把"周限"放数组前面，验证不依赖输入顺序。
+    fn zhipu_two_tiers_classified_by_unit_number() {
+        // 两条 TOKENS_LIMIT，通过 unit/number 字段确定类型，不依赖 nextResetTime 排序。
+        // 故意把周限放数组前面，验证分类不依赖输入顺序。
         let data = json!({
             "limits": [
-                { "type": "TOKENS_LIMIT", "percentage": 53.0, "nextResetTime": 2_000_000_000_000_i64 },
-                { "type": "TOKENS_LIMIT", "percentage": 44.0, "nextResetTime": 1_000_000_000_000_i64 },
-                { "type": "TIME_LIMIT",   "percentage":  7.0 },
+                { "type": "TOKENS_LIMIT", "percentage": 53.0, "nextResetTime": 2_000_000_000_000_i64, "unit": 6, "number": 1 },
+                { "type": "TOKENS_LIMIT", "percentage": 44.0, "nextResetTime": 1_000_000_000_000_i64, "unit": 3, "number": 5 },
+                { "type": "TIME_LIMIT",   "percentage":  7.0 }
             ]
         });
         let tiers = parse_zhipu_token_tiers(&data);
@@ -504,15 +571,11 @@ mod tests {
     }
 
     #[test]
-    fn zhipu_old_plan_single_tier_falls_back_to_five_hour() {
-        // 老套餐（2026-02-12 前订阅）：仅一条 TOKENS_LIMIT，无周限。
+    fn zhipu_single_five_hour_tier_by_unit_number() {
+        // 老套餐：仅一条 TOKENS_LIMIT，unit=3, number=5 → 5 小时桶。
         let data = json!({
             "limits": [
-                {
-                    "type": "TOKENS_LIMIT",
-                    "percentage": 2.0,
-                    "nextResetTime": 1_774_967_594_803_i64
-                },
+                { "type": "TOKENS_LIMIT", "percentage": 2.0, "nextResetTime": 1_774_967_594_803_i64, "unit": 3, "number": 5 },
                 { "type": "TIME_LIMIT", "percentage": 0.0 }
             ]
         });
@@ -523,6 +586,21 @@ mod tests {
     }
 
     #[test]
+    fn zhipu_single_weekly_tier_by_unit_number() {
+        // 仅一条 TOKENS_LIMIT，unit=6, number=1 → 周限套餐。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "percentage": 30.0, "nextResetTime": 2_000_000_000_000_i64, "unit": 6, "number": 1 },
+                { "type": "TIME_LIMIT", "percentage": 5.0 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[0].utilization, 30.0);
+    }
+
+    #[test]
     fn zhipu_no_token_limits_returns_empty() {
         let data = json!({ "limits": [{ "type": "TIME_LIMIT", "percentage": 5.0 }] });
         assert!(parse_zhipu_token_tiers(&data).is_empty());
@@ -530,7 +608,7 @@ mod tests {
 
     #[test]
     fn zhipu_missing_reset_time_sorts_last() {
-        // 防御性：没有 nextResetTime 的条目排到末位，避免抢占 five_hour 槽位。
+        // 无 unit/number → 兜底路径：没有 nextResetTime 的条目排到末位。
         let data = json!({
             "limits": [
                 { "type": "TOKENS_LIMIT", "percentage": 99.0 },
@@ -548,12 +626,11 @@ mod tests {
 
     #[test]
     fn zhipu_type_is_case_insensitive() {
-        // 防御性：上游若把 "TOKENS_LIMIT" 改成 "tokens_limit"（仅大小写变化）仍能识别。
-        // 注意：分隔符差异（如 "TokensLimit" 去掉下划线）不在兼容范围。
+        // type 字段大小写不敏感，同时带 unit/number 验证主路径。
         let data = json!({
             "limits": [
-                { "type": "tokens_limit", "percentage": 12.0, "nextResetTime": 1_000_000_000_000_i64 },
-                { "type": "Tokens_Limit", "percentage": 34.0, "nextResetTime": 2_000_000_000_000_i64 }
+                { "type": "tokens_limit", "percentage": 12.0, "nextResetTime": 1_000_000_000_000_i64, "unit": 3, "number": 5 },
+                { "type": "Tokens_Limit", "percentage": 34.0, "nextResetTime": 2_000_000_000_000_i64, "unit": 6, "number": 1 }
             ]
         });
         let tiers = parse_zhipu_token_tiers(&data);
@@ -566,11 +643,11 @@ mod tests {
 
     #[test]
     fn zhipu_invalid_percentage_falls_back_to_zero() {
-        // percentage 为字符串或 null 时不应崩溃，按 0 处理（仍展示 tier，但用量为 0）。
+        // percentage 为字符串或 null 时按 0 处理，带 unit/number。
         let data = json!({
             "limits": [
-                { "type": "TOKENS_LIMIT", "percentage": "invalid", "nextResetTime": 1_000_000_000_000_i64 },
-                { "type": "TOKENS_LIMIT", "percentage": null,      "nextResetTime": 2_000_000_000_000_i64 }
+                { "type": "TOKENS_LIMIT", "percentage": "invalid", "nextResetTime": 1_000_000_000_000_i64, "unit": 3, "number": 5 },
+                { "type": "TOKENS_LIMIT", "percentage": null,      "nextResetTime": 2_000_000_000_000_i64, "unit": 6, "number": 1 }
             ]
         });
         let tiers = parse_zhipu_token_tiers(&data);
@@ -581,11 +658,11 @@ mod tests {
 
     #[test]
     fn zhipu_extreme_percentage_values_pass_through() {
-        // 负数 / 超 100 不做范围裁剪——下游渲染层负责显示策略，解析层只负责忠实搬运。
+        // 负数 / 超 100 不裁剪，带 unit/number。
         let data = json!({
             "limits": [
-                { "type": "TOKENS_LIMIT", "percentage": -5.0,  "nextResetTime": 1_000_000_000_000_i64 },
-                { "type": "TOKENS_LIMIT", "percentage": 150.0, "nextResetTime": 2_000_000_000_000_i64 }
+                { "type": "TOKENS_LIMIT", "percentage": -5.0,  "nextResetTime": 1_000_000_000_000_i64, "unit": 3, "number": 5 },
+                { "type": "TOKENS_LIMIT", "percentage": 150.0, "nextResetTime": 2_000_000_000_000_i64, "unit": 6, "number": 1 }
             ]
         });
         let tiers = parse_zhipu_token_tiers(&data);
@@ -596,7 +673,7 @@ mod tests {
 
     #[test]
     fn zhipu_more_than_two_token_limits_keeps_first_two() {
-        // 防御性：智谱当前最多两条 TOKENS_LIMIT，若上游意外增加第三条应被丢弃，避免命名空缺。
+        // 无 unit/number → 兜底路径最多保留两条。
         let data = json!({
             "limits": [
                 { "type": "TOKENS_LIMIT", "percentage": 1.0, "nextResetTime": 1_000_000_000_000_i64 },
@@ -608,5 +685,52 @@ mod tests {
         assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
         assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+    }
+
+    #[test]
+    fn zhipu_mixed_unit_number_triggers_fallback() {
+        // 部分条目有 unit/number，部分没有 → 走兜底路径。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "percentage": 10.0, "nextResetTime": 1_000_000_000_000_i64, "unit": 3, "number": 5 },
+                { "type": "TOKENS_LIMIT", "percentage": 20.0, "nextResetTime": 2_000_000_000_000_i64 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 10.0);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 20.0);
+    }
+
+    #[test]
+    fn zhipu_fallback_single_tier_near_reset_is_five_hour() {
+        // 老套餐接口（无 unit/number）：仅一条 TOKENS_LIMIT，nextResetTime 在 12 小时内 → five_hour。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "percentage": 2.0, "nextResetTime": 1_774_967_594_803_i64 },
+                { "type": "TIME_LIMIT", "percentage": 0.0 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 2.0);
+    }
+
+    #[test]
+    fn zhipu_fallback_single_tier_far_future_is_weekly() {
+        // 老套餐接口（无 unit/number）：仅一条 TOKENS_LIMIT，nextResetTime 在数天后 → weekly_limit。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "percentage": 30.0, "nextResetTime": 2_000_000_000_000_i64 },
+                { "type": "TIME_LIMIT", "percentage": 5.0 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[0].utilization, 30.0);
     }
 }

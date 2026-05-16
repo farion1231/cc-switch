@@ -18,6 +18,7 @@ GEMINI.md
 /.vscode
 vitest-report.json
 nul
+/.files
 
 # Flatpak build artifacts
 flatpak/cc-switch.deb
@@ -29,4 +30,5 @@ copilot-api
 .history
 CODEBUDDY.md
 .github
+.venv
 mainWindow.js
