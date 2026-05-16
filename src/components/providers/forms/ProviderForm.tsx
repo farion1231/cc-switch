@@ -7,6 +7,14 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { CircleHelp } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import type {
@@ -117,6 +125,25 @@ type PresetEntry = {
     | HermesProviderPreset;
 };
 
+function getDefaultTerminalCommand(appId: AppId): string {
+  switch (appId) {
+    case "claude":
+      return "claude --settings {settingsFile}";
+    case "codex":
+      return "codex";
+    case "gemini":
+      return "gemini";
+    case "opencode":
+      return "opencode";
+    case "openclaw":
+      return "openclaw";
+    case "hermes":
+      return "hermes";
+    default:
+      return "";
+  }
+}
+
 export interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
@@ -169,6 +196,7 @@ function ProviderFormFull({
   const { data: settingsData } = useSettingsQuery();
   const showCommonConfigNotice =
     settingsData != null && settingsData.commonConfigConfirmed !== true;
+  const defaultTerminalCommand = getDefaultTerminalCommand(appId);
 
   const handleCommonConfigConfirm = async () => {
     try {
@@ -192,6 +220,9 @@ function ProviderFormFull({
     partnerPromotionKey?: string;
     suggestedDefaults?: OpenClawSuggestedDefaults;
   } | null>(null);
+  const [terminalCommandTemplate, setTerminalCommandTemplate] = useState(
+    initialData?.meta?.terminalCommandTemplate ?? "",
+  );
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
   const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] =
     useState(false);
@@ -259,6 +290,7 @@ function ProviderFormFull({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setTerminalCommandTemplate(initialData?.meta?.terminalCommandTemplate ?? "");
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -1197,6 +1229,7 @@ function ProviderFormFull({
               : undefined,
       endpointAutoSelect,
       claudeDesktopMode: undefined,
+      terminalCommandTemplate: terminalCommandTemplate.trim() || undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
       providerType,
       authBinding: isCopilotProvider
@@ -1756,6 +1789,85 @@ function ProviderFormFull({
               ) : undefined
             }
           />
+
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="terminal-command-template">
+                  {t("provider.terminalCommandTemplate")}
+                </Label>
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
+                        aria-label={t("provider.terminalVariables")}
+                      >
+                        <CircleHelp className="size-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[360px] text-xs">
+                      <div className="space-y-2">
+                        <p className="font-medium">
+                          {t("provider.terminalVariables")}
+                        </p>
+                        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                          <dt className="font-mono text-foreground">
+                            {"{settingsFile}"}
+                          </dt>
+                          <dd>{t("provider.terminalVariableSettingsFile")}</dd>
+                          <dt className="font-mono text-foreground">
+                            {"{providerId}"}
+                          </dt>
+                          <dd>{t("provider.terminalVariableProviderId")}</dd>
+                          <dt className="font-mono text-foreground">
+                            {"{sessionName}"}
+                          </dt>
+                          <dd>{t("provider.terminalVariableSessionName")}</dd>
+                          <dt className="font-mono text-foreground">
+                            {"{app}"}
+                          </dt>
+                          <dd>{t("provider.terminalVariableApp")}</dd>
+                          <dt className="font-mono text-foreground">
+                            {"{cwd}"}
+                          </dt>
+                          <dd>{t("provider.terminalVariableCwd")}</dd>
+                        </dl>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              {terminalCommandTemplate.trim() && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setTerminalCommandTemplate("")}
+                >
+                  {t("provider.useDefaultTerminalCommand")}
+                </Button>
+              )}
+            </div>
+            <Textarea
+              id="terminal-command-template"
+              value={terminalCommandTemplate}
+              onChange={(event) =>
+                setTerminalCommandTemplate(event.target.value)
+              }
+              placeholder={t("provider.terminalCommandTemplatePlaceholder", {
+                command: defaultTerminalCommand,
+              })}
+              className="min-h-[72px] font-mono text-xs"
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("provider.terminalCommandTemplateHint", {
+                command: defaultTerminalCommand,
+              })}
+            </p>
+          </section>
 
           {appId === "claude" && (
             <ClaudeFormFields

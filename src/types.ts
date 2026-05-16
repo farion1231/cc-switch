@@ -151,6 +151,8 @@ export interface ProviderMeta {
   usage_script?: UsageScript;
   // 请求地址管理：测速后自动选择最佳端点
   endpointAutoSelect?: boolean;
+  // 打开 provider 终端后执行的命令模板
+  terminalCommandTemplate?: string;
   // 是否为官方合作伙伴
   isPartner?: boolean;
   // 合作伙伴促销 key（用于后端识别 PackyCode 等）
