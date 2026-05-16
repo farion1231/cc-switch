@@ -1564,15 +1564,16 @@ impl RequestForwarder {
 
         // 输出请求信息日志
         let tag = adapter.name();
+        let source = app_type.as_str();
         let request_model = filtered_body
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
-        log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
+        log::info!("[{tag}/{source}] >>> 请求 URL: {url} (model={request_model})");
         if log::log_enabled!(log::Level::Debug) {
             if let Ok(body_str) = serde_json::to_string(&filtered_body) {
                 log::debug!(
-                    "[{tag}] >>> 请求体内容 ({}字节): {}",
+                    "[{tag}/{source}] >>> 请求体内容 ({}字节): {}",
                     body_str.len(),
                     body_str
                 );
