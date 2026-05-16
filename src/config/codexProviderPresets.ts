@@ -127,8 +127,7 @@ name = "Azure OpenAI"
 base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com/openai"
 env_key = "OPENAI_API_KEY"
 query_params = { "api-version" = "2025-04-01-preview" }
-wire_api = "responses"
-requires_openai_auth = true`,
+wire_api = "responses"`,
     endpointCandidates: ["https://YOUR_RESOURCE_NAME.openai.azure.com/openai"],
     theme: {
       icon: "codex",
