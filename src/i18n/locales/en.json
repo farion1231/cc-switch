@@ -365,7 +365,9 @@
         "thinkingSignature": "Thinking Signature Rectification",
         "thinkingSignatureDescription": "When an Anthropic-type provider returns thinking signature incompatibility or illegal request errors, automatically removes incompatible thinking-related blocks and retries once with the same provider",
         "thinkingBudget": "Thinking Budget Rectification",
-        "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once"
+        "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once",
+        "toolUseId": "Tool Use ID Rectification",
+        "toolUseIdDescription": "Before sending requests, automatically validates and fixes tool_use.id / tool_result.tool_use_id when needed to satisfy Claude (Anthropic) strict format requirements"
       },
       "optimizer": {
         "title": "Bedrock Request Optimizer",
@@ -953,7 +955,22 @@
     "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
     "fetchModelsNotSupported": "This provider does not support fetching model list",
     "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
-    "fetchModelsTimeout": "Request timed out, please check network connection"
+    "fetchModelsTimeout": "Request timed out, please check network connection",
+    "claudeModelRouting": "Model Routing Provider",
+    "claudeRoutingToggleHint": "Route requests to specific providers by model type when enabled.",
+    "claudeRoutingDefault": "Main Model",
+    "claudeRoutingHaiku": "Haiku",
+    "claudeRoutingSonnet": "Sonnet",
+    "claudeRoutingOpus": "Opus",
+    "claudeRoutingInheritCurrent": "Follow current provider",
+    "claudeRoutingHint": "Optional: route requests to designated providers by model type; unset slots follow the current provider and failover chain.",
+    "claudeRoutingDisabledHint": "Model routing provider is disabled; requests follow the current provider and failover chain.",
+    "claudeRoutingProxyNotRunningInline": "Local routing service is not running; model routing settings will not take effect after save.",
+    "claudeRoutingTakeoverNotEnabledInline": "Claude takeover is not enabled; model routing settings will not take effect after save.",
+    "claudeRoutingRectifierSuggestedInline": "For continuing history across providers, enable Rectifier and Tool Use ID rectification in Settings.",
+    "claudeRoutingProxyNotRunning": "Local routing service is not running; model routing settings will not take effect.",
+    "claudeRoutingTakeoverNotEnabled": "Claude takeover is not enabled; model routing settings will not take effect.",
+    "claudeRoutingRectifierSuggested": "Model routing provider is configured; for continuing history across providers, enable Rectifier and Tool Use ID rectification in Settings."
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -2221,6 +2238,7 @@
       "enabled": "{{app}} routing enabled",
       "disabled": "{{app}} routing disabled",
       "failed": "Failed to toggle routing: {{detail}}",
+      "claudeRoutingWarning": "A Claude provider has model routing configured. Disabling routing will make model routing ineffective.",
       "tooltip": {
         "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitch provider for hot switching",
         "broken": "{{appLabel}} is routing, but routing service is not running",

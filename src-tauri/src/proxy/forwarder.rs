@@ -18,6 +18,7 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
+    tool_use_id_rectifier::rectify_anthropic_tool_use_ids,
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
@@ -96,6 +97,10 @@ pub struct RequestForwarder {
     app_handle: Option<tauri::AppHandle>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
+    /// 是否抑制 current provider 回写（Claude 模型路由命中时启用）
+    suppress_current_provider_sync: bool,
+    /// 路由命中时预映射的模型名（来自当前供应商 env），None 表示未命中
+    mapped_model: Option<String>,
     /// 代理会话 ID（用于 Gemini Native shadow replay）
     session_id: String,
     /// Session ID 是否由客户端提供；生成值不能作为上游缓存身份。
@@ -129,6 +134,8 @@ impl RequestForwarder {
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
+        suppress_current_provider_sync: bool,
+        mapped_model: Option<String>,
         session_id: String,
         session_client_provided: bool,
         streaming_first_byte_timeout: u64,
@@ -149,6 +156,8 @@ impl RequestForwarder {
             failover_manager,
             app_handle,
             current_provider_id_at_start,
+            suppress_current_provider_sync,
+            mapped_model,
             session_id,
             session_client_provided,
             rectifier_config,
@@ -335,9 +344,17 @@ impl RequestForwarder {
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
 
+        // 路由命中时，只有第一个 provider（路由目标）使用预映射模型；
+        // failover 供应商使用自己的 apply_model_mapping
+        let routed_target_id = if self.suppress_current_provider_sync {
+            providers.first().map(|p| p.id.as_str())
+        } else {
+            None
+        };
+
         // 依次尝试每个供应商
         for provider in providers.iter() {
-            // 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
+// 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
             // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
@@ -353,6 +370,7 @@ impl RequestForwarder {
                 break;
             }
 
+            let is_routed_target = routed_target_id == Some(provider.id.as_str());
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
             // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
             let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
@@ -385,6 +403,28 @@ impl RequestForwarder {
                     body.clone()
                 };
 
+            let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
+            let is_anthropic_provider = matches!(
+                provider_type,
+                ProviderType::Claude | ProviderType::ClaudeAuth
+            );
+
+            // PRE-SEND 整流：Anthropic/Claude 严格校验链路下，按需规范化 tool_use id。
+            if is_anthropic_provider
+                && self.rectifier_config.enabled
+                && self.rectifier_config.request_tool_use_id
+            {
+                let id_rectified = rectify_anthropic_tool_use_ids(&mut provider_body);
+                if id_rectified.applied {
+                    log::info!(
+                        "[{}] [RECT-020] tool use id 整流器触发, 重写 tool_use.id {} 个, tool_result.tool_use_id {} 个",
+                        app_type_str,
+                        id_rectified.rewritten_tool_use_ids,
+                        id_rectified.rewritten_tool_result_ids
+                    );
+                }
+            }
+
             attempted_providers += 1;
 
             // 更新状态中的当前 Provider 信息（per-attempt 维度的标识）
@@ -409,6 +449,7 @@ impl RequestForwarder {
                     &headers,
                     &extensions,
                     adapter.as_ref(),
+                    is_routed_target,
                 )
                 .await
             {
@@ -432,8 +473,8 @@ impl RequestForwarder {
                         let mut status = self.status.write().await;
                         status.success_requests += 1;
                         status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                        let should_switch = !self.suppress_current_provider_sync
+                            && self.current_provider_id_at_start.as_str() != provider.id.as_str();
                         if should_switch {
                             status.failover_count += 1;
 
@@ -465,11 +506,6 @@ impl RequestForwarder {
                 }
                 Err(e) => {
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
-                    let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
-                    let is_anthropic_provider = matches!(
-                        provider_type,
-                        ProviderType::Claude | ProviderType::ClaudeAuth
-                    );
                     let mut signature_rectifier_non_retryable_client_error = false;
 
                     if is_anthropic_provider {
@@ -535,6 +571,7 @@ impl RequestForwarder {
                                         &headers,
                                         &extensions,
                                         adapter.as_ref(),
+                                        is_routed_target,
                                     )
                                     .await
                                 {
@@ -562,8 +599,9 @@ impl RequestForwarder {
                                             let mut status = self.status.write().await;
                                             status.success_requests += 1;
                                             status.last_error = None;
-                                            let should_switch =
-                                                self.current_provider_id_at_start.as_str()
+                                            let should_switch = !self
+                                                .suppress_current_provider_sync
+                                                && self.current_provider_id_at_start.as_str()
                                                     != provider.id.as_str();
                                             if should_switch {
                                                 status.failover_count += 1;
@@ -700,6 +738,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    is_routed_target,
                                 )
                                 .await
                             {
@@ -725,8 +764,8 @@ impl RequestForwarder {
                                         let mut status = self.status.write().await;
                                         status.success_requests += 1;
                                         status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
+                                        let should_switch = !self.suppress_current_provider_sync
+                                            && self.current_provider_id_at_start.as_str()
                                                 != provider.id.as_str();
                                         if should_switch {
                                             status.failover_count += 1;
@@ -920,6 +959,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
+        is_routed_target: bool,
     ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
@@ -930,7 +970,7 @@ impl RequestForwarder {
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
 
-        // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
+// GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = provider
             .meta
             .as_ref()
@@ -938,13 +978,31 @@ impl RequestForwarder {
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
 
-        // 应用模型映射（独立于格式转换）
-        // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
-        // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        // 应用模型映射
+        // - 路由命中：已由 provider_router 从当前供应商 env 预映射，直接应用
+        // - Claude Desktop proxy 模式：Desktop 可见的 claude-* route → 真实上游模型名
+        //   未知 route 要直接报错，不能使用默认模型兜底
+        // - 否则：用目标供应商 env 做模型映射
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+        } else if is_routed_target {
+            // 路由目标（第一跳）：使用当前供应商 env 预映射的模型名
+            if let Some(ref model) = self.mapped_model {
+                let mut b = body.clone();
+                b["model"] = serde_json::json!(model);
+                log::debug!(
+                    "[{}] 路由命中，应用预映射模型: {}",
+                    app_type.as_str(),
+                    model
+                );
+                b
+            } else {
+                // 路由命中但无映射，跳过 model_mapper 透传原始模型
+                body.clone()
+            }
         } else {
+            // 非路由目标（包括 failover 供应商）：用目标供应商自己的 env 做模型映射
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
             mapped_body

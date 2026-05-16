@@ -365,7 +365,9 @@
         "thinkingSignature": "Thinking 签名整流",
         "thinkingSignatureDescription": "当 Anthropic 类型供应商返回 thinking 签名不兼容或非法请求等错误时，自动移除不兼容的 thinking 相关块并对同一供应商重试一次",
         "thinkingBudget": "Thinking Budget 整流",
-        "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次"
+        "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次",
+        "toolUseId": "Tool Use ID 整流",
+        "toolUseIdDescription": "在请求发送前自动校验并按需修复 tool_use.id / tool_result.tool_use_id，确保符合 Claude（Anthropic）严格格式要求"
       },
       "optimizer": {
         "title": "Bedrock 请求优化器",
@@ -953,7 +955,22 @@
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
     "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
-    "fetchModelsTimeout": "请求超时，请检查网络连接"
+    "fetchModelsTimeout": "请求超时，请检查网络连接",
+    "claudeModelRouting": "模型路由供应商",
+    "claudeRoutingToggleHint": "开启后可按模型类型指定目标供应商。",
+    "claudeRoutingDefault": "主模型",
+    "claudeRoutingHaiku": "Haiku",
+    "claudeRoutingSonnet": "Sonnet",
+    "claudeRoutingOpus": "Opus",
+    "claudeRoutingInheritCurrent": "跟随当前供应商",
+    "claudeRoutingHint": "可选：按模型类型将请求优先路由到指定供应商；未设置时跟随当前供应商与故障转移链。",
+    "claudeRoutingDisabledHint": "已关闭模型路由供应商；请求将跟随当前供应商与故障转移链。",
+    "claudeRoutingProxyNotRunningInline": "本地路由服务未启动，模型路由供应商配置保存后暂不会生效。",
+    "claudeRoutingTakeoverNotEnabledInline": "Claude 接管未开启，模型路由供应商配置保存后暂不会生效。",
+    "claudeRoutingRectifierSuggestedInline": "跨供应商继续历史对话时，建议在设置中开启整流器和 Tool Use ID 整流。",
+    "claudeRoutingProxyNotRunning": "本地路由服务未启动，模型路由供应商配置不会生效。",
+    "claudeRoutingTakeoverNotEnabled": "Claude 接管未开启，模型路由供应商配置不会生效。",
+    "claudeRoutingRectifierSuggested": "已配置“模型路由供应商”；跨供应商继续历史对话时，建议在设置中开启整流器和 Tool Use ID 整流。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",
@@ -2221,6 +2238,7 @@
       "enabled": "{{app}} 路由已启用",
       "disabled": "{{app}} 路由已关闭",
       "failed": "切换路由状态失败: {{detail}}",
+      "claudeRoutingWarning": "当前有 Claude 供应商配置了「模型路由供应商」，关闭接管后路由将不再生效。",
       "tooltip": {
         "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切换该应用供应商为热切换",
         "broken": "{{appLabel}} 路由中，但路由服务未运行",

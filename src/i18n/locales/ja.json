@@ -365,7 +365,9 @@
         "thinkingSignature": "Thinking 署名整流",
         "thinkingSignatureDescription": "Anthropic タイプのプロバイダーが thinking 署名の非互換性や不正なリクエストエラーを返した場合、互換性のない thinking 関連ブロックを自動削除し、同じプロバイダーで 1 回リトライします",
         "thinkingBudget": "Thinking Budget 整流",
-        "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします"
+        "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします",
+        "toolUseId": "Tool Use ID 整流",
+        "toolUseIdDescription": "リクエスト送信前に tool_use.id / tool_result.tool_use_id を自動検証し、必要時に修正して Claude（Anthropic）の厳格な形式要件へ適合させます"
       },
       "optimizer": {
         "title": "Bedrock リクエストオプティマイザー",
@@ -953,7 +955,22 @@
     "fetchModelsAuthFailed": "API Key が無効か、権限がありません",
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
     "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
-    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください"
+    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
+    "claudeModelRouting": "モデルルーティングプロバイダー",
+    "claudeRoutingToggleHint": "有効にするとモデルタイプごとにリクエストを特定のプロバイダーへルーティングできます。",
+    "claudeRoutingDefault": "メインモデル",
+    "claudeRoutingHaiku": "Haiku",
+    "claudeRoutingSonnet": "Sonnet",
+    "claudeRoutingOpus": "Opus",
+    "claudeRoutingInheritCurrent": "現在のプロバイダーに従う",
+    "claudeRoutingHint": "オプション：モデルタイプ別にリクエストを指定プロバイダーへ優先ルーティング。未設定時は現在のプロバイダーとフェイルオーバーチェーンに従います。",
+    "claudeRoutingDisabledHint": "モデルルーティングプロバイダーは無効です。リクエストは現在のプロバイダーとフェイルオーバーチェーンに従います。",
+    "claudeRoutingProxyNotRunningInline": "ローカルルーティングサービスが起動していないため、モデルルーティング設定は保存後も有効になりません。",
+    "claudeRoutingTakeoverNotEnabledInline": "Claude テイクオーバーが有効になっていないため、モデルルーティング設定は保存後も有効になりません。",
+    "claudeRoutingRectifierSuggestedInline": "プロバイダーをまたいで履歴を継続する場合は、設定で整流器と Tool Use ID 整流を有効にすることを推奨します。",
+    "claudeRoutingProxyNotRunning": "ローカルルーティングサービスが起動していないため、モデルルーティング設定は有効になりません。",
+    "claudeRoutingTakeoverNotEnabled": "Claude テイクオーバーが有効になっていないため、モデルルーティング設定は有効になりません。",
+    "claudeRoutingRectifierSuggested": "モデルルーティングプロバイダーが設定されています。プロバイダーをまたいで履歴を継続する場合は、設定で整流器と Tool Use ID 整流を有効にすることを推奨します。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",
@@ -2221,6 +2238,7 @@
       "enabled": "{{app}} ルーティング有効",
       "disabled": "{{app}} ルーティング無効",
       "failed": "ルーティングの切り替えに失敗しました: {{detail}}",
+      "claudeRoutingWarning": "Claude プロバイダーにモデルルーティングが設定されています。ルーティングを無効にするとモデルルーティングも有効になりません。",
       "tooltip": {
         "active": "{{appLabel}} がルーティング中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
         "broken": "{{appLabel}} がルーティング中ですが、ルーティングサービスが実行されていません",
