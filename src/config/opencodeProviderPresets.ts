@@ -914,12 +914,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "Xiaomi MiMo",
       options: {
-        baseURL: "https://api.xiaomimimo.com/v1",
+        baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "mimo-v2-pro": { name: "MiMo V2 Pro" },
+        "mimo-v2.5-pro": { name: "MiMo V2.5 Pro" },
+        "mimo-v2.5": { name: "MiMo V2.5" },
       },
     },
     category: "cn_official",

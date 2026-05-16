@@ -735,13 +735,19 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
     settingsConfig: {
-      baseUrl: "https://api.xiaomimimo.com/v1",
+      baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "mimo-v2-pro",
-          name: "MiMo V2 Pro",
+          id: "mimo-v2.5-pro",
+          name: "MiMo V2.5 Pro",
+          contextWindow: 128000,
+          cost: { input: 0.001, output: 0.004 },
+        },
+        {
+          id: "mimo-v2.5",
+          name: "MiMo V2.5",
           contextWindow: 128000,
           cost: { input: 0.001, output: 0.004 },
         },
@@ -758,8 +764,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "xiaomimimo/mimo-v2-pro" },
-      modelCatalog: { "xiaomimimo/mimo-v2-pro": { alias: "MiMo" } },
+      model: { primary: "xiaomimimo/mimo-v2.5-pro" },
+      modelCatalog: { "xiaomimimo/mimo-v2.5-pro": { alias: "MiMo" } },
     },
   },
 
