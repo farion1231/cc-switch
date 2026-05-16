@@ -343,6 +343,11 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+
+  // ===== 远程管理设置 =====
+  remoteEnabled?: boolean;
+  remotePort?: number;
+  remoteTailscaleEnabled?: boolean;
 }
 
 export interface SessionMeta {

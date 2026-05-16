@@ -197,6 +197,7 @@ Modern AI-powered coding relies on CLI tools like Claude Code, Codex, Gemini CLI
 
 ### System & Platform
 
+- **Remote Management** — Built-in HTTP server with Web UI and REST API for switching providers from any device on your network
 - **Cloud sync** — Custom config directory (Dropbox, OneDrive, iCloud, NAS) and WebDAV server sync
 - **Deep Link** (`ccswitch://`) — Import providers, MCP servers, prompts, and skills via URL
 - Dark / Light / System theme, auto-launch, auto-updater, atomic writes, auto-backups, i18n (zh/en/ja)
@@ -279,6 +280,24 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 - **Sessions**: Click "Sessions" → Browse, search, and restore conversation history across all apps
 
 > **Note**: On first launch, you can manually import existing CLI tool configs as the default provider.
+
+### Remote Management
+
+Control CC Switch from any browser on your network.
+
+1. **Enable**: Settings → Remote Management → toggle **Enabled**
+2. **Access**: Open `http://localhost:4000` in any browser (default port; changeable in settings)
+3. **Tailscale**: Optionally enable Tailscale to access from outside your local network
+
+**API Endpoints** (`http://localhost:4000/api/`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Server status |
+| GET | `/providers` | List all providers |
+| GET | `/current` | Current active provider |
+| POST | `/switch` | Switch provider (body: `{ provider_id }`) |
+| GET | `/events` | SSE stream for real-time updates |
 
 ## Download & Installation
 

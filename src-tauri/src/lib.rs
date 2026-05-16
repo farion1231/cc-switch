@@ -26,6 +26,7 @@ mod prompt_files;
 mod provider;
 mod provider_defaults;
 mod proxy;
+mod remote;
 mod services;
 mod session_manager;
 mod settings;
@@ -198,10 +199,45 @@ fn macos_tray_icon() -> Option<Image<'static>> {
     }
 }
 
+/// Sync shell PATH into the current process so that `std::process::Command`
+/// can resolve binaries the same way a terminal does.
+/// Shell PATH is prepended so user-installed binaries (Homebrew, etc.)
+/// take precedence over system defaults.
+fn sync_shell_path() {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        if let Ok(output) = std::process::Command::new(&shell)
+            .args(["-l", "-c", "printf '%s' \"$PATH\""])
+            .output()
+        {
+            if output.status.success() {
+                let shell_path = String::from_utf8_lossy(&output.stdout);
+                let shell_path = shell_path.trim();
+                if !shell_path.is_empty() {
+                    let current = std::env::var("PATH").unwrap_or_default();
+                    let merged = if current.is_empty() {
+                        shell_path.to_string()
+                    } else {
+                        format!("{}:{}", shell_path, current)
+                    };
+                    std::env::set_var("PATH", &merged);
+                    log::info!("Synced shell PATH: {}", merged);
+                }
+            }
+        }
+    }
+    // Windows GUI apps already inherit the system/user PATH, so no action needed.
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
+
+    // Make sure binaries installed via package managers (Homebrew, etc.)
+    // are discoverable by std::process::Command.
+    sync_shell_path();
 
     let mut builder = tauri::Builder::default();
 
@@ -818,6 +854,33 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // 启动 Remote Management HTTP Server
+            {
+                let app_settings = crate::settings::get_settings();
+                let remote_config = remote::RemoteConfig {
+                    enabled: app_settings.remote_enabled,
+                    port: app_settings.remote_port,
+                    tailscale_enabled: app_settings.remote_tailscale_enabled,
+                };
+
+                // 注入空的 ManagedRemoteServer，供后续命令使用
+                app.manage(remote::ManagedRemoteServer::new(Arc::new(tokio::sync::RwLock::new(None))));
+
+                // 异步启动 remote server（仅当 enabled 时）
+                if remote_config.enabled {
+                    let app_handle = app.handle().clone();
+                    let config = remote_config.clone();
+                    tauri::async_runtime::spawn(async move {
+                        match remote::start_remote(&app_handle, config).await {
+                            Ok(urls) => log::info!("[Remote] Management server started on: {}", urls.join(", ")),
+                            Err(e) => log::warn!("[Remote] Failed to start management server: {e}"),
+                        }
+                    });
+                } else {
+                    log::info!("[Remote] Remote management server disabled");
+                }
+            }
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;
@@ -1162,6 +1225,12 @@ pub fn run() {
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             update_tray_menu,
+            // Remote management
+            commands::remote::start_remote_server,
+            commands::remote::stop_remote_server,
+            commands::remote::restart_remote_server,
+            commands::remote::check_tailscale_available,
+            commands::remote::get_tailscale_ip,
             // Environment variable management
             commands::check_env_conflicts,
             commands::delete_env_vars,
