@@ -10,6 +10,7 @@ import {
   useAutoFailoverEnabled,
   useSetAutoFailoverEnabled,
 } from "@/lib/query/failover";
+import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
@@ -24,8 +25,11 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
   const { data: isEnabled = false, isLoading } =
     useAutoFailoverEnabled(activeApp);
   const setEnabled = useSetAutoFailoverEnabled();
+  const { takeoverStatus } = useProxyStatus();
+  const takeoverEnabled = takeoverStatus?.[activeApp] ?? false;
 
   const handleToggle = (checked: boolean) => {
+    if (checked && !takeoverEnabled) return;
     setEnabled.mutate({ appType: activeApp, enabled: checked });
   };
 
@@ -36,15 +40,20 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
         ? "Codex"
         : "Gemini";
 
-  const tooltipText = isEnabled
-    ? t("failover.tooltip.enabled", {
+  const tooltipText = !takeoverEnabled
+    ? t("failover.tooltip.takeoverRequired", {
         app: appLabel,
-        defaultValue: `${appLabel} 故障转移已启用\n按队列优先级（P1→P2→...）选择供应商`,
+        defaultValue: `请先接管 ${appLabel}，再启用故障转移`,
       })
-    : t("failover.tooltip.disabled", {
-        app: appLabel,
-        defaultValue: `启用 ${appLabel} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个`,
-      });
+    : isEnabled
+      ? t("failover.tooltip.enabled", {
+          app: appLabel,
+          defaultValue: `${appLabel} 故障转移已启用\n按队列优先级（P1→P2→...）选择供应商`,
+        })
+      : t("failover.tooltip.disabled", {
+          app: appLabel,
+          defaultValue: `启用 ${appLabel} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个`,
+        });
 
   return (
     <div
@@ -69,7 +78,7 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
       <Switch
         checked={isEnabled}
         onCheckedChange={handleToggle}
-        disabled={setEnabled.isPending || isLoading}
+        disabled={setEnabled.isPending || isLoading || !takeoverEnabled}
       />
     </div>
   );

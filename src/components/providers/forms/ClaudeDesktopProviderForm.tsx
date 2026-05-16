@@ -296,7 +296,6 @@ export function ClaudeDesktopProviderForm({
   showButtons = true,
 }: ClaudeDesktopProviderFormProps) {
   const { t } = useTranslation();
-  const isOfficial = initialData?.category === "official";
   const initialMode = initialData?.meta?.claudeDesktopMode ?? "direct";
   const [mode, setMode] = useState<"direct" | "proxy">(initialMode);
   const needsModelMapping = mode === "proxy";
@@ -395,25 +394,6 @@ export function ClaudeDesktopProviderForm({
     [],
   );
 
-  const groupedPresets = useMemo(
-    () =>
-      presetEntries.reduce<Record<string, PresetEntry[]>>((acc, entry) => {
-        const cat = entry.preset.category ?? "others";
-        if (!acc[cat]) acc[cat] = [];
-        acc[cat].push(entry);
-        return acc;
-      }, {}),
-    [presetEntries],
-  );
-
-  const categoryKeys = useMemo(
-    () =>
-      Object.keys(groupedPresets).filter(
-        (key) => key !== "custom" && groupedPresets[key]?.length,
-      ),
-    [groupedPresets],
-  );
-
   const presetCategoryLabels: Record<string, string> = useMemo(
     () => ({
       official: t("providerForm.categoryOfficial", { defaultValue: "官方" }),
@@ -431,6 +411,9 @@ export function ClaudeDesktopProviderForm({
   );
   const activeProviderType =
     activePreset?.providerType ?? initialData?.meta?.providerType;
+  const isOfficial =
+    initialData?.category === "official" ||
+    activePreset?.category === "official";
   const usesManagedOAuth =
     activePreset?.requiresOAuth === true ||
     activeProviderType === "github_copilot" ||
@@ -777,8 +760,7 @@ export function ClaudeDesktopProviderForm({
         {!initialData && (
           <ProviderPresetSelector
             selectedPresetId={selectedPresetId}
-            groupedPresets={groupedPresets}
-            categoryKeys={categoryKeys}
+            presetEntries={presetEntries}
             presetCategoryLabels={presetCategoryLabels}
             onPresetChange={handlePresetChange}
             category={activePreset?.category}

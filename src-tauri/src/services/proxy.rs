@@ -1993,6 +1993,23 @@ impl ProxyService {
         Ok(())
     }
 
+    /// 热更新指定应用的熔断器配置
+    pub async fn update_circuit_breaker_config_for_app(
+        &self,
+        app_type: &str,
+        config: crate::proxy::CircuitBreakerConfig,
+    ) -> Result<(), String> {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server
+                .update_circuit_breaker_config_for_app(app_type, config)
+                .await;
+            log::info!("已热更新 {app_type} 运行中的熔断器配置");
+        } else {
+            log::debug!("{app_type} 熔断器配置将在下次代理启动时生效");
+        }
+        Ok(())
+    }
+
     /// 重置指定 Provider 的熔断器
     ///
     /// 如果代理服务器正在运行，立即重置内存中的熔断器状态

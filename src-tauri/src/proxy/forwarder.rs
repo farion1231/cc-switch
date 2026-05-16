@@ -25,6 +25,7 @@ use crate::commands::{CodexOAuthState, CopilotAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::{app_config::AppType, provider::Provider};
+use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
 use std::sync::Arc;
@@ -1164,8 +1165,9 @@ impl RequestForwarder {
             &filtered_body,
             self.session_client_provided,
         );
-        let force_identity_encoding = needs_transform
-            || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
+        let request_is_streaming =
+            is_streaming_request(&effective_endpoint, &filtered_body, headers);
+        let force_identity_encoding = needs_transform || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
@@ -1609,8 +1611,6 @@ impl RequestForwarder {
             );
             let client = super::http_client::get();
             let mut request = client.request(method.clone(), &url);
-            let request_is_streaming =
-                is_streaming_request(&effective_endpoint, &filtered_body, headers);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
                 // 的首包/静默期超时控制，避免长流被总时长误杀。
@@ -1663,6 +1663,9 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
+            let response = self
+                .prepare_success_response_for_failover(response, request_is_streaming)
+                .await?;
             Ok((response, resolved_claude_api_format))
         } else {
             let status_code = status.as_u16();
@@ -1673,6 +1676,73 @@ impl RequestForwarder {
                 body: body_text,
             })
         }
+    }
+
+    /// 故障转移开启时，成功不能只看上游响应头。
+    ///
+    /// - 非流式：先把完整 body 读到内存，读超时/连接中断会回到 retry loop 尝试下一家。
+    /// - 流式：至少等首个 chunk 到达，避免上游返回 200 后一直不吐 SSE 时被误记成功。
+    async fn prepare_success_response_for_failover(
+        &self,
+        response: ProxyResponse,
+        request_is_streaming: bool,
+    ) -> Result<ProxyResponse, ProxyError> {
+        if request_is_streaming {
+            return self.prime_streaming_response(response).await;
+        }
+
+        if self.non_streaming_timeout.is_zero() {
+            return Ok(response);
+        }
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body_timeout = self.non_streaming_timeout;
+        let body = tokio::time::timeout(body_timeout, response.bytes())
+            .await
+            .map_err(|_| {
+                ProxyError::Timeout(format!(
+                    "响应体读取超时: {}s（上游发完响应头后 body 未到达）",
+                    body_timeout.as_secs()
+                ))
+            })??;
+
+        Ok(ProxyResponse::buffered(status, headers, body))
+    }
+
+    async fn prime_streaming_response(
+        &self,
+        response: ProxyResponse,
+    ) -> Result<ProxyResponse, ProxyError> {
+        if self.streaming_first_byte_timeout.is_zero() {
+            return Ok(response);
+        }
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let timeout = self.streaming_first_byte_timeout;
+        let mut stream = Box::pin(response.bytes_stream());
+
+        let first = tokio::time::timeout(timeout, stream.next())
+            .await
+            .map_err(|_| {
+                ProxyError::Timeout(format!(
+                    "流式响应首包超时: {}s（上游已返回响应头但未返回数据）",
+                    timeout.as_secs()
+                ))
+            })?;
+
+        let Some(first) = first else {
+            return Err(ProxyError::ForwardFailed(
+                "流式响应在首包到达前结束".to_string(),
+            ));
+        };
+
+        let first =
+            first.map_err(|e| ProxyError::ForwardFailed(format!("读取流式响应首包失败: {e}")))?;
+
+        let replay = futures::stream::once(async move { Ok(first) }).chain(stream);
+        Ok(ProxyResponse::streamed(status, headers, replay))
     }
 
     async fn resolve_claude_api_format(
@@ -2120,6 +2190,7 @@ fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::Head
         .unwrap_or(false)
 }
 
+#[cfg(test)]
 fn should_force_identity_encoding(
     endpoint: &str,
     body: &Value,
@@ -2213,9 +2284,14 @@ fn value_for_log(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use http::StatusCode;
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::time::Duration;
 
     fn test_provider_with_type(provider_type: Option<&str>) -> Provider {
         Provider {
@@ -2234,6 +2310,31 @@ mod tests {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+        }
+    }
+
+    fn test_forwarder(
+        non_streaming_timeout: Duration,
+        streaming_first_byte_timeout: Duration,
+    ) -> RequestForwarder {
+        let db = Arc::new(Database::memory().expect("memory db"));
+
+        RequestForwarder {
+            router: Arc::new(ProviderRouter::new(db.clone())),
+            status: Arc::new(RwLock::new(ProxyStatus::default())),
+            current_providers: Arc::new(RwLock::new(HashMap::new())),
+            gemini_shadow: Arc::new(GeminiShadowStore::new()),
+            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            app_handle: None,
+            current_provider_id_at_start: String::new(),
+            session_id: String::new(),
+            session_client_provided: false,
+            rectifier_config: RectifierConfig::default(),
+            optimizer_config: OptimizerConfig::default(),
+            copilot_optimizer_config: CopilotOptimizerConfig::default(),
+            non_streaming_timeout,
+            streaming_first_byte_timeout,
+            max_attempts: 1,
         }
     }
 
@@ -2380,6 +2481,96 @@ mod tests {
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
         );
+    }
+
+    #[tokio::test]
+    async fn non_streaming_success_is_buffered_before_marking_provider_successful() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::once(async {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(b"{\"ok\":true}"))
+            }),
+        );
+
+        let prepared = forwarder
+            .prepare_success_response_for_failover(response, false)
+            .await
+            .expect("response should be buffered");
+
+        assert_eq!(
+            prepared.bytes().await.unwrap(),
+            Bytes::from_static(b"{\"ok\":true}")
+        );
+    }
+
+    #[tokio::test]
+    async fn non_streaming_body_read_error_is_retryable_before_success_record() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::once(async {
+                Err::<Bytes, std::io::Error>(std::io::Error::other("body boom"))
+            }),
+        );
+
+        let err = match forwarder
+            .prepare_success_response_for_failover(response, false)
+            .await
+        {
+            Ok(_) => panic!("body read errors should fail the attempt"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, ProxyError::ForwardFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn streaming_success_primes_first_chunk_and_replays_it() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::iter(vec![
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(b"first")),
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(b"second")),
+            ]),
+        );
+
+        let prepared = forwarder
+            .prepare_success_response_for_failover(response, true)
+            .await
+            .expect("stream should be primed");
+
+        assert_eq!(
+            prepared.bytes().await.unwrap(),
+            Bytes::from_static(b"firstsecond")
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_first_chunk_error_is_retryable_before_success_record() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::once(async {
+                Err::<Bytes, std::io::Error>(std::io::Error::other("first chunk boom"))
+            }),
+        );
+
+        let err = match forwarder
+            .prepare_success_response_for_failover(response, true)
+            .await
+        {
+            Ok(_) => panic!("first chunk errors should fail the attempt"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, ProxyError::ForwardFailed(_)));
     }
 
     #[test]

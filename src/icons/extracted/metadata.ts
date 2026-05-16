@@ -58,6 +58,20 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  huoshan: {
+    name: "huoshan",
+    displayName: "火山方舟",
+    category: "ai-provider",
+    keywords: ["huoshan", "volcengine", "ark", "agentplan", "byteplus"],
+    defaultColor: "#3370FF",
+  },
+  byteplus: {
+    name: "byteplus",
+    displayName: "BytePlus",
+    category: "ai-provider",
+    keywords: ["byteplus", "volcengine", "ark", "modelark"],
+    defaultColor: "#3370FF",
+  },
   chatglm: {
     name: "chatglm",
     displayName: "chatglm",
@@ -71,6 +85,18 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["anthropic"],
     defaultColor: "#D4915D",
+  },
+  claudeapi: {
+    name: "claudeapi",
+    displayName: "ClaudeAPI",
+    category: "ai-provider",
+    keywords: ["claudeapi", "claude", "anthropic", "bedrock"],
+  },
+  claudecn: {
+    name: "claudecn",
+    displayName: "ClaudeCN",
+    category: "ai-provider",
+    keywords: ["claudecn", "claude", "enterprise"],
   },
   cloudflare: {
     name: "cloudflare",
@@ -282,6 +308,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["packycode", "packy", "packyapi"],
     defaultColor: "currentColor",
   },
+  pateway: {
+    name: "pateway",
+    displayName: "PatewayAI",
+    category: "ai-provider",
+    keywords: ["pateway", "patewayai", "claude", "codex"],
+  },
   palm: {
     name: "palm",
     displayName: "palm",
@@ -372,6 +404,18 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["pipellm", "pipe"],
     defaultColor: "currentColor",
+  },
+  runapi: {
+    name: "runapi",
+    displayName: "RunAPI",
+    category: "ai-provider",
+    keywords: ["runapi", "run", "aggregator", "gateway"],
+  },
+  relaxcode: {
+    name: "relaxcode",
+    displayName: "RelaxyCode",
+    category: "ai-provider",
+    keywords: ["relaxycode", "relaxcode", "relax"],
   },
   eflowcode: {
     name: "eflowcode",
