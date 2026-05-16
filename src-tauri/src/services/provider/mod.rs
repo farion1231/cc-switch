@@ -2682,6 +2682,121 @@ base_url = "http://localhost:8080"
         );
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn switch_claude_profile_and_config_rolls_back_profile_when_proxy_hot_switch_fails() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let previous_profile_dir = crate::config::get_home_dir()
+            .join(".claude-profiles")
+            .join("previous");
+        fs::create_dir_all(&previous_profile_dir).expect("create previous profile dir");
+        crate::settings::set_claude_provider_override_dir(Some(
+            &previous_profile_dir.to_string_lossy(),
+        ))
+        .expect("seed previous profile override");
+        crate::services::env_manager::set_user_env_var(
+            "CLAUDE_CONFIG_DIR",
+            Some(&previous_profile_dir.to_string_lossy()),
+        )
+        .expect("seed previous claude env");
+
+        let target_profile_dir = crate::config::get_home_dir()
+            .join(".claude-profiles")
+            .join("api");
+        fs::create_dir_all(target_profile_dir.join("settings.json"))
+            .expect("create blocking target settings directory");
+
+        let default_live_path = crate::config::get_home_dir()
+            .join(".claude")
+            .join("settings.json");
+        write_json_file(
+            &default_live_path,
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": "PROXY_MANAGED"
+                }
+            }),
+        )
+        .expect("seed taken-over default live file");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let legacy = claude_provider(
+            "legacy",
+            "Claude Legacy",
+            "legacy-token",
+            "https://legacy.example",
+            None,
+        );
+        let profile_and_config = claude_provider(
+            "profile-and-config",
+            "Claude API",
+            "api-provider-token",
+            "https://api-provider.example",
+            Some(ProviderMeta {
+                claude_profile_dir: Some(target_profile_dir.to_string_lossy().to_string()),
+                claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                ..Default::default()
+            }),
+        );
+        db.save_provider("claude", &legacy)
+            .expect("save legacy provider");
+        db.save_provider("claude", &profile_and_config)
+            .expect("save profile-and-config provider");
+        db.set_current_provider("claude", "legacy")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("legacy"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&legacy.settings_config).expect("serialize legacy provider"),
+        )
+        .await
+        .expect("seed live backup");
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 15733,
+            ..Default::default()
+        })
+        .await
+        .expect("set proxy test port");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        let err = ProviderService::switch(&state, AppType::Claude, "profile-and-config")
+            .expect_err("hot-switch should fail when target profile settings path is a directory");
+        assert!(
+            err.to_string().contains("热切换失败"),
+            "expected hot-switch error, got {err:?}"
+        );
+        assert_eq!(
+            crate::settings::get_claude_override_dir().as_deref(),
+            Some(previous_profile_dir.as_path()),
+            "failed hot-switch should restore the previous Claude profile override"
+        );
+        assert_eq!(
+            crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                .expect("read claude config dir")
+                .as_deref(),
+            Some(previous_profile_dir.to_string_lossy().as_ref()),
+            "failed hot-switch should restore the persisted Claude env"
+        );
+        assert_eq!(
+            crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                .expect("effective current provider")
+                .as_deref(),
+            Some("legacy"),
+            "failed hot-switch should restore the logical current provider"
+        );
+    }
+
     #[test]
     #[serial]
     fn rename_rejects_missing_original_provider() {
@@ -3318,15 +3433,6 @@ impl ProviderService {
         }
 
         Ok(())
-    }
-
-    fn apply_claude_provider_switch_plan(
-        provider: &Provider,
-    ) -> Result<ClaudeSwitchPlan, AppError> {
-        let plan = Self::claude_switch_plan(provider);
-        Self::validate_claude_runtime_switch_plan(&plan)?;
-        Self::apply_claude_switch_plan(&plan)?;
-        Ok(plan)
     }
 
     pub(crate) fn prepare_claude_profile_terminal_launch(
@@ -4205,7 +4311,15 @@ impl ProviderService {
 
         if should_hot_switch {
             let claude_switch_plan = if matches!(app_type, AppType::Claude) {
-                Some(Self::apply_claude_provider_switch_plan(_provider)?)
+                Some(Self::claude_switch_plan(_provider))
+            } else {
+                None
+            };
+            let claude_rollback = if matches!(app_type, AppType::Claude) {
+                Some(Self::capture_claude_rollback_state(
+                    state,
+                    claude_switch_plan.as_ref(),
+                )?)
             } else {
                 None
             };
@@ -4225,21 +4339,41 @@ impl ProviderService {
                 id
             );
 
-            if !matches!(
-                claude_switch_plan
-                    .as_ref()
-                    .map(|plan| &plan.activation_mode),
-                Some(ClaudeActivationMode::ProfileOnly)
-            ) {
-                futures::executor::block_on(
-                    state
-                        .proxy_service
-                        .hot_switch_provider(app_type.as_str(), id),
-                )
-                .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
-            } else {
-                state.db.set_current_provider(app_type.as_str(), id)?;
-                crate::settings::set_current_provider(&app_type, Some(id))?;
+            let hot_switch_result = (|| -> Result<(), AppError> {
+                if let Some(plan) = claude_switch_plan.as_ref() {
+                    Self::validate_claude_runtime_switch_plan(plan)?;
+                    Self::apply_claude_switch_plan(plan)?;
+                }
+
+                if !matches!(
+                    claude_switch_plan
+                        .as_ref()
+                        .map(|plan| &plan.activation_mode),
+                    Some(ClaudeActivationMode::ProfileOnly)
+                ) {
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .hot_switch_provider(app_type.as_str(), id),
+                    )
+                    .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
+                } else {
+                    state.db.set_current_provider(app_type.as_str(), id)?;
+                    crate::settings::set_current_provider(&app_type, Some(id))?;
+                }
+
+                Ok(())
+            })();
+
+            if let Err(err) = hot_switch_result {
+                if let Some(rollback) = claude_rollback.as_ref() {
+                    if let Err(rollback_err) = Self::rollback_claude_switch(state, rollback) {
+                        return Err(AppError::Message(format!(
+                            "{err}; additionally failed to roll back Claude switch state: {rollback_err}"
+                        )));
+                    }
+                }
+                return Err(err);
             }
 
             // Note: No Live config write, no MCP sync
