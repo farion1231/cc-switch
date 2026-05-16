@@ -742,14 +742,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "mimo-v2.5-pro",
           name: "MiMo V2.5 Pro",
-          contextWindow: 128000,
-          cost: { input: 0.001, output: 0.004 },
+          contextWindow: 1048576,
+          cost: { input: 1, output: 3 },
         },
         {
           id: "mimo-v2.5",
           name: "MiMo V2.5",
-          contextWindow: 128000,
-          cost: { input: 0.001, output: 0.004 },
+          contextWindow: 1048576,
+          cost: { input: 0.4, output: 2 },
         },
       ],
     },
