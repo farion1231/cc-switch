@@ -15,6 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::app_config::AppType;
+use crate::codex_config::CC_SWITCH_CODEX_MODEL_PROVIDER_ID;
 use crate::config::{get_claude_settings_path, write_json_file};
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
@@ -529,13 +530,13 @@ mod tests {
 
     #[test]
     #[serial]
-    fn switch_codex_to_api_syncs_desktop_threads_to_config_model_provider() {
+    fn switch_codex_to_api_syncs_desktop_threads_to_stable_provider_key() {
         with_test_home(|state, home| {
             let official_provider = codex_provider("codex-official", "OpenAI Official", "");
             let api_provider = codex_provider(
                 "codex-api",
                 "Codex API",
-                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n[model_providers.OpenAI]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:12345/v1\"\n",
             );
 
             state
@@ -552,23 +553,23 @@ mod tests {
                 .expect("set current provider");
             crate::settings::set_current_provider(&AppType::Codex, Some("codex-official"))
                 .expect("set local current provider");
-            seed_codex_threads(home, "openai");
+            seed_codex_threads(home, "OpenAI");
 
             ProviderService::switch(state, AppType::Codex, "codex-api")
                 .expect("switch to api codex provider");
 
             assert_eq!(
                 codex_thread_providers(home),
-                vec![("OpenAI".to_string(), 2)],
-                "API login should make Codex Desktop history visible under the configured provider key"
+                vec![("ccswitch".to_string(), 2)],
+                "API login should make Codex Desktop history visible under the stable cc-switch provider key"
             );
             assert_eq!(
                 codex_rollout_providers(home),
                 vec![
-                    ("thread-1".to_string(), Some("OpenAI".to_string())),
-                    ("thread-2".to_string(), Some("OpenAI".to_string())),
+                    ("thread-1".to_string(), Some("ccswitch".to_string())),
+                    ("thread-2".to_string(), Some("ccswitch".to_string())),
                 ],
-                "API login should update Codex rollout session metadata"
+                "API login should update Codex rollout session metadata to the stable cc-switch provider key"
             );
         });
     }
@@ -3404,8 +3405,17 @@ impl ProviderService {
             return Ok("openai".to_string());
         }
 
-        Ok(crate::codex_config::extract_codex_model_provider(config)
-            .unwrap_or_else(|| "openai".to_string()))
+        let provider_key = crate::codex_config::extract_codex_model_provider(config)
+            .unwrap_or_else(|| "openai".to_string());
+        if provider_key.eq_ignore_ascii_case("openai") && config.contains("[model_providers.") {
+            return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        }
+
+        Ok(provider_key)
+    }
+
+    fn codex_provider_where_clause(column: &str) -> String {
+        format!("({column} = ?1 OR (?1 = 'openai' AND lower({column}) = 'openai'))")
     }
 
     fn codex_threads_have_model_provider(conn: &rusqlite::Connection) -> Result<bool, AppError> {
@@ -3473,8 +3483,12 @@ impl ProviderService {
         };
         let current_provider = payload.get("model_provider").and_then(Value::as_str);
         if current_provider == Some(target_provider)
-            || source_provider
-                .is_some_and(|source| current_provider.is_some_and(|current| current != source))
+            || source_provider.is_some_and(|source| {
+                current_provider.is_some_and(|current| {
+                    current != source
+                        && !(source == "openai" && current.eq_ignore_ascii_case("openai"))
+                })
+            })
         {
             return Ok(false);
         }
@@ -3522,9 +3536,11 @@ impl ProviderService {
 
         let rollout_paths = if Self::codex_threads_have_rollout_path(&conn)? {
             if let Some(source_provider) = source_provider {
-                let mut stmt = conn.prepare(
-                    "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider = ?1",
-                )?;
+                let sql = format!(
+                    "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR {}",
+                    Self::codex_provider_where_clause("model_provider")
+                );
+                let mut stmt = conn.prepare(&sql)?;
                 let rows = stmt.query_map(rusqlite::params![source_provider], |row| row.get(0))?;
                 rows.collect::<Result<Vec<String>, _>>()?
             } else {
@@ -3541,9 +3557,13 @@ impl ProviderService {
         };
 
         let updated = if let Some(source_provider) = source_provider {
+            let sql = format!(
+                "UPDATE threads SET model_provider = ?2 WHERE model_provider IS NULL OR {}",
+                Self::codex_provider_where_clause("model_provider")
+            );
             conn.execute(
-                "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider = ?2",
-                rusqlite::params![target_provider.as_str(), source_provider],
+                &sql,
+                rusqlite::params![source_provider, target_provider.as_str()],
             )?
         } else {
             conn.execute(
