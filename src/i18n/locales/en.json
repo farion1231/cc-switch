@@ -2163,6 +2163,11 @@
           "placeholder": "15721",
           "description": "Port number the routing server listens on (1024 ~ 65535)"
         },
+        "upstreamUrl": {
+          "label": "Upstream URL",
+          "placeholder": "http://127.0.0.1:15721",
+          "description": "Proxy URL written back to client configs (http/https origin only; leave empty to use listen address/port). If you point to another port, run a forwarding/debug proxy there that forwards to this app's listen port."
+        },
         "maxRetries": {
           "label": "Max Retries",
           "placeholder": "3",
@@ -2213,6 +2218,7 @@
       "invalidAddress": "Invalid address. Enter an IPv4 (e.g. 127.0.0.1), IPv6 (e.g. ::1), or localhost",
       "configSaved": "Routing configuration saved",
       "configSaveFailed": "Failed to save configuration",
+      "invalidUpstreamUrl": "Invalid upstream URL, please enter http(s)://host:port (origin only)",
       "restartRequired": "Restart routing service for address or port changes to take effect"
     },
     "switchFailed": "Switch failed: {{error}}",

@@ -257,8 +257,11 @@ impl ProxyService {
                 .map_err(|e| format!("更新代理总开关失败: {e}"))?;
         }
 
-        // 2. 获取配置
-        let config = self
+        // 2. 获取配置（用于启动本地监听服务）
+        //
+        // 注意：这里需要的是旧版 ProxyConfig（包含 max_retries/timeout 等运行时配置），
+        // 而不是 GlobalProxyConfig（仅用于 UI 统一字段与写回 Live 的 upstream_url）。
+        let proxy_config = self
             .db
             .get_proxy_config()
             .await
@@ -277,7 +280,7 @@ impl ProxyService {
 
         // 4. 创建并启动服务器
         let app_handle = self.app_handle.read().await.clone();
-        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let server = ProxyServer::new(proxy_config.clone(), self.db.clone(), app_handle);
         let info = server
             .start()
             .await
@@ -970,7 +973,7 @@ impl ProxyService {
     async fn build_proxy_urls(&self) -> Result<(String, String), String> {
         let config = self
             .db
-            .get_proxy_config()
+            .get_global_proxy_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
@@ -987,9 +990,12 @@ impl ProxyService {
             connect_host
         };
 
-        let proxy_origin = format!("http://{}:{}", connect_host_for_url, config.listen_port);
+        let proxy_origin = match &config.upstream_url {
+            Some(url) if !url.trim().is_empty() => url.trim().trim_end_matches('/').to_string(),
+            _ => format!("http://{}:{}", connect_host_for_url, config.listen_port),
+        };
         let proxy_url = proxy_origin.clone();
-        let proxy_codex_base_url = format!("{}/v1", proxy_origin.trim_end_matches('/'));
+        let proxy_codex_base_url = format!("{}/v1", proxy_origin);
 
         Ok((proxy_url, proxy_codex_base_url))
     }
