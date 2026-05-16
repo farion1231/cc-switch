@@ -202,6 +202,10 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    /// 轻量模式偏好：用户是否选择默认以轻量模式（销毁主窗口、隐藏 dock）运行
+    /// 由托盘 ✓ 切换；运行期状态独立维护于 `lightweight::LIGHTWEIGHT_RUNTIME`，两者互不污染
+    #[serde(default)]
+    pub lightweight_mode: bool,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -321,6 +325,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            lightweight_mode: false,
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,
@@ -525,11 +530,15 @@ pub fn get_settings_for_frontend() -> AppSettings {
         sync.password.clear();
     }
     settings.webdav_backup = None;
+    // 轻量模式偏好由托盘切换独占维护，前端不应感知/写回
+    settings.lightweight_mode = false;
     settings
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
+    // 轻量模式偏好由托盘切换流程独占维护，避免前端 save_settings 携带过期值时回写 false
+    new_settings.lightweight_mode = get_lightweight_mode_persisted();
     save_settings_file(&new_settings)?;
 
     let mut guard = settings_store().write().unwrap_or_else(|e| {
@@ -685,6 +694,26 @@ pub fn get_effective_current_provider(
 
     // Fallback 到数据库的 is_current
     db.get_current_provider(app_type.as_str())
+}
+
+// ===== 轻量模式状态持久化 =====
+
+/// 读取上次会话结束时的轻量模式状态
+pub fn get_lightweight_mode_persisted() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .lightweight_mode
+}
+
+/// 持久化轻量模式状态。失败不应阻断模式切换本身，调用方仅记录 warn。
+pub fn set_lightweight_mode_persisted(enabled: bool) -> Result<(), AppError> {
+    mutate_settings(|s| {
+        s.lightweight_mode = enabled;
+    })
 }
 
 // ===== Skill 同步方式管理函数 =====

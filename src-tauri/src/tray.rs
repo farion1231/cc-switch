@@ -581,7 +581,7 @@ pub fn create_tray_menu(
         "lightweight_mode",
         tray_texts.lightweight_mode,
         true,
-        crate::lightweight::is_lightweight_mode(),
+        crate::lightweight::is_lightweight_preferred(),
         None::<&str>,
     )
     .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
@@ -696,9 +696,10 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 {
                     apply_tray_policy(app, true);
                 }
-            } else if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式重建窗口失败: {e}");
+            } else if crate::lightweight::is_lightweight_runtime() {
+                // "打开主界面" 仅退出运行期，保留用户的轻量模式偏好
+                if let Err(e) = crate::lightweight::exit_lightweight_runtime(app) {
+                    log::error!("退出轻量运行期失败: {e}");
                 }
             }
         }
@@ -708,12 +709,10 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             }
         }
         "lightweight_mode" => {
-            if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式失败: {e}");
-                }
-            } else if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
-                log::error!("进入轻量模式失败: {e}");
+            // 切换偏好；set_lightweight_preference 会同步运行期并刷新菜单
+            let next = !crate::lightweight::is_lightweight_preferred();
+            if let Err(e) = crate::lightweight::set_lightweight_preference(app, next) {
+                log::error!("切换轻量模式偏好失败: {e}");
             }
         }
         "quit" => {
