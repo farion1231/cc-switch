@@ -255,8 +255,13 @@ fn upsert_unix_env_file_content(current: &str, name: &str, value: Option<&str>) 
         .map(ToString::to_string)
         .collect();
 
-    if let Some(value) = value {
-        lines.push(format!("export {name}={}", shell_single_quote(value)));
+    match value {
+        Some(value) => {
+            lines.push(format!("export {name}={}", shell_single_quote(value)));
+        }
+        None => {
+            lines.push(format!("unset {name}"));
+        }
     }
 
     let mut content = UNIX_ENV_HEADER.to_string();
@@ -552,7 +557,8 @@ mod tests {
 
         let content = upsert_unix_env_file_content(&content, "CC_SWITCH_TEST_UNIX_ENV", None);
         assert!(content.contains("export CC_SWITCH_KEEP='old'"));
-        assert!(!content.contains("CC_SWITCH_TEST_UNIX_ENV"));
+        assert!(!content.contains("export CC_SWITCH_TEST_UNIX_ENV="));
+        assert!(content.contains("unset CC_SWITCH_TEST_UNIX_ENV"));
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -575,8 +581,12 @@ mod tests {
         set_user_env_var(name, None).expect("remove unix user env var");
         let content = fs::read_to_string(&env_file).expect("read unix env file after removal");
         assert!(
-            !content.contains("CC_SWITCH_TEST_UNIX_ENV"),
-            "removing the env var should remove the managed shell entry"
+            !content.contains("export CC_SWITCH_TEST_UNIX_ENV="),
+            "removing the env var should remove the export line"
+        );
+        assert!(
+            content.contains("unset CC_SWITCH_TEST_UNIX_ENV"),
+            "removing the env var should write an unset line"
         );
 
         match old_test_home {
