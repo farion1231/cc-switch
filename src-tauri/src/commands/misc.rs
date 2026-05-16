@@ -544,29 +544,7 @@ fn opencode_extra_search_paths(
     paths
 }
 
-fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        vec![
-            dir.join(format!("{tool}.cmd")),
-            dir.join(format!("{tool}.exe")),
-            dir.join(tool),
-        ]
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        vec![dir.join(tool)]
-    }
-}
-
-/// 扫描常见路径查找 CLI
-fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
-    use std::process::Command;
-
-    let home = dirs::home_dir().unwrap_or_default();
-
-    // 常见的安装路径（原生安装优先）
+fn common_cli_search_paths(home: &Path) -> Vec<std::path::PathBuf> {
     let mut search_paths: Vec<std::path::PathBuf> = Vec::new();
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
@@ -631,6 +609,64 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         }
     }
 
+    search_paths
+}
+
+fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        vec![
+            dir.join(format!("{tool}.cmd")),
+            dir.join(format!("{tool}.exe")),
+            dir.join(tool),
+        ]
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        vec![dir.join(tool)]
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_executable_candidate(path: &Path) -> bool {
+    path.is_file()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_executable_candidate(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.is_file()
+        && std::fs::metadata(path)
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+fn find_tool_executable_in_paths(
+    tool: &str,
+    search_paths: &[std::path::PathBuf],
+) -> Option<PathBuf> {
+    for path in search_paths {
+        for tool_path in tool_executable_candidates(tool, path) {
+            if is_executable_candidate(&tool_path) {
+                return Some(tool_path);
+            }
+        }
+    }
+
+    None
+}
+
+/// 扫描常见路径查找 CLI
+fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
+    use std::process::Command;
+
+    let home = dirs::home_dir().unwrap_or_default();
+
+    // 常见的安装路径（原生安装优先）
+    let mut search_paths = common_cli_search_paths(&home);
+
     if tool == "opencode" {
         let extra_paths = opencode_extra_search_paths(
             &home,
@@ -654,7 +690,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         let new_path = format!("{}:{}", path.display(), current_path);
 
         for tool_path in tool_executable_candidates(tool, path) {
-            if !tool_path.exists() {
+            if !is_executable_candidate(&tool_path) {
                 continue;
             }
 
@@ -909,6 +945,91 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn build_unix_claude_launcher_script(
+    config_file: &std::path::Path,
+    script_file: &std::path::Path,
+    cwd: Option<&Path>,
+) -> String {
+    let home = dirs::home_dir().unwrap_or_default();
+    let common_paths = common_cli_search_paths(&home);
+    let mut lookup_paths = Vec::new();
+
+    extend_from_path_list(&mut lookup_paths, std::env::var_os("PATH"), None);
+    for path in &common_paths {
+        push_unique_path(&mut lookup_paths, path.clone());
+    }
+
+    let claude_bin = find_tool_executable_in_paths("claude", &lookup_paths);
+    let mut export_paths = common_paths;
+    if let Some(parent) = claude_bin.as_deref().and_then(Path::parent) {
+        push_unique_path(&mut export_paths, parent.to_path_buf());
+    }
+
+    build_unix_claude_launcher_script_with_context(
+        config_file,
+        script_file,
+        cwd,
+        claude_bin.as_deref(),
+        &export_paths,
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_unix_path_export(path_dirs: &[std::path::PathBuf]) -> String {
+    let mut unique_dirs = Vec::new();
+    for path in path_dirs {
+        push_unique_path(&mut unique_dirs, path.clone());
+    }
+
+    if unique_dirs.is_empty() {
+        return String::new();
+    }
+
+    let joined = unique_dirs
+        .iter()
+        .map(|path| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(":");
+
+    format!("export PATH={}:\"$PATH\"\n", shell_single_quote(&joined))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_unix_claude_launcher_script_with_context(
+    config_file: &std::path::Path,
+    script_file: &std::path::Path,
+    cwd: Option<&Path>,
+    claude_bin: Option<&Path>,
+    path_dirs: &[std::path::PathBuf],
+) -> String {
+    let config_path = config_file.to_string_lossy();
+    let script_path = script_file.to_string_lossy();
+    let claude_bin = claude_bin
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "claude".to_string());
+    let path_export = build_unix_path_export(path_dirs);
+    let cd_command = build_shell_cd_command(cwd);
+
+    format!(
+        r#"#!/bin/bash
+CONFIG_PATH={config_path}
+SCRIPT_PATH={script_path}
+CLAUDE_BIN={claude_bin}
+trap 'rm -f "$CONFIG_PATH" "$SCRIPT_PATH"' EXIT
+{path_export}{cd_command}echo "Using provider-specific claude config:"
+echo "$CONFIG_PATH"
+"$CLAUDE_BIN" --settings "$CONFIG_PATH"
+exec "${{SHELL:-/bin/bash}}"
+"#,
+        config_path = shell_single_quote(&config_path),
+        script_path = shell_single_quote(&script_path),
+        claude_bin = shell_single_quote(&claude_bin),
+        path_export = path_export,
+        cd_command = cd_command,
+    )
+}
+
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
 fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
@@ -919,23 +1040,9 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
 
     // Write the shell script to a temp file
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
+    let script_content = build_unix_claude_launcher_script(config_file, &script_file, cwd);
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
 
@@ -1169,22 +1276,8 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     // Create temp script file
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
 
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
+    let script_content = build_unix_claude_launcher_script(config_file, &script_file, cwd);
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
 
@@ -1703,6 +1796,59 @@ mod tests {
         let candidates = tool_executable_candidates("opencode", &dir);
 
         assert_eq!(candidates, vec![PathBuf::from("/usr/local/bin/opencode")]);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn find_tool_executable_in_paths_finds_claude_in_local_bin() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let bin_dir = temp.path().join(".local/bin");
+        std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+
+        let claude = bin_dir.join("claude");
+        std::fs::write(&claude, "#!/bin/sh\n").expect("write fake claude");
+        let mut permissions = std::fs::metadata(&claude)
+            .expect("fake claude metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&claude, permissions).expect("make fake claude executable");
+
+        let found = find_tool_executable_in_paths("claude", &[bin_dir]).expect("find claude");
+
+        assert_eq!(found, claude);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn build_unix_claude_launcher_script_uses_resolved_claude_and_preserves_shell_startup() {
+        let config_file = Path::new("/tmp/claude.json");
+        let script_file = Path::new("/tmp/cc_switch_launcher.sh");
+        let cwd = Path::new("/home/tester/project O'Brien");
+        let claude_bin = Path::new("/home/tester/.local/bin/claude");
+        let path_dirs = vec![
+            PathBuf::from("/home/tester/.local/bin"),
+            PathBuf::from("/home/tester/.volta/bin"),
+        ];
+
+        let script = build_unix_claude_launcher_script_with_context(
+            config_file,
+            script_file,
+            Some(cwd),
+            Some(claude_bin),
+            &path_dirs,
+        );
+
+        assert!(script.contains("CLAUDE_BIN='/home/tester/.local/bin/claude'"));
+        assert!(script
+            .contains("export PATH='/home/tester/.local/bin:/home/tester/.volta/bin':\"$PATH\""));
+        assert!(script.contains("cd '/home/tester/project O'\"'\"'Brien' || exit 1"));
+        assert!(script.contains("\"$CLAUDE_BIN\" --settings \"$CONFIG_PATH\""));
+        assert!(script.contains("exec \"${SHELL:-/bin/bash}\""));
+        assert!(!script.contains("--norc"));
+        assert!(!script.contains("--noprofile"));
+        assert!(!script.contains("claude --settings"));
     }
 
     #[cfg(target_os = "windows")]
