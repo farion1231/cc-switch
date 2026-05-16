@@ -3,6 +3,7 @@ import {
   Download,
   Copy,
   ExternalLink,
+  Github,
   Globe,
   Info,
   Loader2,
@@ -370,6 +371,20 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             >
               <Globe className="h-3.5 w-3.5" />
               {t("settings.officialWebsite")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                settingsApi.openExternal(
+                  "https://github.com/farion1231/cc-switch",
+                )
+              }
+              className="h-8 gap-1.5 text-xs"
+            >
+              <Github className="h-3.5 w-3.5" />
+              {t("settings.github")}
             </Button>
             <Button
               type="button"

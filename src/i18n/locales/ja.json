@@ -657,6 +657,7 @@
     "viewReleaseNotes": "このバージョンのリリースノートを見る",
     "viewCurrentReleaseNotes": "現在のバージョンのリリースノートを見る",
     "officialWebsite": "公式サイト",
+    "github": "GitHub",
     "oneClickInstall": "ワンクリックインストール",
     "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / OpenCode をインストール",
     "localEnvCheck": "ローカル環境チェック",
