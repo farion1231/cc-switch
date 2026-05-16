@@ -67,6 +67,10 @@ use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
+fn use_app_window_controls_effective(settings: &AppSettings) -> bool {
+    settings.use_app_window_controls
+}
+
 fn redact_url_for_log(url_str: &str) -> String {
     match url::Url::parse(url_str) {
         Ok(url) => {
@@ -139,6 +143,7 @@ fn handle_deeplink_url(
                     let _ = window.set_focus();
                     #[cfg(target_os = "linux")]
                     {
+                        linux_fix::present_after_tauri_show(&window);
                         linux_fix::nudge_main_window(window.clone());
                     }
                     log::info!("✓ Window shown and focused");
@@ -240,6 +245,7 @@ pub fn run() {
                 let _ = window.set_focus();
                 #[cfg(target_os = "linux")]
                 {
+                    linux_fix::present_after_tauri_show(&window);
                     linux_fix::nudge_main_window(window.clone());
                 }
             }
@@ -251,11 +257,22 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
+            #[cfg(target_os = "linux")]
+            if window.label() == "main" {
+                if let Some(webview_window) = window.app_handle().get_webview_window("main") {
+                    linux_fix::handle_window_event(event, &webview_window);
+                }
+            }
+
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let settings = crate::settings::get_settings();
 
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
+                    #[cfg(target_os = "linux")]
+                    if window.label() == "main" {
+                        linux_fix::save_current_window_size_now(window.app_handle());
+                    }
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
                     {
@@ -1013,10 +1030,16 @@ pub fn run() {
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
             if let Some(window) = app.get_webview_window("main") {
-                // 在窗口首次显示前同步装饰状态，避免前端加载后再切换导致标题栏闪烁
-                // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
                 #[cfg(target_os = "linux")]
-                let _ = window.set_decorations(!settings.use_app_window_controls);
+                {
+                    linux_fix::start_window_size_tracking();
+                    linux_fix::restore_saved_window_size(&window);
+                }
+
+                // 在窗口首次显示前同步装饰状态，避免前端加载后再切换导致标题栏闪烁。
+                // Linux 默认仍使用系统装饰栏；应用级按钮只作为用户显式开启的 fallback。
+                #[cfg(target_os = "linux")]
+                let _ = window.set_decorations(!use_app_window_controls_effective(&settings));
                 if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
@@ -1028,11 +1051,14 @@ pub fn run() {
                 } else {
                     // 正常启动模式：显示窗口
                     let _ = window.show();
+                    #[cfg(target_os = "linux")]
+                    {
+                        linux_fix::present_after_tauri_show(&window);
+                    }
                     log::info!("正常启动模式：主窗口已显示");
 
-                    // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
-                    // 启动时 webview 未获取焦点 + surface 尺寸协商失败，导致点击无效。
-                    // 这里做 set_focus + 伪 resize，等价于无视觉版本的"最大化-还原"。
+                    // Linux: 启动后延迟 focus，避免首次点击被窗口管理器消耗。
+                    // 不再做 resize nudge；GNOME/XWayland 下它会放大窗口。
                     #[cfg(target_os = "linux")]
                     {
                         linux_fix::nudge_main_window(window.clone());
@@ -1782,6 +1808,12 @@ fn show_database_init_error_dialog(
 // 在应用主动退出前显式持久化窗口状态
 // ============================================================
 
+#[cfg(target_os = "linux")]
+fn window_state_flags() -> StateFlags {
+    StateFlags::MAXIMIZED
+}
+
+#[cfg(not(target_os = "linux"))]
 fn window_state_flags() -> StateFlags {
     StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED
 }

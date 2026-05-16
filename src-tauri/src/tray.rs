@@ -690,6 +690,7 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 let _ = window.set_focus();
                 #[cfg(target_os = "linux")]
                 {
+                    crate::linux_fix::present_after_tauri_show(&window);
                     crate::linux_fix::nudge_main_window(window.clone());
                 }
                 #[cfg(target_os = "macos")]

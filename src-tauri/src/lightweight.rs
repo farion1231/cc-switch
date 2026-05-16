@@ -35,10 +35,15 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
+        #[cfg(target_os = "linux")]
+        {
+            crate::linux_fix::restore_saved_window_size(&window);
+        }
         let _ = window.show();
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
+            crate::linux_fix::present_after_tauri_show(&window);
             crate::linux_fix::nudge_main_window(window.clone());
         }
         #[cfg(target_os = "windows")]
@@ -69,11 +74,16 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("创建主窗口失败: {e}"))?;
 
     if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "linux")]
+        {
+            crate::linux_fix::restore_saved_window_size(&window);
+        }
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
+            crate::linux_fix::present_after_tauri_show(&window);
             crate::linux_fix::nudge_main_window(window.clone());
         }
     }
