@@ -84,6 +84,7 @@ json-five = "0.3.1"
 tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18.2"
 webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]

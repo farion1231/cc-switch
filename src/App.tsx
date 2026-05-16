@@ -177,8 +177,7 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
-  const useAppWindowControls =
-    isLinux() && (settingsData?.useAppWindowControls ?? false);
+  const useAppWindowControls = settingsData?.useAppWindowControls ?? false;
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
   const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
@@ -1063,8 +1062,8 @@ function App() {
       {(dragBarHeight > 0 || useAppWindowControls) && (
         <div
           className="fixed top-0 left-0 right-0 z-[70] flex items-center justify-end px-2"
-          data-tauri-drag-region
-          style={{ WebkitAppRegion: "drag", height: dragBarHeight } as any}
+          {...DRAG_REGION_ATTR}
+          style={{ ...DRAG_REGION_STYLE, height: dragBarHeight } as any}
         >
           {useAppWindowControls && (
             <div
