@@ -451,7 +451,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                         "content_block": {
                                                             "type": "tool_use",
                                                             "id": id,
-                                                            "name": name
+                                                            "name": name,
+                                                            "input": {}
                                                         }
                                                     });
                                                     let sse_data = format!("event: content_block_start\ndata: {}\n\n",
@@ -559,7 +560,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                     "content_block": {
                                                         "type": "tool_use",
                                                         "id": id,
-                                                        "name": name
+                                                        "name": name,
+                                                        "input": {}
                                                     }
                                                 });
                                                 let sse_data = format!("event: content_block_start\ndata: {}\n\n",
@@ -778,6 +780,15 @@ mod tests {
         }
 
         assert_eq!(tool_index_by_call.len(), 2);
+        for event in events.iter().filter(|event| {
+            event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
+                && event
+                    .pointer("/content_block/type")
+                    .and_then(|v| v.as_str())
+                    == Some("tool_use")
+        }) {
+            assert_eq!(event["content_block"]["input"], json!({}));
+        }
         assert_ne!(
             tool_index_by_call.get("call_0"),
             tool_index_by_call.get("call_1")
@@ -874,6 +885,7 @@ mod tests {
                 .unwrap_or(""),
             "first_tool"
         );
+        assert_eq!(starts[0]["content_block"]["input"], json!({}));
 
         let deltas: Vec<&str> = events
             .iter()
