@@ -73,6 +73,11 @@ function formatResetTime(
 /** 不需要在 inline 模式显示的 tier */
 const HIDDEN_INLINE_TIERS = new Set(["seven_day_sonnet"]);
 
+function shouldRenderInlineTier(tier: QuotaTier): boolean {
+  if (HIDDEN_INLINE_TIERS.has(tier.name)) return false;
+  return Boolean(TIER_I18N_KEYS[tier.name]);
+}
+
 /** 格式化相对时间（与 UsageFooter 一致） */
 function formatRelativeTime(
   timestamp: number,
@@ -237,11 +242,9 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
 
         {/* 第二行：各 tier 使用百分比 */}
         <div className="flex items-center gap-2">
-          {tiers
-            .filter((tier) => !HIDDEN_INLINE_TIERS.has(tier.name))
-            .map((tier) => (
-              <TierBadge key={tier.name} tier={tier} t={t} />
-            ))}
+          {tiers.filter(shouldRenderInlineTier).map((tier) => (
+            <TierBadge key={tier.name} tier={tier} t={t} />
+          ))}
         </div>
       </div>
     );

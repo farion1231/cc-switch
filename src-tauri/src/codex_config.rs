@@ -44,6 +44,42 @@ pub fn get_codex_config_path() -> PathBuf {
     get_codex_config_dir().join("config.toml")
 }
 
+pub fn extract_codex_model_provider(config_text: &str) -> Option<String> {
+    let trimmed = config_text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(doc) = trimmed.parse::<DocumentMut>() {
+        return doc
+            .get("model_provider")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+    }
+
+    None
+}
+
+pub fn extract_codex_model(config_text: &str) -> Option<String> {
+    let trimmed = config_text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(doc) = trimmed.parse::<DocumentMut>() {
+        return doc
+            .get("model")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+    }
+
+    None
+}
+
 /// 获取 Codex 供应商配置文件路径
 #[allow(dead_code)]
 pub fn get_codex_provider_paths(
@@ -829,6 +865,31 @@ model = "gpt-4"
             .and_then(|v| v.as_str())
             .expect("should set top-level base_url");
         assert_eq!(base_url, "https://fallback.api/v1");
+    }
+
+    #[test]
+    fn extract_codex_model_provider_reads_top_level_provider_key() {
+        let input = r#"model = "gpt-5.4"
+model_provider = "OpenAI"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+"#;
+
+        assert_eq!(
+            extract_codex_model_provider(input).as_deref(),
+            Some("OpenAI")
+        );
+    }
+
+    #[test]
+    fn extract_codex_model_reads_model_when_not_on_first_line() {
+        let input = r#"model_provider = "OpenAI"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
+"#;
+
+        assert_eq!(extract_codex_model(input).as_deref(), Some("gpt-5.4"));
     }
 
     #[test]

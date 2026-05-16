@@ -213,7 +213,12 @@ CC Switch supports five tools: **Claude Code**, **Codex**, **Gemini CLI**, **Ope
 <details>
 <summary><strong>Do I need to restart the terminal after switching providers?</strong></summary>
 
-For most tools, yes — restart your terminal or the CLI tool for changes to take effect. The exception is **Claude Code**, which currently supports hot-switching of provider data without a restart.
+For most tools, yes — restart your terminal or the CLI tool for changes to take effect.
+
+Claude Code has two paths:
+
+- Terminals opened from CC Switch receive the selected provider environment directly.
+- Switching only affects newly started terminal processes. Windows Terminal may reuse an existing host process, which can keep stale environment variables. For API mode, opening a terminal from CC Switch is the recommended path. If you open a terminal manually, make sure it is a freshly started PowerShell, cmd, or Windows Terminal process.
 
 </details>
 
@@ -241,7 +246,11 @@ CC Switch follows a "minimal intrusion" design principle — even if you uninsta
 <details>
 <summary><strong>How do I switch back to official login?</strong></summary>
 
-Add an official provider from the preset list. After switching to it, run the Log out / Log in flow, and then you can freely switch between the official provider and third-party providers. Codex supports switching between different official providers, making it easy to switch between multiple Plus or Team accounts.
+Add an official provider from the preset list and keep its Claude switch mode set to **Legacy / system default**. This returns Claude Code to its default profile and reuses the existing official OAuth/subscription login.
+
+For Claude API providers, use **Profile + Config** with a dedicated Claude profile directory. CC Switch writes the provider settings there and sets `CLAUDE_CONFIG_DIR` for newly started terminals.
+
+**Profile only** is an advanced mode. Use it only when you already maintain a complete standalone Claude profile and want CC Switch to switch `CLAUDE_CONFIG_DIR` without writing provider settings into that profile. It is not the recommended mode for the default Claude subscription login.
 
 </details>
 

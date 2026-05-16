@@ -953,7 +953,16 @@
     "fetchModelsAuthFailed": "API Key が無効か、権限がありません",
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
     "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
-    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください"
+    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
+    "claudeActivationMode": "Claude 切替モード",
+    "claudeActivationModeLegacy": "Legacy / システム既定",
+    "claudeActivationModeProfileOnly": "Profile only（上級者向け）",
+    "claudeActivationModeProfileAndConfig": "Profile + Config",
+    "claudeActivationModeHint": "Official/Auth は Legacy、API provider は Profile + Config を使用してください。",
+    "claudeProfileDir": "Claude profile ディレクトリ",
+    "claudeProfileDirPlaceholder": "C:\\Users\\<user>\\.claude-profiles\\api",
+    "claudeProfileDirHint": "Claude のみに適用されます。Legacy は既定の profile 位置を維持します。Profile only は既存の独立した完全な profile 向けで、provider 設定を書き込みません。",
+    "claudeProfileDirRestartHint": "切り替えは新しく起動したターミナルにのみ反映されます。切り替え後は PowerShell、cmd、または Windows Terminal を閉じて開き直してください。API provider では、古いセッションの環境が残らないよう、CC Switch からターミナルを開くことを推奨します。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",

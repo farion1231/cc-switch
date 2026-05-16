@@ -134,7 +134,7 @@
                 {{#each deep_link_protocols as |protocol| ~}}
                 <RegistryKey Root="HKCU" Key="Software\Classes\\{{protocol}}">
                     <RegistryValue Type="string" Name="URL Protocol" Value=""/>
-                    <RegistryValue Type="string" Value="URL:{{bundle_id}} protocol"/>
+                    <RegistryValue Type="string" Value="URL:{{../bundle_id}} protocol"/>
                     <RegistryKey Key="DefaultIcon">
                         <RegistryValue Type="string" Value="&quot;[!Path]&quot;,0" />
                     </RegistryKey>
@@ -146,7 +146,7 @@
             </Component>
             <Component Id="Path" Guid="{{path_component_guid}}" Win64="$(var.Win64)">
                 <File Id="Path" Source="{{main_binary_path}}" KeyPath="no" Checksum="yes"/>
-                <RegistryValue Root="HKCU" Key="Software\{{manufacturer}}\{{product_name}}" Name="PathComponent" Type="integer" Value="1" KeyPath="yes" />
+                <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="PathComponent" Type="integer" Value="1" KeyPath="yes" />
                 {{#each file_associations as |association| ~}}
                 {{#each association.ext as |ext| ~}}
                 <ProgId Id="{{../../product_name}}.{{ext}}" Advertise="yes" Description="{{association.description}}">
@@ -159,7 +159,8 @@
             </Component>
             {{#each binaries as |bin| ~}}
             <Component Id="{{ bin.id }}" Guid="{{bin.guid}}" Win64="$(var.Win64)">
-                <File Id="Bin_{{ bin.id }}" Source="{{bin.path}}" KeyPath="yes"/>
+                <File Id="Bin_{{ bin.id }}" Source="{{bin.path}}" KeyPath="no"/>
+                <RegistryValue Root="HKCU" Key="Software\\{{../manufacturer}}\\{{../product_name}}" Name="{{ bin.id }}" Type="integer" Value="1" KeyPath="yes" />
             </Component>
             {{/each~}}
             {{#if enable_elevated_update_task}}
