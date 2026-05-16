@@ -558,9 +558,44 @@ impl SkillService {
     // ========== 统一管理方法 ==========
 
     /// 获取所有已安装的 Skills
+    ///
+    /// 返回值仅包含 SSOT 目录中实际存在的 Skills。
+    /// 如果数据库记录对应的目录已被手动删除，会自动清理该记录。
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let skills = db.get_all_installed_skills()?;
-        Ok(skills.into_values().collect())
+        let ssot_dir = match Self::get_ssot_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                log::error!("SSOT 目录不可访问: {}, 跳过清理以避免误删", e);
+                return Ok(skills.into_values().collect());
+            }
+        };
+
+        if !ssot_dir.exists() || !ssot_dir.is_dir() {
+            log::error!(
+                "SSOT 目录不可访问: {}, 跳过清理以避免误删",
+                ssot_dir.display()
+            );
+            return Ok(skills.into_values().collect());
+        }
+
+        let mut valid = Vec::new();
+        for skill in skills.into_values() {
+            let skill_path = ssot_dir.join(&skill.directory);
+            if skill_path.exists() {
+                valid.push(skill);
+            } else {
+                log::warn!(
+                    "Skill '{}' (id={}) 的目录不存在，清理孤立数据库记录: {}",
+                    skill.name,
+                    skill.id,
+                    skill_path.display()
+                );
+                let _ = db.delete_skill(&skill.id);
+            }
+        }
+
+        Ok(valid)
     }
 
     /// 安装 Skill
