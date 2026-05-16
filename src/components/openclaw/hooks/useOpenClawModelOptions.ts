@@ -1,6 +1,8 @@
+import { useTranslation } from "react-i18next";
 import { useMemo } from "react";
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { OpenClawProviderConfig } from "@/types";
+import { getLocaleFromLanguage } from "@/lib/locale";
 
 export interface ModelOption {
   value: string; // "providerId/modelId"
@@ -11,6 +13,7 @@ export function useOpenClawModelOptions(): {
   options: ModelOption[];
   isLoading: boolean;
 } {
+  const { i18n } = useTranslation();
   const { data: providersData, isLoading } = useProvidersQuery("openclaw");
 
   const options = useMemo<ModelOption[]>(() => {
@@ -55,8 +58,13 @@ export function useOpenClawModelOptions(): {
 
     return Array.from(dedupedOptions.entries())
       .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
-  }, [providersData?.providers]);
+      .sort((a, b) =>
+        a.label.localeCompare(
+          b.label,
+          getLocaleFromLanguage(i18n.resolvedLanguage || i18n.language || "en"),
+        ),
+      );
+  }, [providersData?.providers, i18n.language]);
 
   return { options, isLoading };
 }

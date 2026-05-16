@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { getActiveLanguage } from "@/lib/locale";
 import {
   extractCodexBaseUrl,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
@@ -110,10 +111,19 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     try {
       const parsed = JSON.parse(value);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        const lang = getActiveLanguage();
+        if (lang === "zh") return "Auth JSON 必须是对象";
+        if (lang === "ja")
+          return "Auth JSON はオブジェクトである必要があります";
+        if (lang === "ru") return "Auth JSON должен быть объектом";
         return "Auth JSON must be an object";
       }
       return "";
     } catch {
+      const lang = getActiveLanguage();
+      if (lang === "zh") return "JSON 格式错误";
+      if (lang === "ja") return "JSON 形式が無効です";
+      if (lang === "ru") return "Неверный формат JSON";
       return "Invalid JSON format";
     }
   }, []);

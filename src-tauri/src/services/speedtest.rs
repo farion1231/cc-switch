@@ -4,6 +4,7 @@ use serde::Serialize;
 use std::time::Instant;
 
 use crate::error::AppError;
+use crate::settings;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 8;
 const MAX_TIMEOUT_SECS: u64 = 30;
@@ -20,6 +21,21 @@ pub struct EndpointLatency {
 
 /// 网络测速相关业务
 pub struct SpeedtestService;
+
+fn current_language() -> String {
+    settings::get_settings()
+        .language
+        .unwrap_or_else(|| "zh".to_string())
+}
+
+fn localized_text(zh: &str, en: &str, ja: &str, ru: &str) -> String {
+    match current_language().as_str() {
+        "en" => en.to_string(),
+        "ja" => ja.to_string(),
+        "ru" => ru.to_string(),
+        _ => zh.to_string(),
+    }
+}
 
 impl SpeedtestService {
     /// 测试一组端点的响应延迟。
@@ -42,7 +58,12 @@ impl SpeedtestService {
                     url: raw_url,
                     latency: None,
                     status: None,
-                    error: Some("URL 不能为空".to_string()),
+                    error: Some(localized_text(
+                        "URL 不能为空",
+                        "URL cannot be empty",
+                        "URL を入力してください",
+                        "URL не может быть пустым",
+                    )),
                 });
                 continue;
             }
@@ -54,7 +75,12 @@ impl SpeedtestService {
                         url: trimmed,
                         latency: None,
                         status: None,
-                        error: Some(format!("URL 无效: {err}")),
+                        error: Some(localized_text(
+                            &format!("URL 无效: {err}"),
+                            &format!("Invalid URL: {err}"),
+                            &format!("URL が無効です: {err}"),
+                            &format!("URL недействителен: {err}"),
+                        )),
                     });
                 }
             }
@@ -89,9 +115,19 @@ impl SpeedtestService {
                     Err(err) => {
                         let status = err.status().map(|s| s.as_u16());
                         let error_message = if err.is_timeout() {
-                            "请求超时".to_string()
+                            localized_text(
+                                "请求超时",
+                                "Request timed out",
+                                "リクエストがタイムアウトしました",
+                                "Время ожидания запроса истекло",
+                            )
                         } else if err.is_connect() {
-                            "连接失败".to_string()
+                            localized_text(
+                                "连接失败",
+                                "Connection failed",
+                                "接続に失敗しました",
+                                "Не удалось подключиться",
+                            )
                         } else {
                             err.to_string()
                         };
@@ -175,12 +211,15 @@ mod tests {
                 .error
                 .as_deref()
                 .unwrap_or_default()
-                .starts_with("URL 无效"),
+                .contains("URL"),
             "invalid url should yield parse error"
         );
-        assert_eq!(
-            result[1].error.as_deref(),
-            Some("URL 不能为空"),
+        assert!(
+            result[1]
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("URL"),
             "empty url should report validation error"
         );
     }

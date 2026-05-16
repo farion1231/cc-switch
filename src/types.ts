@@ -293,7 +293,7 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "ja";
+  language?: "en" | "zh" | "ja" | "ru";
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;

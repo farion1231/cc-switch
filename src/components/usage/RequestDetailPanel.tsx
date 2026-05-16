@@ -19,11 +19,13 @@ export function RequestDetailPanel({
 }: RequestDetailPanelProps) {
   const { t, i18n } = useTranslation();
   const { data: request, isLoading } = useRequestDetail(requestId);
-  const dateLocale =
-    i18n.language === "zh"
-      ? "zh-CN"
-      : i18n.language === "ja"
-        ? "ja-JP"
+  const language = i18n.resolvedLanguage || i18n.language || "en";
+  const dateLocale = language.startsWith("zh")
+    ? "zh-CN"
+    : language.startsWith("ja")
+      ? "ja-JP"
+      : language.startsWith("ru")
+        ? "ru-RU"
         : "en-US";
 
   if (isLoading) {

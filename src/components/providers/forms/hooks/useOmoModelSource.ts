@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { providersApi } from "@/lib/api";
 import { useProvidersQuery } from "@/lib/query/queries";
+import { getLocaleFromLanguage } from "@/lib/locale";
 import type { OpenCodeProviderConfig } from "@/types";
 import { OPENCODE_PRESET_MODEL_VARIANTS } from "@/config/opencodeProviderPresets";
 import { parseOpencodeConfigStrict } from "../helpers/opencodeFormUtils";
@@ -220,7 +221,16 @@ export function useOmoModelSource({
     return {
       options: Array.from(dedupedOptions.entries())
         .map(([value, label]) => ({ value, label }))
-        .sort((a, b) => a.label.localeCompare(b.label, "zh-CN")),
+        .sort((a, b) =>
+          a.label.localeCompare(
+            b.label,
+            getLocaleFromLanguage(
+              (typeof window !== "undefined"
+                ? window.localStorage.getItem("language")
+                : null) || "en",
+            ),
+          ),
+        ),
       variantsMap,
       presetMetaMap,
       parseFailedProviders,

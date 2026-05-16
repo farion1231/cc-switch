@@ -2,17 +2,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
-
-type Language = "zh" | "en" | "ja";
+import {
+  DEFAULT_LANGUAGE,
+  isSupportedLanguage,
+  type Language,
+} from "@/i18n/languages";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
 };
 
 const normalizeLanguage = (lang?: string | null): Language => {
-  if (!lang) return "zh";
+  if (!lang) return DEFAULT_LANGUAGE;
   const normalized = lang.toLowerCase();
-  return normalized === "en" || normalized === "ja" ? normalized : "zh";
+  return isSupportedLanguage(normalized) ? normalized : DEFAULT_LANGUAGE;
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -47,27 +50,27 @@ export function useSettingsForm(): UseSettingsFormResult {
     null,
   );
 
-  const initialLanguageRef = useRef<Language>("zh");
+  const initialLanguageRef = useRef<Language>(DEFAULT_LANGUAGE);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("language");
-      if (stored === "en" || stored === "zh" || stored === "ja") {
-        return stored as Language;
+      if (stored) {
+        const normalized = stored.toLowerCase();
+        if (isSupportedLanguage(normalized)) {
+          return normalized;
+        }
       }
     }
     return normalizeLanguage(i18n.language);
-  }, [i18n]);
+  }, []);
 
-  const syncLanguage = useCallback(
-    (lang: Language) => {
-      const current = normalizeLanguage(i18n.language);
-      if (current !== lang) {
-        void i18n.changeLanguage(lang);
-      }
-    },
-    [i18n],
-  );
+  const syncLanguage = useCallback((lang: Language) => {
+    const current = normalizeLanguage(i18n.language);
+    if (current !== lang) {
+      void i18n.changeLanguage(lang);
+    }
+  }, []);
 
   // 初始化设置数据
   useEffect(() => {

@@ -3,6 +3,7 @@ import {
   type UseQueryResult,
   keepPreviousData,
 } from "@tanstack/react-query";
+import i18n from "@/i18n";
 import {
   providersApi,
   settingsApi,
@@ -18,6 +19,7 @@ import type {
   SessionMessage,
 } from "@/types";
 import { usageKeys } from "@/lib/query/usage";
+import { getLocaleFromLanguage } from "@/lib/locale";
 
 const sortProviders = (
   providers: Record<string, Provider>,
@@ -33,7 +35,10 @@ const sortProviders = (
       const timeA = a.createdAt ?? 0;
       const timeB = b.createdAt ?? 0;
       if (timeA === timeB) {
-        return a.name.localeCompare(b.name, "zh-CN");
+        const locale = getLocaleFromLanguage(
+          i18n.resolvedLanguage || i18n.language || "en",
+        );
+        return a.name.localeCompare(b.name, locale);
       }
       return timeA - timeB;
     })

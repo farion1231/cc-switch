@@ -12,13 +12,16 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
+import { getLocaleFromLanguage } from "@/lib/locale";
 
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
 
   const sortedProviders = useMemo(() => {
-    const locale = i18n.language === "zh" ? "zh-CN" : "en-US";
+    const locale = getLocaleFromLanguage(
+      i18n.resolvedLanguage || i18n.language || "en",
+    );
     return Object.values(providers).sort((a, b) => {
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;
