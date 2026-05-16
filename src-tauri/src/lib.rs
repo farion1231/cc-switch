@@ -1254,6 +1254,8 @@ pub fn run() {
             commands::get_session_messages,
             commands::delete_session,
             commands::delete_sessions,
+            commands::get_codex_session_provider,
+            commands::switch_codex_session_provider,
             commands::launch_session_terminal,
             commands::get_tool_versions,
             // Provider terminal

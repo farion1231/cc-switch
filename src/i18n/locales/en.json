@@ -791,7 +791,11 @@
     "messageCopied": "Message copied",
     "conversationHistory": "Conversation History",
     "expandContent": "Expand full content",
-    "collapseContent": "Collapse"
+    "collapseContent": "Collapse",
+    "codexProviderGroup": "Codex session group",
+    "codexProviderGroupHint": "Use OpenAI for official OpenAI subscriptions and Custom for custom providers so this session appears in the matching Codex history list.",
+    "codexProviderSwitchSuccess": "Codex session group updated",
+    "codexProviderSwitchFailed": "Failed to update Codex session group: {{error}}"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",

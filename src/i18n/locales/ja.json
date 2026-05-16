@@ -791,7 +791,11 @@
     "messageCopied": "メッセージがコピーされました",
     "conversationHistory": "会話履歴",
     "expandContent": "全文を表示",
-    "collapseContent": "折りたたむ"
+    "collapseContent": "折りたたむ",
+    "codexProviderGroup": "Codex セッショングループ",
+    "codexProviderGroupHint": "OpenAI 公式サブスクリプションを使う場合は OpenAI、カスタム Provider を使う場合は Custom に切り替えると、このセッションが対応する Codex 履歴一覧に表示されます。",
+    "codexProviderSwitchSuccess": "Codex セッショングループを更新しました",
+    "codexProviderSwitchFailed": "Codex セッショングループの更新に失敗しました: {{error}}"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",

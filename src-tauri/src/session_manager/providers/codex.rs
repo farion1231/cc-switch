@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -122,6 +122,298 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
     })?;
 
     Ok(true)
+}
+
+pub fn get_session_provider(
+    session_id: &str,
+    source_path: &Path,
+) -> Result<Option<String>, String> {
+    let config_dir = get_codex_config_dir();
+    get_session_provider_with_root(session_id, source_path, &config_dir.join("sessions"))
+}
+
+pub fn switch_session_provider(
+    session_id: &str,
+    source_path: &Path,
+    target_provider: &str,
+) -> Result<Option<String>, String> {
+    let config_dir = get_codex_config_dir();
+    switch_session_provider_with_paths(
+        session_id,
+        source_path,
+        target_provider,
+        &config_dir.join("sessions"),
+        &config_dir.join("state_5.sqlite"),
+    )
+}
+
+fn switch_session_provider_with_paths(
+    session_id: &str,
+    source_path: &Path,
+    target_provider: &str,
+    sessions_root: &Path,
+    state_db_path: &Path,
+) -> Result<Option<String>, String> {
+    validate_codex_model_provider(target_provider)?;
+
+    let root = canonicalize_existing(sessions_root, "Codex sessions root")?;
+    let source = canonicalize_existing(source_path, "Codex session file")?;
+    if !source.starts_with(&root) {
+        return Err(format!(
+            "Codex session file is outside sessions root: {}",
+            source_path.display()
+        ));
+    }
+
+    let original_content = fs::read_to_string(&source).map_err(|e| {
+        format!(
+            "Failed to read Codex session file {}: {e}",
+            source.display()
+        )
+    })?;
+    let provider = update_session_file_model_provider(&source, session_id, target_provider)?;
+    if let Err(update_error) =
+        update_state_db_model_provider(state_db_path, session_id, target_provider)
+    {
+        fs::write(&source, original_content).map_err(|restore_error| {
+            format!(
+                "{update_error}; failed to restore Codex session file {}: {restore_error}",
+                source.display()
+            )
+        })?;
+        return Err(update_error);
+    }
+
+    Ok(provider)
+}
+
+fn get_session_provider_with_root(
+    session_id: &str,
+    source_path: &Path,
+    sessions_root: &Path,
+) -> Result<Option<String>, String> {
+    let root = canonicalize_existing(sessions_root, "Codex sessions root")?;
+    let source = canonicalize_existing(source_path, "Codex session file")?;
+    if !source.starts_with(&root) {
+        return Err(format!(
+            "Codex session file is outside sessions root: {}",
+            source_path.display()
+        ));
+    }
+
+    read_session_file_model_provider(&source, session_id)
+}
+
+fn validate_codex_model_provider(provider: &str) -> Result<(), String> {
+    match provider {
+        "openai" | "custom" => Ok(()),
+        _ => Err(format!("Unsupported Codex model provider: {provider}")),
+    }
+}
+
+fn canonicalize_existing(path: &Path, label: &str) -> Result<PathBuf, String> {
+    if !path.exists() {
+        return Err(format!("{label} not found: {}", path.display()));
+    }
+    path.canonicalize()
+        .map_err(|e| format!("Failed to resolve {label} {}: {e}", path.display()))
+}
+
+fn read_session_file_model_provider(
+    path: &Path,
+    session_id: &str,
+) -> Result<Option<String>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read Codex session file {}: {e}", path.display()))?;
+
+    for line in content.lines() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+            continue;
+        }
+
+        let actual_id = value
+            .get("payload")
+            .and_then(|payload| payload.get("id"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("Codex session metadata is missing id: {}", path.display()))?;
+
+        if actual_id != session_id {
+            return Err(format!(
+                "Codex session ID mismatch: expected {session_id}, found {actual_id}"
+            ));
+        }
+
+        return Ok(value
+            .get("payload")
+            .and_then(|payload| payload.get("model_provider"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string));
+    }
+
+    Err(format!(
+        "Codex session metadata not found in file: {}",
+        path.display()
+    ))
+}
+
+fn update_session_file_model_provider(
+    path: &Path,
+    session_id: &str,
+    target_provider: &str,
+) -> Result<Option<String>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read Codex session file {}: {e}", path.display()))?;
+
+    let mut lines: Vec<String> = content.lines().map(ToString::to_string).collect();
+    if lines.is_empty() {
+        return Err(format!("Codex session file is empty: {}", path.display()));
+    }
+
+    let mut meta_index = None;
+    let mut meta_value = None;
+
+    for (index, line) in lines.iter().enumerate() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            meta_index = Some(index);
+            meta_value = Some(value);
+            break;
+        }
+    }
+
+    let index = meta_index.ok_or_else(|| {
+        format!(
+            "Codex session metadata not found in file: {}",
+            path.display()
+        )
+    })?;
+    let mut value = meta_value.expect("metadata value exists when index exists");
+
+    let actual_id = value
+        .get("payload")
+        .and_then(|payload| payload.get("id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("Codex session metadata is missing id: {}", path.display()))?;
+
+    if actual_id != session_id {
+        return Err(format!(
+            "Codex session ID mismatch: expected {session_id}, found {actual_id}"
+        ));
+    }
+
+    let payload = value
+        .get_mut("payload")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| {
+            format!(
+                "Codex session metadata payload is invalid: {}",
+                path.display()
+            )
+        })?;
+    payload.insert(
+        "model_provider".to_string(),
+        Value::String(target_provider.to_string()),
+    );
+
+    lines[index] =
+        serde_json::to_string(&value).map_err(|e| format!("Failed to encode metadata: {e}"))?;
+
+    let backup_path = session_backup_path(path);
+    fs::copy(path, &backup_path).map_err(|e| {
+        format!(
+            "Failed to create Codex session backup {}: {e}",
+            backup_path.display()
+        )
+    })?;
+
+    let mut output = lines.join("\n");
+    if content.ends_with('\n') {
+        output.push('\n');
+    }
+    fs::write(path, output)
+        .map_err(|e| format!("Failed to write Codex session file {}: {e}", path.display()))?;
+
+    Ok(Some(target_provider.to_string()))
+}
+
+fn session_backup_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("session.jsonl");
+    path.with_file_name(format!("{file_name}.cc-switch.bak"))
+}
+
+fn update_state_db_model_provider(
+    state_db_path: &Path,
+    session_id: &str,
+    target_provider: &str,
+) -> Result<(), String> {
+    if !state_db_path.exists() {
+        return Ok(());
+    }
+
+    let conn = rusqlite::Connection::open(state_db_path).map_err(|e| {
+        format!(
+            "Failed to open Codex state database {}: {e}",
+            state_db_path.display()
+        )
+    })?;
+
+    let has_threads: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'threads'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to inspect Codex state database: {e}"))?;
+    if has_threads == 0 {
+        return Err("Codex state database is missing threads table".to_string());
+    }
+
+    let has_model_provider = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(threads)")
+            .map_err(|e| format!("Failed to inspect Codex threads schema: {e}"))?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("Failed to read Codex threads schema: {e}"))?;
+        let mut found = false;
+        for column in columns {
+            if column.map_err(|e| format!("Failed to read Codex threads column: {e}"))?
+                == "model_provider"
+            {
+                found = true;
+                break;
+            }
+        }
+        found
+    };
+
+    if !has_model_provider {
+        return Err("Codex threads table is missing model_provider column".to_string());
+    }
+
+    let rows_affected = conn
+        .execute(
+            "UPDATE threads SET model_provider = ?1 WHERE id = ?2",
+            rusqlite::params![target_provider, session_id],
+        )
+        .map_err(|e| format!("Failed to update Codex state database: {e}"))?;
+    if rows_affected == 0 {
+        return Err(format!(
+            "Codex state database thread not found for session: {session_id}"
+        ));
+    }
+
+    Ok(())
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
@@ -319,6 +611,152 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("How do I deploy?"));
+    }
+
+    #[test]
+    fn reads_session_model_provider() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\",\"model_provider\":\"custom\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Hello\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let provider = read_session_file_model_provider(&path, "test-id").unwrap();
+        assert_eq!(provider.as_deref(), Some("custom"));
+    }
+
+    #[test]
+    fn switch_session_provider_updates_jsonl_and_state_db() {
+        let temp = tempdir().expect("tempdir");
+        let sessions_root = temp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_root).expect("create sessions root");
+        let path = sessions_root.join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Hello\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let db_path = temp.path().join("state_5.sqlite");
+        let conn = rusqlite::Connection::open(&db_path).expect("open db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads");
+        conn.execute(
+            "INSERT INTO threads (id, model_provider) VALUES ('test-id', 'openai')",
+            [],
+        )
+        .expect("insert thread");
+        drop(conn);
+
+        switch_session_provider_with_paths("test-id", &path, "custom", &sessions_root, &db_path)
+            .expect("switch provider");
+
+        let first_line = std::fs::read_to_string(&path)
+            .expect("read session")
+            .lines()
+            .next()
+            .expect("first line")
+            .to_string();
+        let value: Value = serde_json::from_str(&first_line).expect("parse first line");
+        assert_eq!(
+            value
+                .get("payload")
+                .and_then(|payload| payload.get("model_provider"))
+                .and_then(Value::as_str),
+            Some("custom")
+        );
+
+        let conn = rusqlite::Connection::open(&db_path).expect("reopen db");
+        let provider: String = conn
+            .query_row(
+                "SELECT model_provider FROM threads WHERE id = 'test-id'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query provider");
+        assert_eq!(provider, "custom");
+    }
+
+    #[test]
+    fn switch_session_provider_restores_jsonl_when_state_db_update_fails() {
+        let temp = tempdir().expect("tempdir");
+        let sessions_root = temp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_root).expect("create sessions root");
+        let path = sessions_root.join("session.jsonl");
+        let original_content = concat!(
+            "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\"}}\n",
+            "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Hello\"}}\n"
+        );
+        std::fs::write(&path, original_content).expect("write");
+
+        let db_path = temp.path().join("state_5.sqlite");
+        let conn = rusqlite::Connection::open(&db_path).expect("open db");
+        conn.execute("CREATE TABLE threads (id TEXT PRIMARY KEY)", [])
+            .expect("create threads without provider");
+        drop(conn);
+
+        let error = switch_session_provider_with_paths(
+            "test-id",
+            &path,
+            "custom",
+            &sessions_root,
+            &db_path,
+        )
+        .expect_err("missing model_provider should fail");
+
+        assert!(error.contains("model_provider column"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read session"),
+            original_content
+        );
+    }
+
+    #[test]
+    fn switch_session_provider_fails_when_state_db_thread_is_missing() {
+        let temp = tempdir().expect("tempdir");
+        let sessions_root = temp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_root).expect("create sessions root");
+        let path = sessions_root.join("session.jsonl");
+        let original_content = concat!(
+            "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\"}}\n",
+            "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Hello\"}}\n"
+        );
+        std::fs::write(&path, original_content).expect("write");
+
+        let db_path = temp.path().join("state_5.sqlite");
+        let conn = rusqlite::Connection::open(&db_path).expect("open db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads");
+        drop(conn);
+
+        let error = switch_session_provider_with_paths(
+            "test-id",
+            &path,
+            "custom",
+            &sessions_root,
+            &db_path,
+        )
+        .expect_err("missing thread should fail");
+
+        assert!(error.contains("thread"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read session"),
+            original_content
+        );
     }
 
     #[test]
