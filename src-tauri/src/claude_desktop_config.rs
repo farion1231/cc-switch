@@ -9,7 +9,7 @@ use crate::config::{atomic_write, delete_file, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID;
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute, Provider, ProviderMeta};
 
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
@@ -154,6 +154,105 @@ pub fn apply_provider(db: &Database, provider: &Provider) -> Result<(), AppError
     apply_provider_to_paths(db, provider, &paths)
 }
 
+/// 从 Claude Desktop 当前 live gateway profile 读取配置，回填到 Provider 中。
+/// 用于切换 provider 时保留当前 live 配置中的用户修改。
+pub fn backfill_provider_from_live(provider: &mut Provider) -> Result<(), AppError> {
+    let paths = current_platform_paths()?;
+    backfill_provider_from_live_at_paths(provider, &paths)
+}
+
+fn backfill_provider_from_live_at_paths(
+    provider: &mut Provider,
+    paths: &ClaudeDesktopPaths,
+) -> Result<(), AppError> {
+    let profile = read_json_or_empty(&paths.profile_path)?;
+
+    // profile 不存在或为空，无需 backfill
+    if profile.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        return Ok(());
+    }
+
+    let mode = provider_mode(provider);
+
+    // Direct 模式：从 profile 恢复 base_url 和 api_key
+    if matches!(mode, ClaudeDesktopMode::Direct) {
+        if let Some(base_url) = profile.get("inferenceGatewayBaseUrl").and_then(Value::as_str) {
+            if let Some(env) = provider
+                .settings_config
+                .get_mut("env")
+                .and_then(Value::as_object_mut)
+            {
+                env.insert(
+                    "ANTHROPIC_BASE_URL".to_string(),
+                    Value::String(base_url.to_string()),
+                );
+            }
+        }
+        if let Some(api_key) = profile.get("inferenceGatewayApiKey").and_then(Value::as_str) {
+            if let Some(env) = provider
+                .settings_config
+                .get_mut("env")
+                .and_then(Value::as_object_mut)
+            {
+                env.insert(
+                    "ANTHROPIC_AUTH_TOKEN".to_string(),
+                    Value::String(api_key.to_string()),
+                );
+            }
+        }
+    }
+    // Proxy 模式：base_url 和 api_key 是本地代理的合成值，不应 backfill
+
+    // 从 inferenceModels 恢复 model routes
+    if let Some(models) = profile.get("inferenceModels").and_then(Value::as_array) {
+        let mut routes = std::collections::HashMap::new();
+        for model in models {
+            // inferenceModels 可以是字符串或对象
+            let (name, label_override, supports_1m) = if let Some(s) = model.as_str() {
+                (s, None, None)
+            } else {
+                let name = model.get("name").and_then(Value::as_str).unwrap_or("");
+                let label_override =
+                    model.get("labelOverride").and_then(Value::as_str).map(String::from);
+                let supports_1m = model.get("supports1m").and_then(Value::as_bool);
+                (name, label_override, supports_1m)
+            };
+
+            if name.is_empty() {
+                continue;
+            }
+
+            // 尽量保留现有的 upstream model 映射
+            let upstream_model = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.claude_desktop_model_routes.get(name))
+                .map(|r| r.model.clone())
+                .unwrap_or_else(|| name.to_string());
+
+            routes.insert(
+                name.to_string(),
+                ClaudeDesktopModelRoute {
+                    model: upstream_model,
+                    label_override,
+                    supports_1m,
+                },
+            );
+        }
+
+        if let Some(meta) = provider.meta.as_mut() {
+            meta.claude_desktop_model_routes = routes;
+        } else {
+            provider.meta = Some(ProviderMeta {
+                claude_desktop_model_routes: routes,
+                ..Default::default()
+            });
+        }
+    }
+
+    Ok(())
+}
+
 pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopStatus, AppError> {
     if !is_supported_platform() {
         return Ok(ClaudeDesktopStatus {
@@ -289,30 +388,6 @@ fn inference_model_json(spec: &InferenceModelSpec) -> Value {
     }
 }
 
-fn has_one_m_context_suffix(model: &str) -> bool {
-    model.trim().to_ascii_lowercase().ends_with("[1m]")
-}
-
-fn desktop_model_id(model_id: &str, supports_1m: bool) -> String {
-    let normalized = strip_one_m_context_suffix(model_id);
-    if supports_1m {
-        format!("{normalized}{ONE_M_CONTEXT_SUFFIX}")
-    } else {
-        normalized
-    }
-}
-
-fn upstream_model_id(model_id: &str, supports_1m: bool) -> String {
-    let normalized = strip_one_m_context_suffix(model_id);
-    // Only append [1M] for Claude-series upstream models
-    let is_claude_upstream =
-        normalized.starts_with("claude-") || normalized.starts_with("anthropic/");
-    if supports_1m && is_claude_upstream {
-        format!("{normalized}{ONE_M_CONTEXT_SUFFIX}")
-    } else {
-        normalized
-    }
-}
 pub fn get_or_create_gateway_token(db: &Database) -> Result<String, AppError> {
     if let Some(token) = db.get_setting(GATEWAY_TOKEN_SETTING_KEY)? {
         let trimmed = token.trim();
@@ -813,9 +888,22 @@ fn apply_provider_to_paths_inner(
         }
     };
 
+    // 保留现有 profile 中非 inference 开头的用户配置
+    let mut merged = read_json_or_empty(&paths.profile_path)?;
+    if let Some(obj) = merged.as_object_mut() {
+        obj.retain(|key, _| !key.starts_with("inference"));
+        if let Some(new_obj) = profile.as_object() {
+            for (key, value) in new_obj {
+                obj.insert(key.clone(), value.clone());
+            }
+        }
+    } else {
+        merged = profile;
+    }
+
     write_deployment_mode(&paths.normal_config_path, "3p")?;
     write_deployment_mode(&paths.threep_config_path, "3p")?;
-    write_json_file(&paths.profile_path, &profile)?;
+    write_json_file(&paths.profile_path, &merged)?;
     write_meta(&paths.meta_path, Some(PROFILE_ID))?;
 
     Ok(())
@@ -1416,8 +1504,8 @@ mod tests {
             json!({"model": "claude-opus-4-7", "messages": []}),
             &provider,
         )
-        .expect("base name should fallback-match the [1M] route");
-        assert_eq!(mapped["model"], json!("kimi-k2"));
+        .expect("map repaired route");
+        assert_eq!(mapped["model"], json!("deepseek-v4-pro"));
     }
 
     #[test]
@@ -1620,5 +1708,200 @@ mod tests {
             upstream_model_id("deepseek-v4-pro [1m]", true),
             "deepseek-v4-pro"
         );
+    }
+
+    #[test]
+    fn claude_desktop_backfill_direct_provider_from_live_profile() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = direct_provider("direct");
+        let _db = test_db();
+
+        // Write a gateway profile with modified values
+        let profile = json!({
+            "disableDeploymentModeChooser": true,
+            "inferenceGatewayApiKey": "new-token",
+            "inferenceGatewayAuthScheme": "bearer",
+            "inferenceGatewayBaseUrl": "https://new-gateway.example.com",
+            "inferenceProvider": "gateway",
+            "inferenceModels": [
+                { "name": "claude-sonnet-4-6", "labelOverride": "New Sonnet", "supports1m": true },
+                "claude-opus-4-7"
+            ]
+        });
+        write_json_file(&paths.profile_path, &profile).expect("write profile");
+
+        backfill_provider_from_live_at_paths(&mut provider, &paths).expect("backfill");
+
+        // Verify settings_config was updated
+        let env = provider.settings_config.get("env").and_then(Value::as_object).unwrap();
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(Value::as_str),
+            Some("https://new-gateway.example.com")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(Value::as_str),
+            Some("new-token")
+        );
+
+        // Verify model routes were recovered
+        let meta = provider.meta.expect("meta");
+        let routes = meta.claude_desktop_model_routes;
+        assert_eq!(routes.len(), 2);
+        let sonnet = routes.get("claude-sonnet-4-6").expect("sonnet route");
+        assert_eq!(sonnet.model, "claude-sonnet-4-6");
+        assert_eq!(sonnet.label_override, Some("New Sonnet".to_string()));
+        assert_eq!(sonnet.supports_1m, Some(true));
+        let opus = routes.get("claude-opus-4-7").expect("opus route");
+        assert_eq!(opus.model, "claude-opus-4-7");
+        assert_eq!(opus.label_override, None);
+        assert_eq!(opus.supports_1m, None);
+    }
+
+    #[test]
+    fn claude_desktop_backfill_proxy_provider_skips_synthetic_values() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = proxy_provider("proxy");
+        let _db = test_db();
+
+        // Save original settings_config for comparison
+        let original_base_url = provider
+            .settings_config
+            .get("env")
+            .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        let original_api_key = provider
+            .settings_config
+            .get("env")
+            .and_then(|e| e.get("ANTHROPIC_AUTH_TOKEN"))
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+
+        // Write a gateway profile with synthetic proxy values
+        let profile = json!({
+            "disableDeploymentModeChooser": true,
+            "inferenceGatewayApiKey": "ccs-synthetic-token",
+            "inferenceGatewayAuthScheme": "bearer",
+            "inferenceGatewayBaseUrl": "http://127.0.0.1:15721/claude-desktop",
+            "inferenceProvider": "gateway",
+            "inferenceModels": [
+                { "name": "claude-sonnet-4-6", "supports1m": true }
+            ]
+        });
+        write_json_file(&paths.profile_path, &profile).expect("write profile");
+
+        backfill_provider_from_live_at_paths(&mut provider, &paths).expect("backfill");
+
+        // Verify settings_config was NOT modified (synthetic values skipped)
+        let env = provider.settings_config.get("env").and_then(Value::as_object).unwrap();
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(Value::as_str),
+            Some(original_base_url.as_str())
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(Value::as_str),
+            Some(original_api_key.as_str())
+        );
+
+        // Verify model routes were still recovered
+        let meta = provider.meta.expect("meta");
+        let routes = meta.claude_desktop_model_routes;
+        assert_eq!(routes.len(), 1);
+        let sonnet = routes.get("claude-sonnet-4-6").expect("sonnet route");
+        assert_eq!(sonnet.model, "kimi-k2"); // preserved from original meta
+        assert_eq!(sonnet.supports_1m, Some(true));
+    }
+
+    #[test]
+    fn claude_desktop_backfill_empty_profile_is_noop() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = direct_provider("direct");
+
+        // No profile written - profile_path does not exist
+        let original_settings = provider.settings_config.clone();
+
+        backfill_provider_from_live_at_paths(&mut provider, &paths).expect("backfill");
+
+        // Verify provider was not modified
+        assert_eq!(provider.settings_config, original_settings);
+        assert!(provider.meta.is_some());
+        assert!(provider
+            .meta
+            .as_ref()
+            .unwrap()
+            .claude_desktop_model_routes
+            .is_empty());
+    }
+
+    #[test]
+    fn claude_desktop_backfill_preserves_upstream_model() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = proxy_provider("proxy");
+        let _db = test_db();
+
+        // Write a gateway profile with only the safe route_id
+        let profile = json!({
+            "inferenceGatewayApiKey": "ccs-token",
+            "inferenceGatewayBaseUrl": "http://127.0.0.1:15721/claude-desktop",
+            "inferenceProvider": "gateway",
+            "inferenceModels": [
+                { "name": "claude-sonnet-4-6", "labelOverride": "Updated Label" }
+            ]
+        });
+        write_json_file(&paths.profile_path, &profile).expect("write profile");
+
+        backfill_provider_from_live_at_paths(&mut provider, &paths).expect("backfill");
+
+        // Verify upstream model was preserved from original meta
+        let meta = provider.meta.expect("meta");
+        let routes = meta.claude_desktop_model_routes;
+        let sonnet = routes.get("claude-sonnet-4-6").expect("sonnet route");
+        assert_eq!(sonnet.model, "kimi-k2"); // original upstream model preserved
+        assert_eq!(sonnet.label_override, Some("Updated Label".to_string()));
+    }
+
+    #[test]
+    fn claude_desktop_apply_preserves_non_inference_keys() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let provider = direct_provider_with_models("direct");
+        let db = test_db();
+
+        // Pre-populate profile with user-defined non-inference keys
+        let existing = json!({
+            "disableAutoUpdates": false,
+            "disableEssentialTelemetry": false,
+            "disableNonessentialTelemetry": false,
+            "disableNonessentialServices": false,
+            "inferenceGatewayBaseUrl": "https://old.example.com",
+            "inferenceGatewayApiKey": "old-key",
+            "inferenceProvider": "gateway"
+        });
+        write_json_file(&paths.profile_path, &existing).expect("write existing profile");
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+
+        // inference* keys should be overwritten
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("https://gateway.example.com")
+        );
+        assert_eq!(profile["inferenceGatewayApiKey"], json!("test-token"));
+        assert_eq!(profile["inferenceProvider"], json!("gateway"));
+        assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+
+        // Non-inference keys should be preserved
+        assert_eq!(profile["disableAutoUpdates"], json!(false));
+        assert_eq!(profile["disableEssentialTelemetry"], json!(false));
+        assert_eq!(profile["disableNonessentialTelemetry"], json!(false));
+        assert_eq!(profile["disableNonessentialServices"], json!(false));
     }
 }

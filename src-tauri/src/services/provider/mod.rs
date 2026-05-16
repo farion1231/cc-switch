@@ -1523,7 +1523,29 @@ impl ProviderService {
                 // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
                 if !app_type.is_additive_mode() {
                     // Only backfill when switching to a different provider
-                    if let Ok(live_config) = read_live_settings(app_type.clone()) {
+                    if matches!(app_type, AppType::ClaudeDesktop) {
+                        // Claude Desktop uses the Profile system; generic read_live_settings
+                        // is unsupported. Use the dedicated backfill path instead.
+                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                            if let Err(e) =
+                                crate::claude_desktop_config::backfill_provider_from_live(
+                                    &mut current_provider,
+                                )
+                            {
+                                log::warn!("Claude Desktop backfill failed: {e}");
+                                result
+                                    .warnings
+                                    .push(format!("backfill_failed:{current_id}"));
+                            } else if let Err(e) =
+                                state.db.save_provider(app_type.as_str(), &current_provider)
+                            {
+                                log::warn!("Backfill save failed: {e}");
+                                result
+                                    .warnings
+                                    .push(format!("backfill_failed:{current_id}"));
+                            }
+                        }
+                    } else if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
                             current_provider.settings_config =
                                 strip_common_config_from_live_settings(
