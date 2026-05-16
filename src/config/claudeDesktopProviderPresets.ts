@@ -135,6 +135,21 @@ const brandedRoutes = (
 
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
+    name: "Claude Desktop Official",
+    websiteUrl: "https://claude.ai/download",
+    category: "official",
+    baseUrl: "",
+    mode: "direct",
+    apiFormat: "anthropic",
+    theme: {
+      icon: "claude",
+      backgroundColor: "#D97757",
+      textColor: "#FFFFFF",
+    },
+    icon: "anthropic",
+    iconColor: "#D4915D",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com",
