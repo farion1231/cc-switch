@@ -1297,7 +1297,7 @@ del \"%~f0\" >nul 2>&1
             &["powershell", "-NoExit", "-Command", &ps_cmd],
             "PowerShell",
         ),
-        "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+        "wt" => run_windows_start_command(&["wt", &bat_path], "Windows Terminal"),
         _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
     };
 
@@ -1542,7 +1542,7 @@ read -n 1 -s
                 &["powershell", "-NoExit", "-Command", &ps_cmd],
                 "PowerShell",
             ),
-            "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
+            "wt" => run_windows_start_command(&["wt", &bat_path], "Windows Terminal"),
             _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
         };
 
