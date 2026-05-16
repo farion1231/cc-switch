@@ -381,8 +381,11 @@ base_url = "http://localhost:8080"
         crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
             .expect("set local current provider");
 
+        // 使用与默认代理端口不同的端口，避免与正在运行的 CC Switch 实例冲突
+        let test_proxy_port = 15722;
         db.update_proxy_config(ProxyConfig {
             live_takeover_active: true,
+            listen_port: test_proxy_port,
             ..Default::default()
         })
         .await
@@ -402,7 +405,7 @@ base_url = "http://localhost:8080"
             &get_claude_settings_path(),
             &json!({
                 "env": {
-                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15722",
                     "ANTHROPIC_API_KEY": "PROXY_MANAGED",
                     "ANTHROPIC_MODEL": "stale-model"
                 },
@@ -464,7 +467,7 @@ base_url = "http://localhost:8080"
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
                 .and_then(|v| v.as_str()),
-            Some("http://127.0.0.1:15721"),
+            Some("http://127.0.0.1:15722"),
             "proxy base URL should stay intact"
         );
         assert!(
