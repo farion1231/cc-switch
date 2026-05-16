@@ -50,6 +50,7 @@ describe("useSettingsForm Hook", () => {
     const settings = result.current.settings!;
     expect(settings.showInTray).toBe(true);
     expect(settings.minimizeToTrayOnClose).toBe(true);
+    expect(settings.dynamicTrayIconEnabled).toBe(false);
     expect(settings.enableClaudePluginIntegration).toBe(false);
     expect(settings.claudeConfigDir).toBe("/Users/demo");
     expect(settings.codexConfigDir).toBeUndefined();
