@@ -227,6 +227,9 @@ function ProviderFormFull({
       initialData?.meta?.pricingModelSource,
     ),
   }));
+  const [customCliArgs, setCustomCliArgs] = useState<string>(
+    () => initialData?.meta?.customCliArgs ?? "",
+  );
 
   const { category } = useProviderCategory({
     appId,
@@ -259,6 +262,7 @@ function ProviderFormFull({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setCustomCliArgs(initialData?.meta?.customCliArgs ?? "");
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -1240,6 +1244,7 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      customCliArgs: customCliArgs.trim() || undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -2125,6 +2130,8 @@ function ProviderFormFull({
                 pricingConfig={pricingConfig}
                 onTestConfigChange={setTestConfig}
                 onPricingConfigChange={setPricingConfig}
+                customCliArgs={customCliArgs}
+                onCustomCliArgsChange={setCustomCliArgs}
               />
             )}
 

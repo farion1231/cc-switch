@@ -328,6 +328,10 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// 附加 CLI 启动参数（比如 --dangerously-skip-permissions）
+    /// 打开终端时会附加到启动命令末尾
+    #[serde(rename = "customCliArgs", skip_serializing_if = "Option::is_none")]
+    pub custom_cli_args: Option<String>,
 }
 
 impl ProviderMeta {

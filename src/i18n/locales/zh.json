@@ -1058,7 +1058,10 @@
     "pricingModelSourceInherit": "继承全局默认",
     "pricingModelSourceRequest": "请求模型",
     "pricingModelSourceResponse": "返回模型",
-    "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配"
+    "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配",
+    "customCliArgs": "自定义 CLI 参数",
+    "customCliArgsPlaceholder": "--dangerously-skip-permissions",
+    "customCliArgsHint": "打开终端时附加到启动命令的额外参数，多个参数用空格分隔"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

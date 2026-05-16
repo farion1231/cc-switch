@@ -154,7 +154,7 @@ pub async fn get_tool_versions(
     #[cfg(target_os = "windows")]
     {
         let _ = (tools, wsl_shell_by_tool);
-        return Ok(Vec::new());
+        Ok(Vec::new())
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -756,8 +756,11 @@ pub async fn open_provider_terminal(
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
+    // 从提供商 meta 中读取自定义 CLI 参数
+    let custom_args = provider.meta.as_ref().and_then(|m| m.custom_cli_args.as_deref());
+
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref(), custom_args)
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
@@ -856,6 +859,7 @@ fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
     cwd: Option<&Path>,
+    custom_args: Option<&str>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let config_file = temp_dir.join(format!(
@@ -867,22 +871,32 @@ fn launch_terminal_with_env(
     // 创建并写入配置文件
     write_claude_config(&config_file, &env_vars)?;
 
+    let parsed_custom_args = match custom_args.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(s) => match shlex::split(s) {
+            Some(args) => args,
+            None => {
+                return Err("无法解析自定义 CLI 参数: 存在未闭合的引号，请检查您的输入并重试。".to_string());
+            }
+        },
+        None => Vec::new(),
+    };
+
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd)?;
+        launch_macos_terminal(&config_file, cwd, &parsed_custom_args)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd)?;
+        launch_linux_terminal(&config_file, cwd, &parsed_custom_args)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        return Ok(());
+        launch_windows_terminal(&temp_dir, &config_file, cwd, &parsed_custom_args)?;
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -911,37 +925,14 @@ fn write_claude_config(
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
+fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>, parsed_custom_args: &[String]) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
 
-    // Write the shell script to a temp file
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    // Make script executable
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    generate_unix_launcher_script(config_file, cwd, parsed_custom_args, &script_file)?;
 
     // Try the preferred terminal first, fall back to Terminal.app if it fails
     // Note: Kitty doesn't need the -e flag, others do
@@ -1148,8 +1139,7 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
+fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>, parsed_custom_args: &[String]) -> Result<(), String> {
     use std::process::Command;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -1169,27 +1159,8 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     // Create temp script file
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
 
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    generate_unix_launcher_script(config_file, cwd, parsed_custom_args, &script_file)?;
 
     // Build terminal list: preferred terminal first (if specified), then defaults
     let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
@@ -1263,6 +1234,7 @@ fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
     cwd: Option<&Path>,
+    parsed_custom_args: &[String],
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
@@ -1271,17 +1243,24 @@ fn launch_windows_terminal(
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
+    let escaped_custom_args = parsed_custom_args
+        .iter()
+        .map(|s| escape_windows_batch_arg(s))
+        .collect::<Vec<_>>()
+        .join(" ");
+
     let content = format!(
         "@echo off
 {cwd_command}
 echo Using provider-specific claude config:
 echo {}
-claude --settings \"{}\"
+claude --settings \"{}\" {}
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
 ",
         config_path_for_batch,
         config_path_for_batch,
+        escaped_custom_args,
         config_path_for_batch,
         cwd_command = cwd_command,
     );
@@ -1363,6 +1342,35 @@ fn escape_windows_batch_value(value: &str) -> String {
         .replace('(', "^(")
         .replace(')', "^)")
 }
+
+/// 为 Windows 批处理文件 (.bat/.cmd) 安全转义命令行参数
+///
+/// 批处理文件的参数转义是一个极其复杂的系统，因为参数首先被 `cmd.exe` 解析，
+/// 然后才被传给目标程序（对于 Rust 程序，通常通过 `CommandLineToArgvW` 解析）。
+/// 此函数通过以下原则保障参数在传递过程中的安全性并防止注入：
+/// 
+/// - 将参数整体用双引号 `""` 闭合，从而完全关闭 `cmd.exe` 对诸如 `&`, `|`, `<` 等元字符的特殊处理。
+/// - 对参数内部原本的双引号进行双写转义 `""`，以便让 `CommandLineToArgvW` 能够正确剥离。
+/// - 对环境变量展开符 `%` 转义为 `%%`，以防止恶意的执行时变量展开注入（如 `%PATH%`）。
+/// - 处理尾部的反斜杠加倍逻辑：防范尾部的 `\` 与最外层的双闭合引号结合，导致引号的实际闭合性被破坏。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn escape_windows_batch_arg(arg: &str) -> String {
+    // 1. Prevent newline command injection in batch files
+    let mut s = arg.replace(['\r', '\n'], " ");
+    
+    // 2. Escape % as %% for batch file to prevent variable expansion
+    s = s.replace('%', "%%");
+    // 3. Escape internal double quotes for CommandLineToArgvW compatibility inside double quotes
+    s = s.replace('"', "\"\"");
+    
+    // 4. Trailing backslashes must be doubled so they aren't parsed as escaping the closing quote
+    let trailing_slashes = s.chars().rev().take_while(|&c| c == '\\').count();
+    s.push_str(&"\\".repeat(trailing_slashes));
+
+    // 5. Wrap the entire argument in double quotes so cmd metacharacters are ignored
+    format!("\"{}\"", s)
+}
+
 /// Windows: Run a start command with common error handling
 #[cfg(target_os = "windows")]
 fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
@@ -1594,6 +1602,24 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
+    fn test_escape_windows_batch_arg() {
+        // 普通参数
+        assert_eq!(escape_windows_batch_arg("--help"), "\"--help\"");
+        // 含有空格的参数
+        assert_eq!(escape_windows_batch_arg("hello world"), "\"hello world\"");
+        // 单双引号混合与特殊字符
+        assert_eq!(escape_windows_batch_arg("--arg='single'"), "\"--arg='single'\"");
+        assert_eq!(escape_windows_batch_arg("--arg=\"double\""), "\"--arg=\"\"double\"\"\"");
+        // 环境变量扩展防范（避免被替换成具体的环境变量值）
+        assert_eq!(escape_windows_batch_arg("%PATH%"), "\"%%PATH%%\"");
+        // 尾部反斜杠加倍：单斜杠 => 双斜杠，双斜杠 => 4斜杠。以防止转义掉外侧的引号闭合
+        assert_eq!(escape_windows_batch_arg("C:\\test\\"), "\"C:\\test\\\\\"");
+        assert_eq!(escape_windows_batch_arg("C:\\test\\\\"), "\"C:\\test\\\\\\\\\"");
+        // 中部反斜杠不受影响
+        assert_eq!(escape_windows_batch_arg("C:\\test\\inner"), "\"C:\\test\\inner\"");
+    }
+
+    #[test]
     fn test_extract_version() {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
@@ -1815,4 +1841,40 @@ mod tests {
             "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
         );
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn generate_unix_launcher_script(
+    config_file: &std::path::Path,
+    cwd: Option<&std::path::Path>,
+    parsed_custom_args: &[String],
+    script_file: &std::path::Path,
+) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    
+    let config_path = config_file.to_string_lossy();
+    let cd_command = build_shell_cd_command(cwd);
+    let escaped_custom_args = shlex::try_join(parsed_custom_args.iter().map(|s| s.as_str())).unwrap_or_default();
+
+    let script_content = format!(
+        r#"#!/bin/bash
+trap 'rm -f "{config_path}" "{script_file}"' EXIT
+{cd_command}
+echo "Using provider-specific claude config:"
+echo "{config_path}"
+claude --settings "{config_path}" {custom_args}
+exec bash --norc --noprofile
+"#,
+        config_path = config_path,
+        script_file = script_file.display(),
+        cd_command = cd_command,
+        custom_args = escaped_custom_args,
+    );
+
+    std::fs::write(script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {}", e))?;
+
+    std::fs::set_permissions(script_file, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("设置脚本权限失败: {}", e))?;
+
+    Ok(())
 }
