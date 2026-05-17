@@ -2177,6 +2177,14 @@
           "label": "Enable Logging",
           "description": "Log all routing requests for troubleshooting"
         },
+        "password": {
+          "label": "Proxy Password (optional)",
+          "placeholder": "Leave empty to disable password authentication",
+          "description": "When set, LAN devices must provide this password in the request header. CC Switch configures it automatically in takeover mode.",
+          "status": "Password Authentication",
+          "enabled": "Enabled — clients must provide password in Authorization, x-api-key or x-goog-api-key header",
+          "disabled": "Disabled — LAN devices can access directly"
+        },
         "streamingFirstByteTimeout": {
           "label": "Streaming First Byte Timeout (sec)",
           "description": "Maximum time to wait for the first data chunk"

@@ -69,7 +69,24 @@ impl ProxyService {
         }
     }
 
-    fn apply_claude_takeover_fields(config: &mut Value, proxy_url: &str) {
+    /// 根据当前 DB 配置决定接管时写入的 auth token
+    ///
+    /// 密码已设置 → 返回密码；密码未设置 → 返回 PROXY_TOKEN_PLACEHOLDER
+    async fn get_current_auth_token(&self) -> String {
+        match self.db.get_proxy_config().await {
+            Ok(config) => {
+                let pwd = config.proxy_password.unwrap_or_default();
+                if pwd.is_empty() {
+                    PROXY_TOKEN_PLACEHOLDER.to_string()
+                } else {
+                    pwd
+                }
+            }
+            Err(_) => PROXY_TOKEN_PLACEHOLDER.to_string(),
+        }
+    }
+
+    fn apply_claude_takeover_fields(config: &mut Value, proxy_url: &str, auth_token: &str) {
         // 必须在 remove/insert 前 snapshot：避免读到自己刚写入的接管别名。
         let takeover_model_fields = Self::build_claude_takeover_model_fields(config);
 
@@ -108,16 +125,13 @@ impl ProxyService {
         let mut replaced_any = false;
         for key in token_keys {
             if env.contains_key(key) {
-                env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                env.insert(key.to_string(), json!(auth_token));
                 replaced_any = true;
             }
         }
 
         if !replaced_any {
-            env.insert(
-                "ANTHROPIC_AUTH_TOKEN".to_string(),
-                json!(PROXY_TOKEN_PLACEHOLDER),
-            );
+            env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), json!(auth_token));
         }
     }
 
@@ -228,7 +242,13 @@ impl ProxyService {
         .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
         let (proxy_url, _) = self.build_proxy_urls().await?;
 
-        Self::apply_claude_takeover_fields(&mut effective_settings, &proxy_url);
+        let auth_token = self.get_current_auth_token().await;
+
+        Self::apply_claude_takeover_fields(
+            &mut effective_settings,
+            &proxy_url,
+            &auth_token,
+        );
         self.write_claude_live(&effective_settings)?;
         Ok(())
     }
@@ -313,8 +333,9 @@ impl ProxyService {
             return Err(format!("设置接管状态失败: {e}"));
         }
 
-        // 4. 接管各应用的 Live 配置（写入代理地址，清空 Token）
-        if let Err(e) = self.takeover_live_configs().await {
+        // 4. 接管各应用的 Live 配置（写入代理地址和 auth token）
+        let auth_token = self.get_current_auth_token().await;
+        if let Err(e) = self.takeover_live_configs(&auth_token).await {
             // 接管失败（可能是部分写入），尝试恢复原始配置；若恢复失败则保留标志与备份，等待下次启动自动恢复。
             log::error!("接管 Live 配置失败，尝试恢复原始配置: {e}");
             match self.restore_live_configs().await {
@@ -436,7 +457,8 @@ impl ProxyService {
             }
 
             // 5) 写入接管配置（仅当前 app）
-            if let Err(e) = self.takeover_live_config_strict(&app).await {
+            let auth_token = self.get_current_auth_token().await;
+            if let Err(e) = self.takeover_live_config_strict(&app, &auth_token).await {
                 log::error!("{app_type_str} 接管 Live 配置失败，尝试恢复: {e}");
                 match self.restore_live_config_for_app(&app).await {
                     Ok(()) => {
@@ -572,6 +594,15 @@ impl ProxyService {
         app_type: &AppType,
         live_config: &Value,
     ) -> Result<(), String> {
+        // 获取实际代理 URL，精确判断 Live 配置中的 base_url 是否指向本代理
+        // fail-closed: 无法确认时拒绝同步，避免误写 provider 凭据
+        let proxy_urls = match self.build_proxy_urls().await {
+            Ok(urls) => Some(urls),
+            Err(e) => {
+                log::warn!("无法获取代理 URL，跳过 Live->Provider 同步: {e}");
+                return Ok(());
+            }
+        };
         match app_type {
             AppType::Claude => {
                 let provider_id =
@@ -583,6 +614,13 @@ impl ProxyService {
                         self.db.get_provider_by_id(&provider_id, "claude")
                     {
                         if let Some(env) = live_config.get("env").and_then(|v| v.as_object()) {
+                            // 检查 base_url 是否精确指向本代理的 URL
+                            let base_url_is_local = proxy_urls.as_ref().is_some_and(|(proxy_url, _)| {
+                                env.get("ANTHROPIC_BASE_URL")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|u| u == proxy_url || u.starts_with(&format!("{proxy_url}/")))
+                            });
+
                             let token_pair = [
                                 "ANTHROPIC_AUTH_TOKEN",
                                 "ANTHROPIC_API_KEY",
@@ -596,7 +634,7 @@ impl ProxyService {
                                     .map(|s| (key, s.trim()))
                             })
                             .filter(|(_, token)| {
-                                !token.is_empty() && *token != PROXY_TOKEN_PLACEHOLDER
+                                !token.is_empty() && *token != PROXY_TOKEN_PLACEHOLDER && !base_url_is_local
                             });
 
                             if let Some((token_key, token)) = token_pair {
@@ -677,12 +715,20 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "codex")
                     {
+                        // 检查 config TOML 是否包含本代理的 Codex base URL
+                        let codex_is_local = proxy_urls.as_ref().is_some_and(|(_, codex_url)| {
+                            live_config
+                                .get("config")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|c| c.contains(codex_url.as_str()))
+                        });
+
                         if let Some(token) = live_config
                             .get("auth")
                             .and_then(|v| v.get("OPENAI_API_KEY"))
                             .and_then(|v| v.as_str())
                             .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER && !codex_is_local)
                         {
                             if let Some(auth_obj) = provider
                                 .settings_config
@@ -729,12 +775,21 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "gemini")
                     {
+                        // 检查 base_url 是否精确指向本代理
+                        let gemini_is_local = proxy_urls.as_ref().is_some_and(|(proxy_url, _)| {
+                            live_config
+                                .get("env")
+                                .and_then(|v| v.get("GOOGLE_GEMINI_BASE_URL"))
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|u| u == proxy_url || u.starts_with(&format!("{proxy_url}/")))
+                        });
+
                         if let Some(token) = live_config
                             .get("env")
                             .and_then(|v| v.get("GEMINI_API_KEY"))
                             .and_then(|v| v.as_str())
                             .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER && !gemini_is_local)
                         {
                             if let Some(env_obj) = provider
                                 .settings_config
@@ -1002,24 +1057,22 @@ impl ProxyService {
     /// - `/v1beta/*` → Gemini
     ///
     /// 因此不需要在 URL 中添加应用前缀。
-    async fn takeover_live_configs(&self) -> Result<(), String> {
+    async fn takeover_live_configs(&self, auth_token: &str) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
-        // Claude: 修改 ANTHROPIC_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
+        // Claude: 修改 ANTHROPIC_BASE_URL，写入 auth_token
         if let Ok(mut live_config) = self.read_claude_live() {
-            Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+            Self::apply_claude_takeover_fields(&mut live_config, &proxy_url, auth_token);
             self.write_claude_live(&live_config)?;
             log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
         }
 
-        // Codex: 修改 config.toml 的 base_url，auth.json 的 OPENAI_API_KEY（代理会注入真实 Token）
+        // Codex: 修改 config.toml 的 base_url，auth.json 的 OPENAI_API_KEY
         if let Ok(mut live_config) = self.read_codex_live() {
-            // 1. 修改 auth.json 中的 OPENAI_API_KEY（使用占位符）
             if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut()) {
-                auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                auth.insert("OPENAI_API_KEY".to_string(), json!(auth_token));
             }
 
-            // 2. 修改 config.toml 中的 base_url
             let config_str = live_config
                 .get("config")
                 .and_then(|v| v.as_str())
@@ -1031,16 +1084,15 @@ impl ProxyService {
             log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
         }
 
-        // Gemini: 修改 GOOGLE_GEMINI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
+        // Gemini: 修改 GOOGLE_GEMINI_BASE_URL
         if let Ok(mut live_config) = self.read_gemini_live() {
             if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                 env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
-                // 使用占位符，避免显示缺少 key 的警告
-                env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                env.insert("GEMINI_API_KEY".to_string(), json!(auth_token));
             } else {
                 live_config["env"] = json!({
                     "GOOGLE_GEMINI_BASE_URL": &proxy_url,
-                    "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                    "GEMINI_API_KEY": auth_token
                 });
             }
             self.write_gemini_live(&live_config)?;
@@ -1051,13 +1103,13 @@ impl ProxyService {
     }
 
     /// 接管指定应用的 Live 配置（严格模式：目标配置不存在则返回错误）
-    async fn takeover_live_config_strict(&self, app_type: &AppType) -> Result<(), String> {
+    async fn takeover_live_config_strict(&self, app_type: &AppType, auth_token: &str) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
         match app_type {
             AppType::Claude => {
                 let mut live_config = self.read_claude_live()?;
-                Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+                Self::apply_claude_takeover_fields(&mut live_config, &proxy_url, auth_token);
                 self.write_claude_live(&live_config)?;
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
             }
@@ -1065,7 +1117,7 @@ impl ProxyService {
                 let mut live_config = self.read_codex_live()?;
 
                 if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut()) {
-                    auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                    auth.insert("OPENAI_API_KEY".to_string(), json!(auth_token));
                 }
 
                 let config_str = live_config
@@ -1083,11 +1135,11 @@ impl ProxyService {
 
                 if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                     env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
-                    env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                    env.insert("GEMINI_API_KEY".to_string(), json!(auth_token));
                 } else {
                     live_config["env"] = json!({
                         "GOOGLE_GEMINI_BASE_URL": &proxy_url,
-                        "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                        "GEMINI_API_KEY": auth_token
                     });
                 }
 
@@ -1101,13 +1153,13 @@ impl ProxyService {
     }
 
     /// 接管指定应用的 Live 配置（尽力而为：配置不存在/读取失败则跳过）
-    async fn takeover_live_config_best_effort(&self, app_type: &AppType) -> Result<(), String> {
+    async fn takeover_live_config_best_effort(&self, app_type: &AppType, auth_token: &str) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
         match app_type {
             AppType::Claude => {
                 if let Ok(mut live_config) = self.read_claude_live() {
-                    Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+                    Self::apply_claude_takeover_fields(&mut live_config, &proxy_url, auth_token);
                     let _ = self.write_claude_live(&live_config);
                 }
             }
@@ -1115,7 +1167,7 @@ impl ProxyService {
                 if let Ok(mut live_config) = self.read_codex_live() {
                     if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut())
                     {
-                        auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                        auth.insert("OPENAI_API_KEY".to_string(), json!(auth_token));
                     }
 
                     let config_str = live_config
@@ -1133,11 +1185,11 @@ impl ProxyService {
                 if let Ok(mut live_config) = self.read_gemini_live() {
                     if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
                         env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(&proxy_url));
-                        env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                        env.insert("GEMINI_API_KEY".to_string(), json!(auth_token));
                     } else {
                         live_config["env"] = json!({
                             "GOOGLE_GEMINI_BASE_URL": &proxy_url,
-                            "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                            "GEMINI_API_KEY": auth_token
                         });
                     }
 
@@ -1355,23 +1407,30 @@ impl ProxyService {
             return Ok(());
         };
 
+        let base_url_is_local = env
+            .get("ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(Self::is_local_proxy_url)
+            .unwrap_or(false);
+
         for key in [
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_API_KEY",
             "OPENROUTER_API_KEY",
             "OPENAI_API_KEY",
         ] {
-            if env.get(key).and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            let should_remove = match env.get(key).and_then(|v| v.as_str()) {
+                Some(PROXY_TOKEN_PLACEHOLDER) => true,
+                // 密码模式：base_url 指向本地代理且 token 非空，也是接管残留
+                Some(t) if base_url_is_local && !t.is_empty() => true,
+                _ => false,
+            };
+            if should_remove {
                 env.remove(key);
             }
         }
 
-        if env
-            .get("ANTHROPIC_BASE_URL")
-            .and_then(|v| v.as_str())
-            .map(Self::is_local_proxy_url)
-            .unwrap_or(false)
-        {
+        if base_url_is_local {
             env.remove("ANTHROPIC_BASE_URL");
         }
 
@@ -1382,16 +1441,30 @@ impl ProxyService {
     fn cleanup_codex_takeover_placeholders_in_live(&self) -> Result<(), String> {
         let mut config = self.read_codex_live()?;
 
+        let config_is_local = config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .map_or(false, |c| {
+                c.contains("127.0.0.1") || c.contains("localhost") || c.contains("[::1]")
+            });
+
         if let Some(auth) = config.get_mut("auth").and_then(|v| v.as_object_mut()) {
-            if auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
-            {
+            let token = auth.get("OPENAI_API_KEY").and_then(|v| v.as_str());
+            let should_remove = match token {
+                Some(PROXY_TOKEN_PLACEHOLDER) => true,
+                Some(t) if config_is_local && !t.is_empty() => true,
+                _ => false,
+            };
+            if should_remove {
                 auth.remove("OPENAI_API_KEY");
             }
         }
 
-        if let Some(cfg_str) = config.get("config").and_then(|v| v.as_str()) {
-            let updated = Self::remove_local_toml_base_url(cfg_str);
-            config["config"] = json!(updated);
+        if config_is_local {
+            if let Some(cfg_str) = config.get("config").and_then(|v| v.as_str()) {
+                let updated = Self::remove_local_toml_base_url(cfg_str);
+                config["config"] = json!(updated);
+            }
         }
 
         self.write_codex_live(&config)?;
@@ -1410,16 +1483,23 @@ impl ProxyService {
             return Ok(());
         };
 
-        if env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
-            env.remove("GEMINI_API_KEY");
-        }
-
-        if env
+        let base_url_is_local = env
             .get("GOOGLE_GEMINI_BASE_URL")
             .and_then(|v| v.as_str())
             .map(Self::is_local_proxy_url)
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+
+        let token = env.get("GEMINI_API_KEY").and_then(|v| v.as_str());
+        let should_remove_gemini_key = match token {
+            Some(PROXY_TOKEN_PLACEHOLDER) => true,
+            Some(t) if base_url_is_local && !t.is_empty() => true,
+            _ => false,
+        };
+        if should_remove_gemini_key {
+            env.remove("GEMINI_API_KEY");
+        }
+
+        if base_url_is_local {
             env.remove("GOOGLE_GEMINI_BASE_URL");
         }
 
@@ -1489,13 +1569,24 @@ impl ProxyService {
             None => return false,
         };
 
+        // 检查 base_url 是否指向本地代理
+        let base_url_is_local = env
+            .get("ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost") || u.contains("[::1]"));
+
         for key in [
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_API_KEY",
             "OPENROUTER_API_KEY",
             "OPENAI_API_KEY",
         ] {
-            if env.get(key).and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            let token = env.get(key).and_then(|v| v.as_str());
+            if token == Some(PROXY_TOKEN_PLACEHOLDER) {
+                return true;
+            }
+            // 非空 token + 本地代理 base_url 也视为已接管（密码认证模式）
+            if base_url_is_local && token.is_some_and(|t| !t.is_empty()) {
                 return true;
             }
         }
@@ -1508,7 +1599,22 @@ impl ProxyService {
             Some(auth) => auth,
             None => return false,
         };
-        auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
+
+        // OPENAI_API_KEY 为占位符 → 已接管
+        if auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            return true;
+        }
+
+        // 检查 base_url 是否指向本地代理 + 非空 token 存在（密码认证模式）
+        let base_url_is_local = config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .is_some_and(|c| c.contains("127.0.0.1") || c.contains("localhost") || c.contains("[::1]"));
+        base_url_is_local
+            && auth
+                .get("OPENAI_API_KEY")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| !t.is_empty())
     }
 
     fn is_gemini_live_taken_over(config: &Value) -> bool {
@@ -1516,7 +1622,22 @@ impl ProxyService {
             Some(env) => env,
             None => return false,
         };
-        env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
+
+        // GEMINI_API_KEY 为占位符 → 已接管
+        if env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+            return true;
+        }
+
+        // 检查 base_url 是否指向本地代理 + 非空 token 存在（密码认证模式）
+        let base_url_is_local = env
+            .get("GOOGLE_GEMINI_BASE_URL")
+            .and_then(|v| v.as_str())
+            .is_some_and(|u| u.contains("127.0.0.1") || u.contains("localhost") || u.contains("[::1]"));
+        base_url_is_local
+            && env
+                .get("GEMINI_API_KEY")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| !t.is_empty())
     }
 
     /// 从供应商配置更新 Live 备份（用于代理模式下的热切换）
@@ -1891,6 +2012,19 @@ impl ProxyService {
             .map_err(|e| format!("获取代理配置失败: {e}"))
     }
 
+    /// 同步全局配置到运行中的代理
+    ///
+    /// 从 DB 重读最新配置并应用到运行中的代理服务和已接管 Live 配置。
+    /// 由 `update_global_proxy_config` 命令在落库后调用，使密码等变更立即生效。
+    pub async fn sync_global_config(&self) -> Result<(), String> {
+        let config = self
+            .db
+            .get_proxy_config()
+            .await
+            .map_err(|e| format!("获取代理配置失败: {e}"))?;
+        self.update_config(&config).await
+    }
+
     /// 更新代理配置
     pub async fn update_config(&self, config: &ProxyConfig) -> Result<(), String> {
         // 记录旧配置用于判定是否需要重启
@@ -1936,37 +2070,36 @@ impl ProxyService {
 
             *server_guard = Some(new_server);
             log::info!("代理配置已更新，服务器已自动重启应用最新配置");
-
-            // 如果当前存在任意 app 的 Live 接管，需要同步更新 Live 中的代理地址（否则客户端仍指向旧端口）
-            drop(server_guard);
-            if let Ok(takeover) = self.get_takeover_status().await {
-                let mut updated_any = false;
-
-                if takeover.claude {
-                    self.takeover_live_config_best_effort(&AppType::Claude)
-                        .await?;
-                    updated_any = true;
-                }
-                if takeover.codex {
-                    self.takeover_live_config_best_effort(&AppType::Codex)
-                        .await?;
-                    updated_any = true;
-                }
-                if takeover.gemini {
-                    self.takeover_live_config_best_effort(&AppType::Gemini)
-                        .await?;
-                    updated_any = true;
-                }
-
-                if updated_any {
-                    log::info!("已同步更新 Live 配置中的代理地址");
-                }
-            }
-
-            return Ok(());
         } else if let Some(server) = server_guard.as_ref() {
             server.apply_runtime_config(&new_config).await;
             log::info!("代理配置已实时应用，无需重启代理服务器");
+        }
+
+        // 如果当前存在任意 app 的 Live 接管，同步更新 Live 配置（包括地址变更和密码变更）
+        drop(server_guard);
+        if let Ok(takeover) = self.get_takeover_status().await {
+            let auth_token = self.get_current_auth_token().await;
+            let mut updated_any = false;
+
+            if takeover.claude {
+                self.takeover_live_config_best_effort(&AppType::Claude, &auth_token)
+                    .await?;
+                updated_any = true;
+            }
+            if takeover.codex {
+                self.takeover_live_config_best_effort(&AppType::Codex, &auth_token)
+                    .await?;
+                updated_any = true;
+            }
+            if takeover.gemini {
+                self.takeover_live_config_best_effort(&AppType::Gemini, &auth_token)
+                    .await?;
+                updated_any = true;
+            }
+
+            if updated_any {
+                log::info!("已同步更新 Live 配置中的代理地址");
+            }
         }
 
         Ok(())

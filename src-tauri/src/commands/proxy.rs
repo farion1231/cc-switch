@@ -98,14 +98,23 @@ pub async fn get_global_proxy_config(
 
 /// 更新全局代理配置
 ///
-/// 更新统一的全局配置字段，会同时更新三行（claude/codex/gemini）
+/// 更新统一的全局配置字段，会同时更新三行（claude/codex/gemini）。
+/// 如果代理正在运行，同步更新运行时配置和 Live 接管配置。
 #[tauri::command]
 pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
-    let db = &state.db;
-    db.update_global_proxy_config(config)
+    state
+        .db
+        .update_global_proxy_config(config)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 同步到运行中的代理（密码变更立即生效，接管客户端的 Live 配置也会刷新）
+    state
+        .proxy_service
+        .sync_global_config()
         .await
         .map_err(|e| e.to_string())
 }
