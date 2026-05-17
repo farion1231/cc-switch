@@ -1297,7 +1297,29 @@ del \"%~f0\" >nul 2>&1
             &["powershell", "-NoExit", "-Command", &ps_cmd],
             "PowerShell",
         ),
-        "wt" => run_windows_start_command(&["wt", &bat_path], "Windows Terminal"),
+        "wt" => {
+            // Run claude directly in the default WT profile, bypassing the
+            // CMD-specific bat file so the profile shell is preserved.
+            let config_str = config_file.to_string_lossy().to_string();
+            let mut wt_args = vec!["wt".to_string(), "new-tab".to_string()];
+            if let Some(dir) = cwd {
+                wt_args.push("-d".to_string());
+                wt_args.push(dir.to_string_lossy().to_string());
+            }
+            wt_args.push("--".to_string());
+            wt_args.push("claude".to_string());
+            wt_args.push("--settings".to_string());
+            wt_args.push(config_str);
+            let arg_refs: Vec<&str> = wt_args.iter().map(|s| s.as_str()).collect();
+            let cfg = config_file.to_path_buf();
+            let bat = bat_file.to_path_buf();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                let _ = std::fs::remove_file(&cfg);
+                let _ = std::fs::remove_file(&bat);
+            });
+            run_windows_start_command(&arg_refs, "Windows Terminal")
+        }
         _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
     };
 
@@ -1542,7 +1564,10 @@ read -n 1 -s
                 &["powershell", "-NoExit", "-Command", &ps_cmd],
                 "PowerShell",
             ),
-            "wt" => run_windows_start_command(&["wt", &bat_path], "Windows Terminal"),
+            "wt" => run_windows_start_command(
+                &["wt", "new-tab", "--", &bat_path],
+                "Windows Terminal",
+            ),
             _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
         };
 
