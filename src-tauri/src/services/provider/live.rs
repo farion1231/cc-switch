@@ -31,6 +31,13 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("apiFormat");
         obj.remove("openrouter_compat_mode");
         obj.remove("openrouterCompatMode");
+        let env = obj.entry("env").or_insert_with(|| json!({}));
+        if !env.is_object() {
+            *env = json!({});
+        }
+        if let Some(env) = env.as_object_mut() {
+            env.insert("CLAUDE_CODE_ATTRIBUTION_HEADER".to_string(), json!("0"));
+        }
     }
     v
 }
@@ -1501,6 +1508,43 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sanitize_claude_settings_for_live_disables_attribution_header() {
+        let settings = json!({
+            "api_format": "openai_chat",
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-test"
+            }
+        });
+
+        let sanitized = sanitize_claude_settings_for_live(&settings);
+
+        assert!(sanitized.get("api_format").is_none());
+        assert_eq!(
+            sanitized["env"]["CLAUDE_CODE_ATTRIBUTION_HEADER"],
+            json!("0")
+        );
+        assert_eq!(sanitized["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-test"));
+    }
+
+    #[test]
+    fn sanitize_claude_settings_for_live_normalizes_non_object_env() {
+        let settings = json!({
+            "env": []
+        });
+
+        let sanitized = sanitize_claude_settings_for_live(&settings);
+
+        assert_eq!(
+            sanitized,
+            json!({
+                "env": {
+                    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+                }
+            })
+        );
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {

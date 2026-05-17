@@ -2648,7 +2648,12 @@ model = "gpt-5.1-codex"
         assert_eq!(backup.original_config, expected);
         assert_eq!(
             service.read_claude_live().expect("read live"),
-            provider_b.settings_config
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "b-key",
+                    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+                }
+            })
         );
     }
 
