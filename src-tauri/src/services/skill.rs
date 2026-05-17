@@ -265,6 +265,11 @@ struct SkillBackupMetadata {
 
 const SKILL_BACKUP_RETAIN_COUNT: usize = 20;
 
+#[cfg(windows)]
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+#[cfg(windows)]
+const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000_000C;
+
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
 pub struct SkillMetadata {
@@ -1588,7 +1593,6 @@ impl SkillService {
         const FILE_SHARE_WRITE: u32 = 0x0000_0002;
         const FSCTL_SET_REPARSE_POINT: u32 = 0x0009_00A4;
         const GENERIC_WRITE: u32 = 0x4000_0000;
-        const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
         const OPEN_EXISTING: u32 = 3;
 
         #[link(name = "kernel32")]
@@ -1751,18 +1755,118 @@ impl SkillService {
 
     #[cfg(windows)]
     fn is_windows_directory_reparse_point(path: &Path) -> bool {
+        use std::ffi::c_void;
+        use std::os::windows::ffi::OsStrExt;
         use std::os::windows::fs::MetadataExt;
+
+        type Handle = *mut c_void;
 
         const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0010;
         const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        const FSCTL_GET_REPARSE_POINT: u32 = 0x0009_00A8;
+        const MAXIMUM_REPARSE_DATA_BUFFER_SIZE: usize = 16 * 1024;
+        const OPEN_EXISTING: u32 = 3;
 
-        path.symlink_metadata()
-            .map(|m| {
-                let attributes = m.file_attributes();
-                attributes & FILE_ATTRIBUTE_DIRECTORY != 0
-                    && attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
-            })
-            .unwrap_or(false)
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn CreateFileW(
+                lpFileName: *const u16,
+                dwDesiredAccess: u32,
+                dwShareMode: u32,
+                lpSecurityAttributes: *mut c_void,
+                dwCreationDisposition: u32,
+                dwFlagsAndAttributes: u32,
+                hTemplateFile: Handle,
+            ) -> Handle;
+            fn DeviceIoControl(
+                hDevice: Handle,
+                dwIoControlCode: u32,
+                lpInBuffer: *mut c_void,
+                nInBufferSize: u32,
+                lpOutBuffer: *mut c_void,
+                nOutBufferSize: u32,
+                lpBytesReturned: *mut u32,
+                lpOverlapped: *mut c_void,
+            ) -> i32;
+            fn CloseHandle(hObject: Handle) -> i32;
+        }
+
+        struct OwnedHandle(Handle);
+
+        impl Drop for OwnedHandle {
+            fn drop(&mut self) {
+                unsafe {
+                    CloseHandle(self.0);
+                }
+            }
+        }
+
+        fn wide_null(path: &Path) -> Vec<u16> {
+            path.as_os_str().encode_wide().chain(Some(0)).collect()
+        }
+
+        let metadata = match path.symlink_metadata() {
+            Ok(metadata) => metadata,
+            Err(_) => return false,
+        };
+
+        let attributes = metadata.file_attributes();
+        if attributes & FILE_ATTRIBUTE_DIRECTORY == 0
+            || attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
+        {
+            return false;
+        }
+
+        let path_wide = wide_null(path);
+        let handle = unsafe {
+            CreateFileW(
+                path_wide.as_ptr(),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle as isize == -1 {
+            return false;
+        }
+
+        let _handle_guard = OwnedHandle(handle);
+        let mut buffer = vec![0u8; MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+        let mut bytes_returned = 0u32;
+        let ok = unsafe {
+            DeviceIoControl(
+                handle,
+                FSCTL_GET_REPARSE_POINT,
+                std::ptr::null_mut(),
+                0,
+                buffer.as_mut_ptr() as *mut c_void,
+                MAXIMUM_REPARSE_DATA_BUFFER_SIZE as u32,
+                &mut bytes_returned,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 || bytes_returned < 4 {
+            return false;
+        }
+
+        let reparse_tag = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+        Self::is_managed_windows_reparse_tag(reparse_tag)
+    }
+
+    #[cfg(windows)]
+    fn is_managed_windows_reparse_tag(reparse_tag: u32) -> bool {
+        matches!(
+            reparse_tag,
+            IO_REPARSE_TAG_MOUNT_POINT | IO_REPARSE_TAG_SYMLINK
+        )
     }
 
     #[cfg(not(windows))]
@@ -3276,6 +3380,26 @@ mod tests {
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_windows_reparse_tag_rejects_non_link_tags() {
+        const IO_REPARSE_TAG_CLOUD: u32 = 0x9000_001A;
+
+        assert!(!SkillService::is_managed_windows_reparse_tag(IO_REPARSE_TAG_CLOUD));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_windows_reparse_tag_accepts_symlinks() {
+        assert!(SkillService::is_managed_windows_reparse_tag(IO_REPARSE_TAG_SYMLINK));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_windows_reparse_tag_accepts_mount_point_junctions() {
+        assert!(SkillService::is_managed_windows_reparse_tag(IO_REPARSE_TAG_MOUNT_POINT));
     }
 
     #[cfg(windows)]
