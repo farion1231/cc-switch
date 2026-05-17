@@ -21,18 +21,39 @@ const BATCH_HINT: &str = "\
 
 注意：只合并*不相互依赖*的命令。如果命令 B 依赖命令 A 的输出，则必须分开调用。";
 
+/// 找到不晚于 `pos` 的最大的 UTF-8 字符边界
+fn char_boundary_before(s: &str, pos: usize) -> usize {
+    let pos = pos.min(s.len());
+    if s.is_char_boundary(pos) {
+        pos
+    } else {
+        // 回溯到最近的 char boundary
+        (0..pos).rev().find(|&i| s.is_char_boundary(i)).unwrap_or(0)
+    }
+}
+
+/// 找到不早于 `pos` 的最小的 UTF-8 字符边界
+fn char_boundary_after(s: &str, pos: usize) -> usize {
+    let pos = pos.min(s.len());
+    if s.is_char_boundary(pos) {
+        pos
+    } else {
+        (pos + 1..=s.len()).find(|&i| s.is_char_boundary(i)).unwrap_or(s.len())
+    }
+}
+
 /// 压缩过长的指令（保留头部 60% + 尾部 30%，中间截断）
 fn compress_instructions(instructions: &str) -> String {
     const MAX_LEN: usize = 8000;
     if instructions.len() <= MAX_LEN {
         return instructions.to_string();
     }
-    let head_len = MAX_LEN * 60 / 100; // ~4800 chars
-    let tail_len = MAX_LEN * 30 / 100; // ~2400 chars
+    let head_len = MAX_LEN * 60 / 100; // ~4800 bytes
+    let tail_len = MAX_LEN * 30 / 100; // ~2400 bytes
     let mut result = String::with_capacity(MAX_LEN + 100);
-    result.push_str(&instructions[..head_len.min(instructions.len())]);
+    result.push_str(&instructions[..char_boundary_before(instructions, head_len)]);
     result.push_str("\n\n... [中间部分已截断以节省 token] ...\n\n");
-    let tail_start = instructions.len().saturating_sub(tail_len);
+    let tail_start = char_boundary_after(instructions, instructions.len().saturating_sub(tail_len));
     result.push_str(&instructions[tail_start..]);
     result
 }
@@ -43,12 +64,12 @@ fn compress_tool_output(output: &str) -> String {
     if output.len() <= MAX_LEN {
         return output.to_string();
     }
-    let head_len = MAX_LEN * 50 / 100; // ~2000 chars
-    let tail_len = MAX_LEN * 40 / 100; // ~1600 chars
+    let head_len = MAX_LEN * 50 / 100; // ~2000 bytes
+    let tail_len = MAX_LEN * 40 / 100; // ~1600 bytes
     let mut result = String::with_capacity(MAX_LEN + 100);
-    result.push_str(&output[..head_len.min(output.len())]);
+    result.push_str(&output[..char_boundary_before(output, head_len)]);
     result.push_str("\n\n... [中间输出已截断] ...\n\n");
-    let tail_start = output.len().saturating_sub(tail_len);
+    let tail_start = char_boundary_after(output, output.len().saturating_sub(tail_len));
     result.push_str(&output[tail_start..]);
     result
 }

@@ -27,7 +27,16 @@ pub fn chat_to_responses(
 ) -> Result<Value, ProxyError> {
     // Debug: log upstream chat response
     let body_str = serde_json::to_string(body).unwrap_or_default();
-    let truncated = if body_str.len() > 800 { &body_str[..800] } else { &body_str };
+    let truncated = if body_str.len() > 800 {
+        // 安全截断（防止 UTF-8 边界 panic）：从 byte 800 回溯到最近的 char boundary
+        let mut end = 800;
+        while end > 0 && !body_str.is_char_boundary(end) {
+            end -= 1;
+        }
+        &body_str[..end]
+    } else {
+        &body_str
+    };
     log::info!("[Codex] <<< Upstream Chat response (truncated): {}", truncated);
 
     // 检测上游错误（如 DeepSeek 返回 400 但 forwarder 未拦截）
