@@ -118,7 +118,7 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
 ///
-/// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi/DeepSeek
+/// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi/DeepSeek/MiMo
 /// `reasoning_content` 兼容字段的 provider。默认转换保持通用 OpenAI-compatible
 /// 请求体，避免向严格后端发送未知字段。
 pub fn anthropic_to_openai_with_reasoning_content(
@@ -369,7 +369,7 @@ fn convert_message_to_openai(
     if let Some(blocks) = content.as_array() {
         let mut content_parts = Vec::new();
         let mut tool_calls = Vec::new();
-        // reasoning_parts: 仅在兼容 Moonshot/Kimi/DeepSeek thinking tool-call 路径时
+        // reasoning_parts: 仅在兼容 Moonshot/Kimi/DeepSeek/MiMo thinking tool-call 路径时
         // 生成 reasoning_content，通用 OpenAI-compatible 路径不发送该非标准字段。
         let mut reasoning_parts = Vec::new();
 
@@ -530,7 +530,7 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     let mut content = Vec::new();
     let mut has_tool_use = false;
 
-    // DeepSeek provider 会把思考内容放在 message.reasoning_content。
+    // DeepSeek/MiMo 等 provider 会把思考内容放在 message.reasoning_content。
     if let Some(reasoning_content) = message.get("reasoning_content").and_then(|r| r.as_str()) {
         if !reasoning_content.is_empty() {
             content.push(json!({"type": "thinking", "thinking": reasoning_content}));
