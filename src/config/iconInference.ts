@@ -21,6 +21,7 @@ const iconMappings = {
   tencent: { icon: "tencent", iconColor: "#00A4FF" },
   hunyuan: { icon: "hunyuan", iconColor: "#00A4FF" },
   minimax: { icon: "minimax", iconColor: "#FF6B6B" },
+  qiniu: { icon: "tencent", iconColor: "#00A862" },
   google: { icon: "google", iconColor: "#4285F4" },
   meta: { icon: "meta", iconColor: "#0081FB" },
   mistral: { icon: "mistral", iconColor: "#FF7000" },

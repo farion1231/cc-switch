@@ -230,6 +230,25 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#1E88E5",
   },
   {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://www.qiniu.com",
+    apiKeyUrl: "https://portal.qiniu.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.qnaigc.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v3",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v3",
+      },
+    },
+    category: "cn_official",
+    apiFormat: "openai_chat",
+    endpointCandidates: ["https://api.qnaigc.com"],
+  },
+  {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",

@@ -314,6 +314,29 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://www.qiniu.com",
+    apiKeyUrl: "https://portal.qiniu.com",
+    settingsConfig: {
+      name: "qiniu",
+      base_url: "https://api.qnaigc.com",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "deepseek-v3",
+          name: "DeepSeek V3",
+          context_length: 128000,
+        },
+      ],
+    },
+    category: "cn_official",
+    suggestedDefaults: {
+      model: { default: "deepseek-v3", provider: "qiniu" },
+    },
+  },
+  {
     name: "Together AI",
     nameKey: "providerForm.presets.together",
     websiteUrl: "https://together.ai",

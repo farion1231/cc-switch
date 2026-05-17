@@ -300,6 +300,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#1E88E5",
   },
   {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://www.qiniu.com",
+    apiKeyUrl: "https://portal.qiniu.com",
+    category: "cn_official",
+    baseUrl: "https://api.qnaigc.com",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "deepseek-v3",
+      "deepseek-v3",
+      "deepseek-v3",
+    ),
+    endpointCandidates: ["https://api.qnaigc.com"],
+  },
+  {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
