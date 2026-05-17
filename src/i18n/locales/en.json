@@ -2067,7 +2067,7 @@
   },
   "iconPicker": {
     "search": "Search Icons",
-    "searchPlaceholder": "Enter icon name...",
+    "searchPlaceholder": "Search icon name or paste image URL...",
     "noResults": "No matching icons found",
     "category": {
       "aiProvider": "AI Providers",
@@ -2083,7 +2083,8 @@
     "preview": "Preview",
     "clickToChange": "Click to change icon",
     "clickToSelect": "Click to select icon",
-    "color": "Icon Color"
+    "color": "Icon Color",
+    "imageUrl": "Image URL"
   },
   "migration": {
     "success": "Configuration migrated successfully",
