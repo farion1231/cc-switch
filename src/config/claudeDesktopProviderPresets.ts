@@ -811,12 +811,16 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.xiaomimimo.com/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("mimo-v2-pro", "mimo-v2-pro", "mimo-v2-pro"),
+    modelRoutes: brandedRoutes(
+      "mimo-v2.5-pro",
+      "mimo-v2.5-pro",
+      "mimo-v2.5-pro",
+    ),
     icon: "xiaomimimo",
     iconColor: "#000000",
   },
   {
-    name: "Xiaomi MiMo Token Plan",
+    name: "Xiaomi MiMo Token Plan (China)",
     websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
     category: "cn_official",

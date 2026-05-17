@@ -933,10 +933,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.xiaomimimo.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "mimo-v2-pro",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2-pro",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2-pro",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2-pro",
+        ANTHROPIC_MODEL: "mimo-v2.5-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2.5-pro",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2.5-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2.5-pro",
       },
     },
     category: "cn_official",
@@ -944,7 +944,7 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "Xiaomi MiMo Token Plan",
+    name: "Xiaomi MiMo Token Plan (China)",
     websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
     settingsConfig: {

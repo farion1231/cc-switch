@@ -702,10 +702,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "mimo-v2-pro",
-          name: "MiMo V2 Pro",
-          contextWindow: 128000,
-          cost: { input: 0.001, output: 0.004 },
+          id: "mimo-v2.5-pro",
+          name: "MiMo V2.5 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 32000,
+          cost: { input: 1, output: 3, cacheRead: 0.2, cacheWrite: 0 },
         },
       ],
     },
@@ -720,12 +723,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "xiaomimimo/mimo-v2-pro" },
-      modelCatalog: { "xiaomimimo/mimo-v2-pro": { alias: "MiMo" } },
+      model: { primary: "xiaomimimo/mimo-v2.5-pro" },
+      modelCatalog: { "xiaomimimo/mimo-v2.5-pro": { alias: "MiMo" } },
     },
   },
   {
-    name: "Xiaomi MiMo Token Plan",
+    name: "Xiaomi MiMo Token Plan (China)",
     websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
     settingsConfig: {
@@ -736,14 +739,18 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "mimo-v2.5-pro",
           name: "MiMo V2.5 Pro",
-          contextWindow: 1000000,
-          cost: { input: 0, output: 0 },
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 32000,
         },
         {
           id: "mimo-v2.5",
           name: "MiMo V2.5",
-          contextWindow: 1000000,
-          cost: { input: 0, output: 0 },
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 262144,
+          maxTokens: 32000,
         },
       ],
     },
@@ -761,10 +768,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       model: { primary: "xiaomi-mimo-token-plan/mimo-v2.5-pro" },
       modelCatalog: {
         "xiaomi-mimo-token-plan/mimo-v2.5-pro": {
-          alias: "MiMo Token Plan",
+          alias: "MiMo Token Plan (China)",
         },
         "xiaomi-mimo-token-plan/mimo-v2.5": {
-          alias: "MiMo Token Plan 1M",
+          alias: "MiMo Token Plan (China) Multimodal",
         },
       },
     },

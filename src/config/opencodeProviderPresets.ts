@@ -849,7 +849,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "mimo-v2-pro": { name: "MiMo V2 Pro" },
+        "mimo-v2.5-pro": {
+          name: "MiMo V2.5 Pro",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "mimo-v2.5": {
+          name: "MiMo V2.5",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -864,20 +873,28 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Xiaomi MiMo Token Plan",
+    name: "Xiaomi MiMo Token Plan (China)",
     websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Xiaomi MiMo Token Plan",
+      name: "Xiaomi MiMo Token Plan (China)",
       options: {
         baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "mimo-v2.5-pro": { name: "MiMo V2.5 Pro" },
-        "mimo-v2.5": { name: "MiMo V2.5" },
+        "mimo-v2.5-pro": {
+          name: "MiMo V2.5 Pro",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "mimo-v2.5": {
+          name: "MiMo V2.5",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",

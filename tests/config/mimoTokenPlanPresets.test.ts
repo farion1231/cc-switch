@@ -10,11 +10,11 @@ describe("Xiaomi MiMo Token Plan presets", () => {
       (item) => item.name === "Xiaomi MiMo",
     );
     const tokenPlan = openclawProviderPresets.find(
-      (item) => item.name === "Xiaomi MiMo Token Plan",
+      (item) => item.name === "Xiaomi MiMo Token Plan (China)",
     );
 
     expect(payAsYouGo?.suggestedDefaults?.model?.primary).toBe(
-      "xiaomimimo/mimo-v2-pro",
+      "xiaomimimo/mimo-v2.5-pro",
     );
     expect(tokenPlan?.suggestedDefaults?.model?.primary).toBe(
       "xiaomi-mimo-token-plan/mimo-v2.5-pro",
@@ -29,7 +29,7 @@ describe("Xiaomi MiMo Token Plan presets", () => {
 
   it("rebases OpenClaw defaults to the submitted provider key", () => {
     const tokenPlan = openclawProviderPresets.find(
-      (item) => item.name === "Xiaomi MiMo Token Plan",
+      (item) => item.name === "Xiaomi MiMo Token Plan (China)",
     );
 
     expect(tokenPlan?.suggestedDefaults).toBeDefined();
