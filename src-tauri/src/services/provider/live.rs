@@ -31,8 +31,13 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("apiFormat");
         obj.remove("openrouter_compat_mode");
         obj.remove("openrouterCompatMode");
-        obj.entry("env").or_insert_with(|| json!({}))["CLAUDE_CODE_ATTRIBUTION_HEADER"] =
-            json!("0");
+        let env = obj.entry("env").or_insert_with(|| json!({}));
+        if !env.is_object() {
+            *env = json!({});
+        }
+        if let Some(env) = env.as_object_mut() {
+            env.insert("CLAUDE_CODE_ATTRIBUTION_HEADER".to_string(), json!("0"));
+        }
     }
     v
 }
@@ -1521,6 +1526,24 @@ mod tests {
             json!("0")
         );
         assert_eq!(sanitized["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-test"));
+    }
+
+    #[test]
+    fn sanitize_claude_settings_for_live_normalizes_non_object_env() {
+        let settings = json!({
+            "env": []
+        });
+
+        let sanitized = sanitize_claude_settings_for_live(&settings);
+
+        assert_eq!(
+            sanitized,
+            json!({
+                "env": {
+                    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+                }
+            })
+        );
     }
 
     #[test]
