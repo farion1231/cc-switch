@@ -604,7 +604,9 @@
         "windows": {
           "cmd": "Command Prompt",
           "powershell": "PowerShell",
-          "wt": "Windows Terminal"
+          "wt": "Windows Terminal",
+          "profileError": "Cannot find Windows Terminal settings. Please make sure Windows Terminal is installed.",
+          "noProfiles": "No profiles found"
         },
         "linux": {
           "gnomeTerminal": "GNOME Terminal",
