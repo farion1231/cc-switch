@@ -311,13 +311,14 @@ async fn handle_claude_transform(
                         let provider_id = provider_id.clone();
                         let model = model.clone();
                         let session_id = session_id.clone();
+                        let upstream_model = usage.model.clone();
 
                         tokio::spawn(async move {
                             log_usage(
                                 &state,
                                 &provider_id,
                                 "claude",
-                                &model,
+                                upstream_model.as_deref().unwrap_or(&model),
                                 &model,
                                 usage,
                                 latency_ms,
