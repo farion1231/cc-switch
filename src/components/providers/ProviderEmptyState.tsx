@@ -36,7 +36,11 @@ export function ProviderEmptyState({
         {onImport && (
           <Button onClick={onImport}>
             <Download className="mr-2 h-4 w-4" />
-            {t("provider.importCurrent")}
+            {appId === "claude-desktop"
+              ? t("provider.importFromClaude", {
+                  defaultValue: "将 Claude Code 中已有的供应商导入",
+                })
+              : t("provider.importCurrent")}
           </Button>
         )}
         {onCreate && (

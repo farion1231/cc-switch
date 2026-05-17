@@ -37,19 +37,52 @@ impl CostCalculator {
     /// - `cost_multiplier`: 成本倍数 (provider 自定义)
     ///
     /// # 计算逻辑
-    /// - input_cost: (input_tokens - cache_read_tokens) × 输入价格
+    /// - input_cost: input_tokens × 输入价格
     /// - cache_read_cost: cache_read_tokens × 缓存读取价格
-    /// - 这样避免缓存部分被重复计费
+    /// - Claude/Anthropic 的 input_tokens 已经不包含 cache_read_tokens
     /// - total_cost: 各项成本之和 × 倍率（倍率只作用于最终总价）
     pub fn calculate(
         usage: &TokenUsage,
         pricing: &ModelPricing,
         cost_multiplier: Decimal,
     ) -> CostBreakdown {
+        Self::calculate_with_cache_semantics(usage, pricing, cost_multiplier, false)
+    }
+
+    /// 按 app_type 选择输入 token 语义后计算成本。
+    ///
+    /// Codex/OpenAI Responses 与 Gemini 的输入 token 字段包含 cache read 部分；
+    /// Claude/Anthropic 的 input_tokens 已经是 fresh input。
+    pub fn calculate_for_app(
+        app_type: &str,
+        usage: &TokenUsage,
+        pricing: &ModelPricing,
+        cost_multiplier: Decimal,
+    ) -> CostBreakdown {
+        let input_includes_cache_read = matches!(app_type, "codex" | "gemini");
+        Self::calculate_with_cache_semantics(
+            usage,
+            pricing,
+            cost_multiplier,
+            input_includes_cache_read,
+        )
+    }
+
+    fn calculate_with_cache_semantics(
+        usage: &TokenUsage,
+        pricing: &ModelPricing,
+        cost_multiplier: Decimal,
+        input_includes_cache_read: bool,
+    ) -> CostBreakdown {
         let million = Decimal::from(1_000_000);
 
-        // 计算实际需要按输入价格计费的 token 数（减去缓存命中部分）
-        let billable_input_tokens = usage.input_tokens.saturating_sub(usage.cache_read_tokens);
+        // OpenAI/Gemini 风格的 input_tokens 包含缓存命中，需要扣除后再按输入价计费；
+        // Claude/Anthropic 风格的 input_tokens 已经是 fresh input，不能再次扣减。
+        let billable_input_tokens = if input_includes_cache_read {
+            usage.input_tokens.saturating_sub(usage.cache_read_tokens)
+        } else {
+            usage.input_tokens
+        };
 
         // 各项基础成本（不含倍率）
         let input_cost =
@@ -76,12 +109,22 @@ impl CostCalculator {
     }
 
     /// 尝试计算成本，如果模型未知则返回 None
+    #[allow(dead_code)]
     pub fn try_calculate(
         usage: &TokenUsage,
         pricing: Option<&ModelPricing>,
         cost_multiplier: Decimal,
     ) -> Option<CostBreakdown> {
         pricing.map(|p| Self::calculate(usage, p, cost_multiplier))
+    }
+
+    pub fn try_calculate_for_app(
+        app_type: &str,
+        usage: &TokenUsage,
+        pricing: Option<&ModelPricing>,
+        cost_multiplier: Decimal,
+    ) -> Option<CostBreakdown> {
+        pricing.map(|p| Self::calculate_for_app(app_type, usage, p, cost_multiplier))
     }
 }
 
@@ -122,8 +165,9 @@ mod tests {
 
         let cost = CostCalculator::calculate(&usage, &pricing, multiplier);
 
-        // input: (1000 - 200) * 3.0 / 1M = 0.0024 (只计算非缓存部分)
-        assert_eq!(cost.input_cost, Decimal::from_str("0.0024").unwrap());
+        // Claude/Anthropic 语义：input_tokens 已经不含 cache_read_tokens
+        // input: 1000 * 3.0 / 1M = 0.003
+        assert_eq!(cost.input_cost, Decimal::from_str("0.003").unwrap());
         // output: 500 * 15.0 / 1M = 0.0075
         assert_eq!(cost.output_cost, Decimal::from_str("0.0075").unwrap());
         // cache_read: 200 * 0.3 / 1M = 0.00006
@@ -133,7 +177,34 @@ mod tests {
             cost.cache_creation_cost,
             Decimal::from_str("0.000375").unwrap()
         );
-        // total: 0.0024 + 0.0075 + 0.00006 + 0.000375 = 0.010335
+        // total: 0.003 + 0.0075 + 0.00006 + 0.000375 = 0.010935
+        assert_eq!(cost.total_cost, Decimal::from_str("0.010935").unwrap());
+    }
+
+    #[test]
+    fn test_cost_calculation_for_cache_inclusive_app() {
+        let usage = TokenUsage {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_read_tokens: 200,
+            cache_creation_tokens: 100,
+            model: None,
+            message_id: None,
+        };
+
+        let pricing = ModelPricing::from_strings("3.0", "15.0", "0.3", "3.75").unwrap();
+        let multiplier = Decimal::from_str("1.0").unwrap();
+
+        let cost = CostCalculator::calculate_for_app("codex", &usage, &pricing, multiplier);
+
+        // Codex/OpenAI 语义：input_tokens 包含 cached_tokens，需要扣除 cache_read_tokens
+        assert_eq!(cost.input_cost, Decimal::from_str("0.0024").unwrap());
+        assert_eq!(cost.output_cost, Decimal::from_str("0.0075").unwrap());
+        assert_eq!(cost.cache_read_cost, Decimal::from_str("0.00006").unwrap());
+        assert_eq!(
+            cost.cache_creation_cost,
+            Decimal::from_str("0.000375").unwrap()
+        );
         assert_eq!(cost.total_cost, Decimal::from_str("0.010335").unwrap());
     }
 

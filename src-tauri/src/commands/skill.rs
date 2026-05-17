@@ -12,6 +12,7 @@ use crate::services::skill::{
     SkillsShSearchResult,
 };
 use crate::store::AppState;
+use std::str::FromStr;
 use std::sync::Arc;
 use tauri::State;
 
@@ -20,14 +21,7 @@ pub struct SkillServiceState(pub Arc<SkillService>);
 
 /// 解析 app 参数为 AppType
 fn parse_app_type(app: &str) -> Result<AppType, String> {
-    match app.to_lowercase().as_str() {
-        "claude" => Ok(AppType::Claude),
-        "codex" => Ok(AppType::Codex),
-        "gemini" => Ok(AppType::Gemini),
-        "opencode" => Ok(AppType::OpenCode),
-        "hermes" => Ok(AppType::Hermes),
-        _ => Err(format!("不支持的 app 类型: {app}")),
-    }
+    AppType::from_str(app).map_err(|e| e.to_string())
 }
 
 // ========== 统一管理命令 ==========

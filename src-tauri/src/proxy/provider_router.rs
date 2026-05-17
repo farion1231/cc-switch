@@ -201,6 +201,17 @@ impl ProviderRouter {
         }
     }
 
+    /// 更新指定应用已创建熔断器的配置（热更新）
+    pub async fn update_app_configs(&self, app_type: &str, config: CircuitBreakerConfig) {
+        let prefix = format!("{app_type}:");
+        let breakers = self.circuit_breakers.read().await;
+        for (key, breaker) in breakers.iter() {
+            if key.starts_with(&prefix) {
+                breaker.update_config(config.clone()).await;
+            }
+        }
+    }
+
     /// 获取熔断器状态
     #[allow(dead_code)]
     pub async fn get_circuit_breaker_stats(
