@@ -867,21 +867,24 @@ fn launch_terminal_with_env(
     // 创建并写入配置文件
     write_claude_config(&config_file, &env_vars)?;
 
+    // 解析 claude 绝对路径，避免终端从 launchd 继承最小 PATH 时找不到命令
+    let claude_path = resolve_binary_path("claude").unwrap_or_else(|| "claude".to_string());
+
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd)?;
+        launch_macos_terminal(&config_file, cwd, &claude_path)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd)?;
+        launch_linux_terminal(&config_file, cwd, &claude_path)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
+        launch_windows_terminal(&temp_dir, &config_file, cwd, &claude_path)?;
         return Ok(());
     }
 
@@ -911,7 +914,7 @@ fn write_claude_config(
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>, claude_path: &str) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -929,12 +932,13 @@ trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
+{claude_path} --settings "{config_path}"
+exec "$SHELL" -l
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        claude_path = claude_path,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -950,7 +954,22 @@ exec bash --norc --noprofile
         "warp" => launch_macos_warp(&script_file),
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
-        "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
+        "ghostty" => {
+            // 内联命令，用 Ghostty CLI 直接执行（绕过 open）。
+            // cd 由 --working-directory 处理；不用 exec（避免 Ghostty 检测到 PID 替换而弹出双 tab）
+            let inline_cmd = [
+                format!("trap 'rm -f \"{config_path}\" \"{}\"' EXIT", script_file.display()),
+                "echo \"Using provider-specific claude config:\"".to_string(),
+                format!("echo \"{config_path}\""),
+                format!("{claude_path} --settings \"{config_path}\""),
+                "\"$SHELL\" -l".to_string(),
+            ]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ");
+            launch_macos_ghostty(&inline_cmd, cwd)
+        }
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
         "kaku" => launch_macos_open_app("Kaku", &script_file, true),
         _ => launch_macos_terminal_app(&script_file), // "terminal" or default
@@ -1061,7 +1080,53 @@ fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// macOS: 使用 open -a 启动支持 --args 参数的终端（Alacritty/Kitty/Ghostty）
+/// macOS: Ghostty 专用启动函数
+/// 优先用 Ghostty CLI 直接执行（绕过 macOS open 的安全弹窗），
+/// 找不到 CLI 时 fallback 到 open -a（不用 -na，避免额外 tab）
+#[cfg(target_os = "macos")]
+fn launch_macos_ghostty(inline_command: &str, cwd: Option<&Path>) -> Result<(), String> {
+    use std::process::Command;
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+
+    if let Some(ghostty_bin) = find_ghostty_cli() {
+        let mut cmd = Command::new(&ghostty_bin);
+        cmd.arg("--quit-after-last-window-closed=true");
+        if let Some(dir) = cwd {
+            cmd.arg(format!("--working-directory={}", dir.display()));
+        }
+        cmd.arg("-e").arg(&shell).arg("-l").arg("-c").arg(inline_command);
+
+        let status = cmd
+            .status()
+            .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
+
+        if !status.success() {
+            return Err(format!("Ghostty 启动失败 (exit code: {:?})", status.code()));
+        }
+    } else {
+        let mut cmd = Command::new("open");
+        cmd.arg("-a").arg("Ghostty").arg("--args")
+           .arg("--quit-after-last-window-closed=true");
+        if let Some(dir) = cwd {
+            cmd.arg(format!("--working-directory={}", dir.display()));
+        }
+        cmd.arg("-e").arg(&shell).arg("-l").arg("-c").arg(inline_command);
+
+        let status = cmd
+            .status()
+            .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
+
+        if !status.success() {
+            return Err(format!("Ghostty 启动失败 (exit code: {:?})", status.code()));
+        }
+    }
+
+    Ok(())
+}
+
+/// macOS: 使用 open -na 启动支持 --args 参数的终端（Alacritty/Kitty/WezTerm/Kaku）
+/// 使用 -na 而非 -a，避免在已有实例中产生额外的无命令 tab
 #[cfg(target_os = "macos")]
 fn launch_macos_open_app(
     app_name: &str,
@@ -1071,7 +1136,7 @@ fn launch_macos_open_app(
     use std::process::Command;
 
     let mut cmd = Command::new("open");
-    cmd.arg("-a").arg(app_name).arg("--args");
+    cmd.arg("-na").arg(app_name).arg("--args");
 
     if use_e_flag {
         cmd.arg("-e");
@@ -1148,7 +1213,7 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>, claude_path: &str) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -1178,12 +1243,13 @@ trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
+{claude_path} --settings "{config_path}"
+exec "$SHELL" -l
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        claude_path = claude_path,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1257,12 +1323,55 @@ fn which_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 解析命令的绝对路径，避免终端从 launchd 继承最小 PATH 时找不到命令
+fn resolve_binary_path(cmd: &str) -> Option<String> {
+    use std::process::Command;
+
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("where").arg(cmd).output().ok()?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        stdout.lines().next().map(|s| s.to_string())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let output = Command::new("which").arg(cmd).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if stdout.is_empty() { None } else { Some(stdout) }
+    }
+}
+
+/// 查找 Ghostty CLI 路径，优先使用 App Bundle 内的二进制，绕过 macOS open 的安全检查
+#[cfg(target_os = "macos")]
+fn find_ghostty_cli() -> Option<std::path::PathBuf> {
+    let bundle_path = std::path::PathBuf::from("/Applications/Ghostty.app/Contents/MacOS/ghostty");
+    if bundle_path.is_file() {
+        return Some(bundle_path);
+    }
+    let output = std::process::Command::new("which")
+        .arg("ghostty")
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(std::path::PathBuf::from(path));
+        }
+    }
+    None
+}
+
 /// Windows: 根据用户首选终端启动
 #[cfg(target_os = "windows")]
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
     cwd: Option<&Path>,
+    claude_path: &str,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
@@ -1276,7 +1385,7 @@ fn launch_windows_terminal(
 {cwd_command}
 echo Using provider-specific claude config:
 echo {}
-claude --settings \"{}\"
+\"{claude_path}\" --settings \"{}\"
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
 ",
@@ -1284,6 +1393,7 @@ del \"%~f0\" >nul 2>&1
         config_path_for_batch,
         config_path_for_batch,
         cwd_command = cwd_command,
+        claude_path = claude_path,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
