@@ -173,13 +173,20 @@
       }
     }
   },
+  "claudeCode": {
+    "needsRouting": "Needs Routing",
+    "noRoutingSupport": "No Routing Support"
+  },
+  "codex": {
+    "noRoutingSupport": "No Routing Support"
+  },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop official providers use the built-in 1P sign-in. No API key or endpoint URL is required.",
     "mode": "Model handling",
     "modeDirect": "Direct",
     "modeProxy": "Requires routing",
     "modelMappingToggle": "Needs model mapping",
-    "modelMappingOffHint": "Use this when the provider already exposes and accepts claude-* / anthropic/claude-* model IDs through Anthropic Messages. Claude Desktop connects to the provider directly.",
+    "modelMappingOffHint": "If your provider does not offer native Claude series models, please enable this switch.",
     "modelMappingOnHint": "Claude Desktop currently restricts model IDs. If your provider offers non-Claude models, enable this switch and keep local routing running while in use.",
     "routeMapTitle": "Model mapping",
     "routeMapHint": "Choose a model role and CC Switch will generate a Claude Desktop-compatible route automatically. Use the menu display name for branded models such as DeepSeek or Kimi; requested model IDs are sent upstream exactly as entered.",
@@ -650,6 +657,7 @@
     "viewReleaseNotes": "View release notes for this version",
     "viewCurrentReleaseNotes": "View current version release notes",
     "officialWebsite": "Official Website",
+    "github": "GitHub",
     "oneClickInstall": "One-click Install",
     "oneClickInstallHint": "Install Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "Local environment check",
@@ -828,6 +836,10 @@
     "getApiKey": "Get API Key",
     "partnerPromotion": {
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
+      "patewayai": "PatewayAI offers special benefits for CC Switch users. Register via this link to receive $3 credit.",
+      "claudeapi": "ClaudeAPI offers special benefits for CC Switch users. Register via this link to claim test credits.",
+      "claudecn": "ClaudeCN is an enterprise-grade AI gateway operated by a registered company, supporting enterprise procurement processes with corporate payments, contracts, and compliance guarantees.",
+      "runapi": "RunAPI offers special benefits for CC Switch users. Register via this link and contact customer support to claim ¥14 free credit.",
       "minimax_cn": "MiniMax Coding Plan Special Offer, Starter from ¥9.9",
       "minimax_en": "MiniMax Coding Plan Black Friday, Starter is now $2/mo (80% OFF!)",
       "dmxapi": "Claude Code exclusive model 66% OFF now!",
@@ -844,7 +856,10 @@
       "ctok": "Join the CTok community on the official website and subscribe to a plan.",
       "lionccapi": "LionCCAPI offers exclusive benefits for CC Switch users. After registration, add WeChat HSQBJ088888888 and mention 'cc-switch' to receive $10 free credits!",
       "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!",
-      "lemondata": "Lemon Code offers a special promotion for CC Switch users. Sign up via this link to receive $1 in free credits."
+      "lemondata": "Lemon Code offers a special promotion for CC Switch users. Sign up via this link to receive $1 in free credits.",
+      "doubaoseed": "DouBao offers exclusive benefits for CC Switch users: register via this link to get 500K tokens of inference credits for all DouBao text models and 5M tokens of free Seedance 2.0 credits.",
+      "volcengine_agentplan": "Volcengine Ark Agent Plan offers exclusive benefits for CC Switch users: subscribe via this link, starting from ¥40/month for new customers.",
+      "byteplus": "Register via this link to get 500,000 tokens of free inference quota per model."
     },
     "presets": {
       "ucloud": "Compshare",

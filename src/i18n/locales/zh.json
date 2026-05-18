@@ -173,13 +173,20 @@
       }
     }
   },
+  "claudeCode": {
+    "needsRouting": "需要路由",
+    "noRoutingSupport": "不支持路由"
+  },
+  "codex": {
+    "noRoutingSupport": "不支持路由"
+  },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop 官方供应商使用应用内置的 1P 登录，无需配置 API Key 和接口地址。",
     "mode": "模型处理方式",
     "modeDirect": "直连",
     "modeProxy": "需要路由",
     "modelMappingToggle": "需要模型映射",
-    "modelMappingOffHint": "适合供应商已经暴露并接受 claude-* / anthropic/claude-* 模型名的 Anthropic Messages API；请求会由 Claude Desktop 直连供应商。",
+    "modelMappingOffHint": "如果您的供应商提供的不是原生 Claude 系列模型，请打开此开关。",
     "modelMappingOnHint": "Claude Desktop 目前对模型 ID 进行了限制，如果您的供应商提供的模型不是 Claude 系列模型，则需要打开本开关，并在使用过程中保持本地路由开启。",
     "routeMapTitle": "模型映射",
     "routeMapHint": "选择模型角色后，CC Switch 会自动生成 Claude Desktop 兼容路由；菜单显示名可以写 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
@@ -650,6 +657,7 @@
     "viewReleaseNotes": "查看该版本更新日志",
     "viewCurrentReleaseNotes": "查看当前版本更新日志",
     "officialWebsite": "官方网站",
+    "github": "GitHub",
     "oneClickInstall": "一键安装",
     "oneClickInstallHint": "安装 Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "本地环境检查",
@@ -828,6 +836,10 @@
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
+      "patewayai": "PatewayAI 为 CC Switch 的用户提供了特别福利，通过此链接注册可以获得3美元额度。",
+      "claudeapi": "ClaudeAPI 为 CC Switch 的用户提供了特别福利，通过此链接注册可以领取测试额度。",
+      "claudecn": "ClaudeCN 是一家实体企业运营的企业级AI中转平台，支持企业采购流程，可对公打款、签约，服务合规有保障。",
+      "runapi": "RunAPI 为 CC Switch 的用户提供了特别福利，通过此链接注册并联系客服可领取 ¥14 免费额度。",
       "minimax_cn": "MiniMax Coding Plan 特惠，Starter 套餐 9.9 元起",
       "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 套餐现仅 $2/月（2折优惠！）",
       "dmxapi": "Claude Code 专属模型 3.4 折优惠进行中！",
@@ -844,7 +856,10 @@
       "ctok": "官网加入CTok社群，订阅套餐。",
       "lionccapi": "LionCCAPI 为 CC Switch 的用户提供了特别福利，注册后添加客服微信HSQBJ088888888，发暗号cc-switch备注即可送10美金额度！",
       "shengsuanyun": "胜算云为 CC Switch 的用户提供了特别福利，使用此链接注册的新用户可获 10 元模力及首充 10% 赠送！",
-      "lemondata": "Lemon Code 为 CC Switch 的用户提供了特别优惠。使用此链接注册可以获得1美元免费额度。"
+      "lemondata": "Lemon Code 为 CC Switch 的用户提供了特别优惠。使用此链接注册可以获得1美元免费额度。",
+      "doubaoseed": "豆包大模型为 CC Switch 的用户提供了专属福利：通过此链接注册即可获取豆包全系列文本模型 50万tokens推理额度以及Seedance2.0的500万tokens免费额度",
+      "volcengine_agentplan": "火山方舟 Agent Plan 为 CC Switch 的用户提供了专属福利：通过此链接订阅方舟AgentPlan，新客户首月40元起。",
+      "byteplus": "通过此链接注册即可获取每个模型50万tokens的免费推理额度。"
     },
     "presets": {
       "ucloud": "优云智算",

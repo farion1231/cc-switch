@@ -360,6 +360,17 @@ impl ProxyServer {
         self.state.provider_router.update_all_configs(config).await;
     }
 
+    pub async fn update_circuit_breaker_config_for_app(
+        &self,
+        app_type: &str,
+        config: super::circuit_breaker::CircuitBreakerConfig,
+    ) {
+        self.state
+            .provider_router
+            .update_app_configs(app_type, config)
+            .await;
+    }
+
     /// 重置指定 Provider 的熔断器
     pub async fn reset_provider_circuit_breaker(&self, provider_id: &str, app_type: &str) {
         self.state
