@@ -75,40 +75,52 @@ pub async fn fetch_models(
         {
             Ok(r) => r,
             Err(e) => {
-                return Err(format!("Request failed: {e}"));
+                log::debug!("[ModelFetch] Request error for {url}: {e}");
+                last_err = Some(format!("Request failed: {e}"));
+                continue;
             }
         };
 
         let status = response.status();
 
         if status.is_success() {
-            let resp: ModelsResponse = response
-                .json()
-                .await
-                .map_err(|e| format!("Failed to parse response: {e}"))?;
+            let body = response.text().await.unwrap_or_default();
+            match serde_json::from_str::<ModelsResponse>(&body) {
+                Ok(resp) => {
+                    let mut models: Vec<FetchedModel> = resp
+                        .data
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|m| FetchedModel {
+                            id: m.id,
+                            owned_by: m.owned_by,
+                        })
+                        .collect();
 
-            let mut models: Vec<FetchedModel> = resp
-                .data
-                .unwrap_or_default()
-                .into_iter()
-                .map(|m| FetchedModel {
-                    id: m.id,
-                    owned_by: m.owned_by,
-                })
-                .collect();
-
-            models.sort_by(|a, b| a.id.cmp(&b.id));
-            return Ok(models);
+                    models.sort_by(|a, b| a.id.cmp(&b.id));
+                    return Ok(models);
+                }
+                Err(e) => {
+                    log::debug!("[ModelFetch] Parse error for {url}: {e}");
+                    last_err = Some(format!(
+                        "Failed to parse response: {}",
+                        truncate_body(body)
+                    ));
+                    continue;
+                }
+            }
         }
 
-        if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
+        // 401/403 说明 API Key 有问题，再试其他候选也没用，直接退出
+        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
             let body = truncate_body(response.text().await.unwrap_or_default());
-            last_err = Some(format!("HTTP {status}: {body}"));
-            continue;
+            return Err(format!("HTTP {status}: {body}"));
         }
 
         let body = truncate_body(response.text().await.unwrap_or_default());
-        return Err(format!("HTTP {status}: {body}"));
+        log::debug!("[ModelFetch] Non-success for {url}: HTTP {status}");
+        last_err = Some(format!("HTTP {status}: {body}"));
+        // 继续尝试下一个候选
     }
 
     Err(format!(
