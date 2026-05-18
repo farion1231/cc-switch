@@ -34,7 +34,6 @@ import {
 } from "@/config/opencodeProviderPresets";
 import {
   openclawProviderPresets,
-  rebaseOpenClawSuggestedDefaults,
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
@@ -1131,15 +1130,9 @@ function ProviderFormFull({
       if (activePreset.isPartner) {
         payload.isPartner = activePreset.isPartner;
       }
-      // OpenClaw: align preset model refs with the actual submitted provider key.
+      // OpenClaw: 传递预设的 suggestedDefaults 到提交数据
       if (activePreset.suggestedDefaults) {
-        payload.suggestedDefaults =
-          appId === "openclaw" && payload.providerKey
-            ? rebaseOpenClawSuggestedDefaults(
-                activePreset.suggestedDefaults,
-                payload.providerKey,
-              )
-            : activePreset.suggestedDefaults;
+        payload.suggestedDefaults = activePreset.suggestedDefaults;
       }
     }
 
@@ -1509,7 +1502,7 @@ function ProviderFormFull({
     }
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
-    setLocalIsFullUrl(false);
+    setLocalIsFullUrl(Boolean(preset.isFullUrl));
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,

@@ -352,6 +352,8 @@ impl Database {
             [],
         );
 
+        crate::agent_gateway::db::create_agent_gateway_tables(conn)?;
+
         Ok(())
     }
 
@@ -430,6 +432,11 @@ impl Database {
                         log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
+                    }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（Agent Gateway 基础表）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1197,6 +1204,13 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11 migration: add Agent Gateway and OpenCode subscription tables.
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        crate::agent_gateway::db::create_agent_gateway_tables(conn)?;
+        log::info!("v10 -> v11 迁移完成：已添加 Agent Gateway 基础表");
         Ok(())
     }
 

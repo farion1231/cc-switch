@@ -924,11 +924,7 @@ impl RequestForwarder {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
-        let is_full_url = provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.is_full_url)
-            .unwrap_or(false);
+        let is_full_url = is_full_request_url(provider, &base_url);
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = provider
@@ -2131,6 +2127,18 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
     }
 }
 
+fn is_full_request_url(provider: &Provider, base_url: &str) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.is_full_url)
+        .unwrap_or(false)
+        || base_url
+            .trim_end_matches('/')
+            .to_ascii_lowercase()
+            .ends_with("/chat/completions")
+}
+
 fn build_codex_oauth_session_headers(
     session_id: &str,
 ) -> Vec<(http::HeaderName, http::HeaderValue)> {
@@ -2742,6 +2750,32 @@ mod tests {
         let url = append_query_to_full_url("https://relay.example/api?foo=bar", Some("x-id=1"));
 
         assert_eq!(url, "https://relay.example/api?foo=bar&x-id=1");
+    }
+
+    #[test]
+    fn full_chat_completions_base_is_treated_as_full_request_url() {
+        let mut provider = test_provider_with_type(Some("opencode_go_subscription"));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(false),
+            ..Default::default()
+        });
+
+        assert!(is_full_request_url(
+            &provider,
+            "https://opencode.ai/zen/go/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn version_base_is_not_treated_as_full_request_url() {
+        let provider = test_provider_with_type(Some("opencode_go_subscription"));
+
+        assert!(!is_full_request_url(
+            &provider,
+            "https://opencode.ai/zen/go/v1"
+        ));
     }
 
     #[test]

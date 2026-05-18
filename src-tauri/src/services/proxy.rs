@@ -12,7 +12,7 @@ use crate::proxy::types::*;
 use crate::services::provider::{
     build_effective_settings_with_common_config, write_live_with_common_config,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::Emitter;
@@ -20,30 +20,6 @@ use tokio::sync::RwLock;
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
-
-/// 代理接管模式下需要从 Claude Live 配置中移除的"模型覆盖"字段。
-///
-/// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
-/// 再由本地代理映射到当前供应商真实模型；`*_MODEL_NAME` 也需要同步接管，
-/// 否则 Claude Code 模型菜单会残留上一个供应商的显示名称。
-const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 9] = [
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
-    // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
-    "ANTHROPIC_SMALL_FAST_MODEL",
-];
-
-const CLAUDE_TAKEOVER_HAIKU_MODEL: &str = "claude-haiku-4-5";
-const CLAUDE_TAKEOVER_SONNET_MODEL: &str = "claude-sonnet-4-6";
-const CLAUDE_TAKEOVER_OPUS_MODEL: &str = "claude-opus-4-7";
-// 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
-const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 
 #[derive(Clone)]
 pub struct ProxyService {
@@ -69,10 +45,59 @@ impl ProxyService {
         }
     }
 
-    fn apply_claude_takeover_fields(config: &mut Value, proxy_url: &str) {
-        // 必须在 remove/insert 前 snapshot：避免读到自己刚写入的接管别名。
-        let takeover_model_fields = Self::build_claude_takeover_model_fields(config);
+    fn merge_claude_provider_settings_into_live(
+        live_config: &mut Value,
+        provider_settings: &Value,
+    ) {
+        if !live_config.is_object() {
+            *live_config = json!({});
+        }
 
+        let root = live_config
+            .as_object_mut()
+            .expect("Claude live config should be normalized to an object");
+
+        if let Some(provider_root) = provider_settings.as_object() {
+            for (key, value) in provider_root {
+                if key != "env" {
+                    root.insert(key.clone(), value.clone());
+                }
+            }
+        }
+
+        let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
+        if !env.is_object() {
+            *env = json!({});
+        }
+        let env = env
+            .as_object_mut()
+            .expect("Claude live env should be normalized to an object");
+
+        for key in [
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+        ] {
+            env.remove(key);
+        }
+
+        if let Some(provider_env) = provider_settings.get("env").and_then(Value::as_object) {
+            for (key, value) in provider_env {
+                env.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    fn apply_claude_takeover_fields(config: &mut Value, proxy_url: &str) {
         if !config.is_object() {
             *config = json!({});
         }
@@ -80,6 +105,8 @@ impl ProxyService {
         let root = config
             .as_object_mut()
             .expect("Claude config should be normalized to an object");
+        root.remove("model");
+
         let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
         if !env.is_object() {
             *env = json!({});
@@ -89,14 +116,6 @@ impl ProxyService {
             .as_object_mut()
             .expect("Claude env should be normalized to an object");
         env.insert("ANTHROPIC_BASE_URL".to_string(), json!(proxy_url));
-
-        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
-            env.remove(key);
-        }
-
-        for (key, value) in takeover_model_fields {
-            env.insert(key.to_string(), Value::String(value));
-        }
 
         let token_keys = [
             "ANTHROPIC_AUTH_TOKEN",
@@ -121,106 +140,11 @@ impl ProxyService {
         }
     }
 
-    fn build_claude_takeover_model_fields(config: &Value) -> Vec<(&'static str, String)> {
-        let Some(env) = config.get("env").and_then(Value::as_object) else {
-            return Vec::new();
-        };
-
-        let default_model = Self::claude_env_string(env, "ANTHROPIC_MODEL");
-        let small_fast_model = Self::claude_env_string(env, "ANTHROPIC_SMALL_FAST_MODEL");
-        let haiku_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL")
-            .or(small_fast_model)
-            .or(default_model);
-        let sonnet_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_SONNET_MODEL")
-            .or(default_model)
-            .or(small_fast_model);
-        let opus_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_OPUS_MODEL")
-            .or(default_model)
-            .or(small_fast_model);
-
-        let mut fields = Vec::with_capacity(6);
-        Self::push_claude_takeover_role_fields(
-            &mut fields,
-            env,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
-            CLAUDE_TAKEOVER_HAIKU_MODEL,
-            false,
-            haiku_model,
-        );
-        Self::push_claude_takeover_role_fields(
-            &mut fields,
-            env,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-            CLAUDE_TAKEOVER_SONNET_MODEL,
-            true,
-            sonnet_model,
-        );
-        Self::push_claude_takeover_role_fields(
-            &mut fields,
-            env,
-            "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
-            CLAUDE_TAKEOVER_OPUS_MODEL,
-            true,
-            opus_model,
-        );
-        fields
-    }
-
-    fn push_claude_takeover_role_fields(
-        fields: &mut Vec<(&'static str, String)>,
-        env: &Map<String, Value>,
-        model_key: &'static str,
-        name_key: &'static str,
-        takeover_model: &'static str,
-        supports_one_m: bool,
-        upstream_model: Option<&str>,
-    ) {
-        let Some(upstream_model) = upstream_model else {
-            return;
-        };
-
-        let mut client_model = takeover_model.to_string();
-        if supports_one_m && Self::has_claude_one_m_marker(upstream_model) {
-            client_model.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
-        }
-        fields.push((model_key, client_model));
-
-        let display_name = Self::claude_env_string(env, name_key)
-            .map(str::to_string)
-            .unwrap_or_else(|| Self::strip_claude_one_m_marker(upstream_model));
-        if !display_name.is_empty() {
-            fields.push((name_key, display_name));
-        }
-    }
-
-    fn claude_env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
-        env.get(key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    }
-
-    fn has_claude_one_m_marker(model: &str) -> bool {
-        model
-            .trim_end()
-            .to_ascii_lowercase()
-            .ends_with(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
-    }
-
-    fn strip_claude_one_m_marker(model: &str) -> String {
-        crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model)
-            .trim()
-            .to_string()
-    }
-
     pub async fn sync_claude_live_from_provider_while_proxy_active(
         &self,
         provider: &Provider,
     ) -> Result<(), String> {
-        let mut effective_settings = build_effective_settings_with_common_config(
+        let effective_settings = build_effective_settings_with_common_config(
             self.db.as_ref(),
             &AppType::Claude,
             provider,
@@ -228,9 +152,30 @@ impl ProxyService {
         .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
         let (proxy_url, _) = self.build_proxy_urls().await?;
 
-        Self::apply_claude_takeover_fields(&mut effective_settings, &proxy_url);
-        self.write_claude_live(&effective_settings)?;
+        let mut live_config = self.read_claude_live().unwrap_or_else(|_| json!({}));
+        Self::merge_claude_provider_settings_into_live(&mut live_config, &effective_settings);
+        Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+        self.write_claude_live(&live_config)?;
         Ok(())
+    }
+
+    async fn apply_claude_current_provider_takeover_to_live(
+        &self,
+        mut live_config: Value,
+    ) -> Result<Value, String> {
+        if let Some(provider) = self.current_provider_for_app(&AppType::Claude)? {
+            let effective_settings = build_effective_settings_with_common_config(
+                self.db.as_ref(),
+                &AppType::Claude,
+                &provider,
+            )
+            .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
+            Self::merge_claude_provider_settings_into_live(&mut live_config, &effective_settings);
+        }
+
+        let (proxy_url, _) = self.build_proxy_urls().await?;
+        Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+        Ok(live_config)
     }
 
     /// 设置 AppHandle（在应用初始化时调用）
@@ -392,18 +337,24 @@ impl ProxyService {
         let app_type_str = app.as_str();
 
         if enabled {
-            // 1) 代理服务未运行则自动启动
-            if !self.is_running().await {
-                self.start().await?;
-            }
-
-            // 2) 已接管则直接返回（幂等）；但如果缺少备份或占位符残留，需要重建接管
             let current_config = self
                 .db
                 .get_proxy_config_for_app(app_type_str)
                 .await
                 .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
 
+            if let Err(e) = self.preflight_takeover_for_app(&app).await {
+                self.recover_failed_takeover_preflight(&app, current_config)
+                    .await;
+                return Err(e);
+            }
+
+            // 1) 代理服务未运行则自动启动
+            if !self.is_running().await {
+                self.start().await?;
+            }
+
+            // 2) 已接管则直接返回（幂等）；但如果缺少备份或占位符残留，需要重建接管
             if current_config.enabled {
                 let has_backup = match self.db.get_live_backup(app_type_str).await {
                     Ok(v) => v.is_some(),
@@ -418,12 +369,46 @@ impl ProxyService {
                 // 只看其一会出现「UI 显示已接管但 Live 已被恢复」或「Live 仍是占位符但备份丢失」
                 // 两种脏角落，下面的重建分支会把这些情况修复成一致状态。
                 if has_backup && live_taken_over {
+                    if matches!(app, AppType::Claude)
+                        && !self.claude_takeover_live_matches_current_provider().await?
+                    {
+                        log::warn!(
+                            "{app_type_str} 已接管，但 Live 模型字段与当前 provider 不一致，正在按当前 provider 重新同步"
+                        );
+                        if let Some(provider) = self.current_provider_for_app(&app)? {
+                            self.sync_claude_live_from_provider_while_proxy_active(&provider)
+                                .await?;
+                        }
+                    }
                     return Ok(());
                 }
 
                 log::warn!(
                     "{app_type_str} 标记为已接管，但 backup={has_backup} live_taken_over={live_taken_over}，正在重新接管并补齐备份"
                 );
+
+                // 旧版本可能留下「无备份但 Live 仍是 PROXY_MANAGED」的坏状态。
+                // 不能把这个坏 live 再备份成原始配置；先用当前 provider 写回真实 live，
+                // 然后下面的严格备份才会捕获可恢复的原始快照。
+                if live_taken_over && !has_backup {
+                    match self.restore_live_from_ssot_for_app(&app) {
+                        Ok(true) => {
+                            log::info!("{app_type_str} 已先从当前 provider 重建 Live，再重新接管");
+                        }
+                        Ok(false) => {
+                            log::warn!(
+                                "{app_type_str} 无备份且 Live 被接管，但找不到当前 provider；继续走清理兜底"
+                            );
+                            self.cleanup_takeover_placeholders_in_live_for_app(&app)?;
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "{app_type_str} 从当前 provider 重建 Live 失败，将清理接管占位符后重试备份: {e}"
+                            );
+                            self.cleanup_takeover_placeholders_in_live_for_app(&app)?;
+                        }
+                    }
+                }
             }
 
             // 3) 备份 Live 配置（严格：目标 app 不存在则报错）
@@ -582,6 +567,13 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "claude")
                     {
+                        if Self::is_proxy_only_claude_provider(&provider) {
+                            log::debug!(
+                                "跳过 proxy-only Claude provider 的 Live Token 反向同步 (provider: {provider_id})"
+                            );
+                            return Ok(());
+                        }
+
                         if let Some(env) = live_config.get("env").and_then(|v| v.as_object()) {
                             let token_pair = [
                                 "ANTHROPIC_AUTH_TOKEN",
@@ -780,6 +772,256 @@ impl ProxyService {
         Ok(())
     }
 
+    fn is_proxy_only_claude_provider(provider: &Provider) -> bool {
+        matches!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.provider_type.as_deref()),
+            Some("opencode_go_subscription" | "opencode_zen_subscription")
+        )
+    }
+
+    async fn preflight_takeover_for_app(&self, app_type: &AppType) -> Result<(), String> {
+        if !matches!(app_type, AppType::Claude) {
+            return Ok(());
+        }
+
+        let Some(provider) = self.current_provider_for_app(app_type)? else {
+            return Err("Claude 本地代理接管失败：没有选中的 Claude provider。".to_string());
+        };
+        if !Self::is_proxy_only_claude_provider(&provider) {
+            return Ok(());
+        }
+
+        let effective_settings =
+            build_effective_settings_with_common_config(self.db.as_ref(), app_type, &provider)
+                .map_err(|e| format!("构建 Claude 当前供应商配置失败: {e}"))?;
+
+        Self::preflight_opencode_chat_completions(&provider, &effective_settings).await
+    }
+
+    async fn recover_failed_takeover_preflight(
+        &self,
+        app_type: &AppType,
+        mut current_config: AppProxyConfig,
+    ) {
+        let app_type_str = app_type.as_str();
+        let live_taken_over = self.detect_takeover_in_live_config_for_app(app_type);
+        if current_config.enabled || live_taken_over {
+            log::warn!("{app_type_str} 接管预检失败，正在恢复 Live 配置并关闭该应用接管状态");
+            if let Err(error) = self
+                .restore_live_config_for_app_with_fallback(app_type)
+                .await
+            {
+                log::warn!("{app_type_str} 接管预检失败后的 Live 恢复也失败: {error}");
+            }
+            current_config.enabled = false;
+            if let Err(error) = self.db.update_proxy_config_for_app(current_config).await {
+                log::warn!("{app_type_str} 接管预检失败后清除 enabled 状态失败: {error}");
+            }
+            if let Err(error) = self.db.delete_live_backup(app_type_str).await {
+                log::warn!("{app_type_str} 接管预检失败后删除备份失败: {error}");
+            }
+        }
+
+        match self.is_takeover_active().await {
+            Ok(false) => match self.db.get_global_proxy_config().await {
+                Ok(mut global_config) if global_config.proxy_enabled => {
+                    global_config.proxy_enabled = false;
+                    if let Err(error) = self.db.update_global_proxy_config(global_config).await {
+                        log::warn!("{app_type_str} 接管预检失败后关闭代理总开关失败: {error}");
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    log::warn!("{app_type_str} 接管预检失败后读取代理总开关失败: {error}");
+                }
+            },
+            Ok(true) => {}
+            Err(error) => log::warn!("{app_type_str} 接管预检失败后读取接管状态失败: {error}"),
+        }
+
+        match self.db.is_live_takeover_active().await {
+            Ok(false) if self.is_running().await => {
+                if let Err(error) = self.stop().await {
+                    log::warn!("{app_type_str} 接管预检失败后停止空闲代理失败: {error}");
+                }
+            }
+            Ok(_) => {}
+            Err(error) => log::warn!("{app_type_str} 接管预检失败后读取接管状态失败: {error}"),
+        }
+    }
+
+    async fn preflight_opencode_chat_completions(
+        provider: &Provider,
+        effective_settings: &Value,
+    ) -> Result<(), String> {
+        let env = effective_settings
+            .get("env")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                format!(
+                    "OpenCode provider `{}` 不能接管：缺少 env 配置。",
+                    provider.name
+                )
+            })?;
+        let base_url = env
+            .get("ANTHROPIC_BASE_URL")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "OpenCode provider `{}` 不能接管：缺少 ANTHROPIC_BASE_URL。",
+                    provider.name
+                )
+            })?;
+        let api_key = env
+            .get("ANTHROPIC_AUTH_TOKEN")
+            .or_else(|| env.get("ANTHROPIC_API_KEY"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "OpenCode provider `{}` 不能接管：缺少 API key。",
+                    provider.name
+                )
+            })?;
+        let model = Self::claude_preflight_model(effective_settings).ok_or_else(|| {
+            format!(
+                "OpenCode provider `{}` 不能接管：缺少可用于 Claude Code 的模型配置。",
+                provider.name
+            )
+        })?;
+        let model = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(&model).to_string();
+        let url = Self::openai_chat_completions_url(base_url);
+        let mut client_builder =
+            reqwest::Client::builder().timeout(std::time::Duration::from_secs(20));
+        if url.starts_with("http://127.0.0.1:")
+            || url.starts_with("http://localhost:")
+            || url.starts_with("http://[::1]:")
+        {
+            client_builder = client_builder.no_proxy();
+        }
+        let client = client_builder
+            .build()
+            .map_err(|e| format!("OpenCode 接管预检失败：创建 HTTP 客户端失败: {e}"))?;
+        let response = client
+            .post(&url)
+            .bearer_auth(api_key)
+            .json(&json!({
+                "model": model,
+                "stream": false,
+                "messages": [
+                    { "role": "user", "content": "Reply exactly ok." }
+                ],
+                "max_tokens": 64
+            }))
+            .send()
+            .await
+            .map_err(|e| {
+                format!(
+                    "OpenCode 接管预检失败：无法连接 `{}`。请检查端点、网络或订阅状态。详情: {e}",
+                    Self::redact_url_for_log(&url)
+                )
+            })?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!(
+                "OpenCode 接管预检失败：上游返回 HTTP {}。未写入本地代理配置，请先修复 API key、endpoint 或模型。详情: {}",
+                status.as_u16(),
+                Self::redact_preflight_body(&body, api_key)
+            ));
+        }
+
+        let parsed: Value = serde_json::from_str(&body).map_err(|e| {
+            format!(
+                "OpenCode 接管预检失败：上游返回的不是合法 JSON。详情: {e}; body={}",
+                Self::redact_preflight_body(&body, api_key)
+            )
+        })?;
+        if !Self::chat_completion_has_usable_output(&parsed) {
+            return Err(format!(
+                "OpenCode 接管预检失败：上游 2xx 但没有返回 chat completion 内容。详情: {}",
+                Self::redact_preflight_body(&body, api_key)
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn chat_completion_has_usable_output(parsed: &Value) -> bool {
+        let Some(message) = parsed.pointer("/choices/0/message") else {
+            return false;
+        };
+
+        Self::value_has_non_empty_text(message.get("content"))
+            || Self::value_has_non_empty_text(message.get("reasoning_content"))
+            || Self::value_has_non_empty_text(message.get("reasoning"))
+            || message
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .is_some_and(|items| !items.is_empty())
+    }
+
+    fn value_has_non_empty_text(value: Option<&Value>) -> bool {
+        match value {
+            Some(Value::String(text)) => !text.trim().is_empty(),
+            Some(Value::Array(items)) => items.iter().any(|item| match item {
+                Value::String(text) => !text.trim().is_empty(),
+                Value::Object(object) => object
+                    .get("text")
+                    .or_else(|| object.get("content"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| !text.trim().is_empty()),
+                _ => false,
+            }),
+            _ => false,
+        }
+    }
+
+    fn claude_preflight_model(settings: &Value) -> Option<String> {
+        let env = settings.get("env").and_then(Value::as_object)?;
+        [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        ]
+        .into_iter()
+        .find_map(|key| {
+            env.get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+    }
+
+    fn openai_chat_completions_url(base_url: &str) -> String {
+        let base = base_url.trim().trim_end_matches('/');
+        if base.to_ascii_lowercase().ends_with("/chat/completions") {
+            base.to_string()
+        } else if base.to_ascii_lowercase().ends_with("/v1") {
+            format!("{base}/chat/completions")
+        } else {
+            format!("{base}/v1/chat/completions")
+        }
+    }
+
+    fn redact_url_for_log(url: &str) -> String {
+        url.split('?').next().unwrap_or(url).to_string()
+    }
+
+    fn redact_preflight_body(body: &str, api_key: &str) -> String {
+        let redacted = body.replace(api_key, "<redacted>");
+        redacted.chars().take(800).collect()
+    }
+
     async fn sync_live_to_providers(&self) -> Result<(), String> {
         if let Ok(live_config) = self.read_claude_live() {
             self.sync_live_config_to_provider(&AppType::Claude, &live_config)
@@ -915,32 +1157,17 @@ impl ProxyService {
     async fn backup_live_configs(&self) -> Result<(), String> {
         // Claude
         if let Ok(config) = self.read_claude_live() {
-            let json_str = serde_json::to_string(&config)
-                .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?;
-            self.db
-                .save_live_backup("claude", &json_str)
-                .await
-                .map_err(|e| format!("备份 Claude 配置失败: {e}"))?;
+            self.save_live_backup_if_absent("claude", &config).await?;
         }
 
         // Codex
         if let Ok(config) = self.read_codex_live() {
-            let json_str = serde_json::to_string(&config)
-                .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?;
-            self.db
-                .save_live_backup("codex", &json_str)
-                .await
-                .map_err(|e| format!("备份 Codex 配置失败: {e}"))?;
+            self.save_live_backup_if_absent("codex", &config).await?;
         }
 
         // Gemini
         if let Ok(config) = self.read_gemini_live() {
-            let json_str = serde_json::to_string(&config)
-                .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?;
-            self.db
-                .save_live_backup("gemini", &json_str)
-                .await
-                .map_err(|e| format!("备份 Gemini 配置失败: {e}"))?;
+            self.save_live_backup_if_absent("gemini", &config).await?;
         }
 
         log::info!("已备份所有应用的 Live 配置");
@@ -956,7 +1183,26 @@ impl ProxyService {
             _ => return Err("该应用不支持代理功能".to_string()),
         };
 
-        let json_str = serde_json::to_string(&config)
+        self.save_live_backup_if_absent(app_type_str, &config).await
+    }
+
+    async fn save_live_backup_if_absent(
+        &self,
+        app_type_str: &str,
+        config: &Value,
+    ) -> Result<(), String> {
+        if self
+            .db
+            .get_live_backup(app_type_str)
+            .await
+            .map_err(|e| format!("读取 {app_type_str} Live 备份失败: {e}"))?
+            .is_some()
+        {
+            log::debug!("{app_type_str} Live 备份已存在，保留原始快照");
+            return Ok(());
+        }
+
+        let json_str = serde_json::to_string(config)
             .map_err(|e| format!("序列化 {app_type_str} 配置失败: {e}"))?;
         self.db
             .save_live_backup(app_type_str, &json_str)
@@ -1006,8 +1252,10 @@ impl ProxyService {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
         // Claude: 修改 ANTHROPIC_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
-        if let Ok(mut live_config) = self.read_claude_live() {
-            Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+        if let Ok(live_config) = self.read_claude_live() {
+            let live_config = self
+                .apply_claude_current_provider_takeover_to_live(live_config)
+                .await?;
             self.write_claude_live(&live_config)?;
             log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
         }
@@ -1056,8 +1304,10 @@ impl ProxyService {
 
         match app_type {
             AppType::Claude => {
-                let mut live_config = self.read_claude_live()?;
-                Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+                let live_config = self.read_claude_live()?;
+                let live_config = self
+                    .apply_claude_current_provider_takeover_to_live(live_config)
+                    .await?;
                 self.write_claude_live(&live_config)?;
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
             }
@@ -1106,8 +1356,10 @@ impl ProxyService {
 
         match app_type {
             AppType::Claude => {
-                if let Ok(mut live_config) = self.read_claude_live() {
-                    Self::apply_claude_takeover_fields(&mut live_config, &proxy_url);
+                if let Ok(live_config) = self.read_claude_live() {
+                    let live_config = self
+                        .apply_claude_current_provider_takeover_to_live(live_config)
+                        .await?;
                     let _ = self.write_claude_live(&live_config);
                 }
             }
@@ -1293,6 +1545,60 @@ impl ProxyService {
         }
     }
 
+    fn current_provider_for_app(&self, app_type: &AppType) -> Result<Option<Provider>, String> {
+        let current_id = crate::settings::get_effective_current_provider(&self.db, app_type)
+            .map_err(|e| format!("获取 {app_type:?} 当前供应商失败: {e}"))?;
+
+        let Some(current_id) = current_id else {
+            return Ok(None);
+        };
+
+        self.db
+            .get_provider_by_id(&current_id, app_type.as_str())
+            .map_err(|e| format!("读取 {app_type:?} 当前供应商失败: {e}"))
+    }
+
+    async fn claude_takeover_live_matches_current_provider(&self) -> Result<bool, String> {
+        let Some(provider) = self.current_provider_for_app(&AppType::Claude)? else {
+            return Ok(false);
+        };
+
+        let live = self.read_claude_live()?;
+        let live_env = match live.get("env").and_then(Value::as_object) {
+            Some(env) => env,
+            None => return Ok(false),
+        };
+
+        let mut expected = build_effective_settings_with_common_config(
+            self.db.as_ref(),
+            &AppType::Claude,
+            &provider,
+        )
+        .map_err(|e| format!("构建 Claude 当前供应商配置失败: {e}"))?;
+        let (proxy_url, _) = self.build_proxy_urls().await?;
+        Self::apply_claude_takeover_fields(&mut expected, &proxy_url);
+        let expected_env = match expected.get("env").and_then(Value::as_object) {
+            Some(env) => env,
+            None => return Ok(false),
+        };
+
+        for key in [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+        ] {
+            if live_env.get(key) != expected_env.get(key) {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
     /// 当 Live 备份缺失时，尝试用 SSOT（当前供应商）写回 Live，以解除占位符接管。
     ///
     /// 返回值：
@@ -1315,8 +1621,15 @@ impl ProxyService {
             return Ok(false);
         };
 
-        write_live_with_common_config(self.db.as_ref(), app_type, provider)
-            .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+        if matches!(app_type, AppType::Claude) {
+            let effective_settings =
+                build_effective_settings_with_common_config(self.db.as_ref(), app_type, provider)
+                    .map_err(|e| format!("构建 {app_type:?} Live 配置失败: {e}"))?;
+            self.write_live_config_for_app(app_type, &effective_settings)?;
+        } else {
+            write_live_with_common_config(self.db.as_ref(), app_type, provider)
+                .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+        }
 
         Ok(true)
     }
@@ -1638,7 +1951,7 @@ impl ProxyService {
             .map_err(|e| format!("读取 {app_type} 备份失败: {e}"))?
             .is_some();
         let live_taken_over = self.detect_takeover_in_live_config_for_app(&app_type_enum);
-        let should_sync_backup = has_backup || live_taken_over;
+        let should_sync_proxy_live = has_backup || live_taken_over;
 
         self.db
             .set_current_provider(app_type_enum.as_str(), provider_id)
@@ -1646,14 +1959,9 @@ impl ProxyService {
         crate::settings::set_current_provider(&app_type_enum, Some(provider_id))
             .map_err(|e| format!("更新本地当前供应商失败: {e}"))?;
 
-        if should_sync_backup {
-            self.update_live_backup_from_provider_inner(app_type, &provider)
+        if should_sync_proxy_live && matches!(app_type_enum, AppType::Claude) {
+            self.sync_claude_live_from_provider_while_proxy_active(&provider)
                 .await?;
-
-            if matches!(app_type_enum, AppType::Claude) {
-                self.sync_claude_live_from_provider_while_proxy_active(&provider)
-                    .await?;
-            }
         }
 
         if let Some(server) = self.server.read().await.as_ref() {
@@ -2083,6 +2391,43 @@ mod tests {
         }
     }
 
+    async fn spawn_opencode_mock(
+        status: u16,
+        body: &'static str,
+    ) -> (
+        String,
+        tokio::sync::oneshot::Receiver<String>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock server");
+        let addr = listener.local_addr().expect("mock local addr");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = vec![0_u8; 8192];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let _ = tx.send(request);
+                let response = format!(
+                    "HTTP/1.1 {status} OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        (
+            format!("http://{addr}/zen/go/v1/chat/completions"),
+            rx,
+            handle,
+        )
+    }
+
     #[test]
     fn update_toml_base_url_updates_active_model_provider_base_url() {
         let input = r#"
@@ -2257,9 +2602,1109 @@ model = "gpt-5.1-codex"
         );
     }
 
+    #[test]
+    fn claude_takeover_preserves_env_and_exposes_haiku_one_m_role() {
+        let mut config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+                "ENABLE_TOOL_SEARCH": "true",
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+                "API_TIMEOUT_MS": "3000000",
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1
+            },
+            "model": "opus"
+        });
+
+        ProxyService::apply_claude_takeover_fields(&mut config, "http://127.0.0.1:15721");
+
+        assert!(
+            config.get("model").is_none(),
+            "takeover should not leave a stale top-level model selector"
+        );
+        let env = config
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env object");
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(Value::as_str),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(Value::as_str),
+            Some("http://127.0.0.1:15721")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-pro[1M]")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-pro[1M]")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-flash[1M]")
+        );
+        assert_eq!(env.get("ENABLE_TOOL_SEARCH"), Some(&json!("true")));
+        assert_eq!(
+            env.get("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"),
+            Some(&json!(1))
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_MODEL").and_then(Value::as_str),
+            Some("deepseek-v4-flash[1M]"),
+            "takeover should keep the user's configured default model visible"
+        );
+    }
+
     #[tokio::test]
     #[serial]
-    async fn switch_proxy_target_updates_live_backup_when_taken_over() {
+    async fn claude_restore_returns_exact_pre_takeover_snapshot() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let original = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+                "ENABLE_TOOL_SEARCH": "true",
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+                "API_TIMEOUT_MS": "3000000",
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1
+            }
+        });
+
+        service
+            .write_claude_live(&original)
+            .expect("write original live");
+        service
+            .backup_live_config_strict(&AppType::Claude)
+            .await
+            .expect("backup original");
+        service
+            .takeover_live_config_strict(&AppType::Claude)
+            .await
+            .expect("takeover live");
+
+        let mut polluted = service.read_claude_live().expect("read takeover live");
+        polluted["model"] = json!("opus");
+        service
+            .write_claude_live(&polluted)
+            .expect("simulate claude model write");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Claude)
+            .await
+            .expect("restore live");
+
+        assert_eq!(
+            service.read_claude_live().expect("read restored live"),
+            original
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_without_backup_rebuilds_opencode_live_with_real_provider_config() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let mut provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "opencode-go")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("opencode-go"))
+            .expect("set local current");
+
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]"
+                }
+            }))
+            .expect("seed stale takeover live");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Claude)
+            .await
+            .expect("restore fallback");
+
+        let live = service.read_claude_live().expect("read live");
+        let env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env object");
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(Value::as_str),
+            Some("https://opencode.ai/zen/go/v1/chat/completions")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(Value::as_str),
+            Some("sk-test")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-pro[1M]")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn opencode_takeover_preflight_rejects_invalid_upstream_without_touching_live() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let (base_url, request_rx, server) =
+            spawn_opencode_mock(401, r#"{"error":{"message":"Invalid API key."}}"#).await;
+
+        let original = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "direct-key",
+                "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+            }
+        });
+        service
+            .write_claude_live(&original)
+            .expect("write original live");
+
+        let mut provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "bad-key",
+                    "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "opencode-go")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("opencode-go"))
+            .expect("set local current");
+
+        let error = service
+            .set_takeover_for_app("claude", true)
+            .await
+            .expect_err("preflight should reject invalid upstream");
+        assert!(error.contains("HTTP 401"), "{error}");
+
+        let request = request_rx.await.expect("mock request");
+        assert!(
+            request.contains(r#""model":"deepseek-v4-flash""#),
+            "preflight should strip local [1M] before calling OpenCode: {request}"
+        );
+        server.await.expect("mock server task");
+        assert_eq!(service.read_claude_live().expect("read live"), original);
+        assert!(
+            !db.get_proxy_config_for_app("claude")
+                .await
+                .expect("proxy config")
+                .enabled,
+            "failed preflight must not persist enabled=true"
+        );
+        assert!(
+            db.get_live_backup("claude")
+                .await
+                .expect("read backup")
+                .is_none(),
+            "failed preflight must not create a restore backup"
+        );
+        assert!(
+            !service.is_running().await,
+            "failed preflight should happen before starting the local proxy"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn opencode_takeover_preflight_accepts_valid_upstream_and_uses_current_models() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let (base_url, request_rx, server) = spawn_opencode_mock(
+            200,
+            r#"{"choices":[{"message":{"content":"pong"}}]}"#,
+        )
+        .await;
+
+        let original = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "direct-key",
+                "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+            }
+        });
+        service
+            .write_claude_live(&original)
+            .expect("write original live");
+
+        let mut provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "valid-key",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "opencode-go")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("opencode-go"))
+            .expect("set local current");
+
+        service
+            .set_takeover_for_app("claude", true)
+            .await
+            .expect("valid OpenCode preflight should allow takeover");
+        let request = request_rx.await.expect("mock request");
+        assert!(
+            request.contains(r#""model":"deepseek-v4-flash""#),
+            "preflight should call OpenCode with the stripped upstream model: {request}"
+        );
+        server.await.expect("mock server task");
+
+        let live = service.read_claude_live().expect("read takeover live");
+        let env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("live env");
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN"),
+            Some(&json!(PROXY_TOKEN_PLACEHOLDER))
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL"),
+            Some(&json!("http://127.0.0.1:15721"))
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_MODEL"),
+            Some(&json!("deepseek-v4-flash[1M]"))
+        );
+        assert!(
+            db.get_proxy_config_for_app("claude")
+                .await
+                .expect("proxy config")
+                .enabled,
+            "successful preflight should persist enabled=true"
+        );
+
+        service
+            .stop_with_restore()
+            .await
+            .expect("restore after positive preflight");
+        assert_eq!(service.read_claude_live().expect("restored live"), original);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn opencode_takeover_preflight_accepts_reasoning_only_upstream_response() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let (base_url, request_rx, server) = spawn_opencode_mock(
+            200,
+            r#"{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"We are asked to reply exactly ok."},"finish_reason":"length"}]}"#,
+        )
+        .await;
+
+        let original = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+                "ANTHROPIC_AUTH_TOKEN": "direct-key",
+                "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+            }
+        });
+        service
+            .write_claude_live(&original)
+            .expect("write original live");
+
+        let mut provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "valid-key",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "opencode-go")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("opencode-go"))
+            .expect("set local current");
+
+        service
+            .set_takeover_for_app("claude", true)
+            .await
+            .expect("reasoning-only OpenCode preflight should allow takeover");
+        let request = request_rx.await.expect("mock request");
+        assert!(
+            request.contains(r#""max_tokens":64"#),
+            "preflight should leave enough room for reasoning models: {request}"
+        );
+        server.await.expect("mock server task");
+
+        service
+            .stop_with_restore()
+            .await
+            .expect("restore after reasoning-only preflight");
+        assert_eq!(service.read_claude_live().expect("restored live"), original);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_proxy_lifecycle_preserves_plugins_during_takeover_and_restores_exact_snapshot()
+    {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let (base_url, _request_rx, server) = spawn_opencode_mock(
+            200,
+            r#"{"choices":[{"message":{"content":"pong"}}]}"#,
+        )
+        .await;
+
+        let original = json!({
+            "enabledPlugins": {
+                "chrome-devtools-mcp@claude-plugins-official": true,
+                "github@claude-plugins-official": true,
+                "pua@pua-skills": true
+            },
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+                "ANTHROPIC_AUTH_TOKEN": "sk-original",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]",
+                "ENABLE_TOOL_SEARCH": "true",
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+                "API_TIMEOUT_MS": "3000000"
+            },
+            "permissions": {
+                "defaultMode": "auto"
+            },
+            "skillListingBudgetFraction": 0.1,
+            "skipAutoPermissionPrompt": true,
+            "skipDangerousModePermissionPrompt": true,
+            "model": "sonnet"
+        });
+        service
+            .write_claude_live(&original)
+            .expect("write original live");
+
+        let mut provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "valid-key",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "opencode-go")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("opencode-go"))
+            .expect("set local current");
+
+        service
+            .set_takeover_for_app("claude", true)
+            .await
+            .expect("enable proxy takeover");
+        server.await.expect("mock server task");
+
+        let taken_over = service.read_claude_live().expect("read takeover live");
+        assert_eq!(
+            taken_over.get("enabledPlugins"),
+            original.get("enabledPlugins"),
+            "proxy takeover must keep Claude Code plugin enablement"
+        );
+        assert_eq!(
+            taken_over.get("permissions"),
+            original.get("permissions"),
+            "proxy takeover must keep Claude Code permission settings"
+        );
+        assert_eq!(
+            taken_over.get("skillListingBudgetFraction"),
+            original.get("skillListingBudgetFraction"),
+            "proxy takeover must keep plugin/skill budget settings"
+        );
+        assert_eq!(
+            taken_over.get("skipAutoPermissionPrompt"),
+            original.get("skipAutoPermissionPrompt"),
+            "proxy takeover must keep prompt settings used by plugins"
+        );
+        assert_eq!(
+            taken_over.get("skipDangerousModePermissionPrompt"),
+            original.get("skipDangerousModePermissionPrompt"),
+            "proxy takeover must keep dangerous-mode prompt settings"
+        );
+        assert!(
+            taken_over.get("model").is_none(),
+            "takeover should still isolate Claude Code's transient model selector"
+        );
+
+        let mut polluted = taken_over;
+        polluted["model"] = json!("opus");
+        service
+            .write_claude_live(&polluted)
+            .expect("simulate Claude Code writing transient model");
+
+        service
+            .set_takeover_for_app("claude", false)
+            .await
+            .expect("disable proxy takeover");
+        assert_eq!(
+            service.read_claude_live().expect("read restored live"),
+            original,
+            "disabling proxy must restore the exact pre-takeover settings.json snapshot"
+        );
+        assert!(
+            db.get_live_backup("claude")
+                .await
+                .expect("read live backup")
+                .is_none(),
+            "successful restore should remove the sensitive live backup"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn opencode_startup_preflight_failure_restores_stale_takeover_and_disables_state() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let (base_url, _request_rx, server) =
+            spawn_opencode_mock(401, r#"{"error":{"message":"Invalid API key."}}"#).await;
+
+        let original = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "direct-key",
+                "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+            }
+        });
+        let taken_over = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
+                "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+            }
+        });
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&original).expect("serialize"),
+        )
+        .await
+        .expect("save backup");
+        service
+            .write_claude_live(&taken_over)
+            .expect("write stale takeover live");
+
+        let mut config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("get proxy config");
+        config.enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("mark enabled");
+        let mut global_config = db
+            .get_global_proxy_config()
+            .await
+            .expect("get global proxy config");
+        global_config.proxy_enabled = true;
+        db.update_global_proxy_config(global_config)
+            .await
+            .expect("mark global proxy enabled");
+
+        let mut provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "bad-key",
+                    "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "opencode-go")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("opencode-go"))
+            .expect("set local current");
+
+        let error = service
+            .set_takeover_for_app("claude", true)
+            .await
+            .expect_err("startup preflight should reject invalid upstream");
+        assert!(error.contains("HTTP 401"), "{error}");
+        server.await.expect("mock server task");
+
+        assert_eq!(service.read_claude_live().expect("read live"), original);
+        assert!(
+            !db.get_proxy_config_for_app("claude")
+                .await
+                .expect("proxy config")
+                .enabled,
+            "failed startup restore must clear enabled=true"
+        );
+        assert!(
+            !db.get_global_proxy_config()
+                .await
+                .expect("global proxy config")
+                .proxy_enabled,
+            "failed startup restore must clear proxy_enabled=true when no app remains active"
+        );
+        assert!(
+            db.get_live_backup("claude")
+                .await
+                .expect("read backup")
+                .is_none(),
+            "restored startup failure should delete consumed backup"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_takeover_uses_current_provider_models_while_preserving_original_live_shell() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let original_siliconflow = json!({
+            "enabledPlugins": {
+                "github@claude-plugins-official": true
+            },
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.siliconflow.cn",
+                "ANTHROPIC_AUTH_TOKEN": "siliconflow-key",
+                "ANTHROPIC_MODEL": "deepseek-ai/DeepSeek-V4-Flash[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-ai/DeepSeek-V4-Flash[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-ai/DeepSeek-V4-Flash[1M]",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-ai/DeepSeek-V4-Flash[1M]",
+                "ENABLE_TOOL_SEARCH": "true",
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+            },
+            "permissions": {
+                "defaultMode": "auto"
+            },
+            "model": "opus"
+        });
+        service
+            .write_claude_live(&original_siliconflow)
+            .expect("write original live shell");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&original_siliconflow).expect("serialize backup"),
+        )
+        .await
+        .expect("seed original backup");
+
+        let mut opencode = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+                    "ANTHROPIC_AUTH_TOKEN": "opencode-key",
+                    "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+                    "API_TIMEOUT_MS": "3000000"
+                }
+            }),
+            None,
+        );
+        opencode.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &opencode)
+            .expect("save opencode");
+        db.set_current_provider("claude", "opencode-go")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("opencode-go"))
+            .expect("set local current");
+
+        service
+            .takeover_live_config_strict(&AppType::Claude)
+            .await
+            .expect("strict takeover");
+
+        let live = service.read_claude_live().expect("read takeover live");
+        assert!(
+            live.get("model").is_none(),
+            "takeover should remove stale Claude Code top-level model selection"
+        );
+        assert_eq!(
+            live.get("enabledPlugins")
+                .and_then(|plugins| plugins.get("github@claude-plugins-official"))
+                .and_then(Value::as_bool),
+            Some(true),
+            "takeover should preserve non-provider top-level live settings"
+        );
+        assert_eq!(
+            live.get("permissions")
+                .and_then(|permissions| permissions.get("defaultMode"))
+                .and_then(Value::as_str),
+            Some("auto"),
+            "takeover should preserve user permission settings"
+        );
+
+        let env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env object");
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(Value::as_str),
+            Some("http://127.0.0.1:15721")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(Value::as_str),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_MODEL").and_then(Value::as_str),
+            Some("deepseek-v4-flash[1M]")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-pro[1M]")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-pro[1M]")
+        );
+        assert_eq!(
+            env.get("ENABLE_TOOL_SEARCH").and_then(Value::as_str),
+            Some("true"),
+            "provider takeover should keep non-model env already present in the live shell"
+        );
+        assert_eq!(
+            env.get("API_TIMEOUT_MS").and_then(Value::as_str),
+            Some("3000000"),
+            "provider env should be merged into takeover live"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read backup")
+            .expect("backup exists");
+        let backup_config: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup");
+        assert_eq!(backup_config, original_siliconflow);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn backup_live_config_strict_preserves_existing_original_snapshot() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let original = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.siliconflow.cn",
+                "ANTHROPIC_AUTH_TOKEN": "siliconflow-key"
+            }
+        });
+        let later_live = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+                "ANTHROPIC_AUTH_TOKEN": "opencode-key"
+            }
+        });
+
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&original).expect("serialize original"),
+        )
+        .await
+        .expect("seed original backup");
+        service
+            .write_claude_live(&later_live)
+            .expect("write later live");
+
+        service
+            .backup_live_config_strict(&AppType::Claude)
+            .await
+            .expect("backup should be idempotent");
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read backup")
+            .expect("backup exists");
+        let backup_config: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup");
+        assert_eq!(
+            backup_config, original,
+            "existing original backup must not be overwritten by later live state"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_takeover_resyncs_stale_live_models_without_touching_original_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let original_siliconflow = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.siliconflow.cn",
+                "ANTHROPIC_AUTH_TOKEN": "siliconflow-key",
+                "ANTHROPIC_MODEL": "deepseek-ai/DeepSeek-V4-Flash[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-ai/DeepSeek-V4-Flash[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-ai/DeepSeek-V4-Flash[1M]",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-ai/DeepSeek-V4-Flash[1M]"
+            }
+        });
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&original_siliconflow).expect("serialize backup"),
+        )
+        .await
+        .expect("save backup");
+
+        let mut opencode = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+                    "ANTHROPIC_AUTH_TOKEN": "opencode-key",
+                    "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]"
+                }
+            }),
+            None,
+        );
+        opencode.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &opencode)
+            .expect("save opencode");
+        db.set_current_provider("claude", "opencode-go")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("opencode-go"))
+            .expect("set local current");
+
+        let mut stale_live = original_siliconflow.clone();
+        ProxyService::apply_claude_takeover_fields(&mut stale_live, "http://127.0.0.1:15721");
+        service
+            .write_claude_live(&stale_live)
+            .expect("write stale takeover live");
+
+        assert!(
+            !service
+                .claude_takeover_live_matches_current_provider()
+                .await
+                .expect("check stale live"),
+            "stale SiliconFlow takeover live should not match current OpenCode provider"
+        );
+
+        service
+            .sync_claude_live_from_provider_while_proxy_active(&opencode)
+            .await
+            .expect("sync current provider into takeover live");
+
+        let live = service.read_claude_live().expect("read live");
+        let env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env object");
+        assert_eq!(
+            env.get("ANTHROPIC_MODEL").and_then(Value::as_str),
+            Some("deepseek-v4-flash[1M]")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-pro[1M]")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(Value::as_str),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read backup")
+            .expect("backup exists");
+        let backup_config: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup");
+        assert_eq!(backup_config, original_siliconflow);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_without_backup_rebuilds_codex_live_through_provider_writer() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "rightcode".to_string(),
+            "RightCode".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "rightcode-key"
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).expect("save provider");
+        db.set_current_provider("codex", "rightcode")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Codex, Some("rightcode"))
+            .expect("set local current");
+
+        service
+            .write_codex_live(&json!({
+                "auth": {
+                    "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }))
+            .expect("seed stale takeover live");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore fallback");
+
+        let live = service.read_codex_live().expect("read Codex live");
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(Value::as_str),
+            Some("rightcode-key")
+        );
+        let config = live
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config string");
+        let parsed: toml::Value = toml::from_str(config).expect("parse config");
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("rightcode"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(toml::Value::as_str),
+            Some("https://rightcode.example/v1")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_without_backup_rebuilds_gemini_live_through_provider_writer() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "gemini-direct".to_string(),
+            "Gemini Direct".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
+                }
+            }),
+            None,
+        );
+        db.save_provider("gemini", &provider)
+            .expect("save provider");
+        db.set_current_provider("gemini", "gemini-direct")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Gemini, Some("gemini-direct"))
+            .expect("set local current");
+
+        service
+            .write_gemini_live(&json!({
+                "env": {
+                    "GEMINI_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                    "GOOGLE_GEMINI_BASE_URL": "http://127.0.0.1:15721"
+                }
+            }))
+            .expect("seed stale takeover live");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Gemini)
+            .await
+            .expect("restore fallback");
+
+        let live = service.read_gemini_live().expect("read Gemini live");
+        let env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env object");
+        assert_eq!(
+            env.get("GEMINI_API_KEY").and_then(Value::as_str),
+            Some("gemini-key")
+        );
+        assert_eq!(
+            env.get("GOOGLE_GEMINI_BASE_URL").and_then(Value::as_str),
+            Some("https://generativelanguage.googleapis.com")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn switch_proxy_target_preserves_original_live_backup_when_taken_over() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
@@ -2293,10 +3738,13 @@ model = "gpt-5.1-codex"
         db.set_current_provider("claude", "a")
             .expect("set current provider");
 
-        // 模拟"已接管"状态：存在 Live 备份（内容不重要，会被热切换更新）
-        db.save_live_backup("claude", "{\"env\":{}}")
-            .await
-            .expect("seed live backup");
+        let original_backup = json!({"env": {"ANTHROPIC_API_KEY": "a-key"}});
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&original_backup).expect("serialize original backup"),
+        )
+        .await
+        .expect("seed live backup");
 
         service
             .switch_proxy_target("claude", "b")
@@ -2309,14 +3757,16 @@ model = "gpt-5.1-codex"
             Some("b")
         );
 
-        // 断言：Live 备份已更新为目标供应商配置（用于 stop_with_restore 恢复）
+        // 断言：Live 备份仍是启用代理前的原始配置，热切换不能覆盖恢复快照。
         let backup = db
             .get_live_backup("claude")
             .await
             .expect("get live backup")
             .expect("backup exists");
-        let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
-        assert_eq!(backup.original_config, expected);
+        assert_eq!(
+            backup.original_config,
+            serde_json::to_string(&original_backup).expect("serialize")
+        );
     }
 
     #[tokio::test]
@@ -2411,11 +3861,12 @@ model = "gpt-5.1-codex"
             Some("http://127.0.0.1:15721"),
             "takeover proxy URL should remain active"
         );
-        assert!(
+        assert_eq!(
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_MODEL"))
-                .is_none(),
-            "fallback model override should be removed in takeover mode"
+                .and_then(|v| v.as_str()),
+            Some("claude-new"),
+            "takeover mode should preserve the provider's visible fallback model"
         );
         let live_env = live
             .get("env")
@@ -2425,8 +3876,8 @@ model = "gpt-5.1-codex"
             live_env
                 .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
                 .and_then(|v| v.as_str()),
-            Some("claude-haiku-4-5"),
-            "takeover mode should expose a stable Haiku role model"
+            Some("deepseek-v4-flash"),
+            "model menu should show the provider Haiku model directly"
         );
         assert_eq!(
             live_env
@@ -2439,8 +3890,8 @@ model = "gpt-5.1-codex"
             live_env
                 .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
                 .and_then(|v| v.as_str()),
-            Some("claude-sonnet-4-6[1M]"),
-            "Sonnet role should carry the local 1M declaration for Claude Code"
+            Some("deepseek-v4-pro[1M]"),
+            "Sonnet role should keep the provider 1M model visible"
         );
         assert_eq!(
             live_env
@@ -2453,15 +3904,8 @@ model = "gpt-5.1-codex"
             live_env
                 .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
                 .and_then(|v| v.as_str()),
-            Some("claude-opus-4-7[1M]"),
-            "Opus role should preserve the current provider 1M capability marker"
-        );
-        assert_eq!(
-            live_env
-                .get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
-                .and_then(|v| v.as_str()),
-            Some("deepseek-v4-ultra"),
-            "implicit display names should strip the local 1M marker"
+            Some("deepseek-v4-ultra [1m]"),
+            "Opus role should keep the provider 1M model visible"
         );
 
         let backup = db
@@ -2469,7 +3913,7 @@ model = "gpt-5.1-codex"
             .await
             .expect("get live backup")
             .expect("backup exists");
-        let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
+        let expected = serde_json::to_string(&provider_a.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
     }
 
@@ -2513,9 +3957,13 @@ model = "gpt-5.1-codex"
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("a"))
             .expect("set local current provider");
-        db.save_live_backup("claude", "{\"env\":{}}")
-            .await
-            .expect("seed live backup");
+        let original_backup = json!({"env": {"ANTHROPIC_API_KEY": "original"}});
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&original_backup).expect("serialize original backup"),
+        )
+        .await
+        .expect("seed live backup");
 
         let guard = service.lock_switch_for_test("claude").await;
         let service_for_b = service.clone();
@@ -2562,13 +4010,13 @@ model = "gpt-5.1-codex"
             .await
             .expect("get live backup")
             .expect("backup exists");
-        let expected = serde_json::to_string(&provider_c.settings_config).expect("serialize");
+        let expected = serde_json::to_string(&original_backup).expect("serialize");
         assert_eq!(backup.original_config, expected);
     }
 
     #[tokio::test]
     #[serial]
-    async fn restore_waits_for_hot_switch_and_restores_latest_backup() {
+    async fn restore_waits_for_hot_switch_and_restores_original_backup() {
         use tokio::time::{sleep, Duration};
 
         let _home = TempHome::new();
@@ -2644,11 +4092,11 @@ model = "gpt-5.1-codex"
             .await
             .expect("get live backup")
             .expect("backup exists");
-        let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
+        let expected = serde_json::to_string(&provider_a.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
         assert_eq!(
             service.read_claude_live().expect("read live"),
-            provider_b.settings_config
+            provider_a.settings_config
         );
     }
 
@@ -2769,6 +4217,69 @@ base_url = "https://codex.example/v1"
 
     #[tokio::test]
     #[serial]
+    async fn stop_with_restore_restores_live_and_clears_enabled_for_app_exit() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let original = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_AUTH_TOKEN": "real-token"
+            }
+        });
+        let taken_over = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:15722",
+                "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER
+            }
+        });
+
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&original).expect("serialize"),
+        )
+        .await
+        .expect("save backup");
+        service
+            .write_claude_live(&taken_over)
+            .expect("write taken over live");
+
+        let mut config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("get claude proxy config");
+        config.enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("mark takeover enabled");
+
+        service
+            .stop_with_restore()
+            .await
+            .expect("restore on app exit");
+
+        assert_eq!(service.read_claude_live().expect("read live"), original);
+        assert!(
+            !db.get_proxy_config_for_app("claude")
+                .await
+                .expect("get claude proxy config")
+                .enabled,
+            "normal app exit should clear enabled so startup does not reapply takeover"
+        );
+        assert!(
+            db.get_live_backup("claude")
+                .await
+                .expect("read backup")
+                .is_none(),
+            "backup should be deleted after a successful restore"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn update_live_backup_from_provider_preserves_codex_mcp_servers() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
@@ -2844,7 +4355,7 @@ base_url = "https://new.example/v1"
 
     #[tokio::test]
     #[serial]
-    async fn hot_switch_codex_provider_keeps_model_provider_stable_in_backup_and_restore() {
+    async fn hot_switch_codex_provider_preserves_original_backup_and_restore() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
@@ -2954,8 +4465,8 @@ requires_openai_auth = true
                 .get("rightcode")
                 .and_then(|v| v.get("base_url"))
                 .and_then(|v| v.as_str()),
-            Some("https://aihubmix.example/v1"),
-            "stable provider id should point at the hot-switched provider endpoint"
+            Some("https://rightcode.example/v1"),
+            "hot switch must not rewrite the original restore backup endpoint"
         );
 
         service
@@ -2978,8 +4489,8 @@ requires_openai_auth = true
             live.get("auth")
                 .and_then(|auth| auth.get("OPENAI_API_KEY"))
                 .and_then(|v| v.as_str()),
-            Some("aihubmix-key"),
-            "restore should still use the hot-switched provider auth"
+            Some("rightcode-key"),
+            "restore should return to the original pre-takeover auth"
         );
     }
 

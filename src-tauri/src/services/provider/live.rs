@@ -35,6 +35,21 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
+/// Strip Claude Code runtime fields when reading live settings back into provider settings_config.
+/// These fields are written by Claude Code at runtime and should not be persisted in provider config.
+pub(crate) fn sanitize_claude_settings_from_live(settings: &Value) -> Value {
+    let mut v = settings.clone();
+    if let Some(obj) = v.as_object_mut() {
+        // Claude Code runtime fields - not provider configuration
+        obj.remove("enabledPlugins");
+        obj.remove("installedPlugins");
+        obj.remove("skipDangerousModePermissionPrompt");
+        obj.remove("projects");
+        obj.remove("mcpServers");
+    }
+    v
+}
+
 pub(crate) fn provider_exists_in_live_config(
     app_type: &AppType,
     provider_id: &str,
@@ -370,6 +385,50 @@ pub(crate) fn provider_uses_common_config(
     }
 }
 
+pub(crate) fn is_claude_proxy_only_provider(app_type: &AppType, provider: &Provider) -> bool {
+    matches!(app_type, AppType::Claude)
+        && provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            .is_some_and(|provider_type| {
+                provider_type == "opencode_go_subscription"
+                    || provider_type == "opencode_zen_subscription"
+            })
+}
+
+fn preserve_proxy_only_upstream_fields(settings: &mut Value, source: &Value) {
+    const PROTECTED_ENV_KEYS: &[&str] = &[
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    ];
+
+    let Some(source_env) = source.get("env").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(target_env) = settings
+        .as_object_mut()
+        .and_then(|obj| obj.get_mut("env"))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+
+    for key in PROTECTED_ENV_KEYS {
+        if let Some(value) = source_env.get(*key) {
+            target_env.insert((*key).to_string(), value.clone());
+        } else {
+            target_env.remove(*key);
+        }
+    }
+}
+
 pub(crate) fn remove_common_config_from_settings(
     app_type: &AppType,
     settings: &Value,
@@ -505,6 +564,10 @@ pub(crate) fn build_effective_settings_with_common_config(
         }
     }
 
+    if is_claude_proxy_only_provider(app_type, provider) {
+        preserve_proxy_only_upstream_fields(&mut effective_settings, &provider.settings_config);
+    }
+
     Ok(effective_settings)
 }
 
@@ -516,6 +579,36 @@ pub(crate) fn write_live_with_common_config(
     let mut effective_provider = provider.clone();
     effective_provider.settings_config =
         build_effective_settings_with_common_config(db, app_type, provider)?;
+
+    // Proxy-only providers (OpenCode Go/Zen) must never write their upstream
+    // API key into the local settings.json. Instead, inject a placeholder
+    // token — the proxy owns the real credentials.
+    if matches!(app_type, AppType::Claude)
+        && provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            .is_some_and(|t| t == "opencode_go_subscription" || t == "opencode_zen_subscription")
+    {
+        if let Some(env) = effective_provider
+            .settings_config
+            .as_object_mut()
+            .and_then(|o| o.get_mut("env"))
+            .and_then(|v| v.as_object_mut())
+        {
+            env.remove("ANTHROPIC_AUTH_TOKEN");
+            env.remove("ANTHROPIC_API_KEY");
+            env.remove("OPENAI_API_KEY");
+            env.insert(
+                "ANTHROPIC_AUTH_TOKEN".to_string(),
+                serde_json::json!("PROXY_MANAGED"),
+            );
+        }
+        log::info!(
+            "已代理 Claude proxy-only 供应商 '{}' 的 settings 写入（token 已替换为占位符）",
+            effective_provider.id
+        );
+    }
 
     if matches!(app_type, AppType::ClaudeDesktop) {
         crate::claude_desktop_config::apply_provider(db, &effective_provider)?;
@@ -972,7 +1065,8 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                     "Claude settings file is missing",
                 ));
             }
-            read_json_file(&path)
+            let v: Value = read_json_file(&path)?;
+            Ok(sanitize_claude_settings_from_live(&v))
         }
         AppType::ClaudeDesktop => Err(AppError::localized(
             "claude_desktop.live.read_unsupported",
@@ -1102,7 +1196,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             }
             let mut v = read_json_file::<Value>(&settings_path)?;
             let _ = normalize_claude_models_in_value(&mut v);
-            v
+            sanitize_claude_settings_from_live(&v)
         }
         AppType::ClaudeDesktop => {
             return Err(AppError::localized(

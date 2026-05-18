@@ -2,21 +2,28 @@
 
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
+use crate::provider::Provider;
+use crate::proxy::{server::ProxyServer, types::ProxyServerInfo};
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
+use tokio::sync::Mutex;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+static TERMINAL_PROXY_SERVERS: Lazy<Mutex<HashMap<String, Arc<ProxyServer>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// 打开外部链接
 #[tauri::command]
@@ -560,27 +567,6 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
     }
 }
 
-fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Path) {
-    if home.as_os_str().is_empty() {
-        return;
-    }
-
-    let mise_base = home.join(".local/share/mise");
-    push_unique_path(paths, mise_base.join("shims"));
-
-    let node_installs = mise_base.join("installs").join("node");
-    if node_installs.exists() {
-        if let Ok(entries) = std::fs::read_dir(&node_installs) {
-            for entry in entries.flatten() {
-                let bin_path = entry.path().join("bin");
-                if bin_path.exists() {
-                    push_unique_path(paths, bin_path);
-                }
-            }
-        }
-    }
-}
-
 /// 扫描常见路径查找 CLI
 fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     use std::process::Command;
@@ -594,7 +580,6 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
-        extend_mise_node_search_paths(&mut search_paths, &home);
     }
 
     #[cfg(target_os = "macos")]
@@ -774,15 +759,162 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
-    // 从提供商配置中提取环境变量
-    let config = &provider.settings_config;
-    let env_vars = extract_env_vars_from_config(config, &app_type);
+    let isolated_claude_config =
+        app_type == AppType::Claude && is_opencode_subscription_provider(provider);
+    let env_vars = if isolated_claude_config {
+        let proxy_info = start_isolated_provider_terminal_proxy(state.inner(), &app_type, provider)
+            .await
+            .map_err(|e| format!("启动隔离供应商代理失败: {e}"))?;
+        build_claude_proxy_terminal_env(&proxy_info, provider)
+    } else {
+        // 从提供商配置中提取环境变量
+        extract_env_vars_from_config(&provider.settings_config, &app_type)
+    };
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
-        .map_err(|e| format!("启动终端失败: {e}"))?;
+    launch_terminal_with_env(
+        env_vars,
+        &providerId,
+        launch_cwd.as_deref(),
+        isolated_claude_config,
+    )
+    .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
+}
+
+fn is_opencode_subscription_provider(provider: &Provider) -> bool {
+    matches!(
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref()),
+        Some("opencode_go_subscription" | "opencode_zen_subscription")
+    )
+}
+
+async fn start_isolated_provider_terminal_proxy(
+    state: &crate::store::AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<ProxyServerInfo, String> {
+    let key = format!("{}:{}", app_type.as_str(), provider.id);
+
+    let previous = {
+        let mut servers = TERMINAL_PROXY_SERVERS.lock().await;
+        servers.remove(&key)
+    };
+    if let Some(server) = previous {
+        if let Err(e) = server.stop().await {
+            log::warn!("停止旧的供应商终端隔离代理失败（将继续重启）: {e}");
+        }
+    }
+
+    let mut config = state
+        .db
+        .get_proxy_config()
+        .await
+        .map_err(|e| format!("获取代理配置失败: {e}"))?;
+    config.listen_address = "127.0.0.1".to_string();
+    config.listen_port = allocate_terminal_proxy_port()?;
+    config.live_takeover_active = false;
+
+    let server = Arc::new(ProxyServer::new_forced_provider_snapshot(
+        config,
+        state.db.clone(),
+        None,
+        app_type.as_str().to_string(),
+        provider.clone(),
+    ));
+    let info = server
+        .start()
+        .await
+        .map_err(|e| format!("启动 forced-provider 代理失败: {e}"))?;
+    server
+        .set_active_target(app_type.as_str(), &provider.id, &provider.name)
+        .await;
+
+    let mut servers = TERMINAL_PROXY_SERVERS.lock().await;
+    servers.insert(key, server);
+    Ok(info)
+}
+
+fn allocate_terminal_proxy_port() -> Result<u16, String> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|e| format!("分配临时代理端口失败: {e}"))?;
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .map_err(|e| format!("读取临时代理端口失败: {e}"))
+}
+
+const CLAUDE_PROXY_TERMINAL_MODEL_ENV_KEYS: &[&str] = &[
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+];
+
+const CLAUDE_PROXY_TERMINAL_RUNTIME_ENV_KEYS: &[&str] = &[
+    "ENABLE_TOOL_SEARCH",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+    "API_TIMEOUT_MS",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+];
+
+fn build_claude_proxy_terminal_env(
+    proxy_info: &ProxyServerInfo,
+    provider: &Provider,
+) -> Vec<(String, String)> {
+    let mut env_vars = vec![
+        (
+            "ANTHROPIC_BASE_URL".to_string(),
+            build_proxy_origin(proxy_info),
+        ),
+        (
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            "PROXY_MANAGED".to_string(),
+        ),
+    ];
+
+    if let Some(env) = provider
+        .settings_config
+        .get("env")
+        .and_then(|value| value.as_object())
+    {
+        for (key, value) in env {
+            if !CLAUDE_PROXY_TERMINAL_MODEL_ENV_KEYS.contains(&key.as_str())
+                && !CLAUDE_PROXY_TERMINAL_RUNTIME_ENV_KEYS.contains(&key.as_str())
+            {
+                continue;
+            }
+
+            if let Some(value) = value.as_str() {
+                if !value.is_empty() {
+                    env_vars.push((key.clone(), value.to_string()));
+                }
+            } else if value.is_number() || value.is_boolean() {
+                env_vars.push((key.clone(), value.to_string()));
+            }
+        }
+    }
+
+    env_vars
+}
+
+fn build_proxy_origin(proxy_info: &ProxyServerInfo) -> String {
+    let connect_host = match proxy_info.address.as_str() {
+        "0.0.0.0" => "127.0.0.1".to_string(),
+        "::" => "::1".to_string(),
+        other => other.to_string(),
+    };
+    let connect_host_for_url = if connect_host.contains(':') && !connect_host.starts_with('[') {
+        format!("[{connect_host}]")
+    } else {
+        connect_host
+    };
+    format!("http://{}:{}", connect_host_for_url, proxy_info.port)
 }
 
 /// 从提供商配置中提取环境变量
@@ -878,6 +1010,7 @@ fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
     cwd: Option<&Path>,
+    isolated_claude_config: bool,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let config_file = temp_dir.join(format!(
@@ -888,22 +1021,33 @@ fn launch_terminal_with_env(
 
     // 创建并写入配置文件
     write_claude_config(&config_file, &env_vars)?;
+    let claude_config_dir = if isolated_claude_config {
+        Some(create_isolated_claude_config_dir(provider_id)?)
+    } else {
+        None
+    };
 
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd)?;
+        launch_macos_terminal(&config_file, &env_vars, cwd, claude_config_dir.as_deref())?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd)?;
+        launch_linux_terminal(&config_file, &env_vars, cwd, claude_config_dir.as_deref())?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
+        launch_windows_terminal(
+            &temp_dir,
+            &config_file,
+            &env_vars,
+            cwd,
+            claude_config_dir.as_deref(),
+        )?;
         return Ok(());
     }
 
@@ -931,9 +1075,42 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
+fn create_isolated_claude_config_dir(provider_id: &str) -> Result<PathBuf, String> {
+    let safe_provider_id = provider_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!(
+        "cc_switch_claude_config_{}_{}_{}",
+        safe_provider_id,
+        std::process::id(),
+        nonce
+    ));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建隔离 Claude 配置目录失败: {e}"))?;
+    let settings_file = dir.join("settings.json");
+    std::fs::write(&settings_file, "{}")
+        .map_err(|e| format!("写入隔离 Claude settings.json 失败: {e}"))?;
+    Ok(dir)
+}
+
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: &std::path::Path,
+    env_vars: &[(String, String)],
+    cwd: Option<&Path>,
+    claude_config_dir: Option<&Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -944,11 +1121,39 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
 
+    let mut env_exports = String::new();
+    for (key, value) in env_vars {
+        env_exports.push_str(&format!(
+            "export {}={}\n",
+            shell_single_quote(key),
+            shell_single_quote(value)
+        ));
+    }
+
+    let claude_config_dir_path = claude_config_dir
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let claude_config_export = claude_config_dir
+        .map(|path| {
+            format!(
+                "export CLAUDE_CONFIG_DIR={}\n",
+                shell_single_quote(&path.to_string_lossy())
+            )
+        })
+        .unwrap_or_default();
+    let claude_config_cleanup = if claude_config_dir.is_some() {
+        format!(" \"{claude_config_dir_path}\"")
+    } else {
+        String::new()
+    };
+
     // Write the shell script to a temp file
     let script_content = format!(
         r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
+trap 'rm -f "{config_path}" "{script_file}"; rm -rf{claude_config_cleanup}' EXIT
 {cd_command}
+{env_exports}\
+{claude_config_export}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
@@ -957,6 +1162,9 @@ exec bash --norc --noprofile
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        env_exports = env_exports,
+        claude_config_export = claude_config_export,
+        claude_config_cleanup = claude_config_cleanup,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -972,7 +1180,7 @@ exec bash --norc --noprofile
         "warp" => launch_macos_warp(&script_file),
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
-        "ghostty" => launch_macos_ghostty(&script_file),
+        "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
         "kaku" => launch_macos_open_app("Kaku", &script_file, true),
         _ => launch_macos_terminal_app(&script_file), // "terminal" or default
@@ -1083,37 +1291,7 @@ fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// macOS: Ghostty — use --quit-after-last-window-closed to avoid cloning existing tabs
-#[cfg(target_os = "macos")]
-fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-
-    let output = Command::new("open")
-        .args([
-            "-na",
-            "Ghostty",
-            "--args",
-            "--quit-after-last-window-closed=true",
-            "-e",
-            "bash",
-        ])
-        .arg(script_file)
-        .output()
-        .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Ghostty 启动失败 (exit code: {:?}): {}",
-            output.status.code(),
-            stderr
-        ));
-    }
-
-    Ok(())
-}
-
-/// macOS: 使用 open -na 启动支持 --args 参数的终端（Alacritty/Kitty/WezTerm/Kaku）
+/// macOS: 使用 open -a 启动支持 --args 参数的终端（Alacritty/Kitty/Ghostty）
 #[cfg(target_os = "macos")]
 fn launch_macos_open_app(
     app_name: &str,
@@ -1123,7 +1301,7 @@ fn launch_macos_open_app(
     use std::process::Command;
 
     let mut cmd = Command::new("open");
-    cmd.arg("-na").arg(app_name).arg("--args");
+    cmd.arg("-a").arg(app_name).arg("--args");
 
     if use_e_flag {
         cmd.arg("-e");
@@ -1200,7 +1378,12 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: &std::path::Path,
+    env_vars: &[(String, String)],
+    cwd: Option<&Path>,
+    claude_config_dir: Option<&Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -1224,10 +1407,38 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
 
+    let mut env_exports = String::new();
+    for (key, value) in env_vars {
+        env_exports.push_str(&format!(
+            "export {}={}\n",
+            shell_single_quote(key),
+            shell_single_quote(value)
+        ));
+    }
+
+    let claude_config_dir_path = claude_config_dir
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let claude_config_export = claude_config_dir
+        .map(|path| {
+            format!(
+                "export CLAUDE_CONFIG_DIR={}\n",
+                shell_single_quote(&path.to_string_lossy())
+            )
+        })
+        .unwrap_or_default();
+    let claude_config_cleanup = if claude_config_dir.is_some() {
+        format!(" \"{claude_config_dir_path}\"")
+    } else {
+        String::new()
+    };
+
     let script_content = format!(
         r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
+trap 'rm -f "{config_path}" "{script_file}"; rm -rf{claude_config_cleanup}' EXIT
 {cd_command}
+{env_exports}\
+{claude_config_export}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
@@ -1236,6 +1447,9 @@ exec bash --norc --noprofile
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        env_exports = env_exports,
+        claude_config_export = claude_config_export,
+        claude_config_cleanup = claude_config_cleanup,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -1295,6 +1509,9 @@ exec bash --norc --noprofile
     // Clean up on failure
     let _ = std::fs::remove_file(&script_file);
     let _ = std::fs::remove_file(config_file);
+    if let Some(dir) = claude_config_dir {
+        let _ = std::fs::remove_dir_all(dir);
+    }
     Err(last_error)
 }
 
@@ -1314,7 +1531,9 @@ fn which_command(cmd: &str) -> bool {
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
+    env_vars: &[(String, String)],
     cwd: Option<&Path>,
+    claude_config_dir: Option<&Path>,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
@@ -1323,25 +1542,66 @@ fn launch_windows_terminal(
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
+    // Set env vars directly in the batch file. Claude Code reads these from the
+    // OS environment; the --settings file alone does not guarantee they take effect.
+    let mut env_set_commands = String::new();
+    for (key, value) in env_vars {
+        env_set_commands.push_str(&format!(
+            "set \"{}={}\"\r\n",
+            escape_windows_batch_value(key),
+            escape_windows_batch_value(value)
+        ));
+    }
+
+    let claude_config_set = claude_config_dir
+        .map(|path| {
+            format!(
+                "set \"CLAUDE_CONFIG_DIR={}\"\r\n",
+                escape_windows_batch_value(&path.to_string_lossy())
+            )
+        })
+        .unwrap_or_default();
+    let claude_config_cleanup = claude_config_dir
+        .map(|path| {
+            format!(
+                "rmdir /s /q \"{}\" >nul 2>&1\r\n",
+                escape_windows_batch_value(&path.to_string_lossy())
+            )
+        })
+        .unwrap_or_default();
+
     let content = format!(
         "@echo off
 {cwd_command}
+{env_set_commands}\
+{claude_config_set}
 echo Using provider-specific claude config:
 echo {}
 claude --settings \"{}\"
 del \"{}\" >nul 2>&1
+{claude_config_cleanup}
 del \"%~f0\" >nul 2>&1
 ",
         config_path_for_batch,
         config_path_for_batch,
         config_path_for_batch,
         cwd_command = cwd_command,
+        env_set_commands = env_set_commands,
+        claude_config_set = claude_config_set,
+        claude_config_cleanup = claude_config_cleanup,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
     let bat_path = bat_file.to_string_lossy();
     let ps_cmd = format!("& '{}'", bat_path);
+
+    let terminal = if terminal == "wt" && !windows_command_exists("wt") {
+        log::warn!("首选终端 wt 不存在，回退到 cmd");
+        "cmd"
+    } else {
+        terminal
+    };
 
     // Try the preferred terminal first
     let result = match terminal {
@@ -1360,9 +1620,20 @@ del \"%~f0\" >nul 2>&1
             terminal,
             result.as_ref().err()
         );
-        return run_windows_start_command(&["cmd", "/K", &bat_path], "cmd");
+        let fallback = run_windows_start_command(&["cmd", "/K", &bat_path], "cmd");
+        if fallback.is_err() {
+            if let Some(dir) = claude_config_dir {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
+        return fallback;
     }
 
+    if result.is_err() {
+        if let Some(dir) = claude_config_dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
     result
 }
 
@@ -1442,6 +1713,18 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn windows_command_exists(command: &str) -> bool {
+    use std::process::Command;
+
+    Command::new("where")
+        .arg(command)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 /// 打开用户首选终端并在其中执行一条命令行。脚本尾部 `read -n 1` / `pause`
 /// 是刻意设计的——让命令退出后窗口不要瞬间关闭，用户才看得到 `command
 /// not found` / `ModuleNotFoundError` 这类诊断信息。
@@ -1483,12 +1766,19 @@ read -n 1 -s
         let preferred = crate::settings::get_preferred_terminal();
         let terminal = preferred.as_deref().unwrap_or("terminal");
 
+        let terminal = if terminal == "wt" && !windows_command_exists("wt") {
+            log::warn!("首选终端 wt 不存在，回退到 cmd");
+            "cmd"
+        } else {
+            terminal
+        };
+
         let result = match terminal {
             "iterm2" => launch_macos_iterm2(&script_file),
             "warp" => launch_macos_warp(&script_file),
             "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
             "kitty" => launch_macos_open_app("kitty", &script_file, false),
-            "ghostty" => launch_macos_ghostty(&script_file),
+            "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
             "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
             "kaku" => launch_macos_open_app("Kaku", &script_file, true),
             _ => launch_macos_terminal_app(&script_file),
@@ -1643,13 +1933,121 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
+    use crate::provider::{Provider, ProviderMeta};
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn provider_with_type(provider_type: Option<&str>) -> Provider {
+        let mut provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        if let Some(provider_type) = provider_type {
+            let mut meta = ProviderMeta::default();
+            meta.provider_type = Some(provider_type.to_string());
+            provider.meta = Some(meta);
+        }
+        provider
+    }
 
     #[test]
     fn test_extract_version() {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
         assert_eq!(extract_version("no version here"), "no version here");
+    }
+
+    #[test]
+    fn detects_opencode_subscription_provider_types() {
+        assert!(is_opencode_subscription_provider(&provider_with_type(
+            Some("opencode_go_subscription")
+        )));
+        assert!(is_opencode_subscription_provider(&provider_with_type(
+            Some("opencode_zen_subscription")
+        )));
+        assert!(!is_opencode_subscription_provider(&provider_with_type(
+            Some("github_copilot")
+        )));
+        assert!(!is_opencode_subscription_provider(&provider_with_type(
+            None
+        )));
+    }
+
+    #[test]
+    fn proxy_terminal_env_uses_local_proxy_and_preserves_model_fields() {
+        let info = ProxyServerInfo {
+            address: "0.0.0.0".to_string(),
+            port: 15721,
+            started_at: "now".to_string(),
+        };
+        let provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-secret",
+                    "ANTHROPIC_MODEL": "deepseek-v4-flash",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+                    "ENABLE_TOOL_SEARCH": "true"
+                }
+            }),
+            None,
+        );
+
+        let env = build_claude_proxy_terminal_env(&info, &provider);
+        assert!(env.iter().any(|(key, value)| {
+            key == "ANTHROPIC_BASE_URL" && value == "http://127.0.0.1:15721"
+        }));
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "ANTHROPIC_AUTH_TOKEN" && value == "PROXY_MANAGED"));
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "ANTHROPIC_MODEL" && value == "deepseek-v4-flash"));
+        assert!(env.iter().any(|(key, value)| {
+            key == "ANTHROPIC_DEFAULT_OPUS_MODEL" && value == "deepseek-v4-pro[1M]"
+        }));
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "ENABLE_TOOL_SEARCH" && value == "true"));
+        let encoded = serde_json::to_string(&env).expect("serialize env");
+        assert!(!encoded.contains("opencode.ai"));
+        assert!(!encoded.contains("sk-"));
+    }
+
+    #[test]
+    fn proxy_origin_formats_ipv6_loopback() {
+        let info = ProxyServerInfo {
+            address: "::".to_string(),
+            port: 15721,
+            started_at: "now".to_string(),
+        };
+
+        assert_eq!(build_proxy_origin(&info), "http://[::1]:15721");
+    }
+
+    #[test]
+    fn non_opencode_provider_env_is_extracted_directly() {
+        let env = extract_env_vars_from_config(
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "user-key",
+                    "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+                }
+            }),
+            &AppType::Claude,
+        );
+
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "ANTHROPIC_AUTH_TOKEN" && value == "user-key"));
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "ANTHROPIC_MODEL" && value == "claude-sonnet-4-6"));
     }
 
     #[cfg(target_os = "windows")]
@@ -1731,7 +2129,7 @@ mod tests {
 
         let count = paths
             .iter()
-            .filter(|path| path.as_path() == Path::new("/same/path"))
+            .filter(|path| **path == PathBuf::from("/same/path"))
             .count();
         assert_eq!(count, 1);
     }
@@ -1743,25 +2141,9 @@ mod tests {
 
         let count = paths
             .iter()
-            .filter(|path| path.as_path() == Path::new("/home/tester/.bun/bin"))
+            .filter(|path| **path == PathBuf::from("/home/tester/.bun/bin"))
             .count();
         assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn mise_node_search_paths_include_shims_and_installed_node_bins() {
-        let temp = tempfile::tempdir().expect("temp dir should be created");
-        let home = temp.path();
-        let node_bin = home
-            .join(".local/share/mise/installs/node/25.8.0")
-            .join("bin");
-        std::fs::create_dir_all(&node_bin).expect("node bin should be created");
-
-        let mut paths = Vec::new();
-        extend_mise_node_search_paths(&mut paths, home);
-
-        assert!(paths.contains(&home.join(".local/share/mise/shims")));
-        assert!(paths.contains(&node_bin));
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -1,6 +1,10 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use crate::opencode_subscription::models::{
+    OpenCodeSubscriptionKind, OpenCodeSubscriptionProviderRecord,
+};
 use crate::provider::{Provider, ProviderMeta};
+use chrono::Utc;
 use indexmap::IndexMap;
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
@@ -17,6 +21,56 @@ type OmoProviderRow = (
 );
 
 impl Database {
+    pub fn save_opencode_subscription_provider(
+        &self,
+        provider_id: &str,
+        subscription_kind: OpenCodeSubscriptionKind,
+        base_url: &str,
+        api_key_ref: &str,
+        default_model: Option<&str>,
+    ) -> Result<OpenCodeSubscriptionProviderRecord, AppError> {
+        let conn = lock_conn!(self.conn);
+        let now = Utc::now().to_rfc3339();
+        let id = format!("opencode-subscription-{provider_id}");
+        conn.execute(
+            "INSERT INTO opencode_subscription_providers (
+                id, provider_id, subscription_kind, base_url, api_key_ref,
+                local_adapter_enabled, default_model, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8)
+            ON CONFLICT(id) DO UPDATE SET
+                provider_id = excluded.provider_id,
+                subscription_kind = excluded.subscription_kind,
+                base_url = excluded.base_url,
+                api_key_ref = excluded.api_key_ref,
+                local_adapter_enabled = excluded.local_adapter_enabled,
+                default_model = excluded.default_model,
+                updated_at = excluded.updated_at",
+            params![
+                id,
+                provider_id,
+                subscription_kind.to_string(),
+                base_url,
+                api_key_ref,
+                default_model,
+                now,
+                now
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(OpenCodeSubscriptionProviderRecord {
+            id,
+            provider_id: provider_id.to_string(),
+            subscription_kind,
+            base_url: base_url.to_string(),
+            api_key_ref: api_key_ref.to_string(),
+            local_adapter_enabled: true,
+            default_model: default_model.map(str::to_string),
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
+
     pub fn get_all_providers(
         &self,
         app_type: &str,

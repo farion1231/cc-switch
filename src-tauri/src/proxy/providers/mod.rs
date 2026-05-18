@@ -66,6 +66,8 @@ pub enum ProviderType {
     GitHubCopilot,
     /// OpenAI Codex (ChatGPT Plus/Pro OAuth，需要 Anthropic ↔ Responses API 转换)
     CodexOAuth,
+    /// OpenCode Go/Zen 订阅 (需要 Anthropic → OpenAI 转换，双端点路由)
+    OpenCodeGo,
 }
 
 impl ProviderType {
@@ -74,11 +76,13 @@ impl ProviderType {
     /// 过去 OpenRouter 需要将 Anthropic 格式转换为 OpenAI 格式；
     /// 现在默认关闭转换（因为 OpenRouter 已支持 Claude Code 兼容接口）。
     /// GitHub Copilot 需要转换（Anthropic → OpenAI 格式）。
+    /// OpenCode Go 需要转换（Anthropic → OpenAI 格式，MiniMax 除外）。
     #[allow(dead_code)]
     pub fn needs_transform(&self) -> bool {
         match self {
             ProviderType::GitHubCopilot => true,
             ProviderType::CodexOAuth => true,
+            ProviderType::OpenCodeGo => true,
             ProviderType::OpenRouter => false,
             _ => false,
         }
@@ -96,6 +100,7 @@ impl ProviderType {
             ProviderType::OpenRouter => "https://openrouter.ai/api",
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
             ProviderType::CodexOAuth => "https://chatgpt.com/backend-api/codex",
+            ProviderType::OpenCodeGo => "https://opencode.ai/zen/go/v1",
         }
     }
 
@@ -122,6 +127,14 @@ impl ProviderType {
                     if meta.provider_type.as_deref() == Some("codex_oauth") {
                         return ProviderType::CodexOAuth;
                     }
+                    // 检测是否为 OpenCode Go/Zen
+                    if meta.provider_type.as_deref() == Some("opencode_go")
+                        || meta.provider_type.as_deref() == Some("opencode_go_subscription")
+                        || meta.provider_type.as_deref() == Some("opencode_zen")
+                        || meta.provider_type.as_deref() == Some("opencode_zen_subscription")
+                    {
+                        return ProviderType::OpenCodeGo;
+                    }
                 }
 
                 // 检测 base_url 是否为 GitHub Copilot
@@ -133,6 +146,10 @@ impl ProviderType {
                     // 检测是否为 OpenRouter
                     if base_url.contains("openrouter.ai") {
                         return ProviderType::OpenRouter;
+                    }
+                    // 检测是否为 OpenCode Go/Zen
+                    if base_url.contains("opencode.ai") {
+                        return ProviderType::OpenCodeGo;
                     }
                 }
                 // 检测是否为中转服务（仅 Bearer 认证）
@@ -193,6 +210,7 @@ impl ProviderType {
             ProviderType::OpenRouter => "openrouter",
             ProviderType::GitHubCopilot => "github_copilot",
             ProviderType::CodexOAuth => "codex_oauth",
+            ProviderType::OpenCodeGo => "opencode_go",
         }
     }
 }
@@ -218,6 +236,12 @@ impl std::str::FromStr for ProviderType {
                 Ok(ProviderType::GitHubCopilot)
             }
             "codex_oauth" | "codex-oauth" | "codexoauth" => Ok(ProviderType::CodexOAuth),
+            "opencode_go"
+            | "opencode-go"
+            | "opencodego"
+            | "opencode_go_subscription"
+            | "opencode_zen"
+            | "opencode_zen_subscription" => Ok(ProviderType::OpenCodeGo),
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -244,7 +268,8 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         | ProviderType::ClaudeAuth
         | ProviderType::OpenRouter
         | ProviderType::GitHubCopilot
-        | ProviderType::CodexOAuth => Box::new(ClaudeAdapter::new()),
+        | ProviderType::CodexOAuth
+        | ProviderType::OpenCodeGo => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
     }

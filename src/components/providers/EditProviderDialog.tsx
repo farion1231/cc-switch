@@ -10,6 +10,13 @@ import {
 } from "@/components/providers/forms/ProviderForm";
 import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
 
+function isOpenCodeClaudeSubscription(provider: Provider | null): boolean {
+  return (
+    provider?.meta?.providerType === "opencode_go_subscription" ||
+    provider?.meta?.providerType === "opencode_zen_subscription"
+  );
+}
+
 interface EditProviderDialogProps {
   open: boolean;
   provider: Provider | null;
@@ -58,7 +65,7 @@ export function EditProviderDialog({
 
       // 代理接管模式：Live 配置已被代理改写，读取 live 会导致编辑界面展示代理地址/占位符等内容
       // 因此直接回退到 SSOT（数据库）配置，避免用户困惑与误保存
-      if (isProxyTakeover) {
+      if (isProxyTakeover || isOpenCodeClaudeSubscription(provider)) {
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);

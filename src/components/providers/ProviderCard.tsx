@@ -493,6 +493,7 @@ export function ProviderCard({
               isOfficialBlockedByProxy={isOfficialBlockedByProxy}
               isReadOnly={isHermesReadOnly}
               isOmo={isAnyOmo}
+              allowCurrentDelete={!isProxyTakeover}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}

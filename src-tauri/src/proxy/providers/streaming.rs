@@ -682,6 +682,37 @@ fn map_stop_reason(finish_reason: Option<&str>) -> Option<String> {
     })
 }
 
+/// Wrap an SSE stream with a 3-second heartbeat to prevent client timeouts.
+/// Claude Code disconnects after ~6s of silence, so pings every 3s keep the
+/// connection alive while waiting for upstream data.
+pub fn with_heartbeat<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    use std::time::Duration;
+    use tokio::time::{interval, MissedTickBehavior};
+
+    let mut stream = Box::pin(stream.fuse());
+    let mut heartbeat = interval(Duration::from_secs(3));
+    heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+    async_stream::stream! {
+        loop {
+            tokio::select! {
+                chunk = stream.next() => {
+                    match chunk {
+                        Some(Ok(bytes)) => yield Ok(bytes),
+                        Some(Err(_)) => continue,
+                        None => break,
+                    }
+                }
+                _ = heartbeat.tick() => {
+                    yield Ok(Bytes::from(":keepalive\n\n"));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

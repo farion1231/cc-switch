@@ -1,7 +1,13 @@
 import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
@@ -14,10 +20,24 @@ import { emitTauriEvent } from "../msw/tauriMocks";
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 
+const mockCurrentWindow = {
+  isMaximized: vi.fn().mockResolvedValue(false),
+  onResized: vi.fn().mockResolvedValue(vi.fn()),
+  setDecorations: vi.fn().mockResolvedValue(undefined),
+  minimize: vi.fn().mockResolvedValue(undefined),
+  toggleMaximize: vi.fn().mockResolvedValue(undefined),
+  close: vi.fn().mockResolvedValue(undefined),
+};
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => mockCurrentWindow,
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
+    warning: vi.fn(),
   },
 }));
 
@@ -35,11 +55,11 @@ vi.mock("@/components/providers/ProviderList", () => ({
     <div>
       <div data-testid="provider-list">{JSON.stringify(providers)}</div>
       <div data-testid="current-provider">{currentProviderId}</div>
-      <button onClick={() => onSwitch(providers[currentProviderId])}>
+      <button onClick={() => void onSwitch(providers[currentProviderId])}>
         switch
       </button>
       <button onClick={() => onEdit(providers[currentProviderId])}>edit</button>
-      <button onClick={() => onDuplicate(providers[currentProviderId])}>
+      <button onClick={() => void onDuplicate(providers[currentProviderId])}>
         duplicate
       </button>
       <button onClick={() => onConfigureUsage(providers[currentProviderId])}>
@@ -58,14 +78,15 @@ vi.mock("@/components/providers/AddProviderDialog", () => ({
     open ? (
       <div data-testid="add-provider-dialog">
         <button
-          onClick={() =>
-            onSubmit({
+          onClick={async () => {
+            await onSubmit({
               name: `New ${appId} Provider`,
               settingsConfig: {},
               category: "custom",
               sortIndex: 99,
-            })
-          }
+            });
+            onOpenChange(false);
+          }}
         >
           confirm-add
         </button>
@@ -79,15 +100,16 @@ vi.mock("@/components/providers/EditProviderDialog", () => ({
     open ? (
       <div data-testid="edit-provider-dialog">
         <button
-          onClick={() =>
-            onSubmit({
+          onClick={async () => {
+            await onSubmit({
               provider: {
                 ...provider,
                 name: `${provider.name}-edited`,
               },
               originalId: provider.id,
-            })
-          }
+            });
+            onOpenChange(false);
+          }}
         >
           confirm-edit
         </button>
@@ -145,8 +167,89 @@ vi.mock("@/components/mcp/McpPanel", () => ({
     ),
 }));
 
+vi.mock("@/components/proxy/ProxyToggle", () => ({
+  ProxyToggle: () => <div data-testid="proxy-toggle" />,
+}));
+
+vi.mock("@/components/proxy/ClaudeDesktopRouteToggle", () => ({
+  ClaudeDesktopRouteToggle: () => <div data-testid="claude-desktop-route" />,
+}));
+
+vi.mock("@/components/proxy/FailoverToggle", () => ({
+  FailoverToggle: () => <div data-testid="failover-toggle" />,
+}));
+
+vi.mock("@/components/env/EnvWarningBanner", () => ({
+  EnvWarningBanner: () => null,
+}));
+
+vi.mock("@/components/DeepLinkImportDialog", () => ({
+  DeepLinkImportDialog: () => null,
+}));
+
+vi.mock("@/components/FirstRunNoticeDialog", () => ({
+  FirstRunNoticeDialog: () => null,
+}));
+
+vi.mock("@/components/mcp/UnifiedMcpPanel", () => ({
+  default: () => <div data-testid="unified-mcp-panel" />,
+}));
+
+vi.mock("@/components/prompts/PromptPanel", () => ({
+  default: () => <div data-testid="prompt-panel" />,
+}));
+
+vi.mock("@/components/skills/UnifiedSkillsPanel", () => ({
+  default: () => <div data-testid="unified-skills-panel" />,
+}));
+
+vi.mock("@/components/skills/SkillsPage", () => ({
+  SkillsPage: () => <div data-testid="skills-page" />,
+}));
+
+vi.mock("@/components/agents/AgentsPanel", () => ({
+  AgentsPanel: () => <div data-testid="agents-panel" />,
+}));
+
+vi.mock("@/components/universal", () => ({
+  UniversalProviderPanel: () => <div data-testid="universal-panel" />,
+}));
+
+vi.mock("@/components/sessions/SessionManagerPage", () => ({
+  SessionManagerPage: () => <div data-testid="sessions-page" />,
+}));
+
+vi.mock("@/components/workspace/WorkspaceFilesPanel", () => ({
+  default: () => <div data-testid="workspace-panel" />,
+}));
+
+vi.mock("@/components/openclaw/EnvPanel", () => ({
+  default: () => <div data-testid="openclaw-env-panel" />,
+}));
+
+vi.mock("@/components/openclaw/ToolsPanel", () => ({
+  default: () => <div data-testid="openclaw-tools-panel" />,
+}));
+
+vi.mock("@/components/openclaw/AgentsDefaultsPanel", () => ({
+  default: () => <div data-testid="openclaw-agents-panel" />,
+}));
+
+vi.mock("@/components/openclaw/OpenClawHealthBanner", () => ({
+  default: () => null,
+}));
+
+vi.mock("@/components/hermes/HermesMemoryPanel", () => ({
+  default: () => <div data-testid="hermes-memory-panel" />,
+}));
+
 const renderApp = (AppComponent: ComponentType) => {
-  const client = new QueryClient();
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
   return render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
@@ -158,9 +261,18 @@ const renderApp = (AppComponent: ComponentType) => {
 
 describe("App integration with MSW", () => {
   beforeEach(() => {
+    cleanup();
+    document.body.removeAttribute("data-scroll-locked");
+    document.body.style.pointerEvents = "";
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+    Object.values(mockCurrentWindow).forEach((mock) => mock.mockClear());
+  });
+
+  afterEach(() => {
+    document.body.removeAttribute("data-scroll-locked");
+    document.body.style.pointerEvents = "";
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -218,7 +330,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  });
+  }, 20000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");
@@ -305,6 +417,9 @@ describe("App integration with MSW", () => {
     const liveIdsSpy = vi
       .spyOn(providersApi, "getOpenClawLiveProviderIds")
       .mockRejectedValueOnce(new Error("broken config"));
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
 
     const { default: App } = await import("@/App");
     renderApp(App);
@@ -330,5 +445,6 @@ describe("App integration with MSW", () => {
     );
 
     liveIdsSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
   });
 });

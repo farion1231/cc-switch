@@ -40,6 +40,7 @@ interface ProviderActionsProps {
   isOfficialBlockedByProxy?: boolean;
   // Hermes v12+ providers: dict overlay — edit/delete must go through Web UI
   isReadOnly?: boolean;
+  allowCurrentDelete?: boolean;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -66,6 +67,7 @@ export function ProviderActions({
   onToggleFailover,
   isOfficialBlockedByProxy = false,
   isReadOnly = false,
+  allowCurrentDelete = false,
   // OpenClaw: default model
   isDefaultModel = false,
   onSetAsDefault,
@@ -184,7 +186,7 @@ export function ProviderActions({
       };
     }
 
-    if (isCurrent) {
+    if (isCurrent && isProxyTakeover) {
       return {
         disabled: true,
         variant: "secondary" as const,
@@ -209,7 +211,8 @@ export function ProviderActions({
   const buttonState = getMainButtonState();
 
   const canDelete =
-    !isReadOnly && (isOmo || isAdditiveMode ? true : !isCurrent);
+    !isReadOnly &&
+    (isOmo || isAdditiveMode ? true : !isCurrent || allowCurrentDelete);
   const readOnlyHint = t("provider.managedByHermesHint", {
     defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
   });

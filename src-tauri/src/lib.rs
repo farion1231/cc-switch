@@ -1,3 +1,4 @@
+mod agent_gateway;
 mod app_config;
 mod app_store;
 mod auto_launch;
@@ -9,6 +10,7 @@ mod commands;
 mod config;
 mod database;
 mod deeplink;
+mod diagnostics;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
@@ -20,6 +22,7 @@ mod linux_fix;
 mod mcp;
 mod openclaw_config;
 mod opencode_config;
+mod opencode_subscription;
 mod panic_hook;
 mod prompt;
 mod prompt_files;
@@ -892,6 +895,7 @@ pub fn run() {
 
             // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
+            register_process_signal_cleanup(app_handle.clone());
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<AppState>();
 
@@ -1166,6 +1170,29 @@ pub fn run() {
             commands::check_env_conflicts,
             commands::delete_env_vars,
             commands::restore_env_backup,
+            agent_gateway::commands::agent_gateway_launch_agent,
+            agent_gateway::commands::agent_gateway_stop_agent,
+            agent_gateway::commands::agent_gateway_kill_agent,
+            agent_gateway::commands::agent_gateway_delete_agent,
+            agent_gateway::commands::agent_gateway_restart_agent,
+            agent_gateway::commands::agent_gateway_preview_provider_snapshot,
+            agent_gateway::commands::agent_gateway_list_agents,
+            agent_gateway::commands::agent_gateway_get_agent,
+            agent_gateway::commands::agent_gateway_sync_status,
+            agent_gateway::commands::agent_gateway_get_logs,
+            agent_gateway::commands::agent_gateway_list_run_profiles,
+            agent_gateway::commands::agent_gateway_save_run_profile,
+            agent_gateway::commands::agent_gateway_delete_run_profile,
+            agent_gateway::commands::agent_gateway_cleanup_stale,
+            opencode_subscription::commands::opencode_subscription_save_provider,
+            opencode_subscription::commands::opencode_subscription_test_connection,
+            opencode_subscription::commands::opencode_subscription_test_stream,
+            opencode_subscription::commands::opencode_subscription_list_models,
+            diagnostics::commands::diagnostics_run_all,
+            diagnostics::commands::diagnostics_check_dependencies,
+            diagnostics::commands::diagnostics_check_ports,
+            diagnostics::commands::diagnostics_check_permissions,
+            diagnostics::commands::diagnostics_export_report,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::get_skill_backups,
@@ -1481,8 +1508,10 @@ pub fn run() {
 ///
 /// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
 /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
-/// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
+/// 用户关闭应用时应恢复 Live 配置并清除接管状态，避免下次启动自动重新接管。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
+    crate::agent_gateway::listener::stop_all_agent_listeners().await;
+
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         let proxy_service = &state.proxy_service;
 
@@ -1498,12 +1527,11 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
         let needs_restore = has_backups || live_taken_over;
 
         if needs_restore {
-            log::info!("检测到接管残留，开始恢复 Live 配置（保留代理状态）...");
-            // 使用 keep_state 版本，保留 settings 表中的代理状态
-            if let Err(e) = proxy_service.stop_with_restore_keep_state().await {
+            log::info!("检测到接管残留，开始恢复 Live 配置并清除代理状态...");
+            if let Err(e) = proxy_service.stop_with_restore().await {
                 log::error!("退出时恢复 Live 配置失败: {e}");
             } else {
-                log::info!("已恢复 Live 配置（代理状态已保留，下次启动将自动恢复）");
+                log::info!("已恢复 Live 配置并清除代理状态");
             }
             return;
         }
@@ -1517,6 +1545,23 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
             log::info!("代理服务器清理完成");
         }
     }
+}
+
+fn register_process_signal_cleanup(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => {
+                log::info!("收到 Ctrl+C/控制台退出信号，开始清理...");
+                save_window_state_before_exit(&app_handle);
+                cleanup_before_exit(&app_handle).await;
+                log::info!("控制台退出清理完成");
+                std::process::exit(0);
+            }
+            Err(error) => {
+                log::warn!("注册控制台退出清理失败: {error}");
+            }
+        }
+    });
 }
 
 // ============================================================

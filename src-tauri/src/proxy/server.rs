@@ -14,6 +14,7 @@ use super::{
     ProxyError,
 };
 use crate::database::Database;
+use crate::provider::Provider;
 use axum::{
     extract::DefaultBodyLimit,
     routing::{any, get, post},
@@ -62,6 +63,74 @@ impl ProxyServer {
         // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
         // 创建故障转移切换管理器
+        let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
+
+        let state = ProxyState {
+            db,
+            config: Arc::new(RwLock::new(config.clone())),
+            status: Arc::new(RwLock::new(ProxyStatus::default())),
+            start_time: Arc::new(RwLock::new(None)),
+            current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            provider_router,
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            app_handle,
+            failover_manager,
+        };
+
+        Self {
+            config,
+            state,
+            shutdown_tx: Arc::new(RwLock::new(None)),
+            server_handle: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    pub fn new_forced_provider(
+        config: ProxyConfig,
+        db: Arc<Database>,
+        app_handle: Option<tauri::AppHandle>,
+        app_type: String,
+        provider_id: String,
+    ) -> Self {
+        let provider_router = Arc::new(ProviderRouter::new_forced(
+            db.clone(),
+            app_type,
+            provider_id,
+        ));
+        let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
+
+        let state = ProxyState {
+            db,
+            config: Arc::new(RwLock::new(config.clone())),
+            status: Arc::new(RwLock::new(ProxyStatus::default())),
+            start_time: Arc::new(RwLock::new(None)),
+            current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            provider_router,
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            app_handle,
+            failover_manager,
+        };
+
+        Self {
+            config,
+            state,
+            shutdown_tx: Arc::new(RwLock::new(None)),
+            server_handle: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    pub fn new_forced_provider_snapshot(
+        config: ProxyConfig,
+        db: Arc<Database>,
+        app_handle: Option<tauri::AppHandle>,
+        app_type: String,
+        provider: Provider,
+    ) -> Self {
+        let provider_router = Arc::new(ProviderRouter::new_forced_snapshot(
+            db.clone(),
+            app_type,
+            provider,
+        ));
         let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
 
         let state = ProxyState {

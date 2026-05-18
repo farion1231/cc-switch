@@ -1480,7 +1480,13 @@ impl StreamCheckService {
             return resolve_gemini_native_url(base_url, &endpoint, is_full_url);
         }
 
-        if is_full_url {
+        if is_full_url
+            || (api_format == "openai_chat"
+                && base_url
+                    .trim_end_matches('/')
+                    .to_ascii_lowercase()
+                    .ends_with("/chat/completions"))
+        {
             return base_url.to_string();
         }
 
@@ -1867,6 +1873,19 @@ mod tests {
         );
 
         assert_eq!(url, "https://example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_resolve_claude_stream_url_keeps_full_openai_chat_endpoint() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://opencode.ai/zen/go/v1/chat/completions",
+            AuthStrategy::Bearer,
+            "openai_chat",
+            false,
+            "deepseek-v4-pro",
+        );
+
+        assert_eq!(url, "https://opencode.ai/zen/go/v1/chat/completions");
     }
 
     #[test]

@@ -170,6 +170,33 @@ fn schema_migration_sets_user_version_when_missing() {
 }
 
 #[test]
+fn schema_v11_creates_agent_gateway_tables_idempotently() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migration");
+    Database::apply_schema_migrations_on_conn(&conn).expect("re-run migration");
+
+    assert_eq!(Database::get_user_version(&conn).expect("read version"), 11);
+
+    for table in [
+        "agent_instances",
+        "agent_run_profiles",
+        "agent_port_bindings",
+        "agent_logs",
+        "agent_mcp_bindings",
+        "agent_skill_bindings",
+        "agent_session_bindings",
+        "opencode_subscription_providers",
+    ] {
+        assert!(
+            Database::table_exists(&conn, table).expect("check table"),
+            "{table} should exist after v11 migration"
+        );
+    }
+}
+
+#[test]
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");

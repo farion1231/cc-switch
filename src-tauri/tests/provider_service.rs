@@ -96,6 +96,175 @@ fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
 }
 
 #[test]
+fn switch_claude_does_not_backfill_live_settings_into_opencode_subscription_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let opencode_settings = json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+            "ANTHROPIC_AUTH_TOKEN": "sk-opencode",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+            "ENABLE_TOOL_SEARCH": "true"
+        }
+    });
+    let deepseek_settings = json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": "sk-deepseek",
+            "ANTHROPIC_MODEL": "deepseek-chat"
+        }
+    });
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "opencode-go".to_string();
+
+        let mut opencode_provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            opencode_settings.clone(),
+            Some("https://opencode.ai/docs/zh-cn/go/".to_string()),
+        );
+        opencode_provider.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            common_config_enabled: Some(true),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        manager
+            .providers
+            .insert("opencode-go".to_string(), opencode_provider);
+
+        manager.providers.insert(
+            "deepseek".to_string(),
+            Provider::with_id(
+                "deepseek".to_string(),
+                "DeepSeek".to_string(),
+                deepseek_settings.clone(),
+                Some("https://platform.deepseek.com".to_string()),
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir"))
+        .expect("create settings dir");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&deepseek_settings).expect("serialize live settings"),
+    )
+    .expect("seed live deepseek settings");
+
+    ProviderService::switch(&state, AppType::Claude, "deepseek")
+        .expect("switching to deepseek should succeed");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("get providers");
+    let opencode_provider = providers
+        .get("opencode-go")
+        .expect("opencode provider remains");
+
+    assert_eq!(
+        opencode_provider.settings_config, opencode_settings,
+        "switching away from OpenCode Go must not overwrite its endpoint/key with live settings"
+    );
+}
+
+#[test]
+fn switch_claude_to_opencode_subscription_without_takeover_keeps_live_settings() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let deepseek_settings = json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": "sk-deepseek",
+            "ANTHROPIC_MODEL": "deepseek-chat"
+        }
+    });
+    let opencode_settings = json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1/chat/completions",
+            "ANTHROPIC_AUTH_TOKEN": "sk-opencode",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]"
+        }
+    });
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "deepseek".to_string();
+        manager.providers.insert(
+            "deepseek".to_string(),
+            Provider::with_id(
+                "deepseek".to_string(),
+                "DeepSeek".to_string(),
+                deepseek_settings.clone(),
+                Some("https://platform.deepseek.com".to_string()),
+            ),
+        );
+
+        let mut opencode_provider = Provider::with_id(
+            "opencode-go".to_string(),
+            "OpenCode Go".to_string(),
+            opencode_settings,
+            Some("https://opencode.ai/docs/zh-cn/go/".to_string()),
+        );
+        opencode_provider.meta = Some(ProviderMeta {
+            provider_type: Some("opencode_go_subscription".to_string()),
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        manager
+            .providers
+            .insert("opencode-go".to_string(), opencode_provider);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir"))
+        .expect("create settings dir");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&deepseek_settings).expect("serialize live settings"),
+    )
+    .expect("seed live deepseek settings");
+
+    ProviderService::switch(&state, AppType::Claude, "opencode-go")
+        .expect("selecting OpenCode Go should succeed without writing live settings");
+
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read live settings after switch");
+    assert_eq!(
+        live_after, deepseek_settings,
+        "selecting proxy-only OpenCode Go must not overwrite manual DS live settings"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Claude.as_str())
+            .expect("read db current"),
+        Some("opencode-go".to_string()),
+        "DB current provider should also point to OpenCode Go"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_updates_live_and_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -475,7 +644,7 @@ requires_openai_auth = true
 }
 
 #[test]
-fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup() {
+fn sync_current_provider_for_app_keeps_live_takeover_and_preserves_existing_restore_backup() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let _home = ensure_test_home();
@@ -546,8 +715,27 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
     let live_after: serde_json::Value =
         read_json_file(&settings_path).expect("read live settings after sync");
     assert_eq!(
-        live_after, taken_over_live,
-        "sync should not overwrite live config while takeover is active"
+        live_after
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
+            .and_then(|v| v.as_str()),
+        Some("PROXY_MANAGED"),
+        "sync should keep live config in proxy takeover mode"
+    );
+    assert!(
+        live_after
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str())
+            .is_some_and(|url| url.starts_with("http://127.0.0.1:")),
+        "sync should keep live base url on the local proxy"
+    );
+    assert_eq!(
+        live_after
+            .get("includeCoAuthoredBy")
+            .and_then(|v| v.as_bool()),
+        Some(false),
+        "sync may refresh plugin/common fields while keeping takeover active"
     );
 
     let backup = futures::executor::block_on(state.db.get_live_backup("claude"))
@@ -558,18 +746,15 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
 
     assert_eq!(
         backup_value
-            .get("includeCoAuthoredBy")
-            .and_then(|v| v.as_bool()),
-        Some(false),
-        "restore backup should receive the updated effective config"
-    );
-    assert_eq!(
-        backup_value
             .get("env")
-            .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
-            .and_then(|v| v.as_str()),
-        Some("real-token"),
-        "restore backup should preserve the provider token rather than proxy placeholder"
+            .and_then(|v| v.as_object())
+            .map(|obj| obj.is_empty()),
+        Some(true),
+        "existing restore backup must remain the original pre-takeover snapshot"
+    );
+    assert!(
+        backup_value.get("includeCoAuthoredBy").is_none(),
+        "sync must not overwrite an existing restore backup with common config fields"
     );
 }
 
@@ -1099,7 +1284,7 @@ fn provider_service_delete_claude_removes_provider_files() {
 }
 
 #[test]
-fn provider_service_delete_current_provider_returns_error() {
+fn provider_service_delete_current_provider_clears_current_when_proxy_inactive() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let _home = ensure_test_home();
@@ -1125,24 +1310,23 @@ fn provider_service_delete_current_provider_returns_error() {
 
     let app_state = create_test_state_with_config(&config).expect("create test state");
 
-    let err = ProviderService::delete(&app_state, AppType::Claude, "keep")
-        .expect_err("deleting current provider should fail");
-    match err {
-        AppError::Localized { zh, .. } => assert!(
-            zh.contains("不能删除当前正在使用的供应商")
-                || zh.contains("无法删除当前正在使用的供应商"),
-            "unexpected message: {zh}"
-        ),
-        AppError::Config(msg) => assert!(
-            msg.contains("不能删除当前正在使用的供应商")
-                || msg.contains("无法删除当前正在使用的供应商"),
-            "unexpected message: {msg}"
-        ),
-        AppError::Message(msg) => assert!(
-            msg.contains("不能删除当前正在使用的供应商")
-                || msg.contains("无法删除当前正在使用的供应商"),
-            "unexpected message: {msg}"
-        ),
-        other => panic!("expected Config/Message error, got {other:?}"),
-    }
+    ProviderService::delete(&app_state, AppType::Claude, "keep")
+        .expect("deleting current provider should be allowed when proxy takeover is inactive");
+
+    assert!(
+        app_state
+            .db
+            .get_provider_by_id("keep", AppType::Claude.as_str())
+            .expect("query deleted provider")
+            .is_none(),
+        "provider should be deleted"
+    );
+    assert_eq!(
+        app_state
+            .db
+            .get_current_provider(AppType::Claude.as_str())
+            .expect("query current provider"),
+        None,
+        "current provider should be cleared after deleting it"
+    );
 }

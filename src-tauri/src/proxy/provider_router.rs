@@ -18,6 +18,9 @@ pub struct ProviderRouter {
     db: Arc<Database>,
     /// 熔断器管理器 - key 格式: "app_type:provider_id"
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
+    /// Agent Gateway listener 的强制路由目标。这里保存启动时的 Provider 克隆，
+    /// 避免 Agent 运行中受到全局 current provider 或后续 Provider 编辑影响。
+    forced_provider: Option<(String, Provider)>,
 }
 
 impl ProviderRouter {
@@ -26,7 +29,34 @@ impl ProviderRouter {
         Self {
             db,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            forced_provider: None,
         }
+    }
+
+    pub fn new_forced(db: Arc<Database>, app_type: String, provider_id: String) -> Self {
+        let forced_provider = db
+            .get_provider_by_id(&provider_id, &app_type)
+            .ok()
+            .flatten()
+            .map(|provider| (app_type.clone(), provider));
+        Self {
+            db,
+            circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            forced_provider,
+        }
+    }
+
+    pub fn new_forced_snapshot(db: Arc<Database>, app_type: String, provider: Provider) -> Self {
+        Self {
+            db,
+            circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            forced_provider: Some((app_type, provider)),
+        }
+    }
+
+    /// Check if a forced provider snapshot is active
+    pub fn has_forced_provider(&self) -> bool {
+        self.forced_provider.is_some()
     }
 
     /// 选择可用的供应商（支持故障转移）
@@ -35,6 +65,12 @@ impl ProviderRouter {
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
+        if let Some((forced_app_type, forced_provider)) = self.forced_provider.as_ref() {
+            if forced_app_type == app_type {
+                return Ok(vec![forced_provider.clone()]);
+            }
+        }
+
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;

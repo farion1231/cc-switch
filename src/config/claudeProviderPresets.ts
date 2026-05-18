@@ -59,7 +59,16 @@ export interface ProviderPreset {
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth";
+  // - "opencode_go_subscription": OpenCode Go 订阅（OpenAI Chat Completions 完整 URL）
+  // - "opencode_zen_subscription": OpenCode Zen 订阅（OpenAI Chat Completions 完整 URL）
+  providerType?:
+    | "github_copilot"
+    | "codex_oauth"
+    | "opencode_go_subscription"
+    | "opencode_zen_subscription";
+
+  // 是否将 ANTHROPIC_BASE_URL 作为完整接口地址保存，避免再次拼接 /v1/chat/completions
+  isFullUrl?: boolean;
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -88,6 +97,62 @@ export const providerPresets: ProviderPreset[] = [
     },
     icon: "anthropic",
     iconColor: "#D4915D",
+  },
+  {
+    name: "OpenCode Go",
+    websiteUrl: "https://opencode.ai/docs/zh-cn/go/",
+    apiKeyUrl: "https://opencode.ai/zen",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://opencode.ai/zen/go/v1/chat/completions",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash[1M]",
+        ANTHROPIC_MODEL: "deepseek-v4-flash[1M]",
+        ENABLE_TOOL_SEARCH: "true",
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+        API_TIMEOUT_MS: "3000000",
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_chat",
+    providerType: "opencode_go_subscription",
+    isFullUrl: true,
+    endpointCandidates: ["https://opencode.ai/zen/go/v1/chat/completions"],
+    modelsUrl: "https://opencode.ai/zen/go/v1/models",
+    icon: "opencode",
+    iconColor: "#F97316",
+  },
+  {
+    name: "OpenCode Zen",
+    websiteUrl: "https://opencode.ai/zen",
+    apiKeyUrl: "https://opencode.ai/zen",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://opencode.ai/zen/go/v1/chat/completions",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash[1M]",
+        ANTHROPIC_MODEL: "deepseek-v4-flash[1M]",
+        ENABLE_TOOL_SEARCH: "true",
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+        API_TIMEOUT_MS: "3000000",
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_chat",
+    providerType: "opencode_zen_subscription",
+    isFullUrl: true,
+    endpointCandidates: ["https://opencode.ai/zen/go/v1/chat/completions"],
+    modelsUrl: "https://opencode.ai/zen/go/v1/models",
+    icon: "opencode",
+    iconColor: "#F97316",
   },
   {
     name: "Shengsuanyun",
@@ -887,6 +952,20 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "LionCCAPI",
+    websiteUrl: "https://vibecodingapi.ai",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://vibecodingapi.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "lionccapi",
+    icon: "lioncc",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
@@ -1042,28 +1121,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.xiaomimimo.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "mimo-v2.5-pro",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2.5-pro",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2.5-pro",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2.5-pro",
-      },
-    },
-    category: "cn_official",
-    icon: "xiaomimimo",
-    iconColor: "#000000",
-  },
-  {
-    name: "Xiaomi MiMo Token Plan (China)",
-    websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
-    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://token-plan-cn.xiaomimimo.com/anthropic",
-        ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "mimo-v2.5-pro",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2.5-pro",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2.5-pro",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2.5-pro",
+        ANTHROPIC_MODEL: "mimo-v2-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2-pro",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2-pro",
       },
     },
     category: "cn_official",

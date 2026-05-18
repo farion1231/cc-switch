@@ -27,6 +27,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Bot,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -333,42 +334,34 @@ function App() {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
-    let active = true;
 
     const setupListener = async () => {
       try {
-        const off = await providersApi.onSwitched(
+        unsubscribe = await providersApi.onSwitched(
           async (event: ProviderSwitchEvent) => {
             if (event.appType === activeApp) {
               await refetch();
             }
           },
         );
-        if (!active) {
-          off();
-          return;
-        }
-        unsubscribe = off;
       } catch (error) {
         console.error("[App] Failed to subscribe provider switch event", error);
       }
     };
 
-    void setupListener();
+    setupListener();
     return () => {
-      active = false;
       unsubscribe?.();
     };
   }, [activeApp, refetch]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
-    let active = true;
 
     const setupListener = async () => {
       try {
         const { listen } = await import("@tauri-apps/api/event");
-        const off = await listen("universal-provider-synced", async () => {
+        unsubscribe = await listen("universal-provider-synced", async () => {
           await queryClient.invalidateQueries({ queryKey: ["providers"] });
           try {
             await providersApi.updateTrayMenu();
@@ -376,11 +369,6 @@ function App() {
             console.error("[App] Failed to update tray menu", error);
           }
         });
-        if (!active) {
-          off();
-          return;
-        }
-        unsubscribe = off;
       } catch (error) {
         console.error(
           "[App] Failed to subscribe universal-provider-synced event",
@@ -389,9 +377,8 @@ function App() {
       }
     };
 
-    void setupListener();
+    setupListener();
     return () => {
-      active = false;
       unsubscribe?.();
     };
   }, [queryClient]);
@@ -443,10 +430,9 @@ function App() {
   // Listen for proxy-official-warning: warn when takeover is enabled with an official provider
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
-    let active = true;
 
     const setup = async () => {
-      const off = await listen("proxy-official-warning", (event) => {
+      unsubscribe = await listen("proxy-official-warning", (event) => {
         const { providerName } = event.payload as {
           appType: string;
           providerName: string;
@@ -459,16 +445,10 @@ function App() {
           { duration: 8000 },
         );
       });
-      if (!active) {
-        off();
-        return;
-      }
-      unsubscribe = off;
     };
 
     void setup();
     return () => {
-      active = false;
       unsubscribe?.();
     };
   }, [t]);
@@ -1515,6 +1495,17 @@ function App() {
                             </>
                           ) : (
                             <>
+                              {sharedFeatureApp === "claude" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("agents")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title="Agent Gateway"
+                                >
+                                  <Bot className="w-4 h-4" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"

@@ -53,6 +53,10 @@ impl ModelMapping {
 
     /// 根据原始模型名称获取映射后的模型
     pub fn map_model(&self, original_model: &str) -> String {
+        if self.is_configured_upstream_model(original_model) {
+            return original_model.to_string();
+        }
+
         let model_lower = original_model.to_lowercase();
 
         // 1. 按模型类型匹配
@@ -79,6 +83,26 @@ impl ModelMapping {
 
         // 3. 无映射，保持原样
         original_model.to_string()
+    }
+
+    fn is_configured_upstream_model(&self, original_model: &str) -> bool {
+        let original = original_model.trim();
+        let original_without_marker = strip_one_m_suffix_for_upstream(original);
+
+        [
+            self.haiku_model.as_deref(),
+            self.sonnet_model.as_deref(),
+            self.opus_model.as_deref(),
+            self.default_model.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|configured| {
+            let configured = configured.trim();
+            configured.eq_ignore_ascii_case(original)
+                || strip_one_m_suffix_for_upstream(configured)
+                    .eq_ignore_ascii_case(original_without_marker)
+        })
     }
 }
 
@@ -262,6 +286,39 @@ mod tests {
     }
 
     #[test]
+    fn configured_upstream_model_is_not_remapped_to_default() {
+        let provider = Provider {
+            id: "opencode-go".to_string(),
+            name: "OpenCode Go".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "deepseek-v4-flash[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let body = json!({"model": "deepseek-v4-pro[1M]"});
+        let (mapped, _, mapped_model) = apply_model_mapping(body, &provider);
+        assert_eq!(mapped["model"], "deepseek-v4-pro[1M]");
+        assert!(mapped_model.is_none());
+
+        let result = strip_one_m_suffix_for_upstream_from_body(mapped);
+        assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    #[test]
     fn test_no_mapping_configured() {
         let provider = create_provider_without_mapping();
         let body = json!({"model": "claude-sonnet-4-5"});
@@ -300,6 +357,35 @@ mod tests {
         let (mapped, _, _) = apply_model_mapping(body, &provider);
         let result = strip_one_m_suffix_for_upstream_from_body(mapped);
 
+        assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn maps_haiku_one_m_role_then_strips_local_marker() {
+        let provider = Provider {
+            id: "opencode-go".to_string(),
+            name: "OpenCode Go".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-pro[1M]"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let body = json!({"model": "claude-haiku-4-5[1M]"});
+        let (mapped, _, mapped_model) = apply_model_mapping(body, &provider);
+        assert_eq!(mapped_model, Some("deepseek-v4-pro[1M]".to_string()));
+
+        let result = strip_one_m_suffix_for_upstream_from_body(mapped);
         assert_eq!(result["model"], "deepseek-v4-pro");
     }
 

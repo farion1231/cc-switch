@@ -28,12 +28,13 @@ pub use live::{
 };
 
 // Internal re-exports (pub(crate))
-pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
-    build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    provider_exists_in_live_config, strip_common_config_from_live_settings,
+    build_effective_settings_with_common_config, is_claude_proxy_only_provider,
+    normalize_provider_common_config_for_storage, provider_exists_in_live_config,
+    strip_common_config_from_live_settings,
     sync_current_provider_for_app_to_live, write_live_with_common_config,
 };
+pub(crate) use live::{sanitize_claude_settings_for_live, sanitize_claude_settings_from_live};
 
 // Internal re-exports
 use live::{
@@ -467,11 +468,105 @@ base_url = "http://localhost:8080"
             Some("http://127.0.0.1:15721"),
             "proxy base URL should stay intact"
         );
-        assert!(
+        assert_eq!(
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_MODEL"))
+                .and_then(|v| v.as_str()),
+            Some("model-updated"),
+            "takeover live config should expose the current provider model"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn delete_current_provider_is_allowed_when_proxy_takeover_is_inactive() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "token",
+                    "ANTHROPIC_MODEL": "model-a"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current");
+
+        ProviderService::delete(&state, AppType::Claude, "p1")
+            .expect("delete inactive current provider");
+
+        assert!(
+            db.get_provider_by_id("p1", "claude")
+                .expect("read provider")
                 .is_none(),
-            "model override should be removed in takeover live config"
+            "inactive current provider should be deletable"
+        );
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude),
+            None,
+            "deleting current provider should clear stale local selection"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn delete_current_provider_is_blocked_during_proxy_takeover() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "token",
+                    "ANTHROPIC_MODEL": "model-a"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current");
+        let mut proxy_config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("get proxy config");
+        proxy_config.enabled = true;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("enable takeover");
+
+        let error = ProviderService::delete(&state, AppType::Claude, "p1")
+            .expect_err("delete should be blocked while takeover is enabled");
+
+        assert!(
+            error.to_string().contains("代理接管中无法删除"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            db.get_provider_by_id("p1", "claude")
+                .expect("read provider")
+                .is_some(),
+            "provider should remain when deletion is blocked"
         );
     }
 
@@ -1229,9 +1324,8 @@ impl ProviderService {
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
 
         if is_current {
-            // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
-            // - 不直接走普通 Live 写入逻辑
-            // - 改为更新 Live 备份，并在 Claude 下同步代理安全的 Live 配置
+            // 代理接管处于激活状态时，Live 备份表示启用代理前的原始配置，
+            // 不能被 provider 保存动作覆盖；Claude 只刷新当前被接管的 live 文件。
             let has_live_backup =
                 futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
                     .ok()
@@ -1244,13 +1338,16 @@ impl ProviderService {
             let should_sync_via_proxy = is_proxy_running && (has_live_backup || live_taken_over);
 
             if should_sync_via_proxy {
-                futures::executor::block_on(
-                    state
-                        .proxy_service
-                        .update_live_backup_from_provider(app_type.as_str(), &provider),
-                )
-                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-
+                if live_taken_over && !has_live_backup {
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .update_live_backup_from_provider(app_type.as_str(), &provider),
+                    )
+                    .map_err(|e| {
+                        AppError::Message(format!("补齐 {} Live 备份失败: {e}", app_type.as_str()))
+                    })?;
+                }
                 if matches!(app_type, AppType::Claude) {
                     futures::executor::block_on(
                         state
@@ -1327,9 +1424,23 @@ impl ProviderService {
         let db_current = state.db.get_current_provider(app_type.as_str())?;
 
         if local_current.as_deref() == Some(id) || db_current.as_deref() == Some(id) {
-            return Err(AppError::Message(
-                "无法删除当前正在使用的供应商".to_string(),
-            ));
+            let proxy_enabled =
+                futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str()))
+                    .map(|config| config.enabled)
+                    .unwrap_or(false);
+            let live_taken_over = state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&app_type);
+
+            if proxy_enabled || live_taken_over {
+                return Err(AppError::Message(
+                    "代理接管中无法删除当前正在使用的供应商".to_string(),
+                ));
+            }
+
+            if local_current.as_deref() == Some(id) {
+                crate::settings::set_current_provider(&app_type, None)?;
+            }
         }
 
         state.db.delete_provider(app_type.as_str(), id)
@@ -1477,6 +1588,16 @@ impl ProviderService {
             return Ok(SwitchResult::default());
         }
 
+        if is_claude_proxy_only_provider(&app_type, _provider) {
+            log::info!(
+                "选择 Claude proxy-only 供应商 '{}'，代理未接管时仅更新当前供应商，不写入 Live 配置",
+                id
+            );
+            crate::settings::set_current_provider(&app_type, Some(id))?;
+            state.db.set_current_provider(app_type.as_str(), id)?;
+            return Ok(SwitchResult::default());
+        }
+
         // Normal mode: full switch with Live config write
         Self::switch_normal(state, app_type, id, &providers)
     }
@@ -1525,20 +1646,27 @@ impl ProviderService {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                            current_provider.settings_config =
-                                strip_common_config_from_live_settings(
-                                    state.db.as_ref(),
-                                    &app_type,
-                                    &current_provider,
-                                    live_config,
+                            if is_claude_proxy_only_provider(&app_type, &current_provider) {
+                                log::info!(
+                                    "Skipping live backfill for proxy-only provider '{}' to avoid upstream config pollution",
+                                    current_provider.id
                                 );
-                            if let Err(e) =
-                                state.db.save_provider(app_type.as_str(), &current_provider)
-                            {
-                                log::warn!("Backfill failed: {e}");
-                                result
-                                    .warnings
-                                    .push(format!("backfill_failed:{current_id}"));
+                            } else {
+                                current_provider.settings_config =
+                                    strip_common_config_from_live_settings(
+                                        state.db.as_ref(),
+                                        &app_type,
+                                        &current_provider,
+                                        live_config,
+                                    );
+                                if let Err(e) =
+                                    state.db.save_provider(app_type.as_str(), &current_provider)
+                                {
+                                    log::warn!("Backfill failed: {e}");
+                                    result
+                                        .warnings
+                                        .push(format!("backfill_failed:{current_id}"));
+                                }
                             }
                         }
                     }
@@ -1658,12 +1786,24 @@ impl ProviderService {
             .detect_takeover_in_live_config_for_app(&app_type);
 
         if takeover_enabled && (has_live_backup || live_taken_over) {
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            if live_taken_over && !has_live_backup {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .update_live_backup_from_provider(app_type.as_str(), provider),
+                )
+                .map_err(|e| {
+                    AppError::Message(format!("补齐 {} Live 备份失败: {e}", app_type.as_str()))
+                })?;
+            }
+            if matches!(app_type, AppType::Claude) {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .sync_claude_live_from_provider_while_proxy_active(provider),
+                )
+                .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
+            }
             return Ok(());
         }
 

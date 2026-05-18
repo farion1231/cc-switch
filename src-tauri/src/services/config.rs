@@ -195,9 +195,11 @@ impl ConfigService {
         write_json_file(&settings_path, &settings)?;
 
         let live_after = read_json_file::<serde_json::Value>(&settings_path)?;
+        let live_sanitized =
+            crate::services::provider::sanitize_claude_settings_from_live(&live_after);
         if let Some(manager) = config.get_manager_mut(&AppType::Claude) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
-                target.settings_config = live_after;
+                target.settings_config = live_sanitized;
             }
         }
 

@@ -49,7 +49,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 10;
+pub(crate) const SCHEMA_VERSION: i32 = 11;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -101,7 +101,32 @@ impl Database {
             std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
 
-        let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = match Connection::open(&db_path) {
+            Ok(conn) => conn,
+            Err(open_error) => {
+                if db_path.exists() {
+                    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                    let corrupt_path =
+                        db_path.with_file_name(format!("cc-switch.db.corrupt.{timestamp}"));
+                    let replaced_path =
+                        db_path.with_file_name(format!("cc-switch.db.replaced.{timestamp}"));
+                    std::fs::copy(&db_path, &corrupt_path)
+                        .map_err(|e| AppError::io(&corrupt_path, e))?;
+                    std::fs::rename(&db_path, &replaced_path)
+                        .map_err(|e| AppError::io(&replaced_path, e))?;
+                    log::warn!(
+                        "Database open failed; copied corrupt database to {} and moved original to {}: {open_error}",
+                        corrupt_path.display(),
+                        replaced_path.display()
+                    );
+                }
+                Connection::open(&db_path).map_err(|e| {
+                    AppError::Database(format!(
+                        "failed to create fresh database after recovery: {e}"
+                    ))
+                })?
+            }
+        };
 
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
@@ -181,6 +206,15 @@ impl Database {
     pub(crate) fn get_auto_vacuum_mode(conn: &Connection) -> Result<i32, AppError> {
         conn.query_row("PRAGMA auto_vacuum;", [], |row| row.get(0))
             .map_err(|e| AppError::Database(format!("读取 auto_vacuum 失败: {e}")))
+    }
+
+    pub fn expected_schema_version() -> i32 {
+        SCHEMA_VERSION
+    }
+
+    pub fn schema_version(&self) -> Result<i32, AppError> {
+        let conn = lock_conn!(self.conn);
+        Self::get_user_version(&conn)
     }
 
     fn has_user_tables(conn: &Connection) -> Result<bool, AppError> {
