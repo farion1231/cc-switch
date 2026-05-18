@@ -16,6 +16,7 @@ enum CodingPlanProvider {
     ZhipuEn,
     MiniMaxCn,
     MiniMaxEn,
+    ZenMux,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -30,6 +31,8 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxCn)
     } else if url.contains("api.minimax.io") {
         Some(CodingPlanProvider::MiniMaxEn)
+    } else if url.contains("zenmux") {
+        Some(CodingPlanProvider::ZenMux)
     } else {
         None
     }
@@ -145,6 +148,8 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
                     name: "five_hour".to_string(),
                     utilization,
                     resets_at,
+                    used_value_usd: None,
+                    max_value_usd: None,
                 });
             }
         }
@@ -166,6 +171,8 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
             name: "weekly_limit".to_string(),
             utilization,
             resets_at,
+            used_value_usd: None,
+            max_value_usd: None,
         });
     }
 
@@ -232,6 +239,8 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
                 name: name.to_string(),
                 utilization: percentage,
                 resets_at,
+                used_value_usd: None,
+                max_value_usd: None,
             })
         })
         .collect()
@@ -398,6 +407,8 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
                     name: "five_hour".to_string(),
                     utilization: ((interval_total - interval_remaining) / interval_total) * 100.0,
                     resets_at: end_time.and_then(millis_to_iso8601),
+                    used_value_usd: None,
+                    max_value_usd: None,
                 });
             }
 
@@ -417,6 +428,8 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
                     name: "weekly_limit".to_string(),
                     utilization: ((weekly_total - weekly_remaining) / weekly_total) * 100.0,
                     resets_at: weekly_end.and_then(millis_to_iso8601),
+                    used_value_usd: None,
+                    max_value_usd: None,
                 });
             }
         }
@@ -426,6 +439,126 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
+        success: true,
+        tiers,
+        extra_usage: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    }
+}
+
+// ── ZenMux ──────────────────────────────────────────────────
+
+async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
+    let client = crate::proxy::http_client::get();
+
+    let resp = client
+        .get(base_url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return make_error(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        };
+    }
+
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return make_error(format!("API error (HTTP {status}): {body}"));
+    }
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+    };
+
+    // 检查业务级别错误
+    if body.get("success").and_then(|v| v.as_bool()) != Some(true) {
+        let msg = body
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return make_error(format!("API error: {msg}"));
+    }
+
+    let data = match body.get("data") {
+        Some(d) => d,
+        None => return make_error("Missing 'data' field in response".to_string()),
+    };
+
+    let mut tiers = Vec::new();
+
+    // 5 小时窗口限额
+    if let Some(q5h) = data.get("quota_5_hour") {
+        let usage_pct = q5h.get("usage_percentage").and_then(parse_f64).unwrap_or(0.0);
+        let resets_at = q5h.get("resets_at").and_then(|v| v.as_str()).map(String::from);
+        let used_usd = q5h.get("used_value_usd").and_then(parse_f64);
+        let max_usd = q5h.get("max_value_usd").and_then(parse_f64);
+        tiers.push(QuotaTier {
+            name: "five_hour".to_string(),
+            utilization: usage_pct * 100.0,
+            resets_at,
+            used_value_usd: used_usd,
+            max_value_usd: max_usd,
+        });
+    }
+
+    // 7 天窗口限额
+    if let Some(q7d) = data.get("quota_7_day") {
+        let usage_pct = q7d.get("usage_percentage").and_then(parse_f64).unwrap_or(0.0);
+        let resets_at = q7d.get("resets_at").and_then(|v| v.as_str()).map(String::from);
+        let used_usd = q7d.get("used_value_usd").and_then(parse_f64);
+        let max_usd = q7d.get("max_value_usd").and_then(parse_f64);
+        tiers.push(QuotaTier {
+            name: "weekly_limit".to_string(),
+            utilization: usage_pct * 100.0,
+            resets_at,
+            used_value_usd: used_usd,
+            max_value_usd: max_usd,
+        });
+    }
+
+    // 套餐等级和账户状态存入 credential_message
+    let plan_tier = data
+        .get("plan")
+        .and_then(|p| p.get("tier"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let account_status = data
+        .get("account_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let plan_info = if !plan_tier.is_empty() {
+        format!("{plan_tier} ({account_status})")
+    } else {
+        String::new()
+    };
+
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: if plan_info.is_empty() {
+            None
+        } else {
+            Some(plan_info)
+        },
         success: true,
         tiers,
         extra_usage: None,
@@ -474,6 +607,7 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => query_zhipu(api_key).await,
         CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
+        CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
     };
 
     Ok(quota)

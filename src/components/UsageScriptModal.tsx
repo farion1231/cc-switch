@@ -408,8 +408,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
       // Coding Plan 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
-        const baseUrl = providerCredentials.baseUrl ?? "";
-        const apiKey = providerCredentials.apiKey ?? "";
+        // ZenMux 使用用户在脚本配置中手动填入的 API Key 和 Base URL
+        const isZenMux = script.codingPlanProvider === "zenmux";
+        const baseUrl = isZenMux
+          ? (script.baseUrl ?? "")
+          : (providerCredentials.baseUrl ?? "");
+        const apiKey = isZenMux
+          ? (script.apiKey ?? "")
+          : (providerCredentials.apiKey ?? "");
         const { subscriptionApi } = await import("@/lib/api/subscription");
         const quota = await subscriptionApi.getCodingPlanQuota(baseUrl, apiKey);
         if (quota.success && quota.tiers.length > 0) {
@@ -587,15 +593,17 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const autoDetected = detectCodingPlanProvider(
           providerCredentials.baseUrl,
         );
+        const provider = script.codingPlanProvider || autoDetected || "kimi";
+        // ZenMux 允许手动填写 API Key 和 Base URL，不清除
+        const isZenMux = provider === "zenmux";
         setScript({
           ...script,
           code: "",
-          apiKey: undefined,
-          baseUrl: undefined,
+          apiKey: isZenMux ? script.apiKey : undefined,
+          baseUrl: isZenMux ? script.baseUrl : undefined,
           accessToken: undefined,
           userId: undefined,
-          codingPlanProvider:
-            script.codingPlanProvider || autoDetected || "kimi",
+          codingPlanProvider: provider,
         });
       } else if (presetName === TEMPLATE_TYPES.BALANCE) {
         // 官方余额查询模板不需要脚本，使用 Rust 原生查询
@@ -614,7 +622,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
-    selectedTemplate === TEMPLATE_TYPES.NEW_API;
+    selectedTemplate === TEMPLATE_TYPES.NEW_API ||
+    (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+      script.codingPlanProvider === "zenmux");
 
   const footer = (
     <>
@@ -1011,6 +1021,66 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       </div>
                     </>
                   )}
+
+                  {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+                    script.codingPlanProvider === "zenmux" && (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-zenmux-base-url">
+                            {t("usageScript.baseUrl")}
+                          </Label>
+                          <Input
+                            id="usage-zenmux-base-url"
+                            type="text"
+                            value={script.baseUrl || ""}
+                            onChange={(e) =>
+                              setScript({ ...script, baseUrl: e.target.value })
+                            }
+                            placeholder="https://api.zenmux.com/v1/..."
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-zenmux-api-key">API Key</Label>
+                          <div className="relative">
+                            <Input
+                              id="usage-zenmux-api-key"
+                              type={showApiKey ? "text" : "password"}
+                              value={script.apiKey || ""}
+                              onChange={(e) =>
+                                setScript({
+                                  ...script,
+                                  apiKey: e.target.value,
+                                })
+                              }
+                              placeholder="sk-..."
+                              autoComplete="off"
+                              className="border-white/10"
+                            />
+                            {script.apiKey && (
+                              <button
+                                type="button"
+                                onClick={() => setShowApiKey(!showApiKey)}
+                                className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                                aria-label={
+                                  showApiKey
+                                    ? t("apiKeyInput.hide")
+                                    : t("apiKeyInput.show")
+                                }
+                              >
+                                {showApiKey ? (
+                                  <EyeOff size={16} />
+                                ) : (
+                                  <Eye size={16} />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
                 </div>
               </div>
             )}

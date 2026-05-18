@@ -455,25 +455,70 @@ async fn query_provider_usage_inner(
 
     // ── Coding Plan 专用路径 ──
     if template_type == TEMPLATE_TYPE_TOKEN_PLAN {
-        // 从供应商配置中提取 API Key 和 Base URL
-        let settings_config = provider
-            .map(|p| &p.settings_config)
-            .cloned()
-            .unwrap_or_default();
-        let env = settings_config.get("env");
-        let base_url = env
-            .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let api_key = env
-            .and_then(|e| {
-                e.get("ANTHROPIC_AUTH_TOKEN")
-                    .or_else(|| e.get("ANTHROPIC_API_KEY"))
-            })
-            .and_then(|v| v.as_str())
+        let coding_plan_provider = usage_script
+            .and_then(|s| s.coding_plan_provider.as_deref())
             .unwrap_or("");
 
-        let quota = crate::services::coding_plan::get_coding_plan_quota(base_url, api_key)
+        // ZenMux 使用 usage_script 中手动填入的 API Key 和 Base URL
+        let (base_url, api_key) = if coding_plan_provider == "zenmux" {
+            let script_base_url = usage_script
+                .and_then(|s| s.base_url.as_deref())
+                .unwrap_or("");
+            let script_api_key = usage_script
+                .and_then(|s| s.api_key.as_deref())
+                .unwrap_or("");
+            if !script_base_url.is_empty() && !script_api_key.is_empty() {
+                (script_base_url.to_string(), script_api_key.to_string())
+            } else {
+                // 回退到供应商环境变量
+                let settings_config = provider
+                    .map(|p| &p.settings_config)
+                    .cloned()
+                    .unwrap_or_default();
+                let env = settings_config.get("env");
+                let env_base_url = env
+                    .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let env_api_key = env
+                    .and_then(|e| {
+                        e.get("ANTHROPIC_AUTH_TOKEN")
+                            .or_else(|| e.get("ANTHROPIC_API_KEY"))
+                    })
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !env_base_url.is_empty() && !env_api_key.is_empty() {
+                    (env_base_url, env_api_key)
+                } else {
+                    (script_base_url.to_string(), script_api_key.to_string())
+                }
+            }
+        } else {
+            // 其他 Coding Plan 供应商使用供应商环境变量
+            let settings_config = provider
+                .map(|p| &p.settings_config)
+                .cloned()
+                .unwrap_or_default();
+            let env = settings_config.get("env");
+            let env_base_url = env
+                .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let env_api_key = env
+                .and_then(|e| {
+                    e.get("ANTHROPIC_AUTH_TOKEN")
+                        .or_else(|| e.get("ANTHROPIC_API_KEY"))
+                })
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            (env_base_url, env_api_key)
+        };
+
+        let quota = crate::services::coding_plan::get_coding_plan_quota(&base_url, &api_key)
             .await
             .map_err(|e| format!("Failed to query coding plan: {e}"))?;
 
@@ -486,6 +531,19 @@ async fn query_provider_usage_inner(
             });
         }
 
+        // ZenMux 的 tier 携带 USD 额度信息，需要编码为 JSON extra
+        let has_usd = quota
+            .tiers
+            .first()
+            .map(|t| t.used_value_usd.is_some())
+            .unwrap_or(false);
+        let plan_label = quota
+            .credential_message
+            .as_deref()
+            .and_then(|msg| msg.split(' ').next())
+            .map(|tier| format!("ZenMux·{}", tier.to_uppercase()));
+        let mut first_tier = true;
+
         let data: Vec<crate::provider::UsageData> = quota
             .tiers
             .iter()
@@ -493,6 +551,26 @@ async fn query_provider_usage_inner(
                 let total = 100.0;
                 let used = tier.utilization;
                 let remaining = total - used;
+                let extra = if has_usd {
+                    let mut extra_json = serde_json::json!({
+                        "resetsAt": tier.resets_at,
+                    });
+                    if let Some(v) = tier.used_value_usd {
+                        extra_json["usedValueUsd"] = serde_json::json!(v);
+                    }
+                    if let Some(v) = tier.max_value_usd {
+                        extra_json["maxValueUsd"] = serde_json::json!(v);
+                    }
+                    if first_tier {
+                        if let Some(ref label) = plan_label {
+                            extra_json["planLabel"] = serde_json::json!(label);
+                        }
+                        first_tier = false;
+                    }
+                    Some(extra_json.to_string())
+                } else {
+                    tier.resets_at.clone()
+                };
                 crate::provider::UsageData {
                     plan_name: Some(tier.name.clone()),
                     remaining: Some(remaining),
@@ -501,7 +579,7 @@ async fn query_provider_usage_inner(
                     unit: Some("%".to_string()),
                     is_valid: Some(true),
                     invalid_message: None,
-                    extra: tier.resets_at.clone(),
+                    extra,
                 }
             })
             .collect();

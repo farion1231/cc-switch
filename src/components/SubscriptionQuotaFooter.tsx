@@ -309,6 +309,8 @@ export const TierBadge: React.FC<{
     : tier.name;
   const countdown = countdownStr(tier.resetsAt);
 
+  const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
+
   return (
     <div className="flex items-center gap-0.5">
       <span className="text-gray-500 dark:text-gray-400">{label}:</span>
@@ -317,6 +319,11 @@ export const TierBadge: React.FC<{
       >
         {t("subscription.utilization", { value: Math.round(tier.utilization) })}
       </span>
+      {hasUsd && (
+        <span className="text-muted-foreground/60">
+          (${tier.usedValueUsd!.toFixed(2)}/${tier.maxValueUsd!.toFixed(2)})
+        </span>
+      )}
       {countdown && (
         <span className="text-muted-foreground/60 ml-0.5 flex items-center gap-px">
           <Clock size={10} />
