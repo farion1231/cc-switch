@@ -367,7 +367,9 @@ fn convert_messages_to_contents(
                 let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 if !id.is_empty() && !name.is_empty() {
-                    tool_name_by_id.entry(id.to_string()).or_insert_with(|| name.to_string());
+                    tool_name_by_id
+                        .entry(id.to_string())
+                        .or_insert_with(|| name.to_string());
                 }
             }
         }
