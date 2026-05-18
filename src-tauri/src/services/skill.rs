@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
@@ -1590,24 +1591,27 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
         let source = ssot_dir.join(directory);
 
-        if !source.exists() {
-            return Err(anyhow!("Skill 不存在于 SSOT: {directory}"));
-        }
+        Self::validate_sync_source_dir(&source, directory)?;
 
         let app_dir = Self::get_app_skills_dir(app)?;
         fs::create_dir_all(&app_dir)?;
 
         let dest = app_dir.join(directory);
 
-        // 如果已存在则先删除（无论是 symlink 还是真实目录）
-        if dest.exists() || Self::is_symlink(&dest) {
-            Self::remove_path(&dest)?;
-        }
-
         let sync_method = Self::get_sync_method();
 
         match sync_method {
             SyncMethod::Auto => {
+                if dest.exists() && !Self::is_symlink(&dest) {
+                    Self::replace_dest_with_copy(&source, &dest, directory)?;
+                    log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
+                    return Ok(());
+                }
+
+                if Self::is_symlink(&dest) {
+                    Self::remove_path(&dest)?;
+                }
+
                 // 优先尝试 symlink
                 match Self::create_symlink(&source, &dest) {
                     Ok(()) => {
@@ -1623,15 +1627,18 @@ impl SkillService {
                     }
                 }
                 // Fallback 到 copy
-                Self::copy_dir_recursive(&source, &dest)?;
+                Self::replace_dest_with_copy(&source, &dest, directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
             SyncMethod::Symlink => {
+                if dest.exists() || Self::is_symlink(&dest) {
+                    Self::remove_path(&dest)?;
+                }
                 Self::create_symlink(&source, &dest)?;
                 log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
             }
             SyncMethod::Copy => {
-                Self::copy_dir_recursive(&source, &dest)?;
+                Self::replace_dest_with_copy(&source, &dest, directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
         }
@@ -1660,6 +1667,63 @@ impl SkillService {
             // 普通文件
             fs::remove_file(path)?;
         }
+        Ok(())
+    }
+
+    fn validate_sync_source_dir(source: &Path, directory: &str) -> Result<()> {
+        if !source.is_dir() {
+            return Err(anyhow!("Skill 不存在于 SSOT: {directory}"));
+        }
+
+        let manifest = source.join("SKILL.md");
+        if !manifest.is_file() {
+            return Err(anyhow!(
+                "Skill 源目录缺少 SKILL.md，拒绝同步以避免覆盖目标目录: {}",
+                source.display()
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn replace_dest_with_copy(source: &Path, dest: &Path, directory: &str) -> Result<()> {
+        Self::validate_sync_source_dir(source, directory)?;
+
+        let parent = dest
+            .parent()
+            .ok_or_else(|| anyhow!("Invalid skill destination: {}", dest.display()))?;
+        fs::create_dir_all(parent)?;
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let tmp_name = Self::sanitize_backup_segment(directory);
+        let tmp = parent.join(format!(".{tmp_name}.tmp-{}-{nonce}", std::process::id()));
+
+        if tmp.exists() || Self::is_symlink(&tmp) {
+            Self::remove_path(&tmp)?;
+        }
+
+        let copy_result = Self::copy_dir_recursive(source, &tmp);
+        if let Err(err) = copy_result {
+            let _ = Self::remove_path(&tmp);
+            return Err(err);
+        }
+
+        if dest.exists() || Self::is_symlink(dest) {
+            Self::remove_path(dest)?;
+        }
+
+        fs::rename(&tmp, dest).with_context(|| {
+            let _ = Self::remove_path(&tmp);
+            format!(
+                "替换 Skill 目录失败: {} -> {}",
+                tmp.display(),
+                dest.display()
+            )
+        })?;
+
         Ok(())
     }
 
@@ -3038,5 +3102,26 @@ mod tests {
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
+    }
+
+    #[test]
+    fn replace_dest_with_copy_rejects_empty_source_without_touching_existing_dest() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-skill");
+        let dest = temp.path().join("app-skills").join("source-skill");
+        fs::create_dir_all(&source).expect("create empty source");
+        write_skill(&dest, "Existing Skill");
+
+        let err = SkillService::replace_dest_with_copy(&source, &dest, "source-skill")
+            .expect_err("empty source should not replace existing app skill");
+
+        assert!(
+            err.to_string().contains("SKILL.md"),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            dest.join("SKILL.md").is_file(),
+            "existing destination skill should be preserved"
+        );
     }
 }
