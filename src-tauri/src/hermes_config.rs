@@ -292,16 +292,7 @@ fn cleanup_hermes_backups(dir: &Path) -> Result<(), AppError> {
 /// Write a single top-level YAML section to config.yaml using section-level replacement.
 ///
 /// This preserves comments and unrelated sections while only modifying the
-/// target section.
-fn write_yaml_section_to_config(
-    section_key: &str,
-    value: &serde_yaml::Value,
-) -> Result<HermesWriteOutcome, AppError> {
-    let _guard = hermes_write_lock().lock()?;
-    write_yaml_section_to_config_locked(section_key, value)
-}
-
-/// Inner write helper — caller must already hold the write lock.
+/// target section. Caller must already hold the write lock.
 fn write_yaml_section_to_config_locked(
     section_key: &str,
     value: &serde_yaml::Value,
@@ -778,10 +769,61 @@ pub fn get_model_config() -> Result<Option<HermesModelConfig>, AppError> {
 
 /// Set the `model` section.
 pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome, AppError> {
+    let _guard = hermes_write_lock().lock()?;
+    set_model_config_locked(model)
+}
+
+fn set_model_config_locked(model: &HermesModelConfig) -> Result<HermesWriteOutcome, AppError> {
     let json_val =
         serde_json::to_value(model).map_err(|e| AppError::JsonSerialize { source: e })?;
     let yaml_val = json_to_yaml(&json_val)?;
-    write_yaml_section_to_config("model", &yaml_val)
+    write_yaml_section_to_config_locked("model", &yaml_val)
+}
+
+fn write_auxiliary_title_generation_defaults_locked(
+    provider: &str,
+    model: Option<&str>,
+) -> Result<HermesWriteOutcome, AppError> {
+    let config = read_hermes_config()?;
+    let mut auxiliary = config
+        .get("auxiliary")
+        .cloned()
+        .unwrap_or_else(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    if !auxiliary.is_mapping() {
+        auxiliary = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+
+    let auxiliary_map = auxiliary
+        .as_mapping_mut()
+        .ok_or_else(|| AppError::Config("Failed to prepare Hermes auxiliary config".to_string()))?;
+    let title_key = serde_yaml::Value::String("title_generation".to_string());
+    let mut title_config = auxiliary_map
+        .get(&title_key)
+        .cloned()
+        .unwrap_or_else(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    if !title_config.is_mapping() {
+        title_config = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+
+    let title_map = title_config.as_mapping_mut().ok_or_else(|| {
+        AppError::Config("Failed to prepare Hermes title_generation config".to_string())
+    })?;
+    title_map.insert(
+        serde_yaml::Value::String("provider".to_string()),
+        serde_yaml::Value::String(provider.to_string()),
+    );
+    if let Some(model) = model.map(str::trim).filter(|s| !s.is_empty()) {
+        title_map.insert(
+            serde_yaml::Value::String("model".to_string()),
+            serde_yaml::Value::String(model.to_string()),
+        );
+    }
+    for key in ["base_url", "api_key", "api_mode"] {
+        title_map.remove(serde_yaml::Value::String(key.to_string()));
+    }
+    auxiliary_map.insert(title_key, title_config);
+
+    write_yaml_section_to_config_locked("auxiliary", &auxiliary)
 }
 
 /// Apply the top-level `model:` defaults when switching to a Hermes provider.
@@ -790,13 +832,21 @@ pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome,
 /// this, switching to a provider whose settings lack a `models` list would
 /// leave the runtime routing requests to the previously active provider.
 ///
+/// For writable `custom_providers:` entries, Hermes resolves saved providers
+/// through the `custom:<name>` namespace. This matters when a CC Switch
+/// provider id collides with a built-in Hermes provider such as `xiaomi`:
+/// writing `provider: xiaomi` routes through Hermes' built-in resolver and
+/// ignores the API key stored in `custom_providers`.
+///
 /// `model.default` is only overwritten when the new provider declares at
 /// least one model; otherwise the previous default is preserved so users
 /// still have a runnable configuration (Hermes will surface a clear error
 /// if the default no longer belongs to the active provider).
 ///
-/// Existing fields in `model:` (`context_length` / `max_tokens` / `base_url`
-/// / `extra`) are preserved via struct-update.
+/// Existing model limits (`context_length` / `max_tokens`) are preserved.
+/// Per-provider runtime overrides (`base_url`, `api_key`, `api_mode`) are
+/// cleared for `custom_providers:` switches so the selected custom provider's
+/// own endpoint, protocol, and key are authoritative.
 pub fn apply_switch_defaults(
     provider_id: &str,
     settings_config: &serde_json::Value,
@@ -810,13 +860,43 @@ pub fn apply_switch_defaults(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let current = get_model_config()?.unwrap_or_default();
-    let merged = HermesModelConfig {
-        default: first_model_id.or(current.default.clone()),
-        provider: Some(provider_id.to_string()),
-        ..current
+    let source = settings_config
+        .get(PROVIDER_SOURCE_FIELD)
+        .and_then(|v| v.as_str());
+    let is_providers_dict = source == Some(PROVIDER_SOURCE_DICT);
+    let provider = if is_providers_dict {
+        settings_config
+            .get("provider_key")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(provider_id)
+            .to_string()
+    } else if provider_id.starts_with("custom:") {
+        provider_id.to_string()
+    } else {
+        format!("custom:{provider_id}")
     };
-    set_model_config(&merged)
+
+    let _guard = hermes_write_lock().lock()?;
+    let mut merged = get_model_config()?.unwrap_or_default();
+    merged.default = first_model_id.or(merged.default);
+    merged.provider = Some(provider);
+    if !is_providers_dict {
+        merged.base_url = None;
+        merged.extra.remove("api_key");
+        merged.extra.remove("api_mode");
+    }
+    let provider = merged.provider.clone().unwrap_or_default();
+    let model = merged.default.clone();
+    let model_outcome = set_model_config_locked(&merged)?;
+    let title_outcome =
+        write_auxiliary_title_generation_defaults_locked(&provider, model.as_deref())?;
+    Ok(if title_outcome.backup_path.is_some() {
+        title_outcome
+    } else {
+        model_outcome
+    })
 }
 
 // ============================================================================
@@ -1720,24 +1800,65 @@ custom_providers:
 
             let model = get_model_config().unwrap().unwrap();
             assert_eq!(model.default.as_deref(), Some("primary-model"));
-            assert_eq!(model.provider.as_deref(), Some("demo"));
+            assert_eq!(model.provider.as_deref(), Some("custom:demo"));
+
+            let config = read_hermes_config().unwrap();
+            let title = config
+                .get("auxiliary")
+                .and_then(|v| v.get("title_generation"))
+                .expect("title_generation defaults should be written");
+            assert_eq!(
+                title.get("provider").and_then(|v| v.as_str()),
+                Some("custom:demo")
+            );
+            assert_eq!(
+                title.get("model").and_then(|v| v.as_str()),
+                Some("primary-model")
+            );
         });
     }
 
     #[test]
     #[serial]
-    fn apply_switch_defaults_preserves_user_context_length() {
+    fn apply_switch_defaults_preserves_user_limits_and_clears_stale_runtime_overrides() {
         with_test_home(|| {
             // User previously set a custom context_length via the Model panel.
+            let mut extra = HashMap::new();
+            extra.insert(
+                "api_key".to_string(),
+                serde_json::Value::String("sk-stale".to_string()),
+            );
+            extra.insert(
+                "api_mode".to_string(),
+                serde_json::Value::String("chat_completions".to_string()),
+            );
             let initial = HermesModelConfig {
                 default: Some("old-model".to_string()),
                 provider: Some("old-provider".to_string()),
                 base_url: Some("https://user-override.example.com".to_string()),
                 context_length: Some(131072),
                 max_tokens: Some(16384),
-                extra: HashMap::new(),
+                extra,
             };
             set_model_config(&initial).unwrap();
+            let config_path = get_hermes_config_path();
+            std::fs::write(
+                &config_path,
+                format!(
+                    "{}{}",
+                    std::fs::read_to_string(&config_path).unwrap(),
+                    r#"auxiliary:
+  title_generation:
+    provider: auto
+    model: old-title-model
+    base_url: https://old.example.com/v1
+    api_key: sk-old-title
+    api_mode: chat_completions
+    timeout: 30
+"#
+                ),
+            )
+            .unwrap();
 
             let settings = serde_json::json!({
                 "models": [{ "id": "new-model" }]
@@ -1746,14 +1867,32 @@ custom_providers:
 
             let model = get_model_config().unwrap().unwrap();
             assert_eq!(model.default.as_deref(), Some("new-model"));
-            assert_eq!(model.provider.as_deref(), Some("new-provider"));
-            // User-customized fields must survive the switch.
-            assert_eq!(
-                model.base_url.as_deref(),
-                Some("https://user-override.example.com")
-            );
+            assert_eq!(model.provider.as_deref(), Some("custom:new-provider"));
+            // User-customized limits survive the switch, but top-level
+            // runtime overrides must not shadow the custom provider entry.
+            assert_eq!(model.base_url.as_deref(), None);
             assert_eq!(model.context_length, Some(131072));
             assert_eq!(model.max_tokens, Some(16384));
+            assert!(!model.extra.contains_key("api_key"));
+            assert!(!model.extra.contains_key("api_mode"));
+
+            let config = read_hermes_config().unwrap();
+            let title = config
+                .get("auxiliary")
+                .and_then(|v| v.get("title_generation"))
+                .expect("title_generation defaults should be written");
+            assert_eq!(
+                title.get("provider").and_then(|v| v.as_str()),
+                Some("custom:new-provider")
+            );
+            assert_eq!(
+                title.get("model").and_then(|v| v.as_str()),
+                Some("new-model")
+            );
+            assert_eq!(title.get("timeout").and_then(|v| v.as_i64()), Some(30));
+            assert!(title.get("base_url").is_none());
+            assert!(title.get("api_key").is_none());
+            assert!(title.get("api_mode").is_none());
         });
     }
 
@@ -1779,7 +1918,7 @@ custom_providers:
             apply_switch_defaults("bare", &settings).unwrap();
 
             let model = get_model_config().unwrap().unwrap();
-            assert_eq!(model.provider.as_deref(), Some("bare"));
+            assert_eq!(model.provider.as_deref(), Some("custom:bare"));
             assert_eq!(model.default.as_deref(), Some("legacy-default"));
         });
     }
@@ -1802,10 +1941,37 @@ custom_providers:
 
             let model = get_model_config().unwrap().unwrap();
             // Provider always updates.
-            assert_eq!(model.provider.as_deref(), Some("edge"));
+            assert_eq!(model.provider.as_deref(), Some("custom:edge"));
             // First entry's id is whitespace-only → blank → fall back to old default
             // (we intentionally don't scan past the first entry for a default).
             assert_eq!(model.default.as_deref(), Some("prev-default"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_uses_provider_key_for_providers_dict_entries() {
+        with_test_home(|| {
+            let settings = serde_json::json!({
+                PROVIDER_SOURCE_FIELD: PROVIDER_SOURCE_DICT,
+                "provider_key": "native-xiaomi",
+                "models": [{ "id": "mimo-v2.5-pro" }]
+            });
+            apply_switch_defaults("Xiaomi MiMo", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.default.as_deref(), Some("mimo-v2.5-pro"));
+            assert_eq!(model.provider.as_deref(), Some("native-xiaomi"));
+
+            let config = read_hermes_config().unwrap();
+            let title = config
+                .get("auxiliary")
+                .and_then(|v| v.get("title_generation"))
+                .expect("title_generation defaults should be written");
+            assert_eq!(
+                title.get("provider").and_then(|v| v.as_str()),
+                Some("native-xiaomi")
+            );
         });
     }
 
