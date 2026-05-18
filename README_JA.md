@@ -121,11 +121,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://vibecodingapi.ai"><img src="assets/partners/logos/lioncc.png" alt="LionCC" width="150"></a></td>
-<td>LionCC のご支援に感謝します！LionCC は究極の開発体験を追求する「Vibe Coders」のために生まれました。Claude Code、Codex、OpenClaw 向けに安定・低遅延・お得な価格の計算リソースサービスを提供し、最大 50% のコスト削減を実現します。登録後、カスタマーサービスの WeChat（HSQBJ088888888）を追加し、合言葉「cc-switch」を送信すると、10 ドル分のクレジット（1,000 万トークン）がもらえます。その他のコラボレーションについてはブログ @LionCC.ai をフォローしてください。<a href="https://vibecodingapi.ai">こちら</a>から登録してください！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://console.claudeapi.com/register?aff=pCLD"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
 <td>本プロジェクトは <a href="https://console.claudeapi.com/register?aff=pCLD">Claude API</a> がスポンサーです。Claude API 直結 — わずか 3 分で Claude Code や Agent アプリに接続可能。新規ユーザーにはテストクレジットを提供しています。Anthropic 公式キーおよび AWS Bedrock 公式チャネルに基づいており、リバースエンジニアリングや性能劣化はありません。Opus / Sonnet / Haiku の全モデルラインナップをサポートし、Tool Use や 1M コンテキストなどの公式機能をすべて保持しています。Claude Code ヘビーユーザー、Agent エンジニア、企業技術チームに最適です。請求書発行およびチーム対応が可能です。<a href="https://console.claudeapi.com/register?aff=pCLD">こちら</a>から登録してください！</td>
 </tr>
