@@ -46,6 +46,14 @@ interface CodexFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // Chat Compat mode
+  chatCompat: boolean;
+  onChatCompatChange: (enabled: boolean) => void;
+
+  // Model mapping (e.g. {"gpt-5.4": "deepseek-v4-flash"})
+  modelMapJson: string;
+  onModelMapJsonChange: (json: string) => void;
 }
 
 export function CodexFormFields({
@@ -71,6 +79,10 @@ export function CodexFormFields({
   modelName = "",
   onModelNameChange,
   speedTestEndpoints,
+  chatCompat,
+  onChatCompatChange,
+  modelMapJson,
+  onModelMapJsonChange,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -141,6 +153,64 @@ export function CodexFormFields({
           onFullUrlChange={onFullUrlChange}
           onManageClick={() => onEndpointModalToggle(true)}
         />
+      )}
+
+      {/* Chat Compat 格式转换开关 */}
+      <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-md">
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="codexChatCompat"
+            className="text-sm font-medium text-foreground cursor-pointer"
+          >
+            {t("codexConfig.chatCompatLabel", {
+              defaultValue: "Chat Compat 模式",
+            })}
+          </label>
+          <p className="text-xs text-muted-foreground max-w-md">
+            {t("codexConfig.chatCompatHint", {
+              defaultValue:
+                "启用后将 Codex 的 Responses API 请求转换为 Chat Completions 格式发给上游（如 DeepSeek），并将响应转换回 Responses API 格式",
+            })}
+          </p>
+        </div>
+        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+          <input
+            id="codexChatCompat"
+            type="checkbox"
+            checked={chatCompat}
+            onChange={(e) => onChatCompatChange(e.target.checked)}
+            className="sr-only peer"
+          />
+          <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
+        </label>
+      </div>
+
+      {/* 模型名称映射 */}
+      {chatCompat && (
+        <div className="space-y-2">
+          <label
+            htmlFor="codexModelMap"
+            className="block text-sm font-medium text-foreground"
+          >
+            {t("codexConfig.modelMapLabel", {
+              defaultValue: "模型名称映射",
+            })}
+          </label>
+          <textarea
+            id="codexModelMap"
+            value={modelMapJson}
+            onChange={(e) => onModelMapJsonChange(e.target.value)}
+            placeholder='{"gpt-5.4": "deepseek-v4-flash"}'
+            rows={3}
+            className="w-full px-3 py-2 text-sm font-mono border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+          />
+          <p className="text-xs text-muted-foreground">
+            {t("codexConfig.modelMapHint", {
+              defaultValue:
+                "JSON 对象，Codex 发送的模型名 → 上游真实模型名。例如将 gpt-5.4 映射为 deepseek-v4-flash",
+            })}
+          </p>
+        </div>
       )}
 
       {/* Codex Model Name 输入框 */}

@@ -1106,12 +1106,38 @@ impl RequestForwarder {
             Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
             None => adapter.needs_transform(provider),
         };
+        log::info!(
+            "[{}] needs_transform={}, adapter_name={}, chat_compat_in_config={:?}",
+            adapter.name(),
+            needs_transform,
+            adapter.name(),
+            provider.settings_config.get("chat_compat")
+        );
         let (effective_endpoint, passthrough_query) =
             if needs_transform && adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
                 rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+            } else if needs_transform {
+                // Non-Claude adapter with transform (e.g. Codex chat_compat mode):
+                // rewrite Responses API paths to Chat Completions
+                let (path, query) = split_endpoint_and_query(endpoint);
+                let rewritten = if path.ends_with("/responses") {
+                    path.replace("/responses", "/chat/completions")
+                } else if path == "/v1/responses" {
+                    "/v1/chat/completions".to_string()
+                } else {
+                    path.to_string()
+                };
+                log::info!(
+                    "[{}] chat_compat endpoint rewrite: '{}' -> '{}' (needs_transform=true, base_url='{}')",
+                    adapter.name(),
+                    endpoint,
+                    rewritten,
+                    base_url
+                );
+                (rewritten, query.map(ToString::to_string))
             } else {
                 (
                     endpoint.to_string(),
@@ -1128,7 +1154,21 @@ impl RequestForwarder {
                 is_full_url,
             )
         } else if is_full_url {
-            append_query_to_full_url(&base_url, passthrough_query.as_deref())
+            // When transform is rewriting the endpoint (e.g. Codex chat_compat),
+            // the rewritten endpoint must be appended to the base, not lost.
+            let rewritten_endpoint = if needs_transform {
+                effective_endpoint.as_str()
+            } else {
+                ""
+            };
+            let url_with_endpoint = if rewritten_endpoint.is_empty() {
+                base_url.to_string()
+            } else {
+                let base_trimmed = base_url.trim_end_matches('/');
+                let ep_trimmed = rewritten_endpoint.trim_start_matches('/');
+                format!("{base_trimmed}/{ep_trimmed}")
+            };
+            append_query_to_full_url(&url_with_endpoint, passthrough_query.as_deref())
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
         };
@@ -1568,6 +1608,7 @@ impl RequestForwarder {
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
+        log::info!("[{tag}] >>> effective_endpoint='{effective_endpoint}', passthrough_query='{passthrough_query:?}', is_full_url={is_full_url}");
         log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
         if log::log_enabled!(log::Level::Debug) {
             if let Ok(body_str) = serde_json::to_string(&filtered_body) {

@@ -29,6 +29,10 @@ pub mod transform;
 pub mod transform_gemini;
 pub mod transform_responses;
 
+// Chat Compat 模块 (Codex Responses ↔ Chat Completions 翻译)
+pub mod chat_to_responses;
+pub mod responses_to_chat;
+
 use crate::app_config::AppType;
 use crate::provider::Provider;
 use serde::{Deserialize, Serialize};

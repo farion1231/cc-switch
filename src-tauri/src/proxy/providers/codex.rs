@@ -1,6 +1,9 @@
 //! Codex (OpenAI) Provider Adapter
 //!
-//! 仅透传模式，支持直连 OpenAI API
+//! 支持两种模式：
+//! - 透传模式（默认）：直接转发 Responses API 请求
+//! - Chat Compat 模式（chat_compat=true）：将 Responses API 请求转换为 Chat Completions 格式
+//!   再转发给上游（如 DeepSeek），然后将响应转换回 Responses API 格式返回给 Codex CLI。
 //!
 //! ## 客户端检测
 //! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
@@ -8,6 +11,7 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use crate::proxy::providers::responses_to_chat;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -183,6 +187,41 @@ impl ProviderAdapter for CodexAdapter {
             http::HeaderName::from_static("authorization"),
             auth_header_value(&bearer)?,
         )])
+    }
+
+    /// 检查是否需要 Chat Compat 格式转换
+    ///
+    /// 当 provider 的 settings_config 中包含 `chat_compat: true` 时启用，
+    /// 将 Responses API 请求转换为 Chat Completions 格式。
+    fn needs_transform(&self, provider: &Provider) -> bool {
+        provider
+            .settings_config
+            .get("chat_compat")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// 转换请求体：Responses API → Chat Completions
+    ///
+    /// reasoning_effort 只用 provider 显式配置：
+    /// - "high"/"medium"/"low" → 启用思考模式
+    /// - 未设置 → 默认 thinking:disabled（防止 reasoning_content echo-back）
+    fn transform_request(
+        &self,
+        body: serde_json::Value,
+        provider: &Provider,
+    ) -> Result<serde_json::Value, ProxyError> {
+        let reasoning_effort = provider
+            .settings_config
+            .get("reasoning_effort")
+            .and_then(|v| v.as_str());
+        let model_map = provider
+            .settings_config
+            .get("model_map")
+            .and_then(|v| v.as_object());
+        // chat_compat mode is always true when transform_request is called
+        // (checked by needs_transform before calling)
+        responses_to_chat::responses_to_chat(&body, reasoning_effort, model_map, true)
     }
 }
 

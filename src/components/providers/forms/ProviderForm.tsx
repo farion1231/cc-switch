@@ -417,6 +417,10 @@ function ProviderFormFull({
     codexBaseUrl,
     codexModelName,
     codexAuthError,
+    codexChatCompat,
+    setCodexChatCompat,
+    codexModelMapJson,
+    setCodexModelMapJson,
     setCodexAuth,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
@@ -1048,10 +1052,20 @@ function ProviderFormFull({
     if (appId === "codex") {
       try {
         const authJson = JSON.parse(codexAuth);
-        const configObj = {
+        const configObj: Record<string, unknown> = {
           auth: authJson,
           config: codexConfig ?? "",
+          chat_compat: codexChatCompat,
         };
+        // Parse and include model_map if valid JSON
+        try {
+          const mm = JSON.parse(codexModelMapJson || "{}");
+          if (mm && typeof mm === "object" && !Array.isArray(mm)) {
+            configObj.model_map = mm;
+          }
+        } catch {
+          // ignore invalid JSON
+        }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
@@ -1857,6 +1871,10 @@ function ProviderFormFull({
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}
               speedTestEndpoints={speedTestEndpoints}
+              chatCompat={codexChatCompat}
+              onChatCompatChange={setCodexChatCompat}
+              modelMapJson={codexModelMapJson}
+              onModelMapJsonChange={setCodexModelMapJson}
             />
           )}
 
