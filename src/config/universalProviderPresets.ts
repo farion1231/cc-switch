@@ -55,9 +55,58 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
 };
 
 /**
+ * Astraflow 默认模型配置
+ */
+const ASTRAFLOW_DEFAULT_MODELS: UniversalProviderModels = {
+  claude: {
+    model: "claude-sonnet-4-5",
+    haikuModel: "claude-haiku-4-5",
+    sonnetModel: "claude-sonnet-4-5",
+    opusModel: "claude-opus-4-5",
+  },
+  codex: {
+    model: "gpt-4o",
+    reasoningEffort: "high",
+  },
+  gemini: {
+    model: "gemini-1.5-pro",
+  },
+};
+
+/**
  * 统一供应商预设列表
  */
 export const universalProviderPresets: UniversalProviderPreset[] = [
+  {
+    name: "Astraflow",
+    providerType: "astraflow",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: true,
+    },
+    defaultModels: ASTRAFLOW_DEFAULT_MODELS,
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    icon: "astraflow",
+    iconColor: "#0052D9",
+    description:
+      "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint)",
+  },
+  {
+    name: "Astraflow (中国)",
+    providerType: "astraflow_cn",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: true,
+    },
+    defaultModels: ASTRAFLOW_DEFAULT_MODELS,
+    websiteUrl: "https://astraflow.ucloud.cn",
+    icon: "astraflow",
+    iconColor: "#0052D9",
+    description:
+      "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (China endpoint)",
+  },
   {
     name: "NewAPI",
     providerType: "newapi",
