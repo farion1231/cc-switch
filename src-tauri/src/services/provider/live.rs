@@ -482,6 +482,24 @@ fn apply_common_config_to_settings(
     }
 }
 
+/// Sync all Claude instance directories with their effective settings (including common config overlay).
+///
+/// Creates missing directories (with symlinks) and updates existing ones.
+/// Called after any change that may affect instance content: provider save or common config update.
+pub(crate) fn sync_all_claude_instance_dirs(state: &AppState) -> Result<(), AppError> {
+    let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
+    for (id, p) in &providers {
+        let effective =
+            build_effective_settings_with_common_config(state.db.as_ref(), &AppType::Claude, p)
+                .unwrap_or_else(|_| p.settings_config.clone());
+        let settings = super::instance::sanitize_for_instance(&effective);
+        if let Err(e) = super::instance::ensure_instance_dir(id, &settings) {
+            log::warn!("Failed to sync instance dir for '{id}': {e}");
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn build_effective_settings_with_common_config(
     db: &Database,
     app_type: &AppType,
@@ -886,15 +904,21 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     if app_type.is_additive_mode() {
         sync_all_providers_to_live(state, app_type)?;
     } else {
-        let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type)?
-        {
-            Some(id) => id,
-            None => return Ok(()),
-        };
+        let current_id =
+            crate::settings::get_effective_current_provider(&state.db, app_type)?;
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
-        if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+
+        if let Some(current_id) = current_id {
+            if let Some(provider) = providers.get(&current_id) {
+                write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            }
+        }
+
+        // For Claude, refresh all instance directories regardless of whether a
+        // current provider is set.
+        if matches!(app_type, AppType::Claude) {
+            sync_all_claude_instance_dirs(state)?;
         }
     }
 
@@ -935,6 +959,11 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // MCP sync
     McpService::sync_all_enabled(state)?;
+
+    // Sync all Claude instance directories (for multi-instance support).
+    if let Err(e) = sync_all_claude_instance_dirs(state) {
+        log::warn!("Failed to sync Claude instance directories: {e}");
+    }
 
     // Skill sync
     for app_type in AppType::all() {

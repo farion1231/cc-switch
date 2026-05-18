@@ -192,6 +192,10 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  async exportAliases(): Promise<string> {
+    return await invoke("export_provider_aliases");
+  },
 };
 
 // ============================================================================
