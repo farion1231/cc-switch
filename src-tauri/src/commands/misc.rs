@@ -560,6 +560,27 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
     }
 }
 
+fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Path) {
+    if home.as_os_str().is_empty() {
+        return;
+    }
+
+    let mise_base = home.join(".local/share/mise");
+    push_unique_path(paths, mise_base.join("shims"));
+
+    let node_installs = mise_base.join("installs").join("node");
+    if node_installs.exists() {
+        if let Ok(entries) = std::fs::read_dir(&node_installs) {
+            for entry in entries.flatten() {
+                let bin_path = entry.path().join("bin");
+                if bin_path.exists() {
+                    push_unique_path(paths, bin_path);
+                }
+            }
+        }
+    }
+}
+
 /// 扫描常见路径查找 CLI
 fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     use std::process::Command;
@@ -573,6 +594,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
+        extend_mise_node_search_paths(&mut search_paths, &home);
     }
 
     #[cfg(target_os = "macos")]
@@ -950,7 +972,7 @@ exec bash --norc --noprofile
         "warp" => launch_macos_warp(&script_file),
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
-        "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
+        "ghostty" => launch_macos_ghostty(&script_file),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
         "kaku" => launch_macos_open_app("Kaku", &script_file, true),
         _ => launch_macos_terminal_app(&script_file), // "terminal" or default
@@ -1061,7 +1083,37 @@ fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// macOS: 使用 open -a 启动支持 --args 参数的终端（Alacritty/Kitty/Ghostty）
+/// macOS: Ghostty — use --quit-after-last-window-closed to avoid cloning existing tabs
+#[cfg(target_os = "macos")]
+fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let output = Command::new("open")
+        .args([
+            "-na",
+            "Ghostty",
+            "--args",
+            "--quit-after-last-window-closed=true",
+            "-e",
+            "bash",
+        ])
+        .arg(script_file)
+        .output()
+        .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Ghostty 启动失败 (exit code: {:?}): {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+/// macOS: 使用 open -na 启动支持 --args 参数的终端（Alacritty/Kitty/WezTerm/Kaku）
 #[cfg(target_os = "macos")]
 fn launch_macos_open_app(
     app_name: &str,
@@ -1071,7 +1123,7 @@ fn launch_macos_open_app(
     use std::process::Command;
 
     let mut cmd = Command::new("open");
-    cmd.arg("-a").arg(app_name).arg("--args");
+    cmd.arg("-na").arg(app_name).arg("--args");
 
     if use_e_flag {
         cmd.arg("-e");
@@ -1436,7 +1488,7 @@ read -n 1 -s
             "warp" => launch_macos_warp(&script_file),
             "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
             "kitty" => launch_macos_open_app("kitty", &script_file, false),
-            "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
+            "ghostty" => launch_macos_ghostty(&script_file),
             "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
             "kaku" => launch_macos_open_app("Kaku", &script_file, true),
             _ => launch_macos_terminal_app(&script_file),
@@ -1694,6 +1746,22 @@ mod tests {
             .filter(|path| path.as_path() == Path::new("/home/tester/.bun/bin"))
             .count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn mise_node_search_paths_include_shims_and_installed_node_bins() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let home = temp.path();
+        let node_bin = home
+            .join(".local/share/mise/installs/node/25.8.0")
+            .join("bin");
+        std::fs::create_dir_all(&node_bin).expect("node bin should be created");
+
+        let mut paths = Vec::new();
+        extend_mise_node_search_paths(&mut paths, home);
+
+        assert!(paths.contains(&home.join(".local/share/mise/shims")));
+        assert!(paths.contains(&node_bin));
     }
 
     #[cfg(not(target_os = "windows"))]

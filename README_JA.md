@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw のオールインワン管理ツール
+### Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw、Hermes Agent のオールインワン管理ツール
 
 [![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
@@ -10,6 +10,8 @@
 [![Downloads](https://img.shields.io/github/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
 
 <a href="https://trendshift.io/repositories/15372" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15372" alt="farion1231%2Fcc-switch | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+
+### 🌐 唯一の公式サイト：**[ccswitch.io](https://ccswitch.io)**
 
 [English](README.md) | [中文](README_ZH.md) | 日本語 | [Changelog](CHANGELOG.md)
 
@@ -129,13 +131,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://ddshub.short.gy/ccswitch"><img src="assets/partners/logos/dds.png" alt="DDS" width="150"></a></td>
-<td>本プロジェクトのスポンサーである DDS に感謝いたします！ DDS（呆呆獣 / DDS Hub）は、Claude に特化した信頼性とパフォーマンスの高い API プロキシサービスです。個人および企業ユーザーの皆様に、圧倒的なコストパフォーマンスを誇る Claude 直結アクセラレーションサービスを提供しています。Claude Haiku / Opus / Sonnet などのフルスペックモデルを完全サポートし、安定した低遅延のアクセスを実現します。
-1,000人民元以上のチャージで領収書（発票）の発行が可能です。さらに、企業のお客様にはカスタマイズされたグループ管理や専用テクニカルサポートをご提供しています。
-CC Switch ユーザー限定特典： 専用リンクからご<a href="https://ddshub.short.gy/ccswitch">登録</a>いただくと、初回チャージ時に 10% の追加ボーナスクレジット をプレゼントいたします！（※チャージ完了後、グループ管理人へご連絡の上お受け取りください。）</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://claudecn.top"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
 <td>本プロジェクトのスポンサーである ClaudeCN に感謝いたします！ClaudeCN は、実体のある企業によって運営されるエンタープライズ向け AI ゲートウェイプラットフォームです。Claude、GPT、DeepSeek など主要モデルへの高可用な商用 API アクセスを提供し、企業の調達プロセスにも対応 — 法人振込や正式契約に対応し、コンプライアンス面でも安心してご利用いただけます。<a href="https://claudecn.top">こちら</a>からご登録ください！</td>
 </tr>
@@ -171,7 +166,7 @@ CC Switch ユーザー限定特典： 専用リンクからご<a href="https://d
 
 ## 特長
 
-[完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-notes/v3.12.3-ja.md)
+[完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-notes/v3.15.0-ja.md)
 
 ### プロバイダ管理
 

@@ -19,7 +19,8 @@
 │   ├── 2.2 切换供应商
 │   ├── 2.3 编辑供应商
 │   ├── 2.4 排序与复制
-│   └── 2.5 用量查询
+│   ├── 2.5 用量查询
+│   └── 2.6 Claude Desktop
 │
 ├── 3. 扩展功能
 │   ├── 3.1 MCP 服务器管理
@@ -63,6 +64,7 @@
 | [2.3-edit.md](./2-providers/2.3-edit.md) | 编辑配置、修改 API Key、回填机制 |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | 拖拽排序、复制供应商、删除 |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | 用量查询、剩余额度、多套餐显示 |
+| [2.6-claude-desktop.md](./2-providers/2.6-claude-desktop.md) | Claude Desktop 第三方供应商、直连与模型映射 |
 
 ### 3. 扩展功能
 
@@ -98,17 +100,21 @@
 - **新用户**：从 [1.1 软件介绍](./1-getting-started/1.1-introduction.md) 开始
 - **安装问题**：查看 [1.2 安装指南](./1-getting-started/1.2-installation.md)
 - **配置供应商**：查看 [2.1 添加供应商](./2-providers/2.1-add.md)
+- **使用 Claude Desktop**：查看 [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
 - **使用代理**：查看 [4.1 代理服务](./4-proxy/4.1-service.md)
 - **遇到问题**：查看 [5.2 FAQ](./5-faq/5.2-questions.md)
 
 ## 版本信息
 
-- 文档版本：v3.13.0
-- 最后更新：2026-04-08
-- 适用于 CC Switch v3.13.0+
+- 文档版本：v3.15.0
+- 最后更新：2026-05-16
+- 适用于 CC Switch v3.15.0+
 
-### v3.13.0 亮点
+### v3.15.0 亮点
 
+- **Claude Desktop 一等管理面板**：支持第三方供应商、直连 / 模型映射两种模式、Copilot / Codex OAuth 复用与 3P profile 写入 — 详见 [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
+- **按角色的模型映射**：用 Sonnet / Opus / Haiku 路由和 `supports1m` 标志适配 Claude Desktop 的模型校验
+- **Claude Desktop 本地路由**：通过 `127.0.0.1:15721/claude-desktop` 为需要转换的供应商提供本地网关
 - **轻量模式**：退出到托盘时销毁主窗口，空闲占用接近零 — 详见 [1.5 个性化配置](./1-getting-started/1.5-settings.md)
 - **配额与余额展示**：官方订阅类（Claude/Codex/Gemini/Copilot/Codex OAuth）自动展示剩余额度；Token Plan 和第三方余额通过内置模板一键启用 — 详见 [2.5 用量查询](./2-providers/2.5-usage-query.md)
 - **Codex OAuth 反向代理**：用 ChatGPT 账号在 Claude Code 中复用 Codex 服务 — 详见 [2.1 添加供应商](./2-providers/2.1-add.md)

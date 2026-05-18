@@ -34,6 +34,7 @@ import {
 } from "@/config/opencodeProviderPresets";
 import {
   openclawProviderPresets,
+  rebaseOpenClawSuggestedDefaults,
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
@@ -50,6 +51,7 @@ import {
   hasApiKeyField,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
+import { isNonNegativeDecimalString } from "@/types/usage";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -346,8 +348,11 @@ function ProviderFormFull({
   const {
     claudeModel,
     defaultHaikuModel,
+    defaultHaikuModelName,
     defaultSonnetModel,
+    defaultSonnetModelName,
     defaultOpusModel,
+    defaultOpusModelName,
     handleModelChange,
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
@@ -811,6 +816,20 @@ function ProviderFormFull({
       );
     }
 
+    const costMultiplier = pricingConfig.costMultiplier?.trim();
+    if (
+      pricingConfig.enabled &&
+      costMultiplier &&
+      !isNonNegativeDecimalString(costMultiplier)
+    ) {
+      toast.error(
+        t("settings.globalProxy.defaultCostMultiplierInvalid", {
+          defaultValue: "成本倍率必须为非负数",
+        }),
+      );
+      return;
+    }
+
     // opencode / openclaw / hermes: providerKey 相关
     // A 类（空）归到 issues；B 类（正则不合法 / 重复 / 状态加载中）仍硬拒绝
     const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -1112,9 +1131,15 @@ function ProviderFormFull({
       if (activePreset.isPartner) {
         payload.isPartner = activePreset.isPartner;
       }
-      // OpenClaw: 传递预设的 suggestedDefaults 到提交数据
+      // OpenClaw: align preset model refs with the actual submitted provider key.
       if (activePreset.suggestedDefaults) {
-        payload.suggestedDefaults = activePreset.suggestedDefaults;
+        payload.suggestedDefaults =
+          appId === "openclaw" && payload.providerKey
+            ? rebaseOpenClawSuggestedDefaults(
+                activePreset.suggestedDefaults,
+                payload.providerKey,
+              )
+            : activePreset.suggestedDefaults;
       }
     }
 
@@ -1232,23 +1257,6 @@ function ProviderFormFull({
 
     await onSubmit(payload);
   };
-
-  const groupedPresets = useMemo(() => {
-    return presetEntries.reduce<Record<string, PresetEntry[]>>((acc, entry) => {
-      const category = entry.preset.category ?? "others";
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(entry);
-      return acc;
-    }, {});
-  }, [presetEntries]);
-
-  const categoryKeys = useMemo(() => {
-    return Object.keys(groupedPresets).filter(
-      (key) => key !== "custom" && groupedPresets[key]?.length,
-    );
-  }, [groupedPresets]);
 
   const shouldShowSpeedTest =
     category !== "official" && category !== "cloud_provider";
@@ -1535,8 +1543,7 @@ function ProviderFormFull({
           {!initialData && (
             <ProviderPresetSelector
               selectedPresetId={selectedPresetId}
-              groupedPresets={groupedPresets}
-              categoryKeys={categoryKeys}
+              presetEntries={presetEntries}
               presetCategoryLabels={presetCategoryLabels}
               onPresetChange={handlePresetChange}
               onUniversalPresetSelect={onUniversalPresetSelect}
@@ -1815,8 +1822,11 @@ function ProviderFormFull({
               shouldShowModelSelector={category !== "official"}
               claudeModel={claudeModel}
               defaultHaikuModel={defaultHaikuModel}
+              defaultHaikuModelName={defaultHaikuModelName}
               defaultSonnetModel={defaultSonnetModel}
+              defaultSonnetModelName={defaultSonnetModelName}
               defaultOpusModel={defaultOpusModel}
+              defaultOpusModelName={defaultOpusModelName}
               onModelChange={handleModelChange}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}

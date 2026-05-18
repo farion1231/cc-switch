@@ -42,6 +42,46 @@ export interface OpenClawProviderPreset {
   suggestedDefaults?: OpenClawSuggestedDefaults;
 }
 
+function rebaseOpenClawModelRef(modelRef: string, providerKey: string): string {
+  const slashIndex = modelRef.indexOf("/");
+  return slashIndex === -1
+    ? `${providerKey}/${modelRef}`
+    : `${providerKey}${modelRef.slice(slashIndex)}`;
+}
+
+/**
+ * OpenClaw default model refs are stored as "<provider-key>/<model-id>".
+ * Presets carry stable built-in keys for display/tests, but the real key is
+ * chosen in the add-provider form, so rewrite refs right before submission.
+ */
+export function rebaseOpenClawSuggestedDefaults(
+  defaults: OpenClawSuggestedDefaults,
+  providerKey: string,
+): OpenClawSuggestedDefaults {
+  const key = providerKey.trim();
+  if (!key) return defaults;
+
+  return {
+    model: defaults.model
+      ? {
+          ...defaults.model,
+          primary: rebaseOpenClawModelRef(defaults.model.primary, key),
+          fallbacks: defaults.model.fallbacks?.map((modelRef) =>
+            rebaseOpenClawModelRef(modelRef, key),
+          ),
+        }
+      : undefined,
+    modelCatalog: defaults.modelCatalog
+      ? Object.fromEntries(
+          Object.entries(defaults.modelCatalog).map(([modelRef, entry]) => [
+            rebaseOpenClawModelRef(modelRef, key),
+            entry,
+          ]),
+        )
+      : undefined,
+  };
+}
+
 /**
  * OpenClaw API protocol options
  * @see https://github.com/openclaw/openclaw/blob/main/docs/gateway/configuration.md
@@ -101,6 +141,118 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: {
         "shengsuanyun/claude-opus-4-7": { alias: "Opus" },
         "shengsuanyun/claude-sonnet-4-6": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "火山Agentplan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ark_agentplan/ark-code-latest" },
+      modelCatalog: {
+        "ark_agentplan/ark-code-latest": { alias: "Ark Code" },
+      },
+    },
+  },
+  {
+    name: "BytePlus",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "byteplus",
+    icon: "byteplus",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "byteplus/ark-code-latest" },
+      modelCatalog: {
+        "byteplus/ark-code-latest": { alias: "Ark Code" },
+      },
+    },
+  },
+  {
+    name: "DouBaoSeed",
+    websiteUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "doubao-seed-2-0-code-preview-latest",
+          name: "DouBao Seed Code Preview",
+          contextWindow: 128000,
+          cost: { input: 0.002, output: 0.006 },
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "doubaoseed",
+    icon: "doubao",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "doubaoseed/doubao-seed-2-0-code-preview-latest" },
+      modelCatalog: {
+        "doubaoseed/doubao-seed-2-0-code-preview-latest": { alias: "DouBao" },
       },
     },
   },
@@ -590,40 +742,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "DouBaoSeed",
-    websiteUrl: "https://www.volcengine.com/product/doubao",
-    apiKeyUrl: "https://www.volcengine.com/product/doubao",
-    settingsConfig: {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "doubao-seed-2-0-code-preview-latest",
-          name: "DouBao Seed Code Preview",
-          contextWindow: 128000,
-          cost: { input: 0.002, output: 0.006 },
-        },
-      ],
-    },
-    category: "cn_official",
-    icon: "doubao",
-    iconColor: "#3370FF",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: { primary: "doubaoseed/doubao-seed-2-0-code-preview-latest" },
-      modelCatalog: {
-        "doubaoseed/doubao-seed-2-0-code-preview-latest": { alias: "DouBao" },
-      },
-    },
-  },
-  {
     name: "BaiLing",
     websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
     settingsConfig: {
@@ -662,10 +780,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "mimo-v2-pro",
-          name: "MiMo V2 Pro",
-          contextWindow: 128000,
-          cost: { input: 0.001, output: 0.004 },
+          id: "mimo-v2.5-pro",
+          name: "MiMo V2.5 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1, output: 3, cacheRead: 0.2, cacheWrite: 0 },
         },
       ],
     },
@@ -680,8 +801,57 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "xiaomimimo/mimo-v2-pro" },
-      modelCatalog: { "xiaomimimo/mimo-v2-pro": { alias: "MiMo" } },
+      model: { primary: "xiaomimimo/mimo-v2.5-pro" },
+      modelCatalog: { "xiaomimimo/mimo-v2.5-pro": { alias: "MiMo" } },
+    },
+  },
+  {
+    name: "Xiaomi MiMo Token Plan (China)",
+    websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
+    settingsConfig: {
+      baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "mimo-v2.5-pro",
+          name: "MiMo V2.5 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "mimo-v2.5",
+          name: "MiMo V2.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "Token Plan API Key",
+        placeholder: "tp-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "xiaomi-mimo-token-plan/mimo-v2.5-pro" },
+      modelCatalog: {
+        "xiaomi-mimo-token-plan/mimo-v2.5-pro": {
+          alias: "MiMo Token Plan (China)",
+        },
+        "xiaomi-mimo-token-plan/mimo-v2.5": {
+          alias: "MiMo Token Plan (China) Multimodal",
+        },
+      },
     },
   },
 
@@ -771,6 +941,102 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: {
         "dmxapi/claude-opus-4-7": { alias: "Opus" },
         "dmxapi/claude-sonnet-4-6": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "ClaudeCN",
+    websiteUrl: "https://claudecn.top",
+    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://claudecn.top",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-7",
+          name: "Claude Opus 4.7",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "claudecn",
+    icon: "claudecn",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "claudecn/claude-sonnet-4-6",
+      },
+      modelCatalog: {
+        "claudecn/claude-opus-4-7": { alias: "Opus" },
+        "claudecn/claude-sonnet-4-6": { alias: "Sonnet" },
+        "claudecn/claude-haiku-4-5": { alias: "Haiku" },
+      },
+    },
+  },
+  {
+    name: "RunAPI",
+    websiteUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co",
+    settingsConfig: {
+      baseUrl: "https://runapi.co",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-7",
+          name: "Claude Opus 4.7",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "runapi",
+    icon: "runapi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "runapi/claude-sonnet-4-6",
+      },
+      modelCatalog: {
+        "runapi/claude-opus-4-7": { alias: "Opus" },
+        "runapi/claude-sonnet-4-6": { alias: "Sonnet" },
+        "runapi/claude-haiku-4-5": { alias: "Haiku" },
       },
     },
   },
@@ -1392,7 +1658,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://www.crazyrouter.com",
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
     settingsConfig: {
-      baseUrl: "https://crazyrouter.com/v1",
+      baseUrl: "https://cn.crazyrouter.com/v1",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -1561,10 +1827,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     settingsConfig: {
-      baseUrl: "https://www.openclaudecode.cn",
+      baseUrl: "https://www.micuapi.ai",
       apiKey: "",
       api: "anthropic-messages",
       models: [
