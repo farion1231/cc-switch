@@ -232,11 +232,48 @@ impl OmoService {
 
     fn build_config(v: &OmoVariant, profile_data: Option<&OmoProfileData>) -> Value {
         let mut result = Map::new();
+
+        // Read existing config file to preserve top-level keys (e.g. $schema,
+        // disabled_agents) that the provider's otherFields may not cover.
+        // NOTE: We intentionally do NOT merge agents or categories from the
+        // existing file. The provider config is the source of truth for those
+        // sections — merging would resurrect keys the user explicitly removed
+        // in the OMO form UI (e.g. deleting an agent via `delete next[key]`
+        // in OmoFormFields.tsx). See PR #2766 review discussion.
+        let existing_obj = Self::config_path(v)
+            .exists()
+            .then(|| Self::read_jsonc_object(&Self::config_path(v)))
+            .transpose()
+            .ok()
+            .flatten();
+
         if let Some((agents, categories, other_fields)) = profile_data {
             Self::insert_object_entries(&mut result, other_fields.as_ref());
-            Self::insert_opt_value(&mut result, "agents", agents);
+
+            // Gap-fill top-level keys from existing file that are absent from
+            // the provider's otherFields (e.g. $schema added by another tool).
+            if let Some(ref existing) = existing_obj {
+                for (key, value) in existing {
+                    if key != "agents" && key != "categories" && !result.contains_key(key) {
+                        result.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+
+            if let Some(provider_agents) = agents {
+                result.insert(
+                    "agents".to_string(),
+                    provider_agents.as_object().cloned().unwrap_or_default().into(),
+                );
+            }
+
             if v.has_categories {
-                Self::insert_opt_value(&mut result, "categories", categories);
+                if let Some(provider_categories) = categories {
+                    result.insert(
+                        "categories".to_string(),
+                        provider_categories.as_object().cloned().unwrap_or_default().into(),
+                    );
+                }
             }
         }
         Value::Object(result)
