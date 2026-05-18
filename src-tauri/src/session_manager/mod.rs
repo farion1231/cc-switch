@@ -124,8 +124,8 @@ pub fn delete_session(
         return hermes::delete_session_sqlite(session_id, source_path);
     }
 
-    let root = provider_root(provider_id)?;
-    delete_session_with_root(provider_id, session_id, Path::new(source_path), &root)
+    let roots = provider_roots(provider_id)?;
+    delete_session_with_roots(provider_id, session_id, Path::new(source_path), &roots)
 }
 
 pub fn delete_sessions(requests: &[DeleteSessionRequest]) -> Vec<DeleteSessionOutcome> {
@@ -138,45 +138,67 @@ pub fn delete_sessions(requests: &[DeleteSessionRequest]) -> Vec<DeleteSessionOu
     })
 }
 
-fn delete_session_with_root(
+fn delete_session_with_roots(
     provider_id: &str,
     session_id: &str,
     source_path: &Path,
-    root: &Path,
+    roots: &[PathBuf],
 ) -> Result<bool, String> {
-    let validated_root = canonicalize_existing_path(root, "session root")?;
     let validated_source = canonicalize_existing_path(source_path, "session source")?;
 
-    if !validated_source.starts_with(&validated_root) {
+    let mut saw_existing_root = false;
+    for root in roots {
+        if !root.exists() {
+            continue;
+        }
+
+        saw_existing_root = true;
+        let validated_root = canonicalize_existing_path(root, "session root")?;
+        if validated_source.starts_with(&validated_root) {
+            return match provider_id {
+                "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
+                "claude" => claude::delete_session(&validated_root, &validated_source, session_id),
+                "opencode" => {
+                    opencode::delete_session(&validated_root, &validated_source, session_id)
+                }
+                "openclaw" => {
+                    openclaw::delete_session(&validated_root, &validated_source, session_id)
+                }
+                "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
+                "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
+                _ => Err(format!("Unsupported provider: {provider_id}")),
+            };
+        }
+    }
+
+    if !saw_existing_root {
         return Err(format!(
-            "Session source path is outside provider root: {}",
-            source_path.display()
+            "Session root not found for provider {provider_id}: {}",
+            roots
+                .first()
+                .map(|root| root.display().to_string())
+                .unwrap_or_else(|| "<none>".to_string())
         ));
     }
 
-    match provider_id {
-        "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
-        "claude" => claude::delete_session(&validated_root, &validated_source, session_id),
-        "opencode" => opencode::delete_session(&validated_root, &validated_source, session_id),
-        "openclaw" => openclaw::delete_session(&validated_root, &validated_source, session_id),
-        "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
-        "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
-        _ => Err(format!("Unsupported provider: {provider_id}")),
-    }
+    Err(format!(
+        "Session source path is outside provider roots: {}",
+        source_path.display()
+    ))
 }
 
-fn provider_root(provider_id: &str) -> Result<PathBuf, String> {
-    let root = match provider_id {
-        "codex" => crate::codex_config::get_codex_config_dir().join("sessions"),
-        "claude" => crate::config::get_claude_config_dir().join("projects"),
-        "opencode" => opencode::get_opencode_data_dir(),
-        "openclaw" => crate::openclaw_config::get_openclaw_dir().join("agents"),
-        "gemini" => crate::gemini_config::get_gemini_dir().join("tmp"),
-        "hermes" => crate::hermes_config::get_hermes_dir().join("sessions"),
+fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
+    let roots = match provider_id {
+        "codex" => codex::session_roots(),
+        "claude" => vec![crate::config::get_claude_config_dir().join("projects")],
+        "opencode" => vec![opencode::get_opencode_data_dir()],
+        "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],
+        "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],
+        "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 
-    Ok(root)
+    Ok(roots)
 }
 
 fn canonicalize_existing_path(path: &Path, label: &str) -> Result<PathBuf, String> {
@@ -228,6 +250,39 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn write_codex_session(path: &Path, session_id: &str) {
+        std::fs::write(
+            path,
+            format!(
+                "{{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\",\"cwd\":\"/tmp/project\"}}}}\n\
+                 {{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":\"hello\"}}}}\n",
+            ),
+        )
+        .expect("write source");
+    }
+
+    #[test]
+    fn accepts_source_path_under_any_allowed_provider_root() {
+        let active_root = tempdir().expect("active root");
+        let archived_root = tempdir().expect("archived root");
+        let source = archived_root.path().join("session.jsonl");
+        write_codex_session(&source, "archived-session");
+
+        let deleted = delete_session_with_roots(
+            "codex",
+            "archived-session",
+            &source,
+            &[
+                active_root.path().to_path_buf(),
+                archived_root.path().to_path_buf(),
+            ],
+        )
+        .expect("delete archived session");
+
+        assert!(deleted);
+        assert!(!source.exists());
+    }
+
     #[test]
     fn rejects_source_path_outside_provider_root() {
         let root = tempdir().expect("tempdir");
@@ -235,10 +290,11 @@ mod tests {
         let source = outside.path().join("session.jsonl");
         std::fs::write(&source, "{}").expect("write source");
 
-        let err = delete_session_with_root("codex", "session-1", &source, root.path())
-            .expect_err("expected outside-root path to be rejected");
+        let err =
+            delete_session_with_roots("codex", "session-1", &source, &[root.path().to_path_buf()])
+                .expect_err("expected outside-root path to be rejected");
 
-        assert!(err.contains("outside provider root"));
+        assert!(err.contains("outside provider roots"));
     }
 
     #[test]
@@ -246,8 +302,9 @@ mod tests {
         let root = tempdir().expect("tempdir");
         let missing = root.path().join("missing.jsonl");
 
-        let err = delete_session_with_root("codex", "session-1", &missing, root.path())
-            .expect_err("expected missing source path to fail");
+        let err =
+            delete_session_with_roots("codex", "session-1", &missing, &[root.path().to_path_buf()])
+                .expect_err("expected missing source path to fail");
 
         assert!(err.contains("session source not found"));
     }
