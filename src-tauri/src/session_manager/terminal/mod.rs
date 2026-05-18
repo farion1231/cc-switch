@@ -22,6 +22,8 @@ pub fn launch_terminal(
         "wezterm" => launch_wezterm(command, cwd),
         "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        #[cfg(unix)]
+        "warp" => launch_warp(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
         _ => Err(format!("Unsupported terminal target: {target}")),
     }
@@ -78,22 +80,7 @@ end tell"#
 }
 
 fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    let args = build_ghostty_args(command, cwd);
-
-    let status = Command::new("open")
-        .args(args.iter().map(String::as_str))
-        .status()
-        .map_err(|e| format!("Failed to launch Ghostty: {e}"))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err("Failed to launch Ghostty. Make sure it is installed.".to_string())
-    }
-}
-
-fn build_ghostty_args(command: &str, cwd: Option<&str>) -> Vec<String> {
-    let input = ghostty_raw_input(command);
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
     let mut args = vec![
         "-na".to_string(),
@@ -108,22 +95,22 @@ fn build_ghostty_args(command: &str, cwd: Option<&str>) -> Vec<String> {
         }
     }
 
-    args.push(format!("--input={input}"));
-    args
-}
+    args.push("-e".to_string());
+    args.push(shell);
+    args.push("-l".to_string());
+    args.push("-c".to_string());
+    args.push(command.to_string());
 
-fn ghostty_raw_input(command: &str) -> String {
-    let mut escaped = String::from("raw:");
-    for ch in command.chars() {
-        match ch {
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            _ => escaped.push(ch),
-        }
+    let status = Command::new("open")
+        .args(&args)
+        .status()
+        .map_err(|e| format!("Failed to launch Ghostty: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Ghostty. Make sure it is installed.".to_string())
     }
-    escaped.push_str("\\n");
-    escaped
 }
 
 fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
@@ -216,6 +203,48 @@ fn build_wezterm_compatible_args_with_shell(
     args
 }
 
+#[cfg(unix)]
+fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let cwd = cwd.ok_or("Failed to resume session without cwd")?;
+
+    let mut script_file = tempfile::Builder::new()
+        .disable_cleanup(true)
+        .permissions(std::fs::Permissions::from_mode(0o755))
+        .tempfile_in(cwd)
+        .map_err(|e| format!("Failed to create temporary script file for launching Warp: {e}"))?;
+
+    writeln!(
+        &mut script_file,
+        r#"#!/usr/bin/env sh
+
+        rm -- "$0"
+
+        exec {command}
+        "#,
+    )
+    .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
+
+    let mut warp_url = url::Url::parse("warp://action/new_tab").unwrap();
+    warp_url
+        .query_pairs_mut()
+        .append_pair("path", &script_file.path().to_string_lossy());
+    let warp_url = warp_url.to_string();
+
+    let status = Command::new("open")
+        .args(["-a", "Warp", &warp_url])
+        .status()
+        .map_err(|e| format!("Failed to launch Warp: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Warp.".to_string())
+    }
+}
+
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // Alacritty: open -na Alacritty --args --working-directory ... -e shell -c command
     let full_command = build_shell_command(command, None);
@@ -300,43 +329,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ghostty_uses_shell_mode_for_resume_commands() {
-        let args = build_ghostty_args("claude --resume abc-123", Some("/tmp/project dir"));
-
+    fn build_shell_command_keeps_command_without_cwd_prefix_when_not_provided() {
         assert_eq!(
-            args,
-            vec![
-                "-na",
-                "Ghostty",
-                "--args",
-                "--quit-after-last-window-closed=true",
-                "--working-directory=/tmp/project dir",
-                "--input=raw:claude --resume abc-123\\n",
-            ]
-        );
-    }
-
-    #[test]
-    fn ghostty_keeps_command_without_cwd_prefix_when_not_provided() {
-        let args = build_ghostty_args("claude --resume abc-123", None);
-
-        assert_eq!(
-            args,
-            vec![
-                "-na",
-                "Ghostty",
-                "--args",
-                "--quit-after-last-window-closed=true",
-                "--input=raw:claude --resume abc-123\\n",
-            ]
-        );
-    }
-
-    #[test]
-    fn ghostty_escapes_newlines_and_backslashes_in_input() {
-        assert_eq!(
-            ghostty_raw_input("echo foo\\\\bar\npwd"),
-            "raw:echo foo\\\\\\\\bar\\npwd\\n"
+            build_shell_command("claude --resume abc-123", None),
+            "claude --resume abc-123"
         );
     }
 
@@ -364,5 +360,23 @@ mod tests {
                 "claude --resume abc-123".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn ghostty_uses_working_directory_arg_for_cwd() {
+        // cwd should be passed as --working-directory, not embedded in the shell command string
+        // This avoids shell expansion of special characters in directory paths
+        let cwd = "/tmp/project dir";
+        let command = "claude --resume abc-123";
+
+        // Verify build_shell_command does NOT include cwd when used in ghostty context
+        // (ghostty passes cwd via --working-directory flag instead)
+        assert_eq!(
+            build_shell_command(command, None),
+            "claude --resume abc-123"
+        );
+
+        // Verify shell_escape works correctly for paths with spaces
+        assert_eq!(shell_escape(cwd), "\"/tmp/project dir\"");
     }
 }

@@ -58,6 +58,20 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  huoshan: {
+    name: "huoshan",
+    displayName: "火山方舟",
+    category: "ai-provider",
+    keywords: ["huoshan", "volcengine", "ark", "agentplan", "byteplus"],
+    defaultColor: "#3370FF",
+  },
+  byteplus: {
+    name: "byteplus",
+    displayName: "BytePlus",
+    category: "ai-provider",
+    keywords: ["byteplus", "volcengine", "ark", "modelark"],
+    defaultColor: "#3370FF",
+  },
   chatglm: {
     name: "chatglm",
     displayName: "chatglm",
@@ -71,6 +85,18 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["anthropic"],
     defaultColor: "#D4915D",
+  },
+  claudeapi: {
+    name: "claudeapi",
+    displayName: "ClaudeAPI",
+    category: "ai-provider",
+    keywords: ["claudeapi", "claude", "anthropic", "bedrock"],
+  },
+  claudecn: {
+    name: "claudecn",
+    displayName: "ClaudeCN",
+    category: "ai-provider",
+    keywords: ["claudecn", "claude", "enterprise"],
   },
   cloudflare: {
     name: "cloudflare",
@@ -106,13 +132,6 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["cubence", "api", "relay"],
     defaultColor: "#4B5563",
-  },
-  dds: {
-    name: "dds",
-    displayName: "DDS",
-    category: "other",
-    keywords: [],
-    defaultColor: "currentColor",
   },
   deepseek: {
     name: "deepseek",
@@ -268,12 +287,32 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["openclaw", "lobster", "claw"],
     defaultColor: "#ff4f40",
   },
+  hermes: {
+    name: "hermes",
+    displayName: "Hermes",
+    category: "ai-provider",
+    keywords: ["hermes", "agent", "nous", "nousresearch"],
+    defaultColor: "#000000",
+  },
+  lemondata: {
+    name: "lemondata",
+    displayName: "LemonData",
+    category: "ai-provider",
+    keywords: ["lemondata", "lemon", "lemoncode"],
+    defaultColor: "#F5C518",
+  },
   packycode: {
     name: "packycode",
     displayName: "PackyCode",
     category: "ai-provider",
     keywords: ["packycode", "packy", "packyapi"],
     defaultColor: "currentColor",
+  },
+  pateway: {
+    name: "pateway",
+    displayName: "PatewayAI",
+    category: "ai-provider",
+    keywords: ["pateway", "patewayai", "claude", "codex"],
   },
   palm: {
     name: "palm",
@@ -365,6 +404,18 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["pipellm", "pipe"],
     defaultColor: "currentColor",
+  },
+  runapi: {
+    name: "runapi",
+    displayName: "RunAPI",
+    category: "ai-provider",
+    keywords: ["runapi", "run", "aggregator", "gateway"],
+  },
+  relaxcode: {
+    name: "relaxcode",
+    displayName: "RelaxyCode",
+    category: "ai-provider",
+    keywords: ["relaxycode", "relaxcode", "relax"],
   },
   eflowcode: {
     name: "eflowcode",

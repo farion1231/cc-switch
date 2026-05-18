@@ -12,7 +12,7 @@ use crate::proxy::types::*;
 use crate::services::provider::{
     build_effective_settings_with_common_config, write_live_with_common_config,
 };
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::Emitter;
@@ -23,17 +23,27 @@ const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 /// 代理接管模式下需要从 Claude Live 配置中移除的"模型覆盖"字段。
 ///
-/// 原因：接管模式切换供应商时不会写回 Live 配置，如果保留这些字段，
-/// Claude Code 会继续以旧模型名发起请求，导致新供应商不支持时失败。
-const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 6] = [
+/// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
+/// 再由本地代理映射到当前供应商真实模型；`*_MODEL_NAME` 也需要同步接管，
+/// 否则 Claude Code 模型菜单会残留上一个供应商的显示名称。
+const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 9] = [
     "ANTHROPIC_MODEL",
-    "ANTHROPIC_REASONING_MODEL",
+    "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
     // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
     "ANTHROPIC_SMALL_FAST_MODEL",
 ];
+
+const CLAUDE_TAKEOVER_HAIKU_MODEL: &str = "claude-haiku-4-5";
+const CLAUDE_TAKEOVER_SONNET_MODEL: &str = "claude-sonnet-4-6";
+const CLAUDE_TAKEOVER_OPUS_MODEL: &str = "claude-opus-4-7";
+// 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
+const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 
 #[derive(Clone)]
 pub struct ProxyService {
@@ -59,32 +69,10 @@ impl ProxyService {
         }
     }
 
-    /// 清理接管模式下 Claude Live 配置中的模型覆盖字段。
-    ///
-    /// 这可以避免"接管开启后切换供应商仍使用旧模型"的问题。
-    /// 注意：此方法不会修改 Token/Base URL 的接管占位符，仅移除模型字段。
-    pub fn cleanup_claude_model_overrides_in_live(&self) -> Result<(), String> {
-        let mut config = self.read_claude_live()?;
-
-        let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) else {
-            return Ok(());
-        };
-
-        let mut changed = false;
-        for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
-            if env.remove(key).is_some() {
-                changed = true;
-            }
-        }
-
-        if changed {
-            self.write_claude_live(&config)?;
-        }
-
-        Ok(())
-    }
-
     fn apply_claude_takeover_fields(config: &mut Value, proxy_url: &str) {
+        // 必须在 remove/insert 前 snapshot：避免读到自己刚写入的接管别名。
+        let takeover_model_fields = Self::build_claude_takeover_model_fields(config);
+
         if !config.is_object() {
             *config = json!({});
         }
@@ -104,6 +92,10 @@ impl ProxyService {
 
         for key in CLAUDE_MODEL_OVERRIDE_ENV_KEYS {
             env.remove(key);
+        }
+
+        for (key, value) in takeover_model_fields {
+            env.insert(key.to_string(), Value::String(value));
         }
 
         let token_keys = [
@@ -127,6 +119,101 @@ impl ProxyService {
                 json!(PROXY_TOKEN_PLACEHOLDER),
             );
         }
+    }
+
+    fn build_claude_takeover_model_fields(config: &Value) -> Vec<(&'static str, String)> {
+        let Some(env) = config.get("env").and_then(Value::as_object) else {
+            return Vec::new();
+        };
+
+        let default_model = Self::claude_env_string(env, "ANTHROPIC_MODEL");
+        let small_fast_model = Self::claude_env_string(env, "ANTHROPIC_SMALL_FAST_MODEL");
+        let haiku_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+            .or(small_fast_model)
+            .or(default_model);
+        let sonnet_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_SONNET_MODEL")
+            .or(default_model)
+            .or(small_fast_model);
+        let opus_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_OPUS_MODEL")
+            .or(default_model)
+            .or(small_fast_model);
+
+        let mut fields = Vec::with_capacity(6);
+        Self::push_claude_takeover_role_fields(
+            &mut fields,
+            env,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            CLAUDE_TAKEOVER_HAIKU_MODEL,
+            false,
+            haiku_model,
+        );
+        Self::push_claude_takeover_role_fields(
+            &mut fields,
+            env,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            CLAUDE_TAKEOVER_SONNET_MODEL,
+            true,
+            sonnet_model,
+        );
+        Self::push_claude_takeover_role_fields(
+            &mut fields,
+            env,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            CLAUDE_TAKEOVER_OPUS_MODEL,
+            true,
+            opus_model,
+        );
+        fields
+    }
+
+    fn push_claude_takeover_role_fields(
+        fields: &mut Vec<(&'static str, String)>,
+        env: &Map<String, Value>,
+        model_key: &'static str,
+        name_key: &'static str,
+        takeover_model: &'static str,
+        supports_one_m: bool,
+        upstream_model: Option<&str>,
+    ) {
+        let Some(upstream_model) = upstream_model else {
+            return;
+        };
+
+        let mut client_model = takeover_model.to_string();
+        if supports_one_m && Self::has_claude_one_m_marker(upstream_model) {
+            client_model.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
+        }
+        fields.push((model_key, client_model));
+
+        let display_name = Self::claude_env_string(env, name_key)
+            .map(str::to_string)
+            .unwrap_or_else(|| Self::strip_claude_one_m_marker(upstream_model));
+        if !display_name.is_empty() {
+            fields.push((name_key, display_name));
+        }
+    }
+
+    fn claude_env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+        env.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn has_claude_one_m_marker(model: &str) -> bool {
+        model
+            .trim_end()
+            .to_ascii_lowercase()
+            .ends_with(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
+    }
+
+    fn strip_claude_one_m_marker(model: &str) -> String {
+        crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model)
+            .trim()
+            .to_string()
     }
 
     pub async fn sync_claude_live_from_provider_while_proxy_active(
@@ -327,12 +414,15 @@ impl ProxyService {
                 };
                 let live_taken_over = self.detect_takeover_in_live_config_for_app(&app);
 
-                if has_backup || live_taken_over {
+                // 必须 backup AND live 占位符同时存在才算真接管。
+                // 只看其一会出现「UI 显示已接管但 Live 已被恢复」或「Live 仍是占位符但备份丢失」
+                // 两种脏角落，下面的重建分支会把这些情况修复成一致状态。
+                if has_backup && live_taken_over {
                     return Ok(());
                 }
 
                 log::warn!(
-                    "{app_type_str} 标记为已接管，但缺少备份或占位符，正在重新接管并补齐备份"
+                    "{app_type_str} 标记为已接管，但 backup={has_backup} live_taken_over={live_taken_over}，正在重新接管并补齐备份"
                 );
             }
 
@@ -411,7 +501,11 @@ impl ProxyService {
         }
 
         // 1) 恢复 Live 配置
-        self.restore_live_config_for_app(&app).await?;
+        //
+        // 必须走 with_fallback 版本：备份 → SSOT → 清理占位符 的三层兜底。
+        // 简版 restore_live_config_for_app 在备份缺失时会静默 Ok(())，
+        // 留下接管时写入的占位符（代理地址/PROXY_MANAGED token），客户端无法工作。
+        self.restore_live_config_for_app_with_fallback(&app).await?;
 
         // 2) 删除该 app 的备份（避免长期存储敏感 Token）
         self.db
@@ -466,14 +560,7 @@ impl ProxyService {
             AppType::Claude => self.read_claude_live()?,
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                return Err("OpenCode 不支持代理功能".to_string());
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                return Err("OpenClaw 不支持代理功能".to_string());
-            }
+            _ => return Err("该应用不支持代理功能".to_string()),
         };
 
         self.sync_live_config_to_provider(app_type, &live_config)
@@ -687,12 +774,7 @@ impl ProxyService {
                     }
                 }
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features, skip silently
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features, skip silently
-            }
+            _ => {}
         }
 
         Ok(())
@@ -871,14 +953,7 @@ impl ProxyService {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                return Err("OpenCode 不支持代理功能".to_string());
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                return Err("OpenClaw 不支持代理功能".to_string());
-            }
+            _ => return Err("该应用不支持代理功能".to_string()),
         };
 
         let json_str = serde_json::to_string(&config)
@@ -1019,14 +1094,7 @@ impl ProxyService {
                 self.write_gemini_live(&live_config)?;
                 log::info!("Gemini Live 配置已接管，代理地址: {proxy_url}");
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                return Err("OpenCode 不支持代理功能".to_string());
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                return Err("OpenClaw 不支持代理功能".to_string());
-            }
+            _ => return Err("该应用不支持代理功能".to_string()),
         }
 
         Ok(())
@@ -1076,12 +1144,7 @@ impl ProxyService {
                     let _ = self.write_gemini_live(&live_config);
                 }
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features, skip silently
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features, skip silently
-            }
+            _ => {}
         }
 
         Ok(())
@@ -1119,12 +1182,7 @@ impl ProxyService {
                     log::info!("Gemini Live 配置已恢复");
                 }
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features, skip silently
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features, skip silently
-            }
+            _ => {}
         }
 
         Ok(())
@@ -1213,14 +1271,7 @@ impl ProxyService {
             AppType::Claude => self.write_claude_live(config),
             AppType::Codex => self.write_codex_live(config),
             AppType::Gemini => self.write_gemini_live(config),
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                Err("OpenCode 不支持代理功能".to_string())
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                Err("OpenClaw 不支持代理功能".to_string())
-            }
+            _ => Err("该应用不支持代理功能".to_string()),
         }
     }
 
@@ -1238,14 +1289,7 @@ impl ProxyService {
                 Ok(config) => Self::is_gemini_live_taken_over(&config),
                 Err(_) => false,
             },
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy takeover
-                false
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy takeover
-                false
-            }
+            _ => false,
         }
     }
 
@@ -1285,14 +1329,7 @@ impl ProxyService {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy features
-                Ok(())
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy features
-                Ok(())
-            }
+            _ => Ok(()),
         }
     }
 
@@ -1509,20 +1546,33 @@ impl ProxyService {
                 .map_err(|e| format!("构建 {app_type} 有效配置失败: {e}"))?;
 
         if matches!(app_type_enum, AppType::Codex) {
-            let existing_backup = self
+            let existing_backup_value = self
                 .db
                 .get_live_backup(app_type)
                 .await
-                .map_err(|e| format!("读取 {app_type} 现有备份失败: {e}"))?;
+                .map_err(|e| format!("读取 {app_type} 现有备份失败: {e}"))?
+                .map(|backup| {
+                    serde_json::from_str::<Value>(&backup.original_config)
+                        .map_err(|e| format!("解析 {app_type} 现有备份失败: {e}"))
+                })
+                .transpose()?;
 
-            if let Some(existing_backup) = existing_backup {
-                let existing_value: Value = serde_json::from_str(&existing_backup.original_config)
-                    .map_err(|e| format!("解析 {app_type} 现有备份失败: {e}"))?;
+            if let Some(existing_value) = existing_backup_value.as_ref() {
                 Self::preserve_codex_mcp_servers_in_backup(
                     &mut effective_settings,
-                    &existing_value,
+                    existing_value,
                 )?;
             }
+
+            let anchor_config_text = existing_backup_value
+                .as_ref()
+                .and_then(|value| value.get("config"))
+                .and_then(|value| value.as_str());
+            crate::codex_config::normalize_codex_settings_config_model_provider(
+                &mut effective_settings,
+                anchor_config_text,
+            )
+            .map_err(|e| format!("归一化 Codex restore backup 失败: {e}"))?;
         }
 
         let backup_json = match app_type_enum {
@@ -1540,9 +1590,7 @@ impl ProxyService {
                 serde_json::to_string(&env_backup)
                     .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?
             }
-            AppType::OpenCode | AppType::OpenClaw => {
-                return Err(format!("未知的应用类型: {app_type}"));
-            }
+            _ => return Err(format!("未知的应用类型: {app_type}")),
         };
 
         self.db
@@ -1605,9 +1653,6 @@ impl ProxyService {
             if matches!(app_type_enum, AppType::Claude) {
                 self.sync_claude_live_from_provider_while_proxy_active(&provider)
                     .await?;
-                if let Err(e) = self.cleanup_claude_model_overrides_in_live() {
-                    log::warn!("清理 Claude Live 模型字段失败（不影响热切换结果）: {e}");
-                }
             }
         }
 
@@ -1782,6 +1827,8 @@ impl ProxyService {
         let auth = config.get("auth");
         let config_str = config.get("config").and_then(|v| v.as_str());
 
+        // Proxy restore writes saved live backups verbatim. Provider-driven writes go
+        // through write_live_with_common_config(), which normalizes Codex provider ids.
         match (auth, config_str) {
             (Some(auth), Some(cfg)) => write_codex_live_atomic(auth, Some(cfg))
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?,
@@ -1942,6 +1989,23 @@ impl ProxyService {
             log::info!("已热更新运行中的熔断器配置");
         } else {
             log::debug!("代理服务器未运行，熔断器配置将在下次启动时生效");
+        }
+        Ok(())
+    }
+
+    /// 热更新指定应用的熔断器配置
+    pub async fn update_circuit_breaker_config_for_app(
+        &self,
+        app_type: &str,
+        config: crate::proxy::CircuitBreakerConfig,
+    ) -> Result<(), String> {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server
+                .update_circuit_breaker_config_for_app(app_type, config)
+                .await;
+            log::info!("已热更新 {app_type} 运行中的熔断器配置");
+        } else {
+            log::debug!("{app_type} 熔断器配置将在下次代理启动时生效");
         }
         Ok(())
     }
@@ -2284,7 +2348,12 @@ model = "gpt-5.1-codex"
                 "env": {
                     "ANTHROPIC_API_KEY": "b-key",
                     "ANTHROPIC_BASE_URL": "https://api.b.example",
-                    "ANTHROPIC_MODEL": "claude-new"
+                    "ANTHROPIC_MODEL": "claude-new",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "DeepSeek V4 Flash",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "DeepSeek V4 Pro",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-ultra [1m]"
                 },
                 "permissions": { "allow": ["Read"] }
             }),
@@ -2310,7 +2379,8 @@ model = "gpt-5.1-codex"
                 "env": {
                     "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
                     "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
-                    "ANTHROPIC_MODEL": "stale-model"
+                    "ANTHROPIC_MODEL": "stale-model",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet"
                 },
                 "permissions": { "allow": ["Bash"] }
             }))
@@ -2345,7 +2415,53 @@ model = "gpt-5.1-codex"
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_MODEL"))
                 .is_none(),
-            "Claude model override fields should be removed in takeover mode"
+            "fallback model override should be removed in takeover mode"
+        );
+        let live_env = live
+            .get("env")
+            .and_then(|env| env.as_object())
+            .expect("live env");
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-haiku-4-5"),
+            "takeover mode should expose a stable Haiku role model"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("DeepSeek V4 Flash"),
+            "model menu should show the current provider Haiku display name"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-sonnet-4-6[1M]"),
+            "Sonnet role should carry the local 1M declaration for Claude Code"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("DeepSeek V4 Pro"),
+            "stale model display names should be replaced during hot switch"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-opus-4-7[1M]"),
+            "Opus role should preserve the current provider 1M capability marker"
+        );
+        assert_eq!(
+            live_env
+                .get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("deepseek-v4-ultra"),
+            "implicit display names should strip the local 1M marker"
         );
 
         let backup = db
@@ -2723,6 +2839,147 @@ base_url = "https://new.example/v1"
         assert!(
             config.contains("https://new.example/v1"),
             "provider-specific base_url should still update to the new provider"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_codex_provider_keeps_model_provider_stable_in_backup_and_restore() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "RightCode".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "rightcode-key"
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "AiHubMix".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "aihubmix-key"
+                },
+                "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_codex_live(&json!({
+                "auth": {
+                    "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }))
+            .expect("seed taken-over Codex live config");
+
+        service
+            .hot_switch_provider("codex", "b")
+            .await
+            .expect("hot switch Codex provider");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        let backup_config = stored
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("backup config string");
+        let parsed_backup: toml::Value =
+            toml::from_str(backup_config).expect("parse backup config");
+        assert_eq!(
+            parsed_backup.get("model_provider").and_then(|v| v.as_str()),
+            Some("rightcode"),
+            "provider-derived restore backup should retain stable Codex model_provider"
+        );
+        let backup_model_providers = parsed_backup
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("backup model_providers");
+        assert!(backup_model_providers.get("aihubmix").is_none());
+        assert_eq!(
+            backup_model_providers
+                .get("rightcode")
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://aihubmix.example/v1"),
+            "stable provider id should point at the hot-switched provider endpoint"
+        );
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore Codex live config");
+
+        let live = service.read_codex_live().expect("read Codex live config");
+        let live_config = live
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("live config string");
+        let parsed_live: toml::Value = toml::from_str(live_config).expect("parse live config");
+        assert_eq!(
+            parsed_live.get("model_provider").and_then(|v| v.as_str()),
+            Some("rightcode"),
+            "restored Codex live config should not switch history buckets"
+        );
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("aihubmix-key"),
+            "restore should still use the hot-switched provider auth"
         );
     }
 

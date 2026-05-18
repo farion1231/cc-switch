@@ -80,7 +80,7 @@
     "hideAttribution": "AI署名を非表示",
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
-    "effortHigh": "高強度思考",
+    "effortMax": "最大強度思考",
     "disableAutoUpgrade": "自動アップグレードを無効化"
   },
   "header": {
@@ -104,6 +104,7 @@
     "noProvidersDescription": "既存の設定がある場合は「現在の設定をインポート」をクリックしてください。すべてのデータが default プロバイダーに安全に保存されます",
     "noProvidersDescriptionSnippet": "API キーとリクエスト URL 以外のデータ（プラグインなど）は共通設定スニペットに保存され、プロバイダー間で共有できます",
     "importCurrent": "現在の設定をインポート",
+    "importFromClaude": "Claude Code の既存プロバイダーをインポート",
     "importCurrentDescription": "現在使用中の設定をデフォルトプロバイダーとしてインポート",
     "currentlyUsing": "現在使用中",
     "enable": "有効化",
@@ -141,6 +142,8 @@
     "sortUpdateFailed": "並び順の更新に失敗しました",
     "configureUsage": "利用状況を設定",
     "officialPartner": "公式パートナー",
+    "managedByHermes": "Hermes 管理",
+    "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
     "openTerminal": "ターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
@@ -170,11 +173,59 @@
       }
     }
   },
+  "claudeCode": {
+    "needsRouting": "ルーティングが必要",
+    "noRoutingSupport": "ルーティング非対応"
+  },
+  "codex": {
+    "noRoutingSupport": "ルーティング非対応"
+  },
+  "claudeDesktop": {
+    "officialNotice": "Claude Desktop の公式プロバイダーは内蔵の 1P サインインを使用します。API キーやエンドポイントの設定は不要です。",
+    "mode": "モデル処理方式",
+    "modeDirect": "直結",
+    "modeProxy": "ルーティング必要",
+    "modelMappingToggle": "モデルマッピングが必要",
+    "modelMappingOffHint": "プロバイダーがネイティブの Claude シリーズモデルを提供していない場合は、このスイッチを有効にしてください。",
+    "modelMappingOnHint": "Claude Desktop は現在モデル ID を制限しています。お使いのプロバイダーが Claude 系列以外のモデルを提供する場合、このスイッチを有効にし、使用中はローカルルーティングを起動したままにしてください。",
+    "routeMapTitle": "モデルマッピング",
+    "routeMapHint": "モデル役割を選ぶと、CC Switch が Claude Desktop 互換ルートを自動生成します。DeepSeek や Kimi などのブランド名はメニュー表示名に入れ、実際のリクエストモデルは右側の入力どおりに送信されます。",
+    "routeModelLabel": "モデル役割",
+    "routeRoleSonnet": "Sonnet",
+    "routeRoleOpus": "Opus",
+    "routeRoleHaiku": "Haiku",
+    "labelOverrideLabel": "メニュー表示名",
+    "upstreamModelLabel": "リクエストモデル",
+    "supports1mLabel": "1M 対応を宣言",
+    "supports1mShort": "1M",
+    "directModelListTitle": "Claude Desktop モデルを手動指定（高度・任意）",
+    "directModelListCollapsedHint": "ネイティブ Claude モデルのプロバイダーでは通常不要です。Claude Desktop が /v1/models を自動取得します。",
+    "directModelListHint": "プロバイダーの /v1/models が使えない、または Claude Desktop が認識できる claude-* モデル ID を返さない場合だけ入力してください。1M をオンにすると Claude Desktop に 1M コンテキスト対応を宣言します。",
+    "directModelInvalid": "直結モデルは claude-* / anthropic/claude-* のモデル ID を使う必要があります",
+    "addModel": "モデルを追加",
+    "addRoute": "モデルを追加",
+    "routeInvalid": "モデル役割を選択し、リクエストモデルを入力してください",
+    "routesRequired": "少なくとも 1 つのモデルマッピングが必要です",
+    "statusTitle": "Claude Desktop 設定の確認が必要です",
+    "statusUnsupported": "このプラットフォームでは Claude Desktop 3P 設定の書き込みはまだサポートされていません。",
+    "statusStaleRawModels": "Claude Desktop profile に claude-* ではないモデル ID が含まれています。新しい Claude Desktop では拒否される可能性があります。現在のプロバイダーへ再度切り替えると修復できます。",
+    "statusMissingRouteMappings": "現在のプロバイダーはモデルマッピングを有効にしていますが、有効なルートがありません。プロバイダーを編集し、少なくとも 1 つのマッピングを追加してください。",
+    "statusGatewayTokenMissing": "ローカルルーティング token がまだ生成されていません。このプロバイダーへ再度切り替えると新しい token が書き込まれます。",
+    "statusBaseUrlMismatch": "Claude Desktop profile の URL が現在のプロバイダーと一致しません。現在: {{actual}}、期待値: {{expected}}。現在のプロバイダーへ再度切り替えると修復できます。",
+    "route": {
+      "tooltip": {
+        "active": "Claude Desktop ローカルルーティングは起動中です - {{address}}:{{port}}",
+        "inactive": "モデルマッピングや形式変換が必要なプロバイダー向けに Claude Desktop ローカルルーティングを起動します。設定アドレス: {{address}}:{{port}}"
+      }
+    }
+  },
   "notifications": {
     "providerAdded": "プロバイダーを追加しました",
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
+    "claudeDesktopRestartRequired": "切り替えました。反映するには Claude Desktop を再起動してください",
+    "claudeDesktopProxyRestartRequired": "切り替えました。CC Switch を起動したまま Claude Desktop を再起動してください",
     "addToConfigSuccess": "設定に追加しました",
     "removeFromConfigSuccess": "設定から削除しました",
     "switchFailedTitle": "切り替えに失敗しました",
@@ -194,13 +245,13 @@
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
-    "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、プロキシサービスが必要です。先にプロキシを起動してください",
+    "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、ルーティングサービスが必要です。先にルーティングを起動してください",
     "proxyReasonCopilot": "GitHub Copilot を Claude プロバイダーとして使用しており",
     "proxyReasonOpenAIChat": "OpenAI Chat API フォーマットを使用しており",
     "proxyReasonOpenAIResponses": "OpenAI Responses API フォーマットを使用しており",
     "proxyReasonFullUrl": "完全 URL 接続モードが有効になっており",
-    "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、プロキシサービスの有効化が必要です",
-    "copilotProxyHint": "GitHub Copilot を Claude プロバイダーとして使用する場合、ローカルプロキシが常に必要です。プロキシは現在のモデルに応じて Chat Completions または Responses を自動的に選択します。",
+    "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、ルーティングサービスの有効化が必要です",
+    "copilotProxyHint": "GitHub Copilot を Claude プロバイダーとして使用する場合、ローカルルーティングが常に必要です。ルーティングは現在のモデルに応じて Chat Completions または Responses を自動的に選択します。",
     "openLinkFailed": "リンクを開けませんでした",
     "openclawModelsRegistered": "モデルが /model リストに登録されました",
     "openclawDefaultModelSet": "デフォルトモデルに設定しました",
@@ -208,8 +259,8 @@
     "openclawNoModels": "モデルが設定されていません",
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
-    "officialBlockedByProxy": "プロキシ接管モード中は公式プロバイダーに切り替えできません。プロキシ経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
-    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。プロキシ接管を使用する前にサードパーティプロバイダーに切り替えてください。"
+    "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -217,8 +268,8 @@
     "removeProvider": "プロバイダーを解除",
     "removeProviderMessage": "プロバイダー「{{name}}」を設定から解除してもよろしいですか？\n\n解除後、このプロバイダーは無効になりますが、設定データは CC Switch に保持されます。いつでも再追加できます。",
     "proxy": {
-      "title": "ローカルプロキシの有効化",
-      "message": "ローカルプロキシは上級機能です。有効にする前に、その仕組みを理解していることをご確認ください。\n\n適切な設定方法については、関連ドキュメントまたはプロバイダーにご相談ください。",
+      "title": "ローカルルーティングの有効化",
+      "message": "ローカルルーティングは上級機能です。有効にする前に、その仕組みを理解していることをご確認ください。\n\n適切な設定方法については、関連ドキュメントまたはプロバイダーにご相談ください。",
       "confirm": "理解しました、有効にする"
     },
     "failover": {
@@ -253,7 +304,7 @@
     "tabGeneral": "一般",
     "tabAuth": "認証",
     "tabAdvanced": "詳細",
-    "tabProxy": "プロキシ",
+    "tabProxy": "ルーティング",
     "authCenter": {
       "title": "OAuth 認証センター",
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
@@ -267,10 +318,10 @@
         "description": "Claude、Codex、Gemini の設定保存パスを管理"
       },
       "proxy": {
-        "title": "ローカルプロキシ",
-        "description": "プロキシサービスの切り替え、ステータスとポート情報を表示",
-        "enableFeature": "メインページにプロキシ切り替えを表示",
-        "enableFeatureDescription": "有効にすると、メインページ上部にプロキシとフェイルオーバーの切り替えが表示されます",
+        "title": "ローカルルーティング",
+        "description": "ルーティングサービスの切り替え、ステータスとポート情報を表示",
+        "enableFeature": "メインページにルーティング切り替えを表示",
+        "enableFeatureDescription": "有効にすると、メインページ上部にルーティングとフェイルオーバーの切り替えが表示されます",
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
@@ -547,7 +598,8 @@
           "kitty": "Kitty",
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
-          "kaku": "Kaku"
+          "kaku": "Kaku",
+          "warp": "Warp"
         },
         "windows": {
           "cmd": "コマンドプロンプト",
@@ -577,10 +629,16 @@
     "geminiConfigDirDescription": "Gemini の設定ディレクトリ（.env）を上書きします。",
     "opencodeConfigDir": "OpenCode 設定ディレクトリ",
     "opencodeConfigDirDescription": "OpenCode の設定ディレクトリ（opencode.json）を上書きします。",
+    "openclawConfigDir": "OpenClaw 設定ディレクトリ",
+    "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
+    "hermesConfigDir": "Hermes 設定ディレクトリ",
+    "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
+    "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
+    "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -598,6 +656,8 @@
     "releaseNotes": "リリースノート",
     "viewReleaseNotes": "このバージョンのリリースノートを見る",
     "viewCurrentReleaseNotes": "現在のバージョンのリリースノートを見る",
+    "officialWebsite": "公式サイト",
+    "github": "GitHub",
     "oneClickInstall": "ワンクリックインストール",
     "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / OpenCode をインストール",
     "localEnvCheck": "ローカル環境チェック",
@@ -622,14 +682,14 @@
     "saving": "保存中...",
     "globalProxy": {
       "label": "グローバルプロキシ",
-      "hint": "すべてのリクエスト（API、Skills ダウンロードなど）をプロキシ経由で送信します。空欄で直接接続。",
+      "hint": "すべてのリクエスト（API、Skills ダウンロードなど）をプロキシ経由で送信します。ローカルルーティング有効時、アプリのリクエストもこのプロキシを経由します。空欄で直接接続。",
       "username": "ユーザー名（任意）",
       "password": "パスワード（任意）",
       "test": "接続テスト",
       "scan": "ローカルプロキシをスキャン",
       "clear": "クリア",
       "scanFailed": "スキャンに失敗しました: {{error}}",
-      "saved": "プロキシ設定を保存しました",
+      "saved": "ルーティング設定を保存しました",
       "saveFailed": "保存に失敗しました: {{error}}",
       "testSuccess": "接続成功！遅延 {{latency}}ms",
       "testFailed": "接続に失敗しました: {{error}}",
@@ -652,14 +712,18 @@
   },
   "apps": {
     "claude": "Claude",
+    "claudeCode": "Claude Code",
+    "claudeDesktop": "Claude Desktop",
+    "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes"
   },
   "sessionManager": {
     "title": "セッション管理",
-    "subtitle": "Claude Code / Codex / OpenCode / OpenClaw / Gemini CLI のセッションを管理",
+    "subtitle": "Claude Code / Codex / OpenCode / OpenClaw / Hermes / Gemini CLI のセッションを管理",
     "searchPlaceholder": "内容・ディレクトリ・ID で検索",
     "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
@@ -725,7 +789,9 @@
     "copyCommand": "コマンドをコピー",
     "copyMessage": "メッセージをコピー",
     "messageCopied": "メッセージがコピーされました",
-    "conversationHistory": "会話履歴"
+    "conversationHistory": "会話履歴",
+    "expandContent": "全文を表示",
+    "collapseContent": "折りたたむ"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",
@@ -770,6 +836,10 @@
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
+      "patewayai": "PatewayAI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録すると $3 のクレジットがもらえます。",
+      "claudeapi": "ClaudeAPI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録するとテストクレジットを受け取ることができます。",
+      "claudecn": "ClaudeCN は登録企業が運営するエンタープライズグレードの AI ゲートウェイプラットフォームで、企業調達プロセスをサポートし、法人支払い、契約、コンプライアンス保証を提供します。",
+      "runapi": "RunAPI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録しカスタマーサポートにご連絡いただくと、¥14 の無料クレジットを受け取ることができます。",
       "minimax_cn": "MiniMax Coding Plan 特別価格、Starter ¥9.9 から",
       "minimax_en": "MiniMax Coding Plan Black Friday、Starter が月額 $2（80% OFF）",
       "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！",
@@ -784,12 +854,20 @@
       "ucloud": "Compshare は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、5元のプラットフォーム体験クレジットがもらえます！",
       "micu": "Micu は CC Switch の公式パートナーです",
       "ctok": "公式サイトで CTok コミュニティに参加し、プランを購読してください。",
-      "ddshub": "DDSHub は CC Switch ユーザー向けに特別ボーナスを提供しています。このリンクから登録すると、初回チャージで 10% の追加クレジットがもらえます（グループ管理者に連絡して受け取り）！",
       "lionccapi": "LionCCAPIはCC Switchユーザーに特別特典を提供しています。登録後、WeChat HSQBJ088888888を追加し、「cc-switch」と伝えると$10分のクレジットがもらえます！",
-      "shengsuanyun": "胜算云はCC Switchユーザーに特別特典を提供しています。このリンクから登録すると、10元分の無料クレジットと初回チャージ10%ボーナスがもらえます！"
+      "shengsuanyun": "胜算云はCC Switchユーザーに特別特典を提供しています。このリンクから登録すると、10元分の無料クレジットと初回チャージ10%ボーナスがもらえます！",
+      "lemondata": "Lemon Code は CC Switch ユーザー向けの特別オファーを提供しています。このリンクから登録すると 1 ドル分の無料クレジットがもらえます。",
+      "doubaoseed": "豆包大モデルは CC Switch ユーザーに専属特典を提供しています：このリンクから登録すると、豆包全テキストモデル50万トークンの推論クレジットおよびSeedance2.0の500万トークン無料クレジットがもらえます。",
+      "volcengine_agentplan": "火山方舟 Agent Plan は CC Switch ユーザーに専属特典を提供しています：このリンクから方舟AgentPlanを購読すると、新規のお客様は初月40元から利用できます。",
+      "byteplus": "このリンクから登録すると、各モデルごとに50万トークンの無料推論クォータがもらえます。"
     },
     "presets": {
-      "ucloud": "Compshare"
+      "ucloud": "Compshare",
+      "ucloudCoding": "Compshare Coding Plan",
+      "shengsuanyun": "Shengsuanyun",
+      "openrouter": "OpenRouter",
+      "deepseek": "DeepSeek",
+      "together": "Together AI"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -799,6 +877,7 @@
     "modelHint": "💡 空欄ならプロバイダーのデフォルトモデルを使用します",
     "apiHint": "💡 Claude API 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
     "apiHintOAI": "💡 OpenAI Chat Completions 互換サービスのエンドポイントを入力してください。末尾にスラッシュを付けないでください",
+    "apiHintGeminiNative": "💡 Gemini Native では https://generativelanguage.googleapis.com または https://generativelanguage.googleapis.com/v1beta のような base URL を推奨します。プロキシが models/*:generateContent を自動補完します",
     "codexApiHint": "💡 OpenAI Response 互換のサービスエンドポイントを入力してください",
     "fillSupplierName": "プロバイダー名を入力してください",
     "fillConfigContent": "設定内容を入力してください",
@@ -806,6 +885,11 @@
     "fillTemplateValue": "{{label}} を入力してください",
     "endpointRequired": "公式以外は API エンドポイントが必須です",
     "apiKeyRequired": "公式以外は API Key が必須です",
+    "softValidation": {
+      "title": "設定に以下の問題があります",
+      "hint": "それでも保存しますか？保存後、このプロバイダーへの切り替えが失敗する可能性がありますが、後から補完できます。",
+      "saveAnyway": "それでも保存"
+    },
     "configJsonError": "Config JSON の形式が正しくありません。構文を確認してください",
     "authJsonRequired": "auth.json は JSON オブジェクトで入力してください",
     "authJsonError": "auth.json の形式が正しくありません。JSON を確認してください",
@@ -814,16 +898,17 @@
     "visitWebsite": "{{url}} を開く",
     "anthropicModel": "メインモデル",
     "anthropicSmallFastModel": "高速モデル",
-    "anthropicReasoningModel": "推論モデル（Thinking）",
     "apiFormat": "API フォーマット",
     "apiFormatHint": "プロバイダー API の入力フォーマットを選択",
     "fullUrlLabel": "フル URL",
     "fullUrlEnabled": "フル URL モード",
     "fullUrlDisabled": "フル URL として設定",
-    "fullUrlHint": "💡 完全なリクエスト URL を入力してください。このモードはプロキシを有効にして使用する必要があり、プロキシはこの URL をそのまま使用し、パスを追加しません",
+    "fullUrlHint": "💡 完全なリクエスト URL を入力してください。このモードはルーティングを有効にして使用する必要があり、ルーティングはこの URL をそのまま使用し、パスを追加しません",
+    "fullUrlHintGeminiNative": "💡 Gemini Native のフル URL モードでは 2 種類の入力を扱えます。1. 公式/構造化された Gemini URL は、要求されたモデルやストリーミング方式に合わせて正規化されます。2. カスタム relay の opaque な完全 URL は、主にそのまま使用され、必要なクエリだけ追加されます",
     "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
-    "apiFormatOpenAIChat": "OpenAI Chat Completions（プロキシが必要）",
-    "apiFormatOpenAIResponses": "OpenAI Responses API（プロキシが必要）",
+    "apiFormatOpenAIChat": "OpenAI Chat Completions（ルーティングが必要）",
+    "apiFormatOpenAIResponses": "OpenAI Responses API（ルーティングが必要）",
+    "apiFormatGeminiNative": "Gemini Native generateContent（ルーティングが必要）",
     "authField": "認証フィールド",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（デフォルト）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
@@ -837,7 +922,20 @@
     "haikuModelPlaceholder": "",
     "modelHelper": "任意: 既定で使いたい Claude モデルを指定。空欄ならシステム既定を使用します。",
     "modelMappingLabel": "モデルマッピング",
-    "modelMappingHint": "プロバイダーが Claude モデルをネイティブ提供している場合、通常は設定不要です。リクエストを別のモデル名にマッピングする場合のみ設定してください。",
+    "modelMappingHint": "表示名は /model メニューだけに影響します。1M は Claude Code へのコンテキスト能力宣言です。",
+    "modelRoleLabel": "モデル役割",
+    "modelRoleSonnet": "Sonnet",
+    "modelRoleOpus": "Opus",
+    "modelRoleHaiku": "Haiku",
+    "modelDisplayNameLabel": "表示名",
+    "modelDisplayNamePlaceholder": "例: DeepSeek V4 Pro",
+    "requestModelLabel": "リクエストモデル",
+    "modelOneMHeader": "1M 対応を宣言",
+    "modelOneMLabel": "1M",
+    "fallbackModelLabel": "既定フォールバックモデル",
+    "fallbackModelHint": "Claude Code のリクエストが Sonnet、Opus、Haiku のいずれにも明確に対応しない場合のみ使われます。通常は空欄で構いません。",
+    "quickSetModels": "一括設定",
+    "quickSetSuccess": "モデル名をすべての役割に適用しました",
     "advancedOptionsToggle": "高級オプション",
     "advancedOptionsHint": "API フォーマット、認証フィールド、モデルマッピングの設定を含みます。通常はデフォルトのままで問題ありません。",
     "categoryOfficial": "公式",
@@ -854,6 +952,7 @@
     "fetchModelsNeedConfig": "先に API エンドポイントと API Key を入力してください",
     "fetchModelsAuthFailed": "API Key が無効か、権限がありません",
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
+    "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
     "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください"
   },
   "copilot": {
@@ -884,7 +983,11 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "migrationFailed": "旧認証データの移行に失敗しました: {{error}}",
-    "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました"
+    "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました",
+    "deploymentType": "GitHub デプロイメントタイプ",
+    "deploymentGitHubCom": "GitHub.com",
+    "deploymentEnterprise": "GitHub Enterprise Server",
+    "enterpriseDomainPlaceholder": "例: company.ghe.com"
   },
   "codexOauth": {
     "authStatus": "認証状態",
@@ -905,7 +1008,9 @@
     "addAnotherAccount": "別のアカウントを追加",
     "logoutAll": "すべてのアカウントをログアウト",
     "retry": "再試行",
-    "copyCode": "コードをコピー"
+    "copyCode": "コードをコピー",
+    "fastMode": "FAST モード",
+    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",
@@ -943,11 +1048,6 @@
     "testPrompt": "テストプロンプト",
     "degradedThreshold": "低下閾値（ミリ秒）",
     "maxRetries": "最大リトライ回数",
-    "proxyConfig": "プロキシ設定",
-    "useCustomProxy": "個別プロキシを使用",
-    "proxyConfigDesc": "このプロバイダーに個別のネットワークプロキシを設定します。無効の場合はシステムプロキシまたはグローバル設定を使用します。",
-    "proxyUsername": "ユーザー名（任意）",
-    "proxyPassword": "パスワード（任意）",
     "pricingConfig": "課金設定",
     "useCustomPricing": "個別設定を使用",
     "pricingConfigDesc": "このプロバイダーに個別の課金パラメータを設定します。無効の場合はグローバル設定を使用します。",
@@ -1051,6 +1151,11 @@
     "today": "24時間",
     "last7days": "7日間",
     "last30days": "30日間",
+    "presetToday": "当日",
+    "preset1d": "1d",
+    "preset7d": "7d",
+    "preset14d": "14d",
+    "preset30d": "30d",
     "totalRequests": "総リクエスト数",
     "totalCost": "総コスト",
     "cost": "コスト",
@@ -1059,8 +1164,13 @@
     "rangeToday": "直近24時間 (時間別)",
     "rangeLast7Days": "過去7日間",
     "rangeLast30Days": "過去30日間",
-    "totalTokens": "総トークン数",
+    "totalTokens": "新規トークン (Input+Output)",
     "cacheTokens": "キャッシュトークン",
+    "realTotal": "実消費トークン",
+    "realTotalHint": "Input + Output + キャッシュ書込 + キャッシュ命中",
+    "tokensSuffix": "tokens",
+    "freshInput": "新規入力",
+    "cacheHitRate": "キャッシュヒット率",
     "requestLogs": "リクエストログ",
     "providerStats": "プロバイダー統計",
     "modelStats": "モデル統計",
@@ -1089,9 +1199,10 @@
       "codex": "Codex",
       "gemini": "Gemini"
     },
+    "rawInputLabel": "原始",
     "dataSources": "データソース",
     "dataSource": {
-      "proxy": "プロキシ",
+      "proxy": "ルーティング",
       "session_log": "セッションログ",
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
@@ -1142,9 +1253,15 @@
     "searchProviderPlaceholder": "プロバイダーを検索...",
     "searchModelPlaceholder": "モデルを検索...",
     "timeRange": "期間",
+    "customRange": "カレンダーフィルター",
+    "customRangeHint": "日付と時刻の両方に対応",
+    "startTime": "開始時刻",
+    "endTime": "終了時刻",
     "input": "Input",
     "output": "Output",
     "cacheWrite": "作成",
+    "cacheWriteNotReported": "OpenAI プロトコルはキャッシュ作成を区別せず、キャッシュヒットのみ報告します",
+    "cacheWritePartial": "一部のプロトコル（OpenAIなど）はキャッシュ作成を報告しないため、値は不完全な可能性があります",
     "cacheRead": "ヒット",
     "baseCost": "基本",
     "costMultiplier": "コスト倍率",
@@ -1291,7 +1408,8 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
-        "openclaw": "OpenClaw"
+        "openclaw": "OpenClaw",
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -1610,6 +1728,69 @@
     },
     "primaryModel": "プライマリモデル",
     "fallbackModel": "フォールバックモデル"
+  },
+  "hermes": {
+    "form": {
+      "baseUrl": "API エンドポイント",
+      "baseUrlHint": "プロバイダーの API エンドポイント URL。",
+      "providerKey": "プロバイダーキー",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "小文字、数字、ハイフンのみ。config.yaml のプロバイダー名として使用されます。",
+      "providerKeyLockedHint": "このプロバイダーは Hermes 設定に追加済みのため、キーは変更できません。",
+      "providerKeyRequired": "プロバイダーキーは必須です",
+      "providerKeyInvalid": "プロバイダーキーは小文字、数字、ハイフンのみ使用できます",
+      "providerKeyDuplicate": "このプロバイダーキーは既に存在します",
+      "apiMode": "API モード",
+      "apiModeHint": "プロバイダーの API プロトコル。エンドポイントに合わせて正しい形式を選択してください。",
+      "apiModeChatCompletions": "OpenAI Chat Completions",
+      "apiModeAnthropicMessages": "Anthropic Messages",
+      "apiModeCodexResponses": "OpenAI Responses",
+      "apiModeBedrockConverse": "AWS Bedrock Converse",
+      "baseUrlRequired": "API エンドポイントは必須です",
+      "baseUrlScheme": "http:// または https:// で始まるアドレスを指定してください",
+      "baseUrlInvalid": "API エンドポイントは有効な URL ではありません",
+      "models": "モデル一覧",
+      "addModel": "モデルを追加",
+      "noModels": "モデル未設定。このプロバイダーに切り替えてもデフォルトモデルは更新されません。",
+      "modelId": "モデル ID",
+      "modelIdPlaceholder": "anthropic/claude-opus-4-7",
+      "modelName": "表示名",
+      "modelNamePlaceholder": "Claude Opus 4.7",
+      "contextLength": "コンテキスト長",
+      "advancedOptions": "詳細オプション",
+      "modelsHint": "切り替え時、最初のモデルが model.default に書き込まれます。",
+      "primaryModel": "デフォルト",
+      "fallbackModel": "予備",
+      "providerAdvanced": "プロバイダー詳細オプション",
+      "rateLimitDelay": "リクエスト間隔（秒）",
+      "rateLimitDelayHint": "連続したリクエスト間の最小待機秒数（任意）。空欄の場合は制限なし。"
+    },
+    "webui": {
+      "open": "Hermes Web UI を開く",
+      "offline": "Hermes Web UI が起動していません。まず `hermes dashboard` を実行してください。",
+      "openFailed": "Hermes Web UI を開けませんでした",
+      "launchConfirmTitle": "Hermes Dashboard が起動していません",
+      "launchConfirmMessage": "ターミナルを開いて `hermes dashboard` を実行しますか？\n\n起動完了後、ブラウザが自動的に開きます。\n\nターミナルに `hermes` が見つからない、または web 依存が不足するというエラーが表示される場合は、まず次を実行してください：\npip install hermes-agent[web]",
+      "launchConfirmAction": "ターミナルを開いて起動",
+      "launching": "ターミナルで hermes dashboard を起動しました。",
+      "launchFailed": "ターミナルを開けませんでした"
+    },
+    "memory": {
+      "title": "メモリ",
+      "agentTab": "エージェント記憶 (MEMORY.md)",
+      "userTab": "ユーザープロファイル (USER.md)",
+      "usage": "{{current}} / {{limit}} 文字",
+      "overLimit": "上限を超えました。Hermes は次回読み込み時に切り詰めます",
+      "enableOn": "有効",
+      "enableOff": "無効",
+      "disabledHint": "再度有効化するまで Hermes はこの記憶をスキップします",
+      "toggleFailed": "メモリの切り替えに失敗しました",
+      "saveSuccess": "記憶を保存しました",
+      "saveFailed": "記憶の保存に失敗しました",
+      "loadFailed": "記憶ファイルの読み込みに失敗しました",
+      "openConfig": "Hermes Web UI で上限を調整",
+      "runtimeNote": "変更は Hermes の再起動または新規セッション時に反映されます。"
+    }
   },
   "env": {
     "warning": {
@@ -1972,9 +2153,9 @@
       "addressCopied": "アドレスをコピーしました",
       "currentProvider": "現在のプロバイダー:",
       "waitingFirstRequest": "現在のプロバイダー: 最初のリクエスト待ち...",
-      "stoppedTitle": "プロキシサービス停止中",
+      "stoppedTitle": "ルーティングサービス停止中",
       "stoppedDescription": "上のトグルでサービスを開始できます",
-      "openSettings": "プロキシサービスを設定",
+      "openSettings": "ルーティングサービスを設定",
       "stats": {
         "activeConnections": "アクティブ接続",
         "totalRequests": "総リクエスト数",
@@ -1983,14 +2164,14 @@
       }
     },
     "settings": {
-      "title": "プロキシサービス設定",
-      "description": "ローカルプロキシサーバーのリッスンアドレス、ポート、実行パラメータを設定します。保存後すぐに反映されます。",
+      "title": "ルーティングサービス設定",
+      "description": "ローカルルーティングサーバーのリッスンアドレス、ポート、実行パラメータを設定します。保存後すぐに反映されます。",
       "alert": {
-        "autoApply": "変更は実行中のプロキシサービスに自動的に同期され、手動での再起動は不要です。"
+        "autoApply": "変更は実行中のルーティングサービスに自動的に同期され、手動での再起動は不要です。"
       },
       "basic": {
         "title": "基本設定",
-        "description": "プロキシサービスのリッスンアドレスとポートを設定します。"
+        "description": "ルーティングサービスのリッスンアドレスとポートを設定します。"
       },
       "advanced": {
         "title": "詳細パラメータ",
@@ -2004,12 +2185,12 @@
         "listenAddress": {
           "label": "リッスンアドレス",
           "placeholder": "127.0.0.1",
-          "description": "プロキシサーバーがリッスンするIPアドレス（推奨: 127.0.0.1）"
+          "description": "ルーティングサーバーがリッスンするIPアドレス（推奨: 127.0.0.1）"
         },
         "listenPort": {
           "label": "リッスンポート",
           "placeholder": "15721",
-          "description": "プロキシサーバーがリッスンするポート番号（1024 ~ 65535）"
+          "description": "ルーティングサーバーがリッスンするポート番号（1024 ~ 65535）"
         },
         "maxRetries": {
           "label": "最大リトライ回数",
@@ -2023,7 +2204,7 @@
         },
         "enableLogging": {
           "label": "ログ記録を有効化",
-          "description": "トラブルシューティングのためにすべてのプロキシリクエストを記録"
+          "description": "トラブルシューティングのためにすべてのルーティングリクエストを記録"
         },
         "streamingFirstByteTimeout": {
           "label": "ストリーミング初回バイトタイムアウト（秒）",
@@ -2054,29 +2235,29 @@
         "save": "設定を保存"
       },
       "toast": {
-        "saved": "プロキシ設定を保存しました",
+        "saved": "ルーティング設定を保存しました",
         "saveFailed": "保存に失敗しました: {{error}}"
       },
       "invalidPort": "無効なポートです。1024〜65535 の数値を入力してください",
-      "invalidAddress": "無効なアドレスです。有効な IP アドレス（例: 127.0.0.1）または localhost を入力してください",
-      "configSaved": "プロキシ設定を保存しました",
+      "invalidAddress": "無効なアドレスです。IPv4（例: 127.0.0.1）、IPv6（例: ::1）、または localhost を入力してください",
+      "configSaved": "ルーティング設定を保存しました",
       "configSaveFailed": "設定の保存に失敗しました",
-      "restartRequired": "アドレスまたはポートの変更を反映するにはプロキシサービスの再起動が必要です"
+      "restartRequired": "アドレスまたはポートの変更を反映するにはルーティングサービスの再起動が必要です"
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "takeover": {
-      "hint": "テイクオーバーするアプリを選択します。有効にすると、そのアプリのリクエストはローカルプロキシ経由で転送されます",
-      "enabled": "{{app}} テイクオーバー有効",
-      "disabled": "{{app}} テイクオーバー無効",
-      "failed": "テイクオーバーの切り替えに失敗しました",
+      "hint": "ルーティングするアプリを選択します。有効にすると、そのアプリのリクエストはローカルルーティング経由で転送されます",
+      "enabled": "{{app}} ルーティング有効",
+      "disabled": "{{app}} ルーティング無効",
+      "failed": "ルーティングの切り替えに失敗しました: {{detail}}",
       "tooltip": {
-        "active": "{{appLabel}} がインターセプト中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
-        "broken": "{{appLabel}} がインターセプト中ですが、プロキシサービスが実行されていません",
-        "inactive": "{{appLabel}} のライブ設定をインターセプトしてリクエストをローカルプロキシ経由でルーティング"
+        "active": "{{appLabel}} がルーティング中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
+        "broken": "{{appLabel}} がルーティング中ですが、ルーティングサービスが実行されていません",
+        "inactive": "{{appLabel}} のリクエストをローカルルーティング経由でルーティング"
       }
     },
     "failover": {
-      "proxyRequired": "フェイルオーバーを設定するには、プロキシサービスを先に起動する必要があります",
+      "proxyRequired": "フェイルオーバーを設定するには、ルーティングサービスを先に起動する必要があります",
       "autoSwitch": "自動フェイルオーバー",
       "autoSwitchDescription": "有効にするとキューの P1 に即時切り替え、リクエスト失敗時はキュー内の次のプロバイダーを自動で試行します"
     },
@@ -2140,10 +2321,10 @@
       "failed": "ログ状態の切り替えに失敗しました"
     },
     "server": {
-      "started": "プロキシサービスが開始されました - {{address}}:{{port}}",
-      "startFailed": "プロキシサービスの開始に失敗しました: {{detail}}"
+      "started": "ルーティングサービスが開始されました - {{address}}:{{port}}",
+      "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}"
     },
-    "stoppedWithRestore": "プロキシサービスが停止し、すべてのテイクオーバー設定が復元されました",
+    "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
     "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
   },
   "streamCheck": {
@@ -2161,11 +2342,25 @@
     "operational": "{{providerName}} は正常に動作しています ({{responseTimeMs}}ms)",
     "degraded": "{{providerName}} の応答が遅いです ({{responseTimeMs}}ms)",
     "failed": "{{providerName}} のチェックに失敗しました: {{message}}",
-    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
+    "rejected": "{{providerName}} のチェックが拒否されました: {{message}}",
+    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}",
+    "modelNotFound": "{{providerName}} のテストモデル {{model}} は存在しないか廃止されています",
+    "modelNotFoundHint": "このモデルはプロバイダーにより廃止された可能性があります。「モデルテスト設定」でデフォルトのテストモデルを更新してください。",
+    "quotaExceeded": "{{providerName}} の Coding Plan 利用枠を超過しました",
+    "quotaExceededHint": "Baidu Qianfan が Coding Plan の利用枠超過エラーを返しました。5時間・週次・月次の利用枠更新を待つか、Qianfan コンソールでプランを確認してください。",
+    "httpHint": {
+      "400": "リクエスト形式が拒否されました。ヘルスチェックの形式は実際の使用と異なる場合があります。",
+      "401": "APIキーが無効か、OAuthなどの認証方式を使用しています。チェック失敗は実際に使えないことを意味しません。",
+      "402": "アカウントの利用枠または請求の問題です。",
+      "403": "プロバイダーがリクエストを拒否しました。実際の使用では正常に動作する場合があります。",
+      "404": "エンドポイントが見つかりません。Base URLとAPIパスを確認してください。",
+      "429": "リクエストが多すぎます。しばらくしてからお試しください。",
+      "5xx": "プロバイダーの内部エラーです。一時的な問題の可能性が高いです。"
+    }
   },
   "proxyConfig": {
-    "proxyEnabled": "プロキシ有効",
-    "appTakeover": "プロキシ有効",
+    "proxyEnabled": "ルーティング総スイッチ",
+    "appTakeover": "ルーティング有効",
     "perAppConfig": "アプリ別設定",
     "circuitBreaker": "サーキットブレーカー",
     "circuitBreakerSettings": "サーキットブレーカー設定",
@@ -2207,6 +2402,9 @@
     }
   },
   "universalProvider": {
+    "duplicate": "複製",
+    "duplicatedAndSynced": "統合プロバイダーを複製して同期しました",
+    "duplicateError": "統合プロバイダーの複製に失敗しました",
     "title": "統合プロバイダー",
     "description": "統合プロバイダーは Claude、Codex、Gemini の設定を同時に管理します。変更は有効なすべてのアプリに自動的に同期されます。",
     "add": "統合プロバイダーを追加",
@@ -2388,7 +2586,7 @@
       "artistry": "高度にクリエイティブで芸術的なタスクカテゴリ。斬新なアイデアとクリエイティブなソリューションを促進。デフォルトで Gemini 3 Pro の max バリアントを使用。",
       "quick": "軽量タスクカテゴリ。単一ファイルの修正、タイポ修正、簡単な調整などの些細な作業に使用。デフォルトで Claude Haiku 4.5 高速モデルを使用。",
       "unspecifiedLow": "未分類の低作業量タスクカテゴリ。他のカテゴリに該当せず作業量が小さいタスクに適用。デフォルトで Claude Sonnet 4.5 を使用。",
-      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.6 の max バリアントを使用。",
+      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.7 の max バリアントを使用。",
       "writing": "ライティングカテゴリ。ドキュメント、散文、技術文書に特化。デフォルトで Gemini 3 Flash 高速生成モデルを使用。"
     },
     "slimAgentDesc": {

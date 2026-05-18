@@ -25,7 +25,7 @@ describe("TheRouter provider presets", () => {
       "anthropic/claude-sonnet-4.6",
     );
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe(
-      "anthropic/claude-opus-4.6",
+      "anthropic/claude-opus-4.7",
     );
   });
 
@@ -57,10 +57,10 @@ describe("TheRouter provider presets", () => {
     expect(preset?.category).toBe("aggregator");
     expect(preset?.endpointCandidates).toEqual(["https://api.therouter.ai"]);
     expect(preset?.baseURL).toBe("https://api.therouter.ai");
-    expect(preset?.model).toBe("gemini-2.5-pro");
+    expect(preset?.model).toBe("gemini-3.1-pro");
 
     const env = (preset?.settingsConfig as { env: Record<string, string> }).env;
     expect(env.GOOGLE_GEMINI_BASE_URL).toBe("https://api.therouter.ai");
-    expect(env.GEMINI_MODEL).toBe("gemini-2.5-pro");
+    expect(env.GEMINI_MODEL).toBe("gemini-3.1-pro");
   });
 });

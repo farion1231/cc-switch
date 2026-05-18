@@ -29,7 +29,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Sisyphus",
     descKey: "omo.agentDesc.sisyphus",
     tooltipKey: "omo.agentTooltip.sisyphus",
-    recommended: "claude-opus-4-6",
+    recommended: "claude-opus-4-7",
     group: "main",
   },
   {
@@ -45,7 +45,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Prometheus",
     descKey: "omo.agentDesc.prometheus",
     tooltipKey: "omo.agentTooltip.prometheus",
-    recommended: "claude-opus-4-6",
+    recommended: "claude-opus-4-7",
     group: "main",
   },
   {
@@ -93,7 +93,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Metis",
     descKey: "omo.agentDesc.metis",
     tooltipKey: "omo.agentTooltip.metis",
-    recommended: "claude-opus-4-6",
+    recommended: "claude-opus-4-7",
     group: "sub",
   },
   {
@@ -161,7 +161,7 @@ export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
     display: "Unspecified High",
     descKey: "omo.categoryDesc.unspecifiedHigh",
     tooltipKey: "omo.categoryTooltip.unspecifiedHigh",
-    recommended: "claude-opus-4-6",
+    recommended: "claude-opus-4-7",
   },
   {
     key: "writing",
@@ -280,7 +280,7 @@ export const OMO_BACKGROUND_TASK_PLACEHOLDER = `{
     "google": 10
   },
   "modelConcurrency": {
-    "anthropic/claude-opus-4-6": 2,
+    "anthropic/claude-opus-4-7": 2,
     "google/gemini-3-flash": 10
   }
 }`;
@@ -319,7 +319,7 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Orchestrator",
     descKey: "omo.slimAgentDesc.orchestrator",
     tooltipKey: "omo.slimAgentTooltip.orchestrator",
-    recommended: "claude-opus-4-6",
+    recommended: "claude-opus-4-7",
     group: "main",
   },
   {

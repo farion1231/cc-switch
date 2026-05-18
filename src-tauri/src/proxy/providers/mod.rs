@@ -17,11 +17,16 @@ mod claude;
 mod codex;
 pub mod codex_oauth_auth;
 pub mod copilot_auth;
+pub mod copilot_model_map;
 mod gemini;
+pub(crate) mod gemini_schema;
+pub mod gemini_shadow;
 pub mod models;
 pub mod streaming;
+pub mod streaming_gemini;
 pub mod streaming_responses;
 pub mod transform;
+pub mod transform_gemini;
 pub mod transform_responses;
 
 use crate::app_config::AppType;
@@ -100,7 +105,15 @@ impl ProviderType {
     #[allow(dead_code)]
     pub fn from_app_type_and_config(app_type: &AppType, provider: &Provider) -> Self {
         match app_type {
-            AppType::Claude => {
+            AppType::Claude | AppType::ClaudeDesktop => {
+                if get_claude_api_format(provider) == "gemini_native" {
+                    let adapter = ClaudeAdapter::new();
+                    return match adapter.extract_auth(provider).map(|auth| auth.strategy) {
+                        Some(AuthStrategy::GoogleOAuth) => ProviderType::GeminiCli,
+                        _ => ProviderType::Gemini,
+                    };
+                }
+
                 // 检测是否为 GitHub Copilot
                 if let Some(meta) = provider.meta.as_ref() {
                     if meta.provider_type.as_deref() == Some("github_copilot") {
@@ -162,13 +175,9 @@ impl ProviderType {
                 }
                 ProviderType::Gemini
             }
-            AppType::OpenCode => {
-                // OpenCode doesn't support proxy, but return a default type for completeness
-                ProviderType::Codex // Fallback to Codex-like type
-            }
-            AppType::OpenClaw => {
-                // OpenClaw doesn't support proxy, but return a default type for completeness
-                ProviderType::Codex // Fallback to Codex-like type
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                // These apps don't support proxy, fallback to Codex-like type
+                ProviderType::Codex
             }
         }
     }
@@ -217,15 +226,11 @@ impl std::str::FromStr for ProviderType {
 /// 根据 AppType 获取对应的适配器
 pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
     match app_type {
-        AppType::Claude => Box::new(ClaudeAdapter::new()),
+        AppType::Claude | AppType::ClaudeDesktop => Box::new(ClaudeAdapter::new()),
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
-        AppType::OpenCode => {
-            // OpenCode doesn't support proxy, fallback to Codex adapter
-            Box::new(CodexAdapter::new())
-        }
-        AppType::OpenClaw => {
-            // OpenClaw doesn't support proxy, fallback to Codex adapter
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+            // These apps don't support proxy, fallback to Codex adapter
             Box::new(CodexAdapter::new())
         }
     }

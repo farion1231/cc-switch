@@ -36,7 +36,7 @@ import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { APP_ICON_MAP, MCP_SKILLS_APP_IDS } from "@/config/appConfig";
+import { APP_ICON_MAP, MCP_SKILLS_APP_IDS, SKILLS_APP_IDS} from "@/config/appConfig";
 import { cn } from "@/lib/utils";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
@@ -133,10 +133,18 @@ const UnifiedSkillsPanel = React.forwardRef<
   }, [skillUpdates]);
 
   const enabledCounts = useMemo(() => {
-    const counts = { claude: 0, codex: 0, gemini: 0, opencode: 0, openclaw: 0 };
+    const counts = {
+      claude: 0,
+      "claude-desktop": 0,
+      codex: 0,
+      gemini: 0,
+      opencode: 0,
+      openclaw: 0,
+      hermes: 0,
+    };
     if (!skills) return counts;
     skills.forEach((skill) => {
-      for (const app of MCP_SKILLS_APP_IDS) {
+      for (const app of SKILLS_APP_IDS) {
         if (skill.apps[app]) counts[app]++;
       }
     });
@@ -546,7 +554,7 @@ const UnifiedSkillsPanel = React.forwardRef<
         <AppCountBar
           totalLabel={t("skills.installed", { count: skills?.length || 0 })}
           counts={enabledCounts}
-          appIds={MCP_SKILLS_APP_IDS}
+          appIds={SKILLS_APP_IDS}
         />
         <div className="flex items-center gap-1.5">
           <div
@@ -814,6 +822,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       {importDialogOpen && unmanagedSkills && (
         <ImportSkillsDialog
           skills={unmanagedSkills}
+          isImporting={importMutation.isPending}
           onImport={handleImport}
           onClose={() => setImportDialogOpen(false)}
         />
@@ -982,6 +991,7 @@ interface ImportSkillsDialogProps {
     foundIn: string[];
     path: string;
   }>;
+  isImporting: boolean;
   onImport: (imports: ImportSkillSelection[]) => void;
   onClose: () => void;
 }
@@ -1106,6 +1116,7 @@ const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
 
 const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   skills,
+  isImporting,
   onImport,
   onClose,
 }) => {
@@ -1125,6 +1136,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           gemini: skill.foundIn.includes("gemini"),
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
+          hermes: skill.foundIn.includes("hermes"),
         },
       ]),
     ),
@@ -1150,6 +1162,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           gemini: false,
           opencode: false,
           openclaw: false,
+          hermes: false,
         },
       })),
     );
@@ -1192,6 +1205,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           gemini: false,
                           opencode: false,
                           openclaw: false,
+                          hermes: false,
                         }
                       }
                       onToggle={(app, enabled) => {
@@ -1204,12 +1218,13 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                               gemini: false,
                               opencode: false,
                               openclaw: false,
+                              hermes: false,
                             }),
                             [app]: enabled,
                           },
                         }));
                       }}
-                      appIds={MCP_SKILLS_APP_IDS}
+                      appIds={SKILLS_APP_IDS}
                     />
                   </div>
                   <div
@@ -1224,10 +1239,13 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           </div>
 
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={onClose}>
+            <Button variant="outline" onClick={onClose} disabled={isImporting}>
               {t("common.cancel")}
             </Button>
-            <Button onClick={handleImport} disabled={selected.size === 0}>
+            <Button
+              onClick={handleImport}
+              disabled={selected.size === 0 || isImporting}
+            >
               {t("skills.importSelected", { count: selected.size })}
             </Button>
           </div>

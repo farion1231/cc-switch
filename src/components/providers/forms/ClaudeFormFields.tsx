@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,6 +7,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -24,7 +25,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ChevronDown, ChevronRight, Download, Loader2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Loader2,
+  Wand2,
+} from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
@@ -35,6 +42,7 @@ import {
 } from "@/lib/api/copilot";
 import type { CopilotModel } from "@/lib/api/copilot";
 import {
+  fetchCodexOauthModels,
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
@@ -44,7 +52,16 @@ import type {
   ClaudeApiFormat,
   ClaudeApiKeyField,
 } from "@/types";
-import type { TemplateValueConfig } from "@/config/claudeProviderPresets";
+import {
+  hasClaudeOneMMarker,
+  setClaudeOneMMarker,
+  stripClaudeOneMMarker,
+  type ClaudeModelEnvField,
+} from "./hooks/useModelState";
+import {
+  providerPresets,
+  type TemplateValueConfig,
+} from "@/config/claudeProviderPresets";
 
 interface EndpointCandidate {
   url: string;
@@ -76,6 +93,8 @@ interface ClaudeFormFieldsProps {
   isCodexOauthAuthenticated?: boolean;
   selectedCodexAccountId?: string | null;
   onCodexAccountSelect?: (accountId: string | null) => void;
+  codexFastMode?: boolean;
+  onCodexFastModeChange?: (enabled: boolean) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -92,28 +111,23 @@ interface ClaudeFormFieldsProps {
   onCustomEndpointsChange?: (endpoints: string[]) => void;
   autoSelect: boolean;
   onAutoSelectChange: (checked: boolean) => void;
+  showEndpointTools?: boolean;
 
   // Model Selector
   shouldShowModelSelector: boolean;
   claudeModel: string;
-  reasoningModel: string;
   defaultHaikuModel: string;
+  defaultHaikuModelName: string;
   defaultSonnetModel: string;
+  defaultSonnetModelName: string;
   defaultOpusModel: string;
-  onModelChange: (
-    field:
-      | "ANTHROPIC_MODEL"
-      | "ANTHROPIC_REASONING_MODEL"
-      | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
-      | "ANTHROPIC_DEFAULT_SONNET_MODEL"
-      | "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    value: string,
-  ) => void;
+  defaultOpusModelName: string;
+  onModelChange: (field: ClaudeModelEnvField, value: string) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
-  // API Format (for third-party providers that use OpenAI Chat Completions format)
+  // API Format (for Claude-compatible providers that need request/response conversion)
   apiFormat: ClaudeApiFormat;
   onApiFormatChange: (format: ClaudeApiFormat) => void;
 
@@ -142,8 +156,11 @@ export function ClaudeFormFields({
   selectedGitHubAccountId,
   onGitHubAccountSelect,
   isCodexOauthPreset,
+  isCodexOauthAuthenticated,
   selectedCodexAccountId,
   onCodexAccountSelect,
+  codexFastMode,
+  onCodexFastModeChange,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -156,12 +173,15 @@ export function ClaudeFormFields({
   onCustomEndpointsChange,
   autoSelect,
   onAutoSelectChange,
+  showEndpointTools = true,
   shouldShowModelSelector,
   claudeModel,
-  reasoningModel,
   defaultHaikuModel,
+  defaultHaikuModelName,
   defaultSonnetModel,
+  defaultSonnetModelName,
   defaultOpusModel,
+  defaultOpusModelName,
   onModelChange,
   speedTestEndpoints,
   apiFormat,
@@ -174,7 +194,6 @@ export function ClaudeFormFields({
   const { t } = useTranslation();
   const hasAnyAdvancedValue = !!(
     claudeModel ||
-    reasoningModel ||
     defaultHaikuModel ||
     defaultSonnetModel ||
     defaultOpusModel ||
@@ -193,10 +212,27 @@ export function ClaudeFormFields({
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const copilotModelsRequestRef = useRef(0);
+
+  // Codex OAuth 可用模型列表
+  const [codexOauthModels, setCodexOauthModels] = useState<FetchedModel[]>([]);
+  const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
+  const codexOauthModelsRequestRef = useRef(0);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+
+  const showModelFetchResult = useCallback(
+    (count: number) => {
+      if (count === 0) {
+        toast.info(t("providerForm.fetchModelsEmpty"));
+      } else {
+        toast.success(t("providerForm.fetchModelsSuccess", { count }));
+      }
+    },
+    [t],
+  );
 
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
@@ -206,35 +242,39 @@ export function ClaudeFormFields({
       });
       return;
     }
+    // 当 baseURL 仍是某预设的默认值时，优先使用预设上的 modelsUrl 覆写
+    // 避免多走一次失败的候选请求（如 DeepSeek 把 /models 挂在根，而不是 /anthropic 子路径下）
+    const matchedPreset = providerPresets.find((p) => {
+      const env = (p.settingsConfig as { env?: Record<string, string> })?.env;
+      return env?.ANTHROPIC_BASE_URL === baseUrl;
+    });
+    const modelsUrl = matchedPreset?.modelsUrl;
+
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey, isFullUrl)
+    fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl)
       .then((models) => {
         setFetchedModels(models);
-        if (models.length === 0) {
-          toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
-          );
-        }
+        showModelFetchResult(models.length);
       })
       .catch((err) => {
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, isFullUrl, t]);
+  }, [baseUrl, apiKey, isFullUrl, showModelFetchResult, t]);
 
-  // 当 Copilot 预设且已认证时，加载可用模型
-  useEffect(() => {
-    // 如果不是 Copilot 预设或未认证，清空模型列表
-    if (!isCopilotPreset || !isCopilotAuthenticated) {
-      setCopilotModels([]);
-      setModelsLoading(false);
+  const handleFetchCopilotModels = useCallback(() => {
+    if (!isCopilotAuthenticated) {
+      toast.error(
+        t("copilot.loginRequired", {
+          defaultValue: "请先登录 GitHub Copilot",
+        }),
+      );
       return;
     }
 
-    let cancelled = false;
+    const requestId = copilotModelsRequestRef.current + 1;
+    copilotModelsRequestRef.current = requestId;
     setModelsLoading(true);
     const fetchModels = selectedGitHubAccountId
       ? copilotGetModelsForAccount(selectedGitHubAccountId)
@@ -242,38 +282,114 @@ export function ClaudeFormFields({
 
     fetchModels
       .then((models) => {
-        if (!cancelled) setCopilotModels(models);
+        if (copilotModelsRequestRef.current !== requestId) return;
+        setCopilotModels(models);
+        showModelFetchResult(models.length);
       })
       .catch((err) => {
+        if (copilotModelsRequestRef.current !== requestId) return;
         console.warn("[Copilot] Failed to fetch models:", err);
-        if (!cancelled) {
-          toast.error(
-            t("copilot.loadModelsFailed", {
-              defaultValue: "加载 Copilot 模型列表失败",
-            }),
-          );
-        }
+        toast.error(
+          t("copilot.loadModelsFailed", {
+            defaultValue: "加载 Copilot 模型列表失败",
+          }),
+        );
       })
       .finally(() => {
-        if (!cancelled) setModelsLoading(false);
+        if (copilotModelsRequestRef.current === requestId) {
+          setModelsLoading(false);
+        }
       });
-    return () => {
-      cancelled = true;
-    };
+  }, [
+    isCopilotAuthenticated,
+    selectedGitHubAccountId,
+    showModelFetchResult,
+    t,
+  ]);
+
+  const handleFetchCodexOauthModels = useCallback(() => {
+    if (!isCodexOauthAuthenticated) {
+      toast.error(
+        t("codexOauth.loginRequired", {
+          defaultValue: "请先登录 ChatGPT 账号",
+        }),
+      );
+      return;
+    }
+
+    const requestId = codexOauthModelsRequestRef.current + 1;
+    codexOauthModelsRequestRef.current = requestId;
+    setCodexOauthModelsLoading(true);
+    fetchCodexOauthModels(selectedCodexAccountId)
+      .then((models) => {
+        if (codexOauthModelsRequestRef.current !== requestId) return;
+        setCodexOauthModels(models);
+        showModelFetchResult(models.length);
+      })
+      .catch((err) => {
+        if (codexOauthModelsRequestRef.current !== requestId) return;
+        console.warn("[CodexOAuth] Failed to fetch models:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (codexOauthModelsRequestRef.current === requestId) {
+          setCodexOauthModelsLoading(false);
+        }
+      });
+  }, [
+    isCodexOauthAuthenticated,
+    selectedCodexAccountId,
+    showModelFetchResult,
+    t,
+  ]);
+
+  useEffect(() => {
+    copilotModelsRequestRef.current += 1;
+    setCopilotModels([]);
+    setModelsLoading(false);
   }, [isCopilotPreset, isCopilotAuthenticated, selectedGitHubAccountId]);
+
+  useEffect(() => {
+    codexOauthModelsRequestRef.current += 1;
+    setCodexOauthModels([]);
+    setCodexOauthModelsLoading(false);
+  }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
+
+  const modelFetchLoading = isCopilotPreset
+    ? modelsLoading
+    : isCodexOauthPreset
+      ? codexOauthModelsLoading
+      : isFetchingModels;
+  const handleModelFetchClick = isCopilotPreset
+    ? handleFetchCopilotModels
+    : isCodexOauthPreset
+      ? handleFetchCodexOauthModels
+      : handleFetchModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
     id: string,
     value: string,
-    field: ClaudeFormFieldsProps["onModelChange"] extends (
-      f: infer F,
-      v: string,
-    ) => void
-      ? F
-      : never,
+    field: ClaudeModelEnvField,
     placeholder?: string,
+    onValueChange?: (value: string) => void,
   ) => {
+    const updateValue =
+      onValueChange ?? ((next: string) => onModelChange(field, next));
+
+    if (isCodexOauthPreset) {
+      return (
+        <ModelInputWithFetch
+          id={id}
+          value={value}
+          onChange={updateValue}
+          placeholder={placeholder}
+          fetchedModels={codexOauthModels}
+          isLoading={codexOauthModelsLoading}
+        />
+      );
+    }
+
     if (isCopilotPreset && copilotModels.length > 0) {
       // 按 vendor 分组
       const grouped: Record<string, CopilotModel[]> = {};
@@ -290,7 +406,7 @@ export function ClaudeFormFields({
             id={id}
             type="text"
             value={value}
-            onChange={(e) => onModelChange(field, e.target.value)}
+            onChange={(e) => updateValue(e.target.value)}
             placeholder={placeholder}
             autoComplete="off"
             className="flex-1"
@@ -312,7 +428,7 @@ export function ClaudeFormFields({
                   {grouped[vendor].map((model) => (
                     <DropdownMenuItem
                       key={model.id}
-                      onSelect={() => onModelChange(field, model.id)}
+                      onSelect={() => updateValue(model.id)}
                     >
                       {model.id}
                     </DropdownMenuItem>
@@ -332,7 +448,7 @@ export function ClaudeFormFields({
             id={id}
             type="text"
             value={value}
-            onChange={(e) => onModelChange(field, e.target.value)}
+            onChange={(e) => updateValue(e.target.value)}
             placeholder={placeholder}
             autoComplete="off"
             className="flex-1"
@@ -344,17 +460,93 @@ export function ClaudeFormFields({
       );
     }
 
-    // 非 Copilot 供应商: 使用 ModelInputWithFetch（获取按钮在 section 标题旁）
+    if (isCopilotPreset) {
+      return (
+        <Input
+          id={id}
+          type="text"
+          value={value}
+          onChange={(e) => updateValue(e.target.value)}
+          placeholder={placeholder}
+          autoComplete="off"
+        />
+      );
+    }
+
+    // 普通供应商: 使用 ModelInputWithFetch（获取按钮在 section 标题旁）
     return (
       <ModelInputWithFetch
         id={id}
         value={value}
-        onChange={(v) => onModelChange(field, v)}
+        onChange={updateValue}
         placeholder={placeholder}
         fetchedModels={fetchedModels}
         isLoading={isFetchingModels}
       />
     );
+  };
+
+  type ModelRoleRow = {
+    role: "sonnet" | "opus" | "haiku";
+    label: string;
+    model: string;
+    displayName: string;
+    modelField: ClaudeModelEnvField;
+    displayNameField: ClaudeModelEnvField;
+    inputId: string;
+    supportsOneM: boolean;
+  };
+
+  const modelRoleRows: ModelRoleRow[] = [
+    {
+      role: "sonnet",
+      label: t("providerForm.modelRoleSonnet", { defaultValue: "Sonnet" }),
+      model: defaultSonnetModel,
+      displayName: defaultSonnetModelName,
+      modelField: "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      displayNameField: "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+      inputId: "claudeDefaultSonnetModel",
+      supportsOneM: true,
+    },
+    {
+      role: "opus",
+      label: t("providerForm.modelRoleOpus", { defaultValue: "Opus" }),
+      model: defaultOpusModel,
+      displayName: defaultOpusModelName,
+      modelField: "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      displayNameField: "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+      inputId: "claudeDefaultOpusModel",
+      supportsOneM: true,
+    },
+    {
+      role: "haiku",
+      label: t("providerForm.modelRoleHaiku", { defaultValue: "Haiku" }),
+      model: defaultHaikuModel,
+      displayName: defaultHaikuModelName,
+      modelField: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      displayNameField: "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+      inputId: "claudeDefaultHaikuModel",
+      supportsOneM: false,
+    },
+  ];
+
+  const handleRoleModelChange = (row: ModelRoleRow, value: string) => {
+    const oldModelBase = stripClaudeOneMMarker(row.model).trim();
+    const normalizedValue = row.supportsOneM
+      ? value
+      : stripClaudeOneMMarker(value);
+    const nextModelBase = stripClaudeOneMMarker(normalizedValue).trim();
+    const displayName = row.displayName.trim();
+    const shouldSyncDisplayName = !displayName || displayName === oldModelBase;
+    onModelChange(row.modelField, normalizedValue);
+    if (shouldSyncDisplayName) {
+      onModelChange(row.displayNameField, nextModelBase);
+    }
+  };
+
+  const handleRoleOneMChange = (row: ModelRoleRow, enabled: boolean) => {
+    if (!row.supportsOneM) return;
+    handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
   };
 
   return (
@@ -372,6 +564,8 @@ export function ClaudeFormFields({
         <CodexOAuthSection
           selectedAccountId={selectedCodexAccountId}
           onAccountSelect={onCodexAccountSelect}
+          fastModeEnabled={codexFastMode}
+          onFastModeChange={onCodexFastModeChange}
         />
       )}
 
@@ -436,17 +630,27 @@ export function ClaudeFormFields({
               ? t("providerForm.apiHintResponses")
               : apiFormat === "openai_chat"
                 ? t("providerForm.apiHintOAI")
-                : t("providerForm.apiHint")
+                : apiFormat === "gemini_native"
+                  ? t("providerForm.apiHintGeminiNative")
+                  : t("providerForm.apiHint")
           }
-          onManageClick={() => onEndpointModalToggle(true)}
-          showFullUrlToggle={true}
+          fullUrlHint={
+            apiFormat === "gemini_native"
+              ? t("providerForm.fullUrlHintGeminiNative")
+              : undefined
+          }
+          showManageButton={showEndpointTools}
+          onManageClick={
+            showEndpointTools ? () => onEndpointModalToggle(true) : undefined
+          }
+          showFullUrlToggle={showEndpointTools}
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
         />
       )}
 
       {/* 端点测速弹窗 */}
-      {shouldShowSpeedTest && isEndpointModalOpen && (
+      {shouldShowSpeedTest && showEndpointTools && isEndpointModalOpen && (
         <EndpointSpeedTest
           appId="claude"
           providerId={providerId}
@@ -511,6 +715,11 @@ export function ClaudeFormFields({
                         defaultValue: "OpenAI Responses API (需转换)",
                       })}
                     </SelectItem>
+                    <SelectItem value="gemini_native">
+                      {t("providerForm.apiFormatGeminiNative", {
+                        defaultValue: "Gemini Native generateContent (需转换)",
+                      })}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
@@ -559,100 +768,170 @@ export function ClaudeFormFields({
             <div className="space-y-1 pt-2 border-t">
               <div className="flex items-center justify-between">
                 <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
-                {!isCopilotPreset && (
+                <div className="flex gap-2">
+                  {/* 一键设置按钮 */}
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={handleFetchModels}
-                    disabled={isFetchingModels}
+                    onClick={() => {
+                      const value =
+                        claudeModel ||
+                        defaultSonnetModel ||
+                        defaultOpusModel ||
+                        defaultHaikuModel;
+                      if (value) {
+                        for (const row of modelRoleRows) {
+                          const roleValue = row.supportsOneM
+                            ? value
+                            : stripClaudeOneMMarker(value);
+                          onModelChange(row.modelField, roleValue);
+                          onModelChange(
+                            row.displayNameField,
+                            stripClaudeOneMMarker(roleValue),
+                          );
+                        }
+                        toast.success(
+                          t("providerForm.quickSetSuccess", {
+                            defaultValue: "已将模型名称应用到所有角色",
+                          }),
+                        );
+                      }
+                    }}
+                    disabled={
+                      !claudeModel &&
+                      !defaultHaikuModel &&
+                      !defaultSonnetModel &&
+                      !defaultOpusModel
+                    }
                     className="h-7 gap-1"
                   >
-                    {isFetchingModels ? (
+                    <Wand2 className="h-3.5 w-3.5" />
+                    {t("providerForm.quickSetModels", {
+                      defaultValue: "一键设置",
+                    })}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleModelFetchClick}
+                    disabled={modelFetchLoading}
+                    className="h-7 gap-1"
+                  >
+                    {modelFetchLoading ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
                       <Download className="h-3.5 w-3.5" />
                     )}
                     {t("providerForm.fetchModels")}
                   </Button>
-                )}
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">
                 {t("providerForm.modelMappingHint")}
               </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* 主模型 */}
-              <div className="space-y-2">
-                <FormLabel htmlFor="claudeModel">
-                  {t("providerForm.anthropicModel", {
-                    defaultValue: "主模型",
+
+            <div className="space-y-3">
+              <div className="hidden grid-cols-[120px_1fr_minmax(0,1fr)_104px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                <span>
+                  {t("providerForm.modelRoleLabel", {
+                    defaultValue: "模型角色",
                   })}
-                </FormLabel>
-                {renderModelInput(
-                  "claudeModel",
-                  claudeModel,
-                  "ANTHROPIC_MODEL",
-                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                )}
+                </span>
+                <span>
+                  {t("providerForm.modelDisplayNameLabel", {
+                    defaultValue: "显示名称",
+                  })}
+                </span>
+                <span>
+                  {t("providerForm.requestModelLabel", {
+                    defaultValue: "实际请求模型",
+                  })}
+                </span>
+                <span>
+                  {t("providerForm.modelOneMHeader", {
+                    defaultValue: "声明支持 1M",
+                  })}
+                </span>
               </div>
 
-              {/* 推理模型 */}
-              <div className="space-y-2">
-                <FormLabel htmlFor="reasoningModel">
-                  {t("providerForm.anthropicReasoningModel")}
-                </FormLabel>
-                {renderModelInput(
-                  "reasoningModel",
-                  reasoningModel,
-                  "ANTHROPIC_REASONING_MODEL",
-                )}
-              </div>
+              {modelRoleRows.map((row) => {
+                const modelBase = stripClaudeOneMMarker(row.model);
+                const usesOneM =
+                  row.supportsOneM && hasClaudeOneMMarker(row.model);
 
-              {/* 默认 Haiku */}
-              <div className="space-y-2">
-                <FormLabel htmlFor="claudeDefaultHaikuModel">
-                  {t("providerForm.anthropicDefaultHaikuModel", {
-                    defaultValue: "Haiku 默认模型",
-                  })}
-                </FormLabel>
-                {renderModelInput(
-                  "claudeDefaultHaikuModel",
-                  defaultHaikuModel,
-                  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                  t("providerForm.haikuModelPlaceholder", { defaultValue: "" }),
-                )}
-              </div>
+                return (
+                  <div
+                    key={row.role}
+                    className="grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_minmax(0,1fr)_104px]"
+                  >
+                    <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
+                      {row.label}
+                    </div>
+                    <Input
+                      value={row.displayName}
+                      onChange={(event) =>
+                        onModelChange(row.displayNameField, event.target.value)
+                      }
+                      placeholder={
+                        modelBase ||
+                        t("providerForm.modelDisplayNamePlaceholder", {
+                          defaultValue: "例如 DeepSeek V4 Pro",
+                        })
+                      }
+                      autoComplete="off"
+                    />
+                    {renderModelInput(
+                      row.inputId,
+                      modelBase,
+                      row.modelField,
+                      t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                      (value) =>
+                        handleRoleModelChange(
+                          row,
+                          row.supportsOneM
+                            ? setClaudeOneMMarker(value, usesOneM)
+                            : stripClaudeOneMMarker(value),
+                        ),
+                    )}
+                    {row.supportsOneM && (
+                      <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                        <Checkbox
+                          checked={usesOneM}
+                          onCheckedChange={(checked) =>
+                            handleRoleOneMChange(row, checked === true)
+                          }
+                        />
+                        {t("providerForm.modelOneMLabel", {
+                          defaultValue: "1M",
+                        })}
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
-              {/* 默认 Sonnet */}
-              <div className="space-y-2">
-                <FormLabel htmlFor="claudeDefaultSonnetModel">
-                  {t("providerForm.anthropicDefaultSonnetModel", {
-                    defaultValue: "Sonnet 默认模型",
-                  })}
-                </FormLabel>
-                {renderModelInput(
-                  "claudeDefaultSonnetModel",
-                  defaultSonnetModel,
-                  "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                )}
-              </div>
-
-              {/* 默认 Opus */}
-              <div className="space-y-2">
-                <FormLabel htmlFor="claudeDefaultOpusModel">
-                  {t("providerForm.anthropicDefaultOpusModel", {
-                    defaultValue: "Opus 默认模型",
-                  })}
-                </FormLabel>
-                {renderModelInput(
-                  "claudeDefaultOpusModel",
-                  defaultOpusModel,
-                  "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                )}
-              </div>
+            <div className="space-y-2 border-t pt-4">
+              <FormLabel htmlFor="claudeModel">
+                {t("providerForm.fallbackModelLabel", {
+                  defaultValue: "默认兜底模型",
+                })}
+              </FormLabel>
+              {renderModelInput(
+                "claudeModel",
+                claudeModel,
+                "ANTHROPIC_MODEL",
+                t("providerForm.modelPlaceholder", { defaultValue: "" }),
+              )}
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.fallbackModelHint", {
+                  defaultValue:
+                    "仅在 Claude Code 请求没有明确落到 Sonnet、Opus 或 Haiku 角色时使用；通常可以留空。",
+                })}
+              </p>
             </div>
           </CollapsibleContent>
         </Collapsible>

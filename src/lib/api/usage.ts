@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   UsageSummary,
+  UsageSummaryByApp,
   DailyStats,
   ProviderStats,
   ModelStats,
@@ -55,6 +56,13 @@ export const usageApi = {
     return invoke("get_usage_summary", { startDate, endDate, appType });
   },
 
+  getUsageSummaryByApp: async (
+    startDate?: number,
+    endDate?: number,
+  ): Promise<UsageSummaryByApp[]> => {
+    return invoke("get_usage_summary_by_app", { startDate, endDate });
+  },
+
   getUsageTrends: async (
     startDate?: number,
     endDate?: number,
@@ -63,12 +71,20 @@ export const usageApi = {
     return invoke("get_usage_trends", { startDate, endDate, appType });
   },
 
-  getProviderStats: async (appType?: string): Promise<ProviderStats[]> => {
-    return invoke("get_provider_stats", { appType });
+  getProviderStats: async (
+    startDate?: number,
+    endDate?: number,
+    appType?: string,
+  ): Promise<ProviderStats[]> => {
+    return invoke("get_provider_stats", { startDate, endDate, appType });
   },
 
-  getModelStats: async (appType?: string): Promise<ModelStats[]> => {
-    return invoke("get_model_stats", { appType });
+  getModelStats: async (
+    startDate?: number,
+    endDate?: number,
+    appType?: string,
+  ): Promise<ModelStats[]> => {
+    return invoke("get_model_stats", { startDate, endDate, appType });
   },
 
   getRequestLogs: async (

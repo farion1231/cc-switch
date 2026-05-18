@@ -74,6 +74,20 @@ export interface UsageScript {
   };
 }
 
+const DEFAULT_USAGE_SCRIPT: UsageScript = {
+  enabled: false,
+  language: "javascript",
+  code: "",
+  timeout: 10,
+  autoQueryInterval: 5,
+};
+
+export function createUsageScript(
+  overrides?: Partial<UsageScript>,
+): UsageScript {
+  return { ...DEFAULT_USAGE_SCRIPT, ...overrides };
+}
+
 // 单个套餐用量数据
 export interface UsageData {
   planName?: string; // 套餐名称（可选）
@@ -109,22 +123,6 @@ export interface ProviderTestConfig {
   maxRetries?: number;
 }
 
-// 供应商单独的代理配置
-export interface ProviderProxyConfig {
-  // 是否启用单独配置（false 时使用全局/系统代理）
-  enabled: boolean;
-  // 代理类型：http, https, socks5
-  proxyType?: "http" | "https" | "socks5";
-  // 代理主机
-  proxyHost?: string;
-  // 代理端口
-  proxyPort?: number;
-  // 代理用户名（可选）
-  proxyUsername?: string;
-  // 代理密码（可选）
-  proxyPassword?: string;
-}
-
 export type AuthBindingSource = "provider_config" | "managed_account";
 
 export interface AuthBinding {
@@ -133,12 +131,22 @@ export interface AuthBinding {
   accountId?: string;
 }
 
+export interface ClaudeDesktopModelRoute {
+  model: string;
+  labelOverride?: string;
+  supports1m?: boolean;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
   commonConfigEnabled?: boolean;
+  // Claude Desktop 3P 配置写入模式
+  claudeDesktopMode?: "direct" | "proxy";
+  // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
+  claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
   // 用量查询脚本配置
   usage_script?: UsageScript;
   // 请求地址管理：测速后自动选择最佳端点
@@ -149,8 +157,6 @@ export interface ProviderMeta {
   partnerPromotionKey?: string;
   // 供应商单独的模型测试配置
   testConfig?: ProviderTestConfig;
-  // 供应商单独的代理配置
-  proxyConfig?: ProviderProxyConfig;
   // 供应商成本倍率
   costMultiplier?: string;
   // 供应商计费模式来源
@@ -159,7 +165,12 @@ export interface ProviderMeta {
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
-  apiFormat?: "anthropic" | "openai_chat" | "openai_responses";
+  // - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
+  apiFormat?:
+    | "anthropic"
+    | "openai_chat"
+    | "openai_responses"
+    | "gemini_native";
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -168,6 +179,8 @@ export interface ProviderMeta {
   isFullUrl?: boolean;
   // Prompt cache key for OpenAI Responses-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
+  // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
+  codexFastMode?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -184,7 +197,12 @@ export type SkillStorageLocation = "cc_switch" | "unified";
 // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
 // - "openai_responses": OpenAI Responses API 格式，需要格式转换
-export type ClaudeApiFormat = "anthropic" | "openai_chat" | "openai_responses";
+// - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
+export type ClaudeApiFormat =
+  | "anthropic"
+  | "openai_chat"
+  | "openai_responses"
+  | "gemini_native";
 
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
@@ -192,10 +210,12 @@ export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 // 主页面显示的应用配置
 export interface VisibleApps {
   claude: boolean;
+  "claude-desktop": boolean;
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
   openclaw: boolean;
+  hermes: boolean;
 }
 
 // WebDAV 同步状态
@@ -289,10 +309,14 @@ export interface Settings {
   opencodeConfigDir?: string;
   // 覆盖 OpenClaw 配置目录（可选）
   openclawConfigDir?: string;
+  // 覆盖 Hermes 配置目录（可选）
+  hermesConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
   currentProviderClaude?: string;
+  // 当前 Claude Desktop 供应商 ID（优先于数据库 is_current）
+  currentProviderClaudeDesktop?: string;
   // 当前 Codex 供应商 ID（优先于数据库 is_current）
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
@@ -358,10 +382,12 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   claude: boolean;
+  "claude-desktop"?: boolean;
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
   openclaw: boolean;
+  hermes: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -576,4 +602,26 @@ export interface OpenClawToolsConfig {
   allow?: string[];
   deny?: string[];
   [key: string]: unknown; // preserve unknown fields
+}
+
+// ============================================================================
+// Hermes Agent 专属配置
+// ============================================================================
+
+export interface HermesModelConfig {
+  default?: string;
+  provider?: string;
+  base_url?: string;
+  context_length?: number;
+  max_tokens?: number;
+  [key: string]: unknown;
+}
+
+export type HermesMemoryKind = "memory" | "user";
+
+export interface HermesMemoryLimits {
+  memory: number;
+  user: number;
+  memoryEnabled: boolean;
+  userEnabled: boolean;
 }

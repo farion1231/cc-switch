@@ -65,6 +65,25 @@ impl Provider {
             in_failover_queue: false,
         }
     }
+
+    pub fn is_codex_oauth(&self) -> bool {
+        self.meta.as_ref().and_then(|m| m.provider_type.as_deref()) == Some("codex_oauth")
+    }
+
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| m.codex_fast_mode_enabled())
+            .unwrap_or(false)
+    }
+
+    pub fn has_usage_script_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.usage_script.as_ref())
+            .map(|s| s.enabled)
+            .unwrap_or(false)
+    }
 }
 
 /// 供应商管理器
@@ -172,29 +191,6 @@ pub struct ProviderTestConfig {
     pub max_retries: Option<u32>,
 }
 
-/// 供应商单独的代理配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProviderProxyConfig {
-    /// 是否启用单独配置（false 时使用全局/系统代理）
-    #[serde(default)]
-    pub enabled: bool,
-    /// 代理类型：http, https, socks5
-    #[serde(rename = "proxyType", skip_serializing_if = "Option::is_none")]
-    pub proxy_type: Option<String>,
-    /// 代理主机
-    #[serde(rename = "proxyHost", skip_serializing_if = "Option::is_none")]
-    pub proxy_host: Option<String>,
-    /// 代理端口
-    #[serde(rename = "proxyPort", skip_serializing_if = "Option::is_none")]
-    pub proxy_port: Option<u16>,
-    /// 代理用户名（可选）
-    #[serde(rename = "proxyUsername", skip_serializing_if = "Option::is_none")]
-    pub proxy_username: Option<String>,
-    /// 代理密码（可选）
-    #[serde(rename = "proxyPassword", skip_serializing_if = "Option::is_none")]
-    pub proxy_password: Option<String>,
-}
-
 /// 认证绑定来源
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -220,6 +216,28 @@ pub struct AuthBinding {
     pub account_id: Option<String>,
 }
 
+/// Claude Desktop 3P 写入模式。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeDesktopMode {
+    Direct,
+    Proxy,
+}
+
+/// Claude Desktop 本地路由模式下暴露给 Desktop 的安全模型路由。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeDesktopModelRoute {
+    /// 真实上游模型名，只保存在 CC Switch 内部，不写入 Claude Desktop profile。
+    pub model: String,
+    /// Claude Desktop 模型菜单显示名；写入 profile 的 `labelOverride`。
+    #[serde(rename = "labelOverride", skip_serializing_if = "Option::is_none")]
+    pub label_override: Option<String>,
+    /// Claude Desktop 3P 识别的 1M 上下文能力标记。
+    #[serde(rename = "supports1m", skip_serializing_if = "Option::is_none")]
+    pub supports_1m: Option<bool>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -232,6 +250,16 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub common_config_enabled: Option<bool>,
+    /// Claude Desktop 3P 写入模式：direct（直连）或 proxy（预留）
+    #[serde(rename = "claudeDesktopMode", skip_serializing_if = "Option::is_none")]
+    pub claude_desktop_mode: Option<ClaudeDesktopMode>,
+    /// Claude Desktop proxy 模式的模型路由映射：Claude-safe route -> upstream model。
+    #[serde(
+        default,
+        rename = "claudeDesktopModelRoutes",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub claude_desktop_model_routes: HashMap<String, ClaudeDesktopModelRoute>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
@@ -262,9 +290,6 @@ pub struct ProviderMeta {
     /// 供应商单独的模型测试配置
     #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
     pub test_config: Option<ProviderTestConfig>,
-    /// 供应商单独的代理配置
-    #[serde(rename = "proxyConfig", skip_serializing_if = "Option::is_none")]
-    pub proxy_config: Option<ProviderProxyConfig>,
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
@@ -284,9 +309,13 @@ pub struct ProviderMeta {
     pub is_full_url: Option<bool>,
     /// Prompt cache key for OpenAI Responses-compatible endpoints.
     /// When set, injected into converted Responses requests to improve cache hit rate.
-    /// If not set, provider ID is used automatically during Claude -> Responses conversion.
+    /// If not set, Claude -> Responses conversions use a client-provided session/thread
+    /// identity when available; generated session IDs are not sent upstream.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
+    #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
+    pub codex_fast_mode: Option<bool>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -302,6 +331,12 @@ pub struct ProviderMeta {
 }
 
 impl ProviderMeta {
+    /// Codex OAuth FAST mode 是否启用。默认关闭，因为 `service_tier="priority"`
+    /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.codex_fast_mode.unwrap_or(false)
+    }
+
     /// 解析指定托管认证供应商绑定的账号 ID。
     ///
     /// 新版优先读取 authBinding，旧版继续兼容 githubAccountId。
@@ -725,8 +760,10 @@ mod tests {
 
     #[test]
     fn provider_meta_serializes_pricing_model_source() {
-        let mut meta = ProviderMeta::default();
-        meta.pricing_model_source = Some("response".to_string());
+        let meta = ProviderMeta {
+            pricing_model_source: Some("response".to_string()),
+            ..ProviderMeta::default()
+        };
 
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 

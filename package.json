@@ -1,6 +1,6 @@
 {
   "name": "cc-switch",
-  "version": "3.13.0",
+  "version": "3.15.0",
   "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
   "type": "module",
   "scripts": {
@@ -67,6 +67,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@radix-ui/react-visually-hidden": "^1.2.4",
     "@tanstack/react-query": "^5.90.3",
+    "@tanstack/react-virtual": "^3.13.23",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "@tauri-apps/plugin-process": "^2.0.0",

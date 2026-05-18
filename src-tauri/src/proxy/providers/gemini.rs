@@ -70,6 +70,11 @@ impl GeminiAdapter {
 
     /// 解析 OAuth 凭证
     pub fn parse_oauth_credentials(&self, key: &str) -> Option<OAuthCredentials> {
+        // 防御性 trim:前端在 input 事件中会 trim,但 JSON 编辑器 / deeplink
+        // 导入 / live 回填等路径会绕过。带前导换行的 oauth_creds.json 粘贴
+        // 是常见场景,此处统一兜底。
+        let key = key.trim();
+
         // 直接是 access_token
         if key.starts_with("ya29.") {
             return Some(OAuthCredentials {
@@ -120,7 +125,12 @@ impl GeminiAdapter {
     fn extract_key_raw(&self, provider: &Provider) -> Option<String> {
         if let Some(env) = provider.settings_config.get("env") {
             // 使用 GEMINI_API_KEY
-            if let Some(key) = env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
+            if let Some(key) = env
+                .get("GEMINI_API_KEY")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 return Some(key.to_string());
             }
         }
@@ -131,6 +141,8 @@ impl GeminiAdapter {
             .get("apiKey")
             .or_else(|| provider.settings_config.get("api_key"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
             return Some(key.to_string());
         }
@@ -216,15 +228,19 @@ impl ProviderAdapter for GeminiAdapter {
         url
     }
 
-    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+    ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
+        use super::adapter::auth_header_value as hv;
         use http::{HeaderName, HeaderValue};
-        match auth.strategy {
+        Ok(match auth.strategy {
             AuthStrategy::GoogleOAuth => {
                 let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
                 vec![
                     (
                         HeaderName::from_static("authorization"),
-                        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+                        hv(&format!("Bearer {token}"))?,
                     ),
                     (
                         HeaderName::from_static("x-goog-api-client"),
@@ -234,9 +250,9 @@ impl ProviderAdapter for GeminiAdapter {
             }
             _ => vec![(
                 HeaderName::from_static("x-goog-api-key"),
-                HeaderValue::from_str(&auth.api_key).unwrap(),
+                hv(&auth.api_key)?,
             )],
-        }
+        })
     }
 }
 
