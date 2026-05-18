@@ -42,6 +42,46 @@ export interface OpenClawProviderPreset {
   suggestedDefaults?: OpenClawSuggestedDefaults;
 }
 
+function rebaseOpenClawModelRef(modelRef: string, providerKey: string): string {
+  const slashIndex = modelRef.indexOf("/");
+  return slashIndex === -1
+    ? `${providerKey}/${modelRef}`
+    : `${providerKey}${modelRef.slice(slashIndex)}`;
+}
+
+/**
+ * OpenClaw default model refs are stored as "<provider-key>/<model-id>".
+ * Presets carry stable built-in keys for display/tests, but the real key is
+ * chosen in the add-provider form, so rewrite refs right before submission.
+ */
+export function rebaseOpenClawSuggestedDefaults(
+  defaults: OpenClawSuggestedDefaults,
+  providerKey: string,
+): OpenClawSuggestedDefaults {
+  const key = providerKey.trim();
+  if (!key) return defaults;
+
+  return {
+    model: defaults.model
+      ? {
+          ...defaults.model,
+          primary: rebaseOpenClawModelRef(defaults.model.primary, key),
+          fallbacks: defaults.model.fallbacks?.map((modelRef) =>
+            rebaseOpenClawModelRef(modelRef, key),
+          ),
+        }
+      : undefined,
+    modelCatalog: defaults.modelCatalog
+      ? Object.fromEntries(
+          Object.entries(defaults.modelCatalog).map(([modelRef, entry]) => [
+            rebaseOpenClawModelRef(modelRef, key),
+            entry,
+          ]),
+        )
+      : undefined,
+  };
+}
+
 /**
  * OpenClaw API protocol options
  * @see https://github.com/openclaw/openclaw/blob/main/docs/gateway/configuration.md
@@ -740,10 +780,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "mimo-v2-pro",
-          name: "MiMo V2 Pro",
-          contextWindow: 128000,
-          cost: { input: 0.001, output: 0.004 },
+          id: "mimo-v2.5-pro",
+          name: "MiMo V2.5 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1, output: 3, cacheRead: 0.2, cacheWrite: 0 },
         },
       ],
     },
@@ -758,8 +801,57 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "xiaomimimo/mimo-v2-pro" },
-      modelCatalog: { "xiaomimimo/mimo-v2-pro": { alias: "MiMo" } },
+      model: { primary: "xiaomimimo/mimo-v2.5-pro" },
+      modelCatalog: { "xiaomimimo/mimo-v2.5-pro": { alias: "MiMo" } },
+    },
+  },
+  {
+    name: "Xiaomi MiMo Token Plan (China)",
+    websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
+    settingsConfig: {
+      baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "mimo-v2.5-pro",
+          name: "MiMo V2.5 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "mimo-v2.5",
+          name: "MiMo V2.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "Token Plan API Key",
+        placeholder: "tp-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "xiaomi-mimo-token-plan/mimo-v2.5-pro" },
+      modelCatalog: {
+        "xiaomi-mimo-token-plan/mimo-v2.5-pro": {
+          alias: "MiMo Token Plan (China)",
+        },
+        "xiaomi-mimo-token-plan/mimo-v2.5": {
+          alias: "MiMo Token Plan (China) Multimodal",
+        },
+      },
     },
   },
 
