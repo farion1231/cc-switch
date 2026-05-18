@@ -4,6 +4,11 @@ import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -200,6 +205,15 @@ export function OpenCodeFormFields({
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [extraOptionsOpen, setExtraOptionsOpen] = useState(
+    () => Object.keys(extraOptions).length > 0,
+  );
+
+  useEffect(() => {
+    if (Object.keys(extraOptions).length > 0) {
+      setExtraOptionsOpen(true);
+    }
+  }, [extraOptions]);
 
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
@@ -581,11 +595,19 @@ export function OpenCodeFormFields({
       </div>
 
       {/* Headers Editor */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <FormLabel>
-            {t("opencode.headers", { defaultValue: "Headers" })}
-          </FormLabel>
+      <div className="space-y-2 border-l border-border-default pl-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="max-w-3xl space-y-1">
+            <FormLabel>
+              {t("opencode.headers", { defaultValue: "Headers" })}
+            </FormLabel>
+            <p className="text-xs text-muted-foreground">
+              {t("opencode.headersHint", {
+                defaultValue:
+                  "Optional HTTP headers sent with provider requests, such as HTTP-Referer or X-Title.",
+              })}
+            </p>
+          </div>
           <Button
             type="button"
             variant="outline"
@@ -599,141 +621,165 @@ export function OpenCodeFormFields({
           </Button>
         </div>
 
-        {Object.keys(headers).length === 0 ? (
-          <p className="text-sm text-muted-foreground py-2">
-            {t("opencode.noHeaders", {
-              defaultValue: "No custom headers configured",
-            })}
-          </p>
-        ) : (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-1">
-              <span className="flex-1">
-                {t("opencode.headerName", { defaultValue: "Header" })}
-              </span>
-              <span className="flex-1">
-                {t("opencode.headerValue", { defaultValue: "Value" })}
-              </span>
-              <span className="w-9" />
-            </div>
-            {Object.entries(headers).map(([key, value]) => (
-              <div key={key} className="flex items-center gap-2">
-                <ExtraOptionKeyInput
-                  optionKey={key}
-                  onChange={(newKey) => handleHeaderKeyChange(key, newKey)}
-                  placeholder={t("opencode.headerNamePlaceholder", {
-                    defaultValue: "X-Title",
-                  })}
-                  placeholderPrefixes={["header-"]}
-                />
-                <Input
-                  value={value}
-                  onChange={(e) => handleHeaderValueChange(key, e.target.value)}
-                  placeholder={t("opencode.headerValuePlaceholder", {
-                    defaultValue: "CC Switch",
-                  })}
-                  className="flex-1"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleRemoveHeader(key)}
-                  aria-label={t("opencode.removeHeader", {
-                    defaultValue: "Remove header",
-                  })}
-                  className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+        <div className="max-w-3xl">
+          {Object.keys(headers).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-1">
+              {t("opencode.noHeaders", {
+                defaultValue: "No custom headers configured",
+              })}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-1">
+                <span className="flex-1">
+                  {t("opencode.headerName", { defaultValue: "Header" })}
+                </span>
+                <span className="flex-1">
+                  {t("opencode.headerValue", { defaultValue: "Value" })}
+                </span>
+                <span className="w-9" />
               </div>
-            ))}
-          </div>
-        )}
-
-        <p className="text-xs text-muted-foreground">
-          {t("opencode.headersHint", {
-            defaultValue:
-              "Optional HTTP headers sent with provider requests, such as HTTP-Referer or X-Title.",
-          })}
-        </p>
+              {Object.entries(headers).map(([key, value]) => (
+                <div key={key} className="flex items-center gap-2">
+                  <ExtraOptionKeyInput
+                    optionKey={key}
+                    onChange={(newKey) => handleHeaderKeyChange(key, newKey)}
+                    placeholder={t("opencode.headerNamePlaceholder", {
+                      defaultValue: "X-Title",
+                    })}
+                    placeholderPrefixes={["header-"]}
+                  />
+                  <Input
+                    value={value}
+                    onChange={(e) =>
+                      handleHeaderValueChange(key, e.target.value)
+                    }
+                    placeholder={t("opencode.headerValuePlaceholder", {
+                      defaultValue: "CC Switch",
+                    })}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleRemoveHeader(key)}
+                    aria-label={t("opencode.removeHeader", {
+                      defaultValue: "Remove header",
+                    })}
+                    className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Extra Options Editor */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <FormLabel>
-            {t("opencode.extraOptions", { defaultValue: "额外选项" })}
-          </FormLabel>
+      <Collapsible
+        open={extraOptionsOpen}
+        onOpenChange={setExtraOptionsOpen}
+        className="space-y-2 border-l border-border-default pl-3"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex min-w-0 max-w-3xl flex-1 items-start gap-2 text-left"
+            >
+              <ChevronRight
+                className={cn(
+                  "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                  extraOptionsOpen && "rotate-90",
+                )}
+              />
+              <span className="space-y-1">
+                <span className="block text-sm font-medium text-foreground">
+                  {t("opencode.extraOptions", {
+                    defaultValue: "Extra SDK Options",
+                  })}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {t("opencode.extraOptionsHint", {
+                    defaultValue:
+                      "Advanced SDK options not exposed by the structured fields.",
+                  })}
+                </span>
+              </span>
+            </button>
+          </CollapsibleTrigger>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={handleAddExtraOption}
+            onClick={() => {
+              setExtraOptionsOpen(true);
+              handleAddExtraOption();
+            }}
             className="h-7 gap-1"
           >
             <Plus className="h-3.5 w-3.5" />
-            {t("opencode.addExtraOption", { defaultValue: "添加" })}
+            {t("opencode.addExtraOption", { defaultValue: "Add" })}
           </Button>
         </div>
 
-        {Object.keys(extraOptions).length === 0 ? (
-          <p className="text-sm text-muted-foreground py-2">
-            {t("opencode.noExtraOptions", {
-              defaultValue: "暂无额外选项",
-            })}
-          </p>
-        ) : (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-1">
-              <span className="flex-1">
-                {t("opencode.extraOptionKey", { defaultValue: "键名" })}
-              </span>
-              <span className="flex-1">
-                {t("opencode.extraOptionValue", { defaultValue: "值" })}
-              </span>
-              <span className="w-9" />
-            </div>
-            {Object.entries(extraOptions).map(([key, value]) => (
-              <div key={key} className="flex items-center gap-2">
-                <ExtraOptionKeyInput
-                  optionKey={key}
-                  onChange={(newKey) => handleExtraOptionKeyChange(key, newKey)}
-                  placeholder={t("opencode.extraOptionKeyPlaceholder", {
-                    defaultValue: "timeout",
-                  })}
-                />
-                <Input
-                  value={value}
-                  onChange={(e) =>
-                    handleExtraOptionValueChange(key, e.target.value)
-                  }
-                  placeholder={t("opencode.extraOptionValuePlaceholder", {
-                    defaultValue: "600000",
-                  })}
-                  className="flex-1"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleRemoveExtraOption(key)}
-                  className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+        <CollapsibleContent className="max-w-3xl space-y-2">
+          {Object.keys(extraOptions).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-1">
+              {t("opencode.noExtraOptions", {
+                defaultValue: "No extra SDK options configured",
+              })}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-1">
+                <span className="flex-1">
+                  {t("opencode.extraOptionKey", { defaultValue: "Key" })}
+                </span>
+                <span className="flex-1">
+                  {t("opencode.extraOptionValue", { defaultValue: "Value" })}
+                </span>
+                <span className="w-9" />
               </div>
-            ))}
-          </div>
-        )}
-
-        <p className="text-xs text-muted-foreground">
-          {t("opencode.extraOptionsHint", {
-            defaultValue:
-              "配置额外的 SDK 选项，如 timeout、setCacheKey 等。值会自动解析类型（数字、布尔值等）。",
-          })}
-        </p>
-      </div>
+              {Object.entries(extraOptions).map(([key, value]) => (
+                <div key={key} className="flex items-center gap-2">
+                  <ExtraOptionKeyInput
+                    optionKey={key}
+                    onChange={(newKey) =>
+                      handleExtraOptionKeyChange(key, newKey)
+                    }
+                    placeholder={t("opencode.extraOptionKeyPlaceholder", {
+                      defaultValue: "timeout",
+                    })}
+                  />
+                  <Input
+                    value={value}
+                    onChange={(e) =>
+                      handleExtraOptionValueChange(key, e.target.value)
+                    }
+                    placeholder={t("opencode.extraOptionValuePlaceholder", {
+                      defaultValue: "600000",
+                    })}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleRemoveExtraOption(key)}
+                    className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Models Editor */}
       <div className="space-y-3">
