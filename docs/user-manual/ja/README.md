@@ -19,7 +19,8 @@ CC Switch ユーザーマニュアル
 │   ├── 2.2 プロバイダーの切り替え
 │   ├── 2.3 プロバイダーの編集
 │   ├── 2.4 並べ替えと複製
-│   └── 2.5 使用量クエリ
+│   ├── 2.5 使用量クエリ
+│   └── 2.6 Claude Desktop
 │
 ├── 3. 拡張機能
 │   ├── 3.1 MCP サーバー管理
@@ -63,6 +64,7 @@ CC Switch ユーザーマニュアル
 | [2.3-edit.md](./2-providers/2.3-edit.md) | 設定の編集、API Key の変更、バックフィル機能 |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | ドラッグで並べ替え、プロバイダーの複製、削除 |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | 使用量クエリ、残額表示、複数プラン表示 |
+| [2.6-claude-desktop.md](./2-providers/2.6-claude-desktop.md) | Claude Desktop サードパーティプロバイダー、直結モード、モデルマッピング |
 
 ### 3. 拡張機能
 
@@ -98,17 +100,21 @@ CC Switch ユーザーマニュアル
 - **初めての方**：[1.1 ソフトウェア紹介](./1-getting-started/1.1-introduction.md) からお読みください
 - **インストールの問題**：[1.2 インストールガイド](./1-getting-started/1.2-installation.md) をご確認ください
 - **プロバイダーの設定**：[2.1 プロバイダーの追加](./2-providers/2.1-add.md) をご確認ください
+- **Claude Desktop の利用**：[2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md) をご確認ください
 - **プロキシの使用**：[4.1 プロキシサービス](./4-proxy/4.1-service.md) をご確認ください
 - **お困りの方**：[5.2 FAQ](./5-faq/5.2-questions.md) をご確認ください
 
 ## バージョン情報
 
-- ドキュメントバージョン：v3.13.0
-- 最終更新：2026-04-08
-- CC Switch v3.13.0+ 対応
+- ドキュメントバージョン：v3.15.0
+- 最終更新：2026-05-16
+- CC Switch v3.15.0+ 対応
 
-### v3.13.0 の注目機能
+### v3.15.0 の注目機能
 
+- **Claude Desktop の一等管理パネル**：サードパーティプロバイダー、直結 / モデルマッピングの 2 モード、Copilot / Codex OAuth 再利用、3P profile 書き込みに対応 — 詳細は [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
+- **役割別モデルマッピング**：Sonnet / Opus / Haiku ルートと `supports1m` フラグで Claude Desktop のモデル検証に対応
+- **Claude Desktop ローカルルーティング**：変換が必要なプロバイダー向けに `127.0.0.1:15721/claude-desktop` のローカルゲートウェイを提供
 - **軽量モード**：トレイへ最小化時にメインウィンドウを破棄、アイドル時のリソース使用量をほぼゼロに — 詳細は [1.5 個人設定](./1-getting-started/1.5-settings.md)
 - **クォータ・残高表示**：公式サブスクリプション系（Claude/Codex/Gemini/Copilot/Codex OAuth）はカードに自動表示、Token Plan および第三者残高は内蔵テンプレートでワンクリック有効化 — 詳細は [2.5 使用量クエリ](./2-providers/2.5-usage-query.md)
 - **Codex OAuth リバースプロキシ**：ChatGPT アカウントで Claude Code 内から Codex サービスを再利用 — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)

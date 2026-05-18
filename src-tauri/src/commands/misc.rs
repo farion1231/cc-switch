@@ -560,6 +560,27 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
     }
 }
 
+fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Path) {
+    if home.as_os_str().is_empty() {
+        return;
+    }
+
+    let mise_base = home.join(".local/share/mise");
+    push_unique_path(paths, mise_base.join("shims"));
+
+    let node_installs = mise_base.join("installs").join("node");
+    if node_installs.exists() {
+        if let Ok(entries) = std::fs::read_dir(&node_installs) {
+            for entry in entries.flatten() {
+                let bin_path = entry.path().join("bin");
+                if bin_path.exists() {
+                    push_unique_path(paths, bin_path);
+                }
+            }
+        }
+    }
+}
+
 /// 扫描常见路径查找 CLI
 fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     use std::process::Command;
@@ -573,6 +594,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
+        extend_mise_node_search_paths(&mut search_paths, &home);
     }
 
     #[cfg(target_os = "macos")]
@@ -784,7 +806,7 @@ fn extract_env_vars_from_config(
 
         // 处理 base_url: 根据应用类型添加对应的环境变量
         let base_url_key = match app_type {
-            AppType::Claude => Some("ANTHROPIC_BASE_URL"),
+            AppType::Claude | AppType::ClaudeDesktop => Some("ANTHROPIC_BASE_URL"),
             AppType::Gemini => Some("GOOGLE_GEMINI_BASE_URL"),
             _ => None,
         };
@@ -947,6 +969,7 @@ exec bash --norc --noprofile
     // Note: Kitty doesn't need the -e flag, others do
     let result = match terminal {
         "iterm2" => launch_macos_iterm2(&script_file),
+        "warp" => launch_macos_warp(&script_file),
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
         "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
@@ -1001,21 +1024,46 @@ end tell"#,
 
 /// macOS: iTerm2
 #[cfg(target_os = "macos")]
-fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-
-    let applescript = format!(
-        r#"tell application "iTerm"
-    activate
-    tell current window
-        create tab with default profile
-        tell current session
-            write text "bash '{}'"
-        end tell
+fn build_macos_iterm2_applescript(script_file: &std::path::Path) -> String {
+    format!(
+        r#"set launcher_script to "bash '{}'"
+set was_running to application "iTerm" is running
+tell application "iTerm"
+    if was_running then
+        activate
+        if (count of windows) = 0 then
+            create window with default profile
+        else
+            tell current window
+                create tab with default profile
+            end tell
+        end if
+    else
+        activate
+        set waited to 0
+        repeat while (count of windows) = 0
+            delay 0.1
+            set waited to waited + 1
+            if waited >= 30 then exit repeat
+        end repeat
+        if (count of windows) = 0 then
+            create window with default profile
+        end if
+    end if
+    tell current session of current window
+        write text launcher_script
     end tell
 end tell"#,
         script_file.display()
-    );
+    )
+}
+
+/// macOS: iTerm2
+#[cfg(target_os = "macos")]
+fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let applescript = build_macos_iterm2_applescript(script_file);
 
     let output = Command::new("osascript")
         .arg("-e")
@@ -1061,6 +1109,57 @@ fn launch_macos_open_app(
         return Err(format!(
             "{} 启动失败 (exit code: {:?}): {}",
             app_name,
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let mut cmd = Command::new("open");
+    cmd.arg("-a").arg("Warp");
+
+    // Warp URI scheme cannot work well with script_file, because:
+    //
+    // 1. script_file's name ends up with .sh, so Warp would open the file rather than execute it
+    // 2. script_file has no execution permission, so we need to add one more indirection
+    let mut second_script_file = tempfile::Builder::new()
+        .disable_cleanup(true)
+        .permissions(std::fs::Permissions::from_mode(0o755))
+        .tempfile()
+        .map_err(|e| format!("Failed to create temporary script file: {e}"))?;
+
+    writeln!(
+        &mut second_script_file,
+        r#"#!/usr/bin/env sh
+
+        rm -- "$0"
+
+        exec bash {}
+        "#,
+        script_file.display(),
+    )
+    .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
+
+    let mut warp_url = url::Url::parse("warp://action/new_tab").unwrap();
+    warp_url
+        .query_pairs_mut()
+        .append_pair("path", &second_script_file.path().to_string_lossy());
+    let warp_url = warp_url.to_string();
+    cmd.arg(warp_url);
+
+    let output = cmd.output().map_err(|e| format!("启动 Warp 失败: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Warp 启动失败 (exit code: {:?}): {}",
             output.status.code(),
             stderr
         ));
@@ -1356,6 +1455,7 @@ read -n 1 -s
 
         let result = match terminal {
             "iterm2" => launch_macos_iterm2(&script_file),
+            "warp" => launch_macos_warp(&script_file),
             "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
             "kitty" => launch_macos_open_app("kitty", &script_file, false),
             "ghostty" => launch_macos_open_app("Ghostty", &script_file, true),
@@ -1513,7 +1613,7 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn test_extract_version() {
@@ -1601,7 +1701,7 @@ mod tests {
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/same/path"))
+            .filter(|path| path.as_path() == Path::new("/same/path"))
             .count();
         assert_eq!(count, 1);
     }
@@ -1613,9 +1713,25 @@ mod tests {
 
         let count = paths
             .iter()
-            .filter(|path| **path == PathBuf::from("/home/tester/.bun/bin"))
+            .filter(|path| path.as_path() == Path::new("/home/tester/.bun/bin"))
             .count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn mise_node_search_paths_include_shims_and_installed_node_bins() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let home = temp.path();
+        let node_bin = home
+            .join(".local/share/mise/installs/node/25.8.0")
+            .join("bin");
+        std::fs::create_dir_all(&node_bin).expect("node bin should be created");
+
+        let mut paths = Vec::new();
+        extend_mise_node_search_paths(&mut paths, home);
+
+        assert!(paths.contains(&home.join(".local/share/mise/shims")));
+        assert!(paths.contains(&node_bin));
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1672,6 +1788,43 @@ mod tests {
         let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
 
         assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn iterm2_applescript_cold_start_avoids_current_window_before_one_exists() {
+        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        let cold_start_branch = script
+            .split("else\n        activate")
+            .nth(1)
+            .expect("cold start branch should be present")
+            .split("    end if\n    tell current session")
+            .next()
+            .expect("cold start branch should end before writing command");
+
+        assert!(cold_start_branch.contains("repeat while (count of windows) = 0"));
+        assert!(cold_start_branch.contains("create window with default profile"));
+        assert!(!cold_start_branch.contains("tell current window"));
+        assert!(!cold_start_branch.contains("create tab with default profile"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn iterm2_applescript_keeps_new_tab_behavior_for_existing_windows() {
+        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        let running_branch = script
+            .split("if was_running then")
+            .nth(1)
+            .expect("already-running branch should be present")
+            .split("else\n        activate")
+            .next()
+            .expect("already-running branch should end before cold start branch");
+
+        assert!(running_branch.contains("if (count of windows) = 0 then"));
+        assert!(running_branch.contains("create window with default profile"));
+        assert!(running_branch.contains("create tab with default profile"));
     }
 
     #[test]

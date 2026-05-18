@@ -165,6 +165,36 @@ export function UniversalProviderPanel() {
     [providers],
   );
 
+  // 复制供应商
+  const handleDuplicate = useCallback(
+    async (provider: UniversalProvider) => {
+      const duplicated: UniversalProvider = {
+        ...JSON.parse(JSON.stringify(provider)),
+        id: crypto.randomUUID(),
+        name: `${provider.name} copy`,
+        createdAt: Date.now(),
+      };
+      try {
+        await universalProvidersApi.upsert(duplicated);
+        await universalProvidersApi.sync(duplicated.id);
+        toast.success(
+          t("universalProvider.duplicatedAndSynced", {
+            defaultValue: "统一供应商已复制并同步",
+          }),
+        );
+        loadProviders();
+      } catch (error) {
+        console.error("Failed to duplicate universal provider:", error);
+        toast.error(
+          t("universalProvider.duplicateError", {
+            defaultValue: "复制统一供应商失败",
+          }),
+        );
+      }
+    },
+    [loadProviders, t],
+  );
+
   // 打开编辑
   const handleEdit = useCallback((provider: UniversalProvider) => {
     setEditingProvider(provider);
@@ -235,6 +265,7 @@ export function UniversalProviderPanel() {
               onEdit={handleEdit}
               onDelete={handleDeleteClick}
               onSync={handleSyncClick}
+              onDuplicate={handleDuplicate}
             />
           ))}
         </div>

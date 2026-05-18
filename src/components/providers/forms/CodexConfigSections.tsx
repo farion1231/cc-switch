@@ -1,17 +1,17 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+// NOTE: Codex 1M 上下文 UI 已暂时隐藏（详见下方 CodexConfigSection 内 JSX 注释）。
+// 如需恢复，请同时：
+//   - 在下方 React import 中加回 `useMemo`
+//   - 取消下面 `@/utils/providerConfigUtils` import 的注释
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
+/*
 import {
   extractCodexTopLevelInt,
   setCodexTopLevelInt,
   removeCodexTopLevelField,
 } from "@/utils/providerConfigUtils";
+*/
 
 interface CodexAuthSectionProps {
   value: string;
@@ -144,6 +144,8 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
     [onChange],
   );
 
+  // Codex 1M 上下文相关状态/回调暂时禁用——见同文件下方 JSX 注释处的恢复说明。
+  /*
   // Parse toggle states from TOML text
   const toggleStates = useMemo(() => {
     const contextWindow = extractCodexTopLevelInt(
@@ -211,6 +213,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   useEffect(() => {
     return () => clearTimeout(compactTimerRef.current);
   }, []);
+  */
 
   return (
     <div className="space-y-2">
@@ -249,6 +252,8 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         </p>
       )}
 
+      {/* Codex 1M 上下文 UI 已隐藏：模型不再支持该字段。
+          恢复方法：(1) 取消本段 JSX 注释；(2) 取消文件顶部 import 中 useMemo / extractCodexTopLevelInt / setCodexTopLevelInt / removeCodexTopLevelField 的注释；(3) 取消下方 toggleStates / compactTimerRef / handleContextWindowToggle / handleCompactLimitChange / cleanup useEffect 的注释。
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
           <input
@@ -273,6 +278,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
           />
         </label>
       </div>
+      */}
 
       <JsonEditor
         value={localValue}

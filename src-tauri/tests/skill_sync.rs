@@ -73,6 +73,53 @@ fn import_from_apps_respects_explicit_app_selection() {
 }
 
 #[test]
+fn import_from_apps_does_not_rewrite_selected_app_directory() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_skill_dir = home.join(".cc-switch").join("skills").join("codex-skill");
+    write_skill(&ssot_skill_dir, "Stale SSOT Skill");
+    fs::write(ssot_skill_dir.join("prompt.md"), "stale ssot").expect("write stale ssot prompt");
+
+    let codex_skill_dir = home.join(".codex").join("skills").join("codex-skill");
+    write_skill(&codex_skill_dir, "Live Codex Skill");
+    fs::write(codex_skill_dir.join("prompt.md"), "live codex").expect("write live codex prompt");
+
+    let state = create_test_state().expect("create test state");
+
+    let imported = SkillService::import_from_apps(
+        &state.db,
+        vec![ImportSkillSelection {
+            directory: "codex-skill".to_string(),
+            apps: SkillApps {
+                codex: true,
+                ..Default::default()
+            },
+        }],
+    )
+    .expect("import skills");
+
+    assert_eq!(imported.len(), 1, "expected exactly one imported skill");
+    assert!(
+        imported[0].apps.codex,
+        "import should preserve the selected Codex app state"
+    );
+    assert_eq!(
+        fs::read_to_string(codex_skill_dir.join("prompt.md")).expect("read live codex prompt"),
+        "live codex",
+        "import should not replace the app skill directory with SSOT contents"
+    );
+    assert!(
+        !fs::symlink_metadata(&codex_skill_dir)
+            .expect("read codex skill metadata")
+            .file_type()
+            .is_symlink(),
+        "import should not replace the app skill directory with a managed symlink"
+    );
+}
+
+#[test]
 fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

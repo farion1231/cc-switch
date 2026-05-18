@@ -1,0 +1,61 @@
+name: Claude
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+jobs:
+  claude:
+    if: |
+      ((github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
+        (github.event.comment.author_association == 'OWNER' ||
+         github.event.comment.author_association == 'MEMBER' ||
+         github.event.comment.author_association == 'COLLABORATOR'))
+       ||
+       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') &&
+        (github.event.comment.author_association == 'OWNER' ||
+         github.event.comment.author_association == 'MEMBER' ||
+         github.event.comment.author_association == 'COLLABORATOR'))
+       ||
+       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') &&
+        (github.event.review.author_association == 'OWNER' ||
+         github.event.review.author_association == 'MEMBER' ||
+         github.event.review.author_association == 'COLLABORATOR'))
+       ||
+       (github.event_name == 'issues' &&
+        (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+        (github.event.issue.author_association == 'OWNER' ||
+         github.event.issue.author_association == 'MEMBER' ||
+         github.event.issue.author_association == 'COLLABORATOR')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Run Claude (review only)
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: >-
+            --model claude-opus-4-7
+            --disallowedTools Edit,Write,MultiEdit,NotebookEdit
+            --append-system-prompt "You are reviewing PRs for cc-switch — a small open-source Tauri 2.0 + React + TypeScript desktop app maintained by a single developer who values pragmatism over perfection.
+            ONLY flag HIGH SIGNAL issues. An issue qualifies only if it meets at least one of: code that fails to compile/parse/run; code that will definitely produce wrong results; a security vulnerability with a concrete trigger (SSRF, injection, unsafe deserialization, credential or data leaks); database/migration correctness (schema mismatch, data loss on upgrade, broken SCHEMA_VERSION transition); cross-platform breakage (Windows/macOS/Linux specific); clear, quotable violations of CLAUDE.md.
+            Each finding must include a confidence score from 0 to 100. Do NOT post any finding scored below 80. Each finding must carry a severity tag — Important (bug that should be fixed before merge), Nit (minor, worth fixing but not blocking), or Pre-existing (exists already, not introduced by this PR).
+            DO NOT flag any of the following: pedantic nitpicks a senior engineer would not raise; anything a linter, typechecker, pnpm format, or cargo fmt would catch; missing test coverage unless CLAUDE.md explicitly mandates it; style, naming, or 'could be more idiomatic' suggestions; speculative future-proofing ('what if X is added later'); issues on lines the PR did not modify; potential bugs for which you cannot construct a concrete failure scenario; positive feedback or 'what is well done' sections.
+            OUTPUT RULES: Cap Nit-level findings at 5 per review. If you found more nits, append 'plus N similar nits' to the summary instead of listing them inline. If only nits were found, lead the review with 'No blocking issues.' If nothing material is wrong, say 'LGTM' explicitly and stop — approval with zero comments is a valid and expected outcome for most PRs. Do NOT post a final APPROVE or REQUEST CHANGES verdict; leave the merge decision to the maintainer.
+            Never modify files, push commits, or create PRs."

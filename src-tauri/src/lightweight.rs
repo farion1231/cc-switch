@@ -17,6 +17,7 @@ pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     }
 
     if let Some(window) = app.get_webview_window("main") {
+        crate::save_window_state_before_exit(app);
         window
             .destroy()
             .map_err(|e| format!("销毁主窗口失败: {e}"))?;
@@ -64,11 +65,12 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
 
     WebviewWindowBuilder::from_config(app, window_config)
         .map_err(|e| format!("加载主窗口配置失败: {e}"))?
-        .visible(true)
         .build()
         .map_err(|e| format!("创建主窗口失败: {e}"))?;
 
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {

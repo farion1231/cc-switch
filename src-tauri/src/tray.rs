@@ -5,6 +5,7 @@
 use once_cell::sync::Lazy;
 use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
@@ -32,6 +33,7 @@ static TRAY_LAST_APP_WITH_DATA: Lazy<std::sync::Mutex<Option<AppType>>> =
 #[derive(Clone, Copy)]
 pub struct TrayTexts {
     pub show_main: &'static str,
+    pub open_website: &'static str,
     pub no_providers_label: &'static str,
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
@@ -43,6 +45,7 @@ impl TrayTexts {
         match language {
             "en" => Self {
                 show_main: "Open main window",
+                open_website: "Open Official Website",
                 no_providers_label: "(no providers)",
                 lightweight_mode: "Lightweight Mode",
                 quit: "Quit",
@@ -50,6 +53,7 @@ impl TrayTexts {
             },
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
+                open_website: "公式サイトを開く",
                 no_providers_label: "(プロバイダーなし)",
                 lightweight_mode: "軽量モード",
                 quit: "終了",
@@ -57,6 +61,7 @@ impl TrayTexts {
             },
             _ => Self {
                 show_main: "打开主界面",
+                open_website: "打开官方网站",
                 no_providers_label: "(无供应商)",
                 lightweight_mode: "轻量模式",
                 quit: "退出",
@@ -807,14 +812,9 @@ fn handle_provider_click(
             .db
             .set_proxy_flags_sync(app_type_str, proxy_enabled, false)?;
 
-        // 切换供应商
-        crate::commands::switch_provider(
-            app.clone(),
-            app_state.clone(),
-            app_type_str.to_string(),
-            provider_id.to_string(),
-        )
-        .map_err(AppError::Message)?;
+        // 切换供应商。需要本地路由的供应商也不在这里自动启动代理，
+        // 由用户在页面/设置中手动开启。
+        crate::services::ProviderService::switch(app_state.inner(), app_type.clone(), provider_id)?;
 
         // 更新托盘菜单 + 环图（switch_provider 已刷过图标一次，这里复用 helper
         // 重建菜单并兜底再刷一次图标，确保 auto_failover 关闭后的状态同步）
@@ -853,11 +853,22 @@ pub fn create_tray_menu(
     let mut detail_handles: std::collections::HashMap<AppType, MenuItem<tauri::Wry>> =
         std::collections::HashMap::new();
 
-    // 顶部：打开主界面
+    // 顶部：打开主界面 / 打开官方网站
     let show_main_item =
         MenuItem::with_id(app, "show_main", tray_texts.show_main, true, None::<&str>)
             .map_err(|e| AppError::Message(format!("创建打开主界面菜单失败: {e}")))?;
-    menu_builder = menu_builder.item(&show_main_item).separator();
+    let open_website_item = MenuItem::with_id(
+        app,
+        "open_website",
+        tray_texts.open_website,
+        true,
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建打开官方网站菜单失败: {e}")))?;
+    menu_builder = menu_builder
+        .item(&show_main_item)
+        .item(&open_website_item)
+        .separator();
 
     // Pre-compute proxy running state (used to disable official providers in tray menu)
     let is_proxy_running = futures::executor::block_on(app_state.proxy_service.is_running());
@@ -1135,6 +1146,11 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
                     log::error!("退出轻量模式重建窗口失败: {e}");
                 }
+            }
+        }
+        "open_website" => {
+            if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {
+                log::error!("打开官方网站失败: {e}");
             }
         }
         "lightweight_mode" => {

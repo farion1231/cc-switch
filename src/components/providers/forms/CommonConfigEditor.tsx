@@ -81,7 +81,7 @@ export function CommonConfigEditor({
         enableToolSearch:
           config?.env?.ENABLE_TOOL_SEARCH === "true" ||
           config?.env?.ENABLE_TOOL_SEARCH === "1",
-        effortMax: config?.effortLevel === "max",
+        effortMax: config?.env?.CLAUDE_CODE_EFFORT_LEVEL === "max",
         disableAutoUpgrade:
           config?.env?.DISABLE_AUTOUPDATER === "1" ||
           config?.env?.DISABLE_AUTOUPDATER === 1,
@@ -129,10 +129,12 @@ export function CommonConfigEditor({
             }
             break;
           case "effortMax":
+            if (!config.env) config.env = {};
             if (checked) {
-              config.effortLevel = "max";
+              config.env.CLAUDE_CODE_EFFORT_LEVEL = "max";
             } else {
-              delete config.effortLevel;
+              delete config.env.CLAUDE_CODE_EFFORT_LEVEL;
+              if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
           case "disableAutoUpgrade":

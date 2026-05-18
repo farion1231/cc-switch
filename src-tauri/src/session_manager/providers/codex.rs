@@ -143,6 +143,9 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
         if value.get("type").and_then(Value::as_str) == Some("session_meta") {
             if let Some(payload) = value.get("payload") {
+                if is_subagent_source(payload.get("source")) {
+                    return None;
+                }
                 if session_id.is_none() {
                     session_id = payload
                         .get("id")
@@ -170,7 +173,10 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 {
                     let text = payload.get("content").map(extract_text).unwrap_or_default();
                     let trimmed = text.trim();
-                    if !trimmed.is_empty() && !trimmed.starts_with("# AGENTS.md") {
+                    if !trimmed.is_empty()
+                        && !trimmed.starts_with("# AGENTS.md")
+                        && !trimmed.starts_with("<environment_context>")
+                    {
                         first_user_message = Some(trimmed.to_string());
                     }
                 }
@@ -237,6 +243,13 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("codex resume {session_id}")),
     })
+}
+
+fn is_subagent_source(source: Option<&Value>) -> bool {
+    source
+        .and_then(|value| value.as_object())
+        .map(|source| source.contains_key("subagent"))
+        .unwrap_or(false)
 }
 
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
@@ -325,6 +338,41 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         // Should skip AGENTS.md injection and use the real user message
+        assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
+    }
+
+    #[test]
+    fn parse_session_skips_subagent_sessions() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-04-28T10:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"subagent-id\",\"cwd\":\"/tmp/project\",\"originator\":\"codex-tui\",\"source\":{\"subagent\":{\"thread_spawn\":{\"parent_thread_id\":\"parent-id\",\"depth\":1,\"agent_role\":\"explorer\"}}}}}\n",
+                "{\"timestamp\":\"2026-04-28T10:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Inspect the project\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        assert!(parse_session(&path).is_none());
+    }
+
+    #[test]
+    fn parse_session_skips_environment_context_injection() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"<environment_context>\\n  <cwd>/tmp/project</cwd>\\n</environment_context>\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        // Should skip environment_context injection and use the real user message
         assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
     }
 

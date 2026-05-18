@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUpdateModelPricing } from "@/lib/query/usage";
-import type { ModelPricing } from "@/types/usage";
+import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
 
 interface PricingEditModalProps {
   open: boolean;
@@ -52,8 +52,7 @@ export function PricingEditModal({
     ];
 
     for (const value of values) {
-      const num = parseFloat(value);
-      if (isNaN(num) || num < 0) {
+      if (!isNonNegativeDecimalString(value)) {
         toast.error(t("usage.invalidPrice", "价格必须为非负数"));
         return;
       }

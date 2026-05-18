@@ -14,6 +14,12 @@ pub type ResponseUsageParser = fn(&Value) -> Option<TokenUsage>;
 /// 参数: (流式事件列表, 请求中的模型名称) -> 最终使用的模型名称
 pub type StreamModelExtractor = fn(&[Value], &str) -> String;
 
+/// 流式 usage 事件预过滤器类型别名。
+///
+/// 参数是 SSE `data:` 原始字符串。返回 false 时跳过 JSON parse，避免在
+/// token/chunk 高频路径上解析与 usage 无关的事件。
+pub type StreamUsageEventFilter = fn(&str) -> bool;
+
 /// 各 API 的使用量解析配置
 #[derive(Clone, Copy)]
 pub struct UsageParserConfig {
@@ -23,8 +29,30 @@ pub struct UsageParserConfig {
     pub response_parser: ResponseUsageParser,
     /// 流式响应中的模型提取器
     pub model_extractor: StreamModelExtractor,
+    /// 流式 usage 事件预过滤器
+    pub stream_event_filter: Option<StreamUsageEventFilter>,
     /// 应用类型字符串（用于日志记录）
     pub app_type_str: &'static str,
+}
+
+// ============================================================================
+// 流式 usage 事件预过滤
+// ============================================================================
+
+pub fn claude_stream_usage_event_filter(data: &str) -> bool {
+    data.contains("\"message_start\"") || data.contains("\"message_delta\"")
+}
+
+fn openai_stream_usage_event_filter(data: &str) -> bool {
+    data.contains("\"usage\"")
+}
+
+fn codex_stream_usage_event_filter(data: &str) -> bool {
+    data.contains("\"response.completed\"") || data.contains("\"usage\"")
+}
+
+fn gemini_stream_usage_event_filter(data: &str) -> bool {
+    data.contains("\"usageMetadata\"")
 }
 
 // ============================================================================
@@ -104,6 +132,7 @@ pub const CLAUDE_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
     stream_parser: TokenUsage::from_claude_stream_events,
     response_parser: TokenUsage::from_claude_response,
     model_extractor: claude_model_extractor,
+    stream_event_filter: Some(claude_stream_usage_event_filter),
     app_type_str: "claude",
 };
 
@@ -112,6 +141,7 @@ pub const OPENAI_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
     stream_parser: TokenUsage::from_openai_stream_events,
     response_parser: TokenUsage::from_openai_response,
     model_extractor: openai_model_extractor,
+    stream_event_filter: Some(openai_stream_usage_event_filter),
     app_type_str: "codex",
 };
 
@@ -120,6 +150,7 @@ pub const CODEX_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
     stream_parser: TokenUsage::from_codex_stream_events_auto,
     response_parser: TokenUsage::from_codex_response_auto,
     model_extractor: codex_auto_model_extractor,
+    stream_event_filter: Some(codex_stream_usage_event_filter),
     app_type_str: "codex",
 };
 
@@ -128,6 +159,7 @@ pub const GEMINI_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
     stream_parser: TokenUsage::from_gemini_stream_chunks,
     response_parser: TokenUsage::from_gemini_response,
     model_extractor: gemini_model_extractor,
+    stream_event_filter: Some(gemini_stream_usage_event_filter),
     app_type_str: "gemini",
 };
 

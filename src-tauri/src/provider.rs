@@ -216,6 +216,28 @@ pub struct AuthBinding {
     pub account_id: Option<String>,
 }
 
+/// Claude Desktop 3P 写入模式。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeDesktopMode {
+    Direct,
+    Proxy,
+}
+
+/// Claude Desktop 本地路由模式下暴露给 Desktop 的安全模型路由。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeDesktopModelRoute {
+    /// 真实上游模型名，只保存在 CC Switch 内部，不写入 Claude Desktop profile。
+    pub model: String,
+    /// Claude Desktop 模型菜单显示名；写入 profile 的 `labelOverride`。
+    #[serde(rename = "labelOverride", skip_serializing_if = "Option::is_none")]
+    pub label_override: Option<String>,
+    /// Claude Desktop 3P 识别的 1M 上下文能力标记。
+    #[serde(rename = "supports1m", skip_serializing_if = "Option::is_none")]
+    pub supports_1m: Option<bool>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -228,6 +250,16 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub common_config_enabled: Option<bool>,
+    /// Claude Desktop 3P 写入模式：direct（直连）或 proxy（预留）
+    #[serde(rename = "claudeDesktopMode", skip_serializing_if = "Option::is_none")]
+    pub claude_desktop_mode: Option<ClaudeDesktopMode>,
+    /// Claude Desktop proxy 模式的模型路由映射：Claude-safe route -> upstream model。
+    #[serde(
+        default,
+        rename = "claudeDesktopModelRoutes",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub claude_desktop_model_routes: HashMap<String, ClaudeDesktopModelRoute>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
@@ -277,8 +309,8 @@ pub struct ProviderMeta {
     pub is_full_url: Option<bool>,
     /// Prompt cache key for OpenAI Responses-compatible endpoints.
     /// When set, injected into converted Responses requests to improve cache hit rate.
-    /// If not set, Codex OAuth uses the current session ID; other Claude -> Responses
-    /// conversions fall back to provider ID.
+    /// If not set, Claude -> Responses conversions use a client-provided session/thread
+    /// identity when available; generated session IDs are not sent upstream.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
@@ -728,8 +760,10 @@ mod tests {
 
     #[test]
     fn provider_meta_serializes_pricing_model_source() {
-        let mut meta = ProviderMeta::default();
-        meta.pricing_model_source = Some("response".to_string());
+        let meta = ProviderMeta {
+            pricing_model_source: Some("response".to_string()),
+            ..ProviderMeta::default()
+        };
 
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 

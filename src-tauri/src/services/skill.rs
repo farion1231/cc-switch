@@ -509,6 +509,7 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::ClaudeDesktop => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -545,6 +546,7 @@ impl SkillService {
 
         Ok(match app {
             AppType::Claude => home.join(".claude").join("skills"),
+            AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
@@ -1536,19 +1538,6 @@ impl SkillService {
             // 保存到数据库
             db.save_skill(&skill)?;
 
-            // 同步到已启用的应用目录（创建 symlink 或复制文件）
-            for app in AppType::all() {
-                if skill.apps.is_enabled_for(&app) {
-                    if let Err(e) = Self::sync_to_app_dir(&skill.directory, &app) {
-                        log::warn!(
-                            "导入后同步 Skill '{}' 到 {:?} 失败: {e:#}",
-                            skill.directory,
-                            app
-                        );
-                    }
-                }
-            }
-
             imported.push(skill);
         }
 
@@ -1594,6 +1583,10 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
+        if matches!(app, AppType::ClaudeDesktop) {
+            return Ok(());
+        }
+
         let ssot_dir = Self::get_ssot_dir()?;
         let source = ssot_dir.join(directory);
 
@@ -1699,6 +1692,10 @@ impl SkillService {
 
     /// 从应用目录删除 Skill（支持 symlink 和真实目录）
     pub fn remove_from_app(directory: &str, app: &AppType) -> Result<()> {
+        if matches!(app, AppType::ClaudeDesktop) {
+            return Ok(());
+        }
+
         let app_dir = Self::get_app_skills_dir(app)?;
         let skill_path = app_dir.join(directory);
 
@@ -1712,6 +1709,10 @@ impl SkillService {
 
     /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
+        if matches!(app, AppType::ClaudeDesktop) {
+            return Ok(());
+        }
+
         let skills = db.get_all_installed_skills()?;
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_app_skills_dir(app)?;

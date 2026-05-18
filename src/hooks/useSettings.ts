@@ -2,18 +2,17 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import { providersApi, settingsApi } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
 import type { Settings } from "@/types";
 import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
 import {
   useDirectorySettings,
+  type DirectoryAppId,
   type ResolvedDirectories,
 } from "./useDirectorySettings";
 import { useSettingsMetadata } from "./useSettingsMetadata";
-
-type Language = "zh" | "en" | "ja";
 
 interface SaveResult {
   requiresRestart: boolean;
@@ -28,11 +27,11 @@ export interface UseSettingsResult {
   resolvedDirs: ResolvedDirectories;
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
-  updateDirectory: (app: AppId, value?: string) => void;
+  updateDirectory: (app: DirectoryAppId, value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
-  browseDirectory: (app: AppId) => Promise<void>;
+  browseDirectory: (app: DirectoryAppId) => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
-  resetDirectory: (app: AppId) => Promise<void>;
+  resetDirectory: (app: DirectoryAppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
   saveSettings: (
     overrides?: Partial<SettingsFormState>,
@@ -401,11 +400,8 @@ export function useSettings(): UseSettingsResult {
         );
 
         try {
-          if (typeof window !== "undefined") {
-            window.localStorage.setItem(
-              "language",
-              payload.language as Language,
-            );
+          if (typeof window !== "undefined" && payload.language) {
+            window.localStorage.setItem("language", payload.language);
           }
         } catch (error) {
           console.warn(
