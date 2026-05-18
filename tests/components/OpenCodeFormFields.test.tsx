@@ -26,6 +26,8 @@ const renderOpenCodeForm = (
     websiteUrl: "",
     baseUrl: "https://api.example.com/v1",
     onBaseUrlChange: vi.fn(),
+    headers: {},
+    onHeadersChange: vi.fn(),
     models: {
       "kimi-k2": {
         name: "Kimi K2",
@@ -53,6 +55,69 @@ const expandFirstModel = () => {
 };
 
 describe("OpenCodeFormFields", () => {
+  it("surfaces existing provider headers", () => {
+    renderOpenCodeForm({
+      headers: {
+        "HTTP-Referer": "https://cc-switch.app",
+        "X-Title": "CC Switch",
+      },
+    });
+
+    expect(screen.getByDisplayValue("HTTP-Referer")).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("https://cc-switch.app"),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("X-Title")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("CC Switch")).toBeInTheDocument();
+  });
+
+  it("updates provider headers", () => {
+    const onHeadersChange = vi.fn();
+    renderOpenCodeForm({
+      headers: { "X-Title": "CC Switch" },
+      onHeadersChange,
+    });
+
+    fireEvent.change(screen.getByDisplayValue("CC Switch"), {
+      target: { value: "OpenCode" },
+    });
+
+    expect(onHeadersChange).toHaveBeenCalledWith({
+      "X-Title": "OpenCode",
+    });
+  });
+
+  it("shows a blank header name for newly added headers", () => {
+    const onHeadersChange = vi.fn();
+    const { rerender, props } = renderOpenCodeForm({ onHeadersChange });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add header" }));
+
+    const nextHeaders = onHeadersChange.mock.calls[0][0];
+    const headerKey = Object.keys(nextHeaders)[0];
+    expect(headerKey).toMatch(/^header-/);
+
+    rerender(
+      <FormShell>
+        <OpenCodeFormFields {...props} headers={nextHeaders} />
+      </FormShell>,
+    );
+
+    expect(screen.getByPlaceholderText("X-Title")).toHaveValue("");
+  });
+
+  it("removes provider headers", () => {
+    const onHeadersChange = vi.fn();
+    renderOpenCodeForm({
+      headers: { "X-Title": "CC Switch" },
+      onHeadersChange,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove header" }));
+
+    expect(onHeadersChange).toHaveBeenCalledWith({});
+  });
+
   it("surfaces existing model token limits", () => {
     renderOpenCodeForm();
 

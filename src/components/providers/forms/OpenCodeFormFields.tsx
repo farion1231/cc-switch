@@ -72,19 +72,23 @@ function ExtraOptionKeyInput({
   optionKey,
   onChange,
   placeholder,
+  placeholderPrefixes = ["option-"],
 }: {
   optionKey: string;
   onChange: (newKey: string) => void;
   placeholder?: string;
+  placeholderPrefixes?: string[];
 }) {
-  // For new options with placeholder keys like "option-123", show empty string
-  const displayValue = optionKey.startsWith("option-") ? "" : optionKey;
+  const isPlaceholderKey = placeholderPrefixes.some((prefix) =>
+    optionKey.startsWith(prefix),
+  );
+  const displayValue = isPlaceholderKey ? "" : optionKey;
   const [localValue, setLocalValue] = useState(displayValue);
 
   // Sync when external key changes
   useEffect(() => {
-    setLocalValue(optionKey.startsWith("option-") ? "" : optionKey);
-  }, [optionKey]);
+    setLocalValue(isPlaceholderKey ? "" : optionKey);
+  }, [isPlaceholderKey, optionKey]);
 
   return (
     <Input
@@ -160,6 +164,10 @@ interface OpenCodeFormFieldsProps {
   baseUrl: string;
   onBaseUrlChange: (value: string) => void;
 
+  // Headers
+  headers: Record<string, string>;
+  onHeadersChange: (headers: Record<string, string>) => void;
+
   // Models
   models: Record<string, OpenCodeModel>;
   onModelsChange: (models: Record<string, OpenCodeModel>) => void;
@@ -181,6 +189,8 @@ export function OpenCodeFormFields({
   partnerPromotionKey,
   baseUrl,
   onBaseUrlChange,
+  headers,
+  onHeadersChange,
   models,
   onModelsChange,
   extraOptions,
@@ -311,6 +321,40 @@ export function OpenCodeFormFields({
     onModelsChange({
       ...models,
       [modelKey]: nextModel,
+    });
+  };
+
+  // Header handlers
+  const handleAddHeader = () => {
+    const newKey = `header-${Date.now()}`;
+    onHeadersChange({
+      ...headers,
+      [newKey]: "",
+    });
+  };
+
+  const handleRemoveHeader = (key: string) => {
+    const newHeaders = { ...headers };
+    delete newHeaders[key];
+    onHeadersChange(newHeaders);
+  };
+
+  const handleHeaderKeyChange = (oldKey: string, newKey: string) => {
+    const trimmedKey = newKey.trim();
+    if (!trimmedKey || oldKey === trimmedKey || trimmedKey in headers) return;
+
+    const newHeaders: Record<string, string> = {};
+    for (const [key, value] of Object.entries(headers)) {
+      if (key === oldKey) newHeaders[trimmedKey] = value;
+      else newHeaders[key] = value;
+    }
+    onHeadersChange(newHeaders);
+  };
+
+  const handleHeaderValueChange = (key: string, value: string) => {
+    onHeadersChange({
+      ...headers,
+      [key]: value,
     });
   };
 
@@ -532,6 +576,85 @@ export function OpenCodeFormFields({
           {t("opencode.baseUrlHint", {
             defaultValue:
               "The base URL for the API endpoint. Leave empty to use the default endpoint for official SDKs.",
+          })}
+        </p>
+      </div>
+
+      {/* Headers Editor */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <FormLabel>
+            {t("opencode.headers", { defaultValue: "Headers" })}
+          </FormLabel>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleAddHeader}
+            aria-label={t("opencode.addHeader", { defaultValue: "Add header" })}
+            className="h-7 gap-1"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t("opencode.addHeader", { defaultValue: "Add" })}
+          </Button>
+        </div>
+
+        {Object.keys(headers).length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">
+            {t("opencode.noHeaders", {
+              defaultValue: "No custom headers configured",
+            })}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-1">
+              <span className="flex-1">
+                {t("opencode.headerName", { defaultValue: "Header" })}
+              </span>
+              <span className="flex-1">
+                {t("opencode.headerValue", { defaultValue: "Value" })}
+              </span>
+              <span className="w-9" />
+            </div>
+            {Object.entries(headers).map(([key, value]) => (
+              <div key={key} className="flex items-center gap-2">
+                <ExtraOptionKeyInput
+                  optionKey={key}
+                  onChange={(newKey) => handleHeaderKeyChange(key, newKey)}
+                  placeholder={t("opencode.headerNamePlaceholder", {
+                    defaultValue: "X-Title",
+                  })}
+                  placeholderPrefixes={["header-"]}
+                />
+                <Input
+                  value={value}
+                  onChange={(e) => handleHeaderValueChange(key, e.target.value)}
+                  placeholder={t("opencode.headerValuePlaceholder", {
+                    defaultValue: "CC Switch",
+                  })}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleRemoveHeader(key)}
+                  aria-label={t("opencode.removeHeader", {
+                    defaultValue: "Remove header",
+                  })}
+                  className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <p className="text-xs text-muted-foreground">
+          {t("opencode.headersHint", {
+            defaultValue:
+              "Optional HTTP headers sent with provider requests, such as HTTP-Referer or X-Title.",
           })}
         </p>
       </div>
