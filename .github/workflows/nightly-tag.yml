@@ -1,0 +1,61 @@
+name: Nightly Tag
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # UTC 0:00 = 北京时间 8:00
+  workflow_dispatch:       # 允许手动触发
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-tag
+  cancel-in-progress: true
+
+jobs:
+  tag-if-new:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check for new commits since last nightly
+        id: check
+        shell: bash
+        run: |
+          TAG="nightly-$(date -u +%Y%m%d)"
+
+          # 查找最新的 nightly tag
+          LAST_NIGHTLY=$(git tag --list 'nightly-*' --sort=-creatordate | head -1)
+
+          if [ -z "$LAST_NIGHTLY" ]; then
+            echo "No previous nightly tag found, creating first one: $TAG"
+            echo "create=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 检查 last nightly tag 之后是否有新提交
+          NEW_COMMITS=$(git rev-list --count "${LAST_NIGHTLY}..HEAD" 2>/dev/null || echo 0)
+          echo "Commits since $LAST_NIGHTLY: $NEW_COMMITS"
+
+          if [ "$NEW_COMMITS" -gt 0 ]; then
+            echo "New commits found, creating tag: $TAG"
+            echo "create=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No new commits since $LAST_NIGHTLY, skipping"
+            echo "create=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.check.outputs.create == 'true'
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag "${{ steps.check.outputs.tag }}"
+          git push origin "${{ steps.check.outputs.tag }}"
