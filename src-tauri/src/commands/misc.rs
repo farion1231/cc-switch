@@ -560,6 +560,27 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
     }
 }
 
+fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Path) {
+    if home.as_os_str().is_empty() {
+        return;
+    }
+
+    let mise_base = home.join(".local/share/mise");
+    push_unique_path(paths, mise_base.join("shims"));
+
+    let node_installs = mise_base.join("installs").join("node");
+    if node_installs.exists() {
+        if let Ok(entries) = std::fs::read_dir(&node_installs) {
+            for entry in entries.flatten() {
+                let bin_path = entry.path().join("bin");
+                if bin_path.exists() {
+                    push_unique_path(paths, bin_path);
+                }
+            }
+        }
+    }
+}
+
 /// 扫描常见路径查找 CLI
 fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
     use std::process::Command;
@@ -573,6 +594,7 @@ fn scan_cli_version(tool: &str) -> (Option<String>, Option<String>) {
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
+        extend_mise_node_search_paths(&mut search_paths, &home);
     }
 
     #[cfg(target_os = "macos")]
@@ -1694,6 +1716,22 @@ mod tests {
             .filter(|path| path.as_path() == Path::new("/home/tester/.bun/bin"))
             .count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn mise_node_search_paths_include_shims_and_installed_node_bins() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let home = temp.path();
+        let node_bin = home
+            .join(".local/share/mise/installs/node/25.8.0")
+            .join("bin");
+        std::fs::create_dir_all(&node_bin).expect("node bin should be created");
+
+        let mut paths = Vec::new();
+        extend_mise_node_search_paths(&mut paths, home);
+
+        assert!(paths.contains(&home.join(".local/share/mise/shims")));
+        assert!(paths.contains(&node_bin));
     }
 
     #[cfg(not(target_os = "windows"))]

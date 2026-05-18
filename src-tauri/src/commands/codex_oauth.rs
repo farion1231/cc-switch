@@ -3,9 +3,10 @@
 //! 提供 OpenAI ChatGPT Plus/Pro OAuth 认证相关的 Tauri 命令。
 //!
 //! 大部分认证命令通过通用 `auth_*` 命令（参见 `commands::auth`）暴露给前端，
-//! 此处定义 State wrapper 以及 Codex OAuth 专属的订阅额度查询命令。
+//! 此处定义 State wrapper 以及 Codex OAuth 专属的订阅额度和模型列表查询命令。
 
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+use crate::services::model_fetch::FetchedModel;
 use crate::services::subscription::{query_codex_quota, CredentialStatus, SubscriptionQuota};
 use std::sync::Arc;
 use tauri::State;
@@ -55,4 +56,35 @@ pub async fn get_codex_oauth_quota(
         "Codex OAuth access token expired or rejected. Please re-login via cc-switch.",
     )
     .await)
+}
+
+/// 获取 Codex OAuth (ChatGPT Plus/Pro) 可用模型列表
+///
+/// ChatGPT Codex 反代使用 `chatgpt.com/backend-api/codex/*`，不是 OpenAI 兼容
+/// `/v1/models`。这里复用托管 OAuth 账号的 access_token，直接读取 Codex 后端
+/// 暴露的模型列表端点。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_codex_oauth_models(
+    account_id: Option<String>,
+    state: State<'_, CodexOAuthState>,
+) -> Result<Vec<FetchedModel>, String> {
+    let manager = state.0.read().await;
+    let resolved = match account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => Some(id.to_string()),
+        None => manager.default_account_id().await,
+    };
+    let Some(id) = resolved else {
+        return Err("No ChatGPT account available".to_string());
+    };
+
+    let token = manager
+        .get_valid_token_for_account(&id)
+        .await
+        .map_err(|e| format!("Codex OAuth token unavailable: {e}"))?;
+
+    crate::services::codex_oauth_models::fetch_models_with_token(&token, &id).await
 }

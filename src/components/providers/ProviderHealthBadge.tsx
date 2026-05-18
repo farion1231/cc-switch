@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 interface ProviderHealthBadgeProps {
   consecutiveFailures: number;
+  isHealthy?: boolean;
   className?: string;
 }
 
@@ -13,6 +14,7 @@ interface ProviderHealthBadgeProps {
  */
 export function ProviderHealthBadge({
   consecutiveFailures,
+  isHealthy,
   className,
 }: ProviderHealthBadgeProps) {
   const { t } = useTranslation();
@@ -29,7 +31,7 @@ export function ProviderHealthBadge({
         bgColor: "bg-green-500/10",
         textColor: "text-green-600 dark:text-green-400",
       };
-    } else if (consecutiveFailures < 5) {
+    } else if (isHealthy !== false) {
       return {
         labelKey: "health.degraded",
         labelFallback: "降级",

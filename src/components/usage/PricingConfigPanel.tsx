@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/select";
 import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
 import { PricingEditModal } from "./PricingEditModal";
-import type { ModelPricing } from "@/types/usage";
+import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
 import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
@@ -143,7 +143,7 @@ export function PricingConfigPanel() {
         );
         return;
       }
-      if (!/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+      if (!isNonNegativeDecimalString(trimmed)) {
         toast.error(
           `${t(`apps.${app}`)}: ${t("settings.globalProxy.defaultCostMultiplierInvalid")}`,
         );
@@ -281,6 +281,7 @@ export function PricingConfigPanel() {
                       <Input
                         type="number"
                         step="0.01"
+                        min="0"
                         inputMode="decimal"
                         value={appConfigs[app].multiplier}
                         onChange={(e) =>
