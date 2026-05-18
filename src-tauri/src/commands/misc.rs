@@ -1564,10 +1564,9 @@ read -n 1 -s
                 &["powershell", "-NoExit", "-Command", &ps_cmd],
                 "PowerShell",
             ),
-            "wt" => run_windows_start_command(
-                &["wt", "new-tab", "--", &bat_path],
-                "Windows Terminal",
-            ),
+            "wt" => {
+                run_windows_start_command(&["wt", "new-tab", "--", &bat_path], "Windows Terminal")
+            }
             _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
         };
 
