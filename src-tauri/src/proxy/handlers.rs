@@ -296,7 +296,7 @@ async fn handle_claude_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
-            let model = ctx.request_model.clone();
+            let request_model = ctx.request_model.clone();
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
             let session_id = ctx.session_id.clone();
@@ -306,11 +306,15 @@ async fn handle_claude_transform(
                 Some(claude_stream_usage_event_filter),
                 move |events, first_token_ms| {
                     if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
+                        let model = usage
+                            .model
+                            .clone()
+                            .unwrap_or(request_model.clone());
                         let latency_ms = start_time.elapsed().as_millis() as u64;
                         let state = state.clone();
                         let provider_id = provider_id.clone();
-                        let model = model.clone();
                         let session_id = session_id.clone();
+                        let request_model = request_model.clone();
 
                         tokio::spawn(async move {
                             log_usage(
@@ -318,7 +322,7 @@ async fn handle_claude_transform(
                                 &provider_id,
                                 "claude",
                                 &model,
-                                &model,
+                                &request_model,
                                 usage,
                                 latency_ms,
                                 first_token_ms,

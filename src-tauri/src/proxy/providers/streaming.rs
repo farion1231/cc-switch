@@ -100,11 +100,14 @@ struct ToolBlockState {
 const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
 
 fn build_anthropic_usage_json(usage: &Usage) -> Value {
+    // OpenAI prompt_tokens 含缓存，Anthropic input_tokens 不含，需减去
+    let cached = extract_cache_read_tokens(usage).unwrap_or(0);
+    let input_tokens = usage.prompt_tokens.saturating_sub(cached);
     let mut usage_json = json!({
-        "input_tokens": usage.prompt_tokens,
+        "input_tokens": input_tokens,
         "output_tokens": usage.completion_tokens
     });
-    if let Some(cached) = extract_cache_read_tokens(usage) {
+    if cached > 0 {
         usage_json["cache_read_input_tokens"] = json!(cached);
     }
     if let Some(created) = usage.cache_creation_input_tokens {
@@ -223,8 +226,10 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 "output_tokens": 0
                                             });
                                             if let Some(u) = &chunk.usage {
-                                                start_usage["input_tokens"] = json!(u.prompt_tokens);
-                                                if let Some(cached) = extract_cache_read_tokens(u) {
+                                                let cached = extract_cache_read_tokens(u).unwrap_or(0);
+                                                let input = u.prompt_tokens.saturating_sub(cached);
+                                                start_usage["input_tokens"] = json!(input);
+                                                if cached > 0 {
                                                     start_usage["cache_read_input_tokens"] = json!(cached);
                                                 }
                                                 if let Some(created) = u.cache_creation_input_tokens {
