@@ -10,6 +10,7 @@ import {
   DRAG_REGION_STYLE,
 } from "@/lib/platform";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { cn } from "@/lib/utils";
 
 interface FullScreenPanelProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ interface FullScreenPanelProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  scrollbarVisible?: boolean;
 }
 
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px - match App.tsx
@@ -33,6 +35,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   onClose,
   children,
   footer,
+  scrollbarVisible = false,
 }) => {
   React.useEffect(() => {
     if (isOpen) {
@@ -135,7 +138,12 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto scroll-overlay">
+          <div
+            className={cn(
+              "flex-1 overflow-y-auto scroll-overlay",
+              scrollbarVisible && "scroll-overlay-visible",
+            )}
+          >
             <div className="px-6 py-6 space-y-6 w-full">{children}</div>
           </div>
 
