@@ -4,7 +4,12 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import {
+  ApiKeySection,
+  EndpointField,
+  ModelInputWithFetch,
+  ApiKeyHeaderSection,
+} from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -46,6 +51,10 @@ interface CodexFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // Custom API Key Header
+  apiKeyHeaderName?: string;
+  onApiKeyHeaderNameChange: (name: string | undefined) => void;
 }
 
 export function CodexFormFields({
@@ -71,6 +80,8 @@ export function CodexFormFields({
   modelName = "",
   onModelNameChange,
   speedTestEndpoints,
+  apiKeyHeaderName,
+  onApiKeyHeaderNameChange,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -125,6 +136,12 @@ export function CodexFormFields({
             defaultValue: "输入 API Key，将自动填充到配置",
           }),
         }}
+      />
+
+      {/* API Key Header 自定义 */}
+      <ApiKeyHeaderSection
+        apiKeyHeaderName={apiKeyHeaderName}
+        onApiKeyHeaderNameChange={onApiKeyHeaderNameChange}
       />
 
       {/* Codex Base URL 输入框 */}

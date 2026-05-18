@@ -1279,7 +1279,32 @@ impl RequestForwarder {
                 }
             }
 
-            adapter.get_auth_headers(&auth)?
+            if let Some(ref header_name) = auth.custom_auth_header {
+                use http::{HeaderName, HeaderValue};
+                if let (Ok(custom_name), Ok(custom_value)) = (
+                    HeaderName::from_bytes(header_name.as_bytes()),
+                    HeaderValue::from_str(&auth.api_key),
+                ) {
+                    // Strip all default auth headers (authorization, x-api-key, x-goog-api-key)
+                    // plus any header that would duplicate the custom name, then inject once.
+                    // Companion headers (e.g. x-goog-api-client, Copilot headers) are preserved.
+                    let custom_lower = header_name.to_lowercase();
+                    let mut headers = adapter.get_auth_headers(&auth)?;
+                    headers.retain(|(name, _)| {
+                        let n = name.as_str();
+                        n != "authorization"
+                            && n != "x-api-key"
+                            && n != "x-goog-api-key"
+                            && n != custom_lower.as_str()
+                    });
+                    headers.push((custom_name, custom_value));
+                    headers
+                } else {
+                    adapter.get_auth_headers(&auth)?
+                }
+            } else {
+                adapter.get_auth_headers(&auth)?
+            }
         } else {
             Vec::new()
         };

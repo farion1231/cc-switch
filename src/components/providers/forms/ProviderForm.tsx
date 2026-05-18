@@ -259,6 +259,7 @@ function ProviderFormFull({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setLocalApiKeyHeaderName(initialData?.meta?.apiKeyHeaderName ?? undefined);
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -362,6 +363,10 @@ function ProviderFormFull({
     if (appId !== "claude") return "anthropic";
     return initialData?.meta?.apiFormat ?? "anthropic";
   });
+
+  const [localApiKeyHeaderName, setLocalApiKeyHeaderName] = useState<
+    string | undefined
+  >(() => initialData?.meta?.apiKeyHeaderName);
 
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
     setLocalApiFormat(format);
@@ -1240,6 +1245,10 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      apiKeyHeaderName:
+        category !== "official" && localApiKeyHeaderName?.trim()
+          ? localApiKeyHeaderName.trim()
+          : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -1503,6 +1512,7 @@ function ProviderFormFull({
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
+    setLocalApiKeyHeaderName(undefined);
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -1828,6 +1838,8 @@ function ProviderFormFull({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              apiKeyHeaderName={localApiKeyHeaderName}
+              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
@@ -1857,6 +1869,8 @@ function ProviderFormFull({
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}
               speedTestEndpoints={speedTestEndpoints}
+              apiKeyHeaderName={localApiKeyHeaderName}
+              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
@@ -1886,6 +1900,8 @@ function ProviderFormFull({
               model={geminiModel}
               onModelChange={handleGeminiModelChange}
               speedTestEndpoints={speedTestEndpoints}
+              apiKeyHeaderName={localApiKeyHeaderName}
+              onApiKeyHeaderNameChange={setLocalApiKeyHeaderName}
             />
           )}
 
