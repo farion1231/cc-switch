@@ -1938,7 +1938,53 @@
       "installed": "Installed",
       "uninstalled": "Not installed",
       "repo": "Filter by repo",
-      "allRepos": "All repos"
+      "allRepos": "All repos",
+      "source": "Source",
+      "app": "App",
+      "local": "Local",
+      "updateOnly": "Updates available ({{count}})"
+    },
+    "toolbar": {
+      "searchPlaceholder": "Search skills by name, description, directory, or source",
+      "sortBy": "Sort by",
+      "groupBy": "Group by",
+      "multiSelectMode": "Multi-select",
+      "exitMultiSelect": "Exit multi-select",
+      "clearFilters": "Clear filters",
+      "showing": "{{filtered}}/{{total}}"
+    },
+    "sort": {
+      "nameAsc": "Name A→Z",
+      "nameDesc": "Name Z→A",
+      "installedNewest": "Newest installed",
+      "installedOldest": "Oldest installed",
+      "sourceAsc": "Source A→Z"
+    },
+    "group": {
+      "none": "No grouping",
+      "source": "By source",
+      "app": "By app",
+      "appHint": "(a skill may appear in multiple groups)"
+    },
+    "bulk": {
+      "selected": "{{count}} selected",
+      "selectAll": "Select all ({{count}})",
+      "selectNone": "Select none",
+      "uninstall": "Uninstall",
+      "enableIn": "Enable in",
+      "disableIn": "Disable in",
+      "updateAvailable": "Update ({{count}})",
+      "cancel": "Cancel",
+      "select": "Select skill",
+      "confirmUninstallTitle": "Uninstall {{count}} skills?",
+      "confirmUninstallMessage": "This will uninstall {{count}} selected skills. Are you sure?",
+      "uninstallSuccess": "Uninstalled {{count}} skills",
+      "enableSuccess": "Enabled {{count}} skills in {{app}}",
+      "disableSuccess": "Disabled {{count}} skills in {{app}}"
+    },
+    "pin": {
+      "pin": "Pin to top",
+      "unpin": "Remove from pinned"
     },
     "noResults": "No matching skills found",
     "noInstalled": "No skills installed",

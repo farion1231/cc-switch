@@ -36,6 +36,8 @@ export interface InstalledSkill {
   installedAt: number;
   contentHash?: string;
   updatedAt: number;
+  /** 置顶时间（Unix 时间戳；undefined = 未置顶；多个置顶项按值降序排列） */
+  pinnedAt?: number;
 }
 
 export interface SkillUninstallResult {
@@ -175,6 +177,11 @@ export const skillsApi = {
   /** 切换 Skill 的应用启用状态 */
   async toggleApp(id: string, app: AppId, enabled: boolean): Promise<boolean> {
     return await invoke("toggle_skill_app", { id, app, enabled });
+  },
+
+  /** 设置 Skill 的置顶状态（pinned=true 时记录当前时间戳，false 时清空） */
+  async setPin(id: string, pinned: boolean): Promise<boolean> {
+    return await invoke("set_skill_pin", { id, pinned });
   },
 
   /** 扫描未管理的 Skills */

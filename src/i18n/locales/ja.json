@@ -1938,7 +1938,53 @@
       "installed": "インストール済み",
       "uninstalled": "未インストール",
       "repo": "リポジトリで絞り込み",
-      "allRepos": "すべてのリポジトリ"
+      "allRepos": "すべてのリポジトリ",
+      "source": "ソース",
+      "app": "アプリ",
+      "local": "ローカル",
+      "updateOnly": "更新あり ({{count}})"
+    },
+    "toolbar": {
+      "searchPlaceholder": "名前・説明・ディレクトリ・ソースで検索",
+      "sortBy": "並び替え",
+      "groupBy": "グループ化",
+      "multiSelectMode": "複数選択",
+      "exitMultiSelect": "複数選択を終了",
+      "clearFilters": "フィルターをクリア",
+      "showing": "{{filtered}}/{{total}}"
+    },
+    "sort": {
+      "nameAsc": "名前 A→Z",
+      "nameDesc": "名前 Z→A",
+      "installedNewest": "新しい順",
+      "installedOldest": "古い順",
+      "sourceAsc": "ソース A→Z"
+    },
+    "group": {
+      "none": "グループ化しない",
+      "source": "ソース別",
+      "app": "アプリ別",
+      "appHint": "（同じスキルが複数のグループに表示されることがあります）"
+    },
+    "bulk": {
+      "selected": "{{count}} 件選択中",
+      "selectAll": "すべて選択 ({{count}})",
+      "selectNone": "選択を解除",
+      "uninstall": "アンインストール",
+      "enableIn": "有効化",
+      "disableIn": "無効化",
+      "updateAvailable": "更新 ({{count}})",
+      "cancel": "キャンセル",
+      "select": "スキルを選択",
+      "confirmUninstallTitle": "{{count}} 件のスキルをアンインストール？",
+      "confirmUninstallMessage": "選択した {{count}} 件のスキルをアンインストールします。よろしいですか？",
+      "uninstallSuccess": "{{count}} 件のスキルをアンインストールしました",
+      "enableSuccess": "{{app}} で {{count}} 件のスキルを有効化しました",
+      "disableSuccess": "{{app}} で {{count}} 件のスキルを無効化しました"
+    },
+    "pin": {
+      "pin": "上にピン留め",
+      "unpin": "ピン留めを解除"
     },
     "noResults": "一致するスキルが見つかりませんでした",
     "noInstalled": "インストールされたスキルがありません",

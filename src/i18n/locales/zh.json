@@ -1938,7 +1938,53 @@
       "installed": "已安装",
       "uninstalled": "未安装",
       "repo": "仓库筛选",
-      "allRepos": "全部仓库"
+      "allRepos": "全部仓库",
+      "source": "来源",
+      "app": "应用",
+      "local": "本地",
+      "updateOnly": "仅显示有更新 ({{count}})"
+    },
+    "toolbar": {
+      "searchPlaceholder": "按名称、描述、目录或来源搜索",
+      "sortBy": "排序",
+      "groupBy": "分组",
+      "multiSelectMode": "批量选择",
+      "exitMultiSelect": "退出多选",
+      "clearFilters": "清除筛选",
+      "showing": "{{filtered}}/{{total}}"
+    },
+    "sort": {
+      "nameAsc": "名称 A→Z",
+      "nameDesc": "名称 Z→A",
+      "installedNewest": "最新安装",
+      "installedOldest": "最早安装",
+      "sourceAsc": "来源 A→Z"
+    },
+    "group": {
+      "none": "不分组",
+      "source": "按来源",
+      "app": "按应用",
+      "appHint": "（同一技能可能跨组出现）"
+    },
+    "bulk": {
+      "selected": "已选 {{count}} 项",
+      "selectAll": "全选 ({{count}})",
+      "selectNone": "取消全选",
+      "uninstall": "卸载",
+      "enableIn": "启用到",
+      "disableIn": "禁用于",
+      "updateAvailable": "更新可用项 ({{count}})",
+      "cancel": "取消",
+      "select": "选择技能",
+      "confirmUninstallTitle": "卸载 {{count}} 个技能？",
+      "confirmUninstallMessage": "将卸载选中的 {{count}} 个技能，确认继续？",
+      "uninstallSuccess": "已卸载 {{count}} 个技能",
+      "enableSuccess": "已在 {{app}} 启用 {{count}} 个技能",
+      "disableSuccess": "已在 {{app}} 禁用 {{count}} 个技能"
+    },
+    "pin": {
+      "pin": "置顶",
+      "unpin": "取消置顶"
     },
     "noResults": "未找到匹配的技能",
     "noInstalled": "暂无已安装的技能",

@@ -97,6 +97,19 @@ pub fn toggle_skill_app(
     Ok(true)
 }
 
+/// 设置 Skill 的置顶状态
+///
+/// `pinned = true`：置顶（记录当前时间戳）；`false`：取消置顶。
+#[tauri::command]
+pub fn set_skill_pin(
+    id: String,
+    pinned: bool,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    SkillService::set_pin(&app_state.db, &id, pinned).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// 扫描未管理的 Skills
 #[tauri::command]
 pub fn scan_unmanaged_skills(
