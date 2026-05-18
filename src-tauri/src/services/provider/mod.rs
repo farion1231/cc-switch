@@ -1473,6 +1473,9 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::Kimi => {
+                        let _ = crate::kimi_config::write_kimi_live("", "");
+                    }
                     _ => {}
                 }
             }
@@ -1537,6 +1540,9 @@ impl ProviderService {
             }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
+            }
+            AppType::Kimi => {
+                crate::kimi_config::write_kimi_live("", "")?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -1750,6 +1756,11 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                    AppType::Kimi => {
+                        crate::kimi_config::write_kimi_live("", "").map_err(|e| {
+                            AppError::Message(format!("Failed to rollback Kimi live config: {e}"))
+                        })
+                    }
                     _ => Ok(()),
                 };
 
@@ -1933,6 +1944,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Kimi => Ok(String::new()), // Kimi doesn't use common config snippets
         }
     }
 
@@ -1949,6 +1961,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Kimi => Ok(String::new()), // Kimi doesn't use common config snippets
         }
     }
 
@@ -2337,6 +2350,9 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Kimi => {
+                crate::kimi_config::validate_kimi_settings(&provider.settings_config)?;
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -2540,6 +2556,23 @@ impl ProviderService {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Kimi => {
+                let env_map = crate::kimi_config::json_to_env(&provider.settings_config)?;
+
+                let api_key = env_map.get("KIMI_API_KEY").cloned().unwrap_or_default();
+                let base_url = env_map
+                    .get("KIMI_BASE_URL")
+                    .cloned()
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "kimi.missing_base_url",
+                            "缺少 KIMI_BASE_URL",
+                            "Missing KIMI_BASE_URL",
+                        )
+                    })?;
 
                 Ok((api_key, base_url))
             }

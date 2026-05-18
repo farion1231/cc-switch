@@ -637,6 +637,8 @@
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json).",
     "openclawConfigDir": "OpenClaw Configuration Directory",
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
+    "kimiConfigDir": "Kimi Configuration Directory",
+    "kimiConfigDirDescription": "Override Kimi configuration directory (config.toml).",
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
@@ -644,6 +646,7 @@
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
+    "browsePlaceholderKimi": "e.g., /home/<your-username>/.kimi",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
@@ -752,6 +755,7 @@
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
+    "kimi": "Kimi Code",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
@@ -1476,6 +1480,7 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
+        "kimi": "Kimi Code",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"

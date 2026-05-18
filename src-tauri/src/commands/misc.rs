@@ -2437,6 +2437,7 @@ fn extract_env_vars_from_config(
         let base_url_key = match app_type {
             AppType::Claude | AppType::ClaudeDesktop => Some("ANTHROPIC_BASE_URL"),
             AppType::Gemini => Some("GOOGLE_GEMINI_BASE_URL"),
+            AppType::Kimi => Some("KIMI_BASE_URL"),
             _ => None,
         };
 

@@ -136,6 +136,9 @@ impl ConfigService {
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }
+            AppType::Kimi => {
+                // Kimi live config is managed by write_live_with_common_config
+            }
         }
 
         Ok(())
