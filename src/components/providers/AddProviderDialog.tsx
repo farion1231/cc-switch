@@ -309,6 +309,8 @@ export function AddProviderDialog({
       isOpen={open}
       title={t("provider.addNewProvider")}
       onClose={() => onOpenChange(false)}
+      showScrollHint={activeTab === "app-specific"}
+      scrollHintText={t("providerPreset.scrollHint")}
       footer={footer}
     >
       {showUniversalTab ? (
