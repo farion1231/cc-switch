@@ -1989,7 +1989,9 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
-    }
+    },
+    "addNotes": "Add notes",
+    "notesPlaceholder": "Enter notes..."
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",

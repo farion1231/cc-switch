@@ -1989,7 +1989,9 @@
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
       "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
-    }
+    },
+    "addNotes": "メモを追加",
+    "notesPlaceholder": "メモを入力..."
   },
   "deeplink": {
     "confirmImport": "プロバイダーのインポートを確認",
