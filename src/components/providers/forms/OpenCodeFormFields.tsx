@@ -284,6 +284,36 @@ export function OpenCodeFormFields({
     });
   };
 
+  const handleModelLimitChange = (
+    modelKey: string,
+    limitKey: "context" | "output",
+    value: string,
+  ) => {
+    const model = models[modelKey];
+    const nextLimit = { ...(model.limit || {}) };
+    const trimmedValue = value.trim();
+
+    if (trimmedValue === "") {
+      delete nextLimit[limitKey];
+    } else {
+      const parsed = Number(trimmedValue);
+      if (!Number.isFinite(parsed) || parsed < 0) return;
+      nextLimit[limitKey] = Math.trunc(parsed);
+    }
+
+    const nextModel = { ...model };
+    if (Object.keys(nextLimit).length > 0) {
+      nextModel.limit = nextLimit;
+    } else {
+      delete nextModel.limit;
+    }
+
+    onModelsChange({
+      ...models,
+      [modelKey]: nextModel,
+    });
+  };
+
   // Model options handlers
   const handleAddModelOption = (modelKey: string) => {
     const model = models[modelKey];
@@ -644,6 +674,9 @@ export function OpenCodeFormFields({
                     variant="ghost"
                     size="icon"
                     onClick={() => toggleModelExpand(key)}
+                    aria-label={t("opencode.toggleModelDetails", {
+                      defaultValue: "Toggle model details",
+                    })}
                     className="h-9 w-9 shrink-0"
                   >
                     <ChevronRight
@@ -690,6 +723,67 @@ export function OpenCodeFormFields({
                 {/* Expanded model details */}
                 {expandedModels.has(key) && (
                   <div className="ml-9 pl-4 border-l-2 border-muted space-y-3">
+                    {/* Token limits (model.limit) */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t("opencode.modelLimits", {
+                          defaultValue: "Token Limits",
+                        })}
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <FormLabel
+                            htmlFor={`opencode-${key}-limit-context`}
+                            className="text-xs text-muted-foreground"
+                          >
+                            {t("opencode.limitContext", {
+                              defaultValue: "Context",
+                            })}
+                          </FormLabel>
+                          <Input
+                            id={`opencode-${key}-limit-context`}
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={model.limit?.context ?? ""}
+                            onChange={(e) =>
+                              handleModelLimitChange(
+                                key,
+                                "context",
+                                e.target.value,
+                              )
+                            }
+                            placeholder="1048576"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <FormLabel
+                            htmlFor={`opencode-${key}-limit-output`}
+                            className="text-xs text-muted-foreground"
+                          >
+                            {t("opencode.limitOutput", {
+                              defaultValue: "Output",
+                            })}
+                          </FormLabel>
+                          <Input
+                            id={`opencode-${key}-limit-output`}
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={model.limit?.output ?? ""}
+                            onChange={(e) =>
+                              handleModelLimitChange(
+                                key,
+                                "output",
+                                e.target.value,
+                              )
+                            }
+                            placeholder="131072"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Model Properties (extra fields like variants, cost) */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
