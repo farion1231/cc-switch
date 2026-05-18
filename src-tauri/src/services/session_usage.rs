@@ -130,10 +130,10 @@ fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
             for sub_entry in sub_entries.flatten() {
                 let sub_path = sub_entry.path();
                 if sub_path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-                    files.push(sub_path.clone());
-                }
-                // 扫描子 agent 目录: 项目/SESSION_ID/subagents/*.jsonl
-                if sub_path.is_dir() {
+                    // 主会话 JSONL 文件
+                    files.push(sub_path);
+                } else if sub_path.is_dir() {
+                    // 扫描子 agent 目录: 项目/SESSION_ID/subagents/*.jsonl
                     let subagents_dir = sub_path.join("subagents");
                     if subagents_dir.is_dir() {
                         if let Ok(agent_entries) = fs::read_dir(&subagents_dir) {
@@ -732,7 +732,10 @@ mod tests {
 
         let files = collect_jsonl_files(&tmp);
         assert_eq!(files.len(), 2);
-        let paths: Vec<String> = files.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        let paths: Vec<String> = files
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
         assert!(paths.iter().any(|p| p.contains("main.jsonl")));
         assert!(paths.iter().any(|p| p.contains("agent-abc.jsonl")));
 
