@@ -91,6 +91,16 @@ fn should_preserve_reasoning_content_for_openai_chat(
     provider: &Provider,
     body: &serde_json::Value,
 ) -> bool {
+    // 显式 meta 标志优先（支持 Qwen3.5 等任意模型）
+    if provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.preserve_reasoning_content)
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
     if body
         .get("model")
         .and_then(|m| m.as_str())

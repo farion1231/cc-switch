@@ -185,6 +185,10 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // 关闭模型思考模式（openai_chat 路径注入 chat_template_kwargs.enable_thinking=false）
+  disableThinking?: boolean;
+  // 回传 reasoning_content（openai_chat + thinking 开启时修复 tool loop）
+  preserveReasoningContent?: boolean;
 }
 
 // Skill 同步方式
