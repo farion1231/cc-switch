@@ -30,3 +30,5 @@ copilot-api
 CODEBUDDY.md
 .github
 mainWindow.js
+tauri-signing.key
+tauri-signing.key.pub

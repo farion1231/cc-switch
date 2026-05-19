@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::config::{atomic_write, get_home_dir, write_text_file};
+use crate::config::{get_home_dir, write_text_file};
 use crate::error::AppError;
 use serde_json::Value;
 use toml_edit::DocumentMut;

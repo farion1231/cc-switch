@@ -294,6 +294,9 @@ pub struct McpRoot {
     /// Hermes MCP 配置（实际使用 config.yaml）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub hermes: McpConfig,
+    /// Kimi MCP 配置（MVP 暂不支持）
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub kimi: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -309,6 +312,7 @@ impl Default for McpRoot {
             opencode: McpConfig::default(),
             openclaw: McpConfig::default(),
             hermes: McpConfig::default(),
+            kimi: McpConfig::default(),
         }
     }
 }
@@ -342,6 +346,8 @@ pub struct PromptRoot {
     pub openclaw: PromptConfig,
     #[serde(default)]
     pub hermes: PromptConfig,
+    #[serde(default)]
+    pub kimi: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -688,6 +694,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &self.mcp.opencode,
             AppType::OpenClaw => &self.mcp.openclaw,
             AppType::Hermes => &self.mcp.hermes,
+            AppType::Kimi => &self.mcp.kimi,
         }
     }
 
@@ -701,6 +708,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
             AppType::Hermes => &mut self.mcp.hermes,
+            AppType::Kimi => &mut self.mcp.kimi,
         }
     }
 
@@ -827,6 +835,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
             AppType::Hermes => &mut config.prompts.hermes.prompts,
+            AppType::Kimi => &mut config.prompts.kimi.prompts,
         };
 
         prompts.insert(id, prompt);
@@ -869,6 +878,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
+                AppType::Kimi => continue,     // Kimi doesn't support MCP in MVP
             };
 
             for (id, entry) in old_servers {

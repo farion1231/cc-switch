@@ -282,6 +282,18 @@ impl StreamCheckService {
                 // Already handled via early dispatch above
                 unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
             }
+            AppType::Kimi => {
+                Self::check_codex_stream(
+                    &client,
+                    &base_url,
+                    &auth,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                    provider,
+                )
+                .await
+            }
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -1411,6 +1423,10 @@ impl StreamCheckService {
                 // OpenClaw/Hermes use models array in settings_config
                 // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
+            AppType::Kimi => {
+                Self::extract_env_model(provider, "KIMI_MODEL")
+                    .unwrap_or_else(|| "moonshot-v1-8k".to_string())
             }
         }
     }
