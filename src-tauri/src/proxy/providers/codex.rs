@@ -144,6 +144,14 @@ impl CodexAdapter {
         Self
     }
 
+    fn is_github_copilot(provider: &Provider) -> bool {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("github_copilot")
+    }
+
     /// 检测是否为官方 Codex 客户端
     ///
     /// 匹配 User-Agent 模式: `^(codex_vscode|codex_cli_rs)/[\d.]+`
@@ -252,6 +260,10 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        if Self::is_github_copilot(provider) {
+            return Some(AuthInfo::new("", AuthStrategy::GitHubCopilot));
+        }
+
         self.extract_key(provider)
             .map(|key| AuthInfo::new(key, AuthStrategy::Bearer))
     }
@@ -351,6 +363,23 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-test-key-12345678");
         assert_eq!(auth.strategy, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_extract_auth_uses_github_copilot_strategy_for_managed_provider() {
+        let adapter = CodexAdapter::new();
+        let mut provider = create_provider(json!({
+            "auth": {
+                "OPENAI_API_KEY": ""
+            }
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
     }
 
     #[test]
