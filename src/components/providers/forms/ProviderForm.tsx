@@ -142,6 +142,14 @@ const codexApiFormatFromWireApi = (
   }
 };
 
+const presetProviderType = (
+  preset: PresetEntry["preset"],
+): string | undefined =>
+  "providerType" in preset ? preset.providerType : undefined;
+
+const presetRequiresOAuth = (preset: PresetEntry["preset"]): boolean =>
+  "requiresOAuth" in preset ? preset.requiresOAuth === true : false;
+
 export interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
@@ -215,6 +223,8 @@ function ProviderFormFull({
     category?: ProviderCategory;
     isPartner?: boolean;
     partnerPromotionKey?: string;
+    providerType?: string;
+    requiresOAuth?: boolean;
     suggestedDefaults?: OpenClawSuggestedDefaults;
   } | null>(null);
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
@@ -979,10 +989,12 @@ function ProviderFormFull({
 
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
     const isCopilotProvider =
+      activePreset?.providerType === "github_copilot" ||
       templatePreset?.providerType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
       baseUrl.includes("githubcopilot.com");
     const isCodexOauthProvider =
+      activePreset?.providerType === "codex_oauth" ||
       templatePreset?.providerType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
     if (isCopilotProvider && !isCopilotAuthenticated) {
@@ -1097,10 +1109,12 @@ function ProviderFormFull({
   const performSubmit = async (values: ProviderFormData) => {
     // OAuth / 其它身份识别（与 handleSubmit 保持一致）
     const isCopilotProvider =
+      activePreset?.providerType === "github_copilot" ||
       templatePreset?.providerType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
       baseUrl.includes("githubcopilot.com");
     const isCodexOauthProvider =
+      activePreset?.providerType === "codex_oauth" ||
       templatePreset?.providerType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
 
@@ -1254,7 +1268,9 @@ function ProviderFormFull({
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType =
-      templatePreset?.providerType || initialData?.meta?.providerType;
+      activePreset?.providerType ||
+      templatePreset?.providerType ||
+      initialData?.meta?.providerType;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -1458,6 +1474,8 @@ function ProviderFormFull({
       category: entry.preset.category,
       isPartner: entry.preset.isPartner,
       partnerPromotionKey: entry.preset.partnerPromotionKey,
+      providerType: presetProviderType(entry.preset),
+      requiresOAuth: presetRequiresOAuth(entry.preset),
     });
 
     if (appId === "codex") {
@@ -1855,19 +1873,24 @@ function ProviderFormFull({
               isPartner={isClaudePartner}
               partnerPromotionKey={claudePartnerPromotionKey}
               isCopilotPreset={
+                activePreset?.providerType === "github_copilot" ||
                 templatePreset?.providerType === "github_copilot" ||
                 initialData?.meta?.providerType === "github_copilot" ||
                 baseUrl.includes("githubcopilot.com")
               }
               isCodexOauthPreset={
+                activePreset?.providerType === "codex_oauth" ||
                 templatePreset?.providerType === "codex_oauth" ||
                 initialData?.meta?.providerType === "codex_oauth"
               }
               usesOAuth={
+                activePreset?.requiresOAuth === true ||
                 templatePreset?.requiresOAuth === true ||
+                activePreset?.providerType === "github_copilot" ||
                 templatePreset?.providerType === "github_copilot" ||
                 initialData?.meta?.providerType === "github_copilot" ||
                 baseUrl.includes("githubcopilot.com") ||
+                activePreset?.providerType === "codex_oauth" ||
                 templatePreset?.providerType === "codex_oauth" ||
                 initialData?.meta?.providerType === "codex_oauth"
               }

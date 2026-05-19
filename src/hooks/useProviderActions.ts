@@ -151,7 +151,7 @@ export function useProviderActions(
   const switchProvider = useCallback(
     async (provider: Provider) => {
       const isCopilotProvider =
-        activeApp === "claude" &&
+        (activeApp === "claude" || activeApp === "codex") &&
         provider.meta?.providerType === "github_copilot";
       const isCodexChatFormat =
         activeApp === "codex" &&
@@ -169,7 +169,7 @@ export function useProviderActions(
       if (!isProxyRunning && provider.category !== "official") {
         if (isCopilotProvider) {
           proxyRequiredReason = t("notifications.proxyReasonCopilot", {
-            defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
+            defaultValue: "使用 GitHub Copilot 作为供应商",
           });
         } else if (
           provider.meta?.apiFormat === "openai_chat" &&

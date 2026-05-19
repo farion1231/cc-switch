@@ -247,7 +247,7 @@
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
     "proxyRequiredForSwitch": "This provider {{reason}}, requires the routing service to work properly. Start routing first.",
-    "proxyReasonCopilot": "uses GitHub Copilot as a Claude provider",
+    "proxyReasonCopilot": "uses GitHub Copilot as a provider",
     "proxyReasonOpenAIChat": "uses OpenAI Chat API format",
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
     "proxyReasonFullUrl": "has full URL connection mode enabled",

@@ -247,7 +247,7 @@
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "proxyRequiredForSwitch": "此供应商{{reason}}，需要路由服务才能正常使用，请先启动路由",
-    "proxyReasonCopilot": "使用 GitHub Copilot 作为 Claude 供应商",
+    "proxyReasonCopilot": "使用 GitHub Copilot 作为供应商",
     "proxyReasonOpenAIChat": "使用 OpenAI Chat 接口格式",
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
     "proxyReasonFullUrl": "开启了完整 URL 连接模式",
