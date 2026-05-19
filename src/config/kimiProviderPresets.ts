@@ -9,6 +9,7 @@ export interface KimiProviderPreset {
   websiteUrl: string;
   apiKeyUrl?: string;
   settingsConfig: object;
+  endpointCandidates?: string[];
   isOfficial?: boolean;
   category?: ProviderCategory;
   icon?: string;
@@ -26,6 +27,7 @@ export const kimiProviderPresets: KimiProviderPreset[] = [
         KIMI_API_KEY: "",
       },
     },
+    endpointCandidates: ["https://api.moonshot.cn/v1"],
     isOfficial: true,
     category: "official",
     icon: "kimi",
@@ -41,6 +43,7 @@ export const kimiProviderPresets: KimiProviderPreset[] = [
         KIMI_API_KEY: "",
       },
     },
+    endpointCandidates: ["https://api.kimi.com/coding/v1"],
     category: "cn_official",
     icon: "kimi",
     iconColor: "#6366F1",

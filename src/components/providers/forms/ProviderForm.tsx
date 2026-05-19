@@ -45,6 +45,7 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import { kimiProviderPresets } from "@/config/kimiProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
@@ -72,6 +73,7 @@ import { ClaudeFormFields } from "./ClaudeFormFields";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
+import { KimiFormFields } from "./KimiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
@@ -372,7 +374,9 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                  : appId === "kimi"
+                    ? JSON.stringify({ env: { KIMI_BASE_URL: "", KIMI_API_KEY: "" } }, null, 2)
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -429,7 +433,12 @@ function ProviderFormFull({
     apiKeyField: appId === "claude" ? localApiKeyField : undefined,
   });
 
-  const { baseUrl, handleClaudeBaseUrlChange } = useBaseUrlState({
+  const {
+    baseUrl,
+    kimiBaseUrl,
+    handleClaudeBaseUrlChange,
+    handleKimiBaseUrlChange,
+  } = useBaseUrlState({
     appType: appId,
     category,
     settingsConfig: form.getValues("settingsConfig"),
@@ -622,6 +631,11 @@ function ProviderFormFull({
     } else if (appId === "hermes") {
       return hermesProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `hermes-${index}`,
+        preset,
+      }));
+    } else if (appId === "kimi") {
+      return kimiProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `kimi-${index}`,
         preset,
       }));
     }
@@ -1502,6 +1516,20 @@ function ProviderFormFull({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  // 使用 API Key 链接 hook (Kimi)
+  const {
+    shouldShowApiKeyLink: shouldShowKimiApiKeyLink,
+    websiteUrl: kimiWebsiteUrl,
+    isPartner: isKimiPartner,
+    partnerPromotionKey: kimiPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "kimi",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -2154,6 +2182,25 @@ function ProviderFormFull({
               onRateLimitDelayChange={
                 hermesForm.handleHermesRateLimitDelayChange
               }
+            />
+          )}
+
+          {appId === "kimi" && (
+            <KimiFormFields
+              providerId={providerId}
+              shouldShowApiKey={shouldShowApiKey(
+                form.getValues("settingsConfig"),
+                isEditMode,
+              )}
+              apiKey={apiKey}
+              onApiKeyChange={handleApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowKimiApiKeyLink}
+              websiteUrl={kimiWebsiteUrl}
+              isPartner={isKimiPartner}
+              partnerPromotionKey={kimiPartnerPromotionKey}
+              baseUrl={kimiBaseUrl}
+              onBaseUrlChange={handleKimiBaseUrlChange}
             />
           )}
 

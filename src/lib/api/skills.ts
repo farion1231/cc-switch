@@ -17,6 +17,7 @@ export interface SkillApps {
   "claude-desktop"?: boolean;
   codex: boolean;
   gemini: boolean;
+  kimi: boolean;
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;

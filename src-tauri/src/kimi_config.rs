@@ -83,6 +83,8 @@ pub fn write_kimi_live(base_url: &str, api_key: &str) -> Result<(), AppError> {
             provider_table["type"] = toml_edit::value("kimi");
             provider_table["base_url"] = toml_edit::value(base_url);
             provider_table["api_key"] = toml_edit::value(api_key);
+            // Clear any existing OAuth credentials so API key takes precedence
+            provider_table.remove("oauth");
         }
     }
 

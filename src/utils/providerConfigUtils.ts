@@ -183,6 +183,12 @@ export const getApiKeyFromConfig = (
       return typeof codexKey === "string" ? codexKey : "";
     }
 
+    // Kimi API Key
+    if (appType === "kimi") {
+      const kimiKey = env.KIMI_API_KEY;
+      return typeof kimiKey === "string" ? kimiKey : "";
+    }
+
     // Claude API Key (优先 ANTHROPIC_AUTH_TOKEN，其次 ANTHROPIC_API_KEY)
     const token = env.ANTHROPIC_AUTH_TOKEN;
     const apiKey = env.ANTHROPIC_API_KEY;
@@ -319,6 +325,18 @@ export const setApiKeyInConfig = (
         env.CODEX_API_KEY = apiKey;
       } else if (createIfMissing) {
         env.CODEX_API_KEY = apiKey;
+      } else {
+        return jsonString;
+      }
+      return JSON.stringify(config, null, 2);
+    }
+
+    // Kimi API Key
+    if (appType === "kimi") {
+      if ("KIMI_API_KEY" in env) {
+        env.KIMI_API_KEY = apiKey;
+      } else if (createIfMissing) {
+        env.KIMI_API_KEY = apiKey;
       } else {
         return jsonString;
       }

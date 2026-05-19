@@ -72,6 +72,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   opencode: {},
   openclaw: {},
   hermes: {},
+  kimi: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -79,6 +80,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   "claude-desktop": "",
   codex: "codex-1",
   gemini: "gemini-1",
+  kimi: "",
   opencode: "",
   openclaw: "",
   hermes: "",
@@ -160,6 +162,7 @@ let mcpConfigs: McpConfigState = {
         claude: true,
         codex: false,
         gemini: false,
+        kimi: false,
         opencode: false,
         openclaw: false,
         hermes: false,
@@ -180,6 +183,7 @@ let mcpConfigs: McpConfigState = {
         claude: false,
         codex: true,
         gemini: false,
+        kimi: false,
         opencode: false,
         openclaw: false,
         hermes: false,
@@ -194,6 +198,7 @@ let mcpConfigs: McpConfigState = {
   opencode: {},
   openclaw: {},
   hermes: {},
+  kimi: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -228,6 +233,7 @@ export const resetProviderState = () => {
           claude: true,
           codex: false,
           gemini: false,
+          kimi: false,
           opencode: false,
           openclaw: false,
           hermes: false,
@@ -248,6 +254,7 @@ export const resetProviderState = () => {
           claude: false,
           codex: true,
           gemini: false,
+          kimi: false,
           opencode: false,
           openclaw: false,
           hermes: false,
@@ -262,6 +269,7 @@ export const resetProviderState = () => {
     opencode: {},
     openclaw: {},
     hermes: {},
+    kimi: {},
   };
 };
 
