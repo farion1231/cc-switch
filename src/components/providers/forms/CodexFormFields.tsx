@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { FormLabel } from "@/components/ui/form";
@@ -13,6 +13,12 @@ import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import { CopilotAuthSection } from "./CopilotAuthSection";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+  type CopilotModel,
+} from "@/lib/api/copilot";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -34,6 +40,10 @@ interface CodexFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
+  isCopilotPreset?: boolean;
+  usesOAuth?: boolean;
+  selectedGitHubAccountId?: string | null;
+  onGitHubAccountSelect?: (accountId: string | null) => void;
 
   // Base URL
   shouldShowSpeedTest: boolean;
@@ -69,6 +79,10 @@ export function CodexFormFields({
   websiteUrl,
   isPartner,
   partnerPromotionKey,
+  isCopilotPreset,
+  usesOAuth,
+  selectedGitHubAccountId,
+  onGitHubAccountSelect,
   shouldShowSpeedTest,
   codexBaseUrl,
   onBaseUrlChange,
@@ -90,8 +104,56 @@ export function CodexFormFields({
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const copilotModelsRequestRef = useRef(0);
+
+  const showModelFetchResult = useCallback(
+    (count: number) => {
+      if (count === 0) {
+        toast.info(t("providerForm.fetchModelsEmpty"));
+      } else {
+        toast.success(t("providerForm.fetchModelsSuccess", { count }));
+      }
+    },
+    [t],
+  );
 
   const handleFetchModels = useCallback(() => {
+    if (isCopilotPreset) {
+      const requestId = copilotModelsRequestRef.current + 1;
+      copilotModelsRequestRef.current = requestId;
+      setIsFetchingModels(true);
+      const fetchModels = selectedGitHubAccountId
+        ? copilotGetModelsForAccount(selectedGitHubAccountId)
+        : copilotGetModels();
+
+      fetchModels
+        .then((models: CopilotModel[]) => {
+          if (copilotModelsRequestRef.current !== requestId) return;
+          setFetchedModels(
+            models.map((model) => ({
+              id: model.id,
+              ownedBy: model.vendor || null,
+            })),
+          );
+          showModelFetchResult(models.length);
+        })
+        .catch((err) => {
+          if (copilotModelsRequestRef.current !== requestId) return;
+          console.warn("[Copilot] Failed to fetch models:", err);
+          toast.error(
+            t("copilot.loadModelsFailed", {
+              defaultValue: "加载 Copilot 模型列表失败",
+            }),
+          );
+        })
+        .finally(() => {
+          if (copilotModelsRequestRef.current === requestId) {
+            setIsFetchingModels(false);
+          }
+        });
+      return;
+    }
+
     if (!codexBaseUrl || !codexApiKey) {
       showFetchModelsError(null, t, {
         hasApiKey: !!codexApiKey,
@@ -103,43 +165,61 @@ export function CodexFormFields({
     fetchModelsForConfig(codexBaseUrl, codexApiKey, isFullUrl)
       .then((models) => {
         setFetchedModels(models);
-        if (models.length === 0) {
-          toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
-          );
-        }
+        showModelFetchResult(models.length);
       })
       .catch((err) => {
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [codexBaseUrl, codexApiKey, isFullUrl, t]);
+  }, [
+    codexBaseUrl,
+    codexApiKey,
+    isCopilotPreset,
+    isFullUrl,
+    selectedGitHubAccountId,
+    showModelFetchResult,
+    t,
+  ]);
+
+  useEffect(() => {
+    copilotModelsRequestRef.current += 1;
+    setFetchedModels([]);
+    setIsFetchingModels(false);
+  }, [isCopilotPreset, selectedGitHubAccountId]);
 
   return (
     <>
+      {/* GitHub Copilot OAuth 认证 */}
+      {isCopilotPreset && (
+        <CopilotAuthSection
+          selectedAccountId={selectedGitHubAccountId}
+          onAccountSelect={onGitHubAccountSelect}
+        />
+      )}
+
       {/* Codex API Key 输入框 */}
-      <ApiKeySection
-        id="codexApiKey"
-        label="API Key"
-        value={codexApiKey}
-        onChange={onApiKeyChange}
-        category={category}
-        shouldShowLink={shouldShowApiKeyLink}
-        websiteUrl={websiteUrl}
-        isPartner={isPartner}
-        partnerPromotionKey={partnerPromotionKey}
-        placeholder={{
-          official: t("providerForm.codexOfficialNoApiKey", {
-            defaultValue: "官方供应商无需 API Key",
-          }),
-          thirdParty: t("providerForm.codexApiKeyAutoFill", {
-            defaultValue: "输入 API Key，将自动填充到配置",
-          }),
-        }}
-      />
+      {!usesOAuth && (
+        <ApiKeySection
+          id="codexApiKey"
+          label="API Key"
+          value={codexApiKey}
+          onChange={onApiKeyChange}
+          category={category}
+          shouldShowLink={shouldShowApiKeyLink}
+          websiteUrl={websiteUrl}
+          isPartner={isPartner}
+          partnerPromotionKey={partnerPromotionKey}
+          placeholder={{
+            official: t("providerForm.codexOfficialNoApiKey", {
+              defaultValue: "官方供应商无需 API Key",
+            }),
+            thirdParty: t("providerForm.codexApiKeyAutoFill", {
+              defaultValue: "输入 API Key，将自动填充到配置",
+            }),
+          }}
+        />
+      )}
 
       {/* Codex Base URL 输入框 */}
       {shouldShowSpeedTest && (

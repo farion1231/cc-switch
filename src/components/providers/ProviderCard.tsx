@@ -184,11 +184,13 @@ export function ProviderCard({
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
   const isOfficial = isOfficialProvider(provider, appId);
-  const isOfficialBlockedByProxy =
-    isProxyTakeover && (provider.category === "official" || isOfficial);
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
+  const isOfficialBlockedByProxy =
+    isProxyTakeover &&
+    !isCopilot &&
+    (provider.category === "official" || isOfficial);
   // Hermes v12+ overlay entries live under the `providers:` dict and are
   // read-only here — writes have to go through Hermes Web UI.
   const isHermesReadOnly =

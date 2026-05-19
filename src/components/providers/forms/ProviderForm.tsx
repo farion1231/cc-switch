@@ -992,7 +992,8 @@ function ProviderFormFull({
       activePreset?.providerType === "github_copilot" ||
       templatePreset?.providerType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
+      baseUrl.includes("githubcopilot.com") ||
+      codexBaseUrl.includes("githubcopilot.com");
     const isCodexOauthProvider =
       activePreset?.providerType === "codex_oauth" ||
       templatePreset?.providerType === "codex_oauth" ||
@@ -1071,7 +1072,11 @@ function ProviderFormFull({
             }),
           );
         }
-        if (!codexApiKey.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isCodexOauthProvider &&
+          !codexApiKey.trim()
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1112,7 +1117,8 @@ function ProviderFormFull({
       activePreset?.providerType === "github_copilot" ||
       templatePreset?.providerType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
+      baseUrl.includes("githubcopilot.com") ||
+      codexBaseUrl.includes("githubcopilot.com");
     const isCodexOauthProvider =
       activePreset?.providerType === "codex_oauth" ||
       templatePreset?.providerType === "codex_oauth" ||
@@ -1946,6 +1952,19 @@ function ProviderFormFull({
               websiteUrl={codexWebsiteUrl}
               isPartner={isCodexPartner}
               partnerPromotionKey={codexPartnerPromotionKey}
+              isCopilotPreset={
+                activePreset?.providerType === "github_copilot" ||
+                initialData?.meta?.providerType === "github_copilot" ||
+                codexBaseUrl.includes("githubcopilot.com")
+              }
+              usesOAuth={
+                activePreset?.requiresOAuth === true ||
+                activePreset?.providerType === "github_copilot" ||
+                initialData?.meta?.providerType === "github_copilot" ||
+                codexBaseUrl.includes("githubcopilot.com")
+              }
+              selectedGitHubAccountId={selectedGitHubAccountId}
+              onGitHubAccountSelect={setSelectedGitHubAccountId}
               shouldShowSpeedTest={shouldShowSpeedTest}
               codexBaseUrl={codexBaseUrl}
               onBaseUrlChange={handleCodexBaseUrlChange}
