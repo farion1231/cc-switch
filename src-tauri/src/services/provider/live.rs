@@ -1224,10 +1224,17 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             let toml_value: toml::Value = toml::from_str(&content)
                 .map_err(|e| AppError::Message(format!("Invalid Kimi config.toml: {e}")))?;
 
+            // Follow the active provider referenced by models (not just the first one in the table)
+            let provider_name = toml_value
+                .get("models")
+                .and_then(|m| m.get("kimi-code/kimi-for-coding"))
+                .and_then(|m| m.get("provider"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME);
             let (base_url, api_key) = toml_value
                 .get("providers")
                 .and_then(|p| p.as_table())
-                .and_then(|providers| providers.values().next())
+                .and_then(|providers| providers.get(provider_name))
                 .and_then(|provider| {
                     let base_url = provider.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
                     let api_key = provider.get("api_key").and_then(|v| v.as_str()).unwrap_or("");

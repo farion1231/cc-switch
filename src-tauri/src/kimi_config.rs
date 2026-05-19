@@ -89,6 +89,15 @@ pub fn write_kimi_live(base_url: &str, api_key: &str, provider_name: &str) -> Re
             // Clear any existing OAuth credentials so API key takes precedence
             provider_table.remove("oauth");
         }
+        // Also clear OAuth from ALL other providers (e.g. managed:kimi-code created by Kimi CLI)
+        // to prevent Kimi CLI from auto-switching back to OAuth authentication.
+        for (key, value) in providers.iter_mut() {
+            if key.get() != provider_name {
+                if let Some(other_table) = value.as_table_mut() {
+                    other_table.remove("oauth");
+                }
+            }
+        }
     }
 
     // Ensure default_model points to the correct model
