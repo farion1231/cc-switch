@@ -44,12 +44,11 @@ export function detectCodingPlanProvider(
 }
 
 /**
- * 新建 Claude 供应商时，若 `ANTHROPIC_BASE_URL` 命中 Coding Plan 路由表，
+ * 新建供应商时，若 Base URL 命中 Coding Plan 路由表，
  * 自动把 `meta.usage_script` 标记为 token_plan 并启用。
  *
  * - 仅在 `meta.usage_script` 完全缺失时注入，不覆盖用户/UsageScriptModal 已有配置
- * - 仅对 Claude app 生效：后端 `commands/provider.rs` 的 token_plan 分支只处理 Claude
- *   supplier 的 `settings_config.env.ANTHROPIC_BASE_URL`
+ * - 支持 Claude（读 ANTHROPIC_BASE_URL）和 Kimi（读 KIMI_BASE_URL）
  * - code 置空：Rust 端走专用 `coding_plan::get_coding_plan_quota`，不执行 JS 脚本
  */
 export function injectCodingPlanUsageScript<
@@ -58,13 +57,17 @@ export function injectCodingPlanUsageScript<
     meta?: Record<string, any>;
   },
 >(appId: string, provider: T): T {
-  if (appId !== "claude") return provider;
+  if (appId !== "claude" && appId !== "kimi") return provider;
   if (provider.meta?.usage_script) return provider;
 
-  const baseUrl = provider.settingsConfig?.env?.ANTHROPIC_BASE_URL;
-  const codingPlanProvider = detectCodingPlanProvider(
-    typeof baseUrl === "string" ? baseUrl : null,
-  );
+  let baseUrl: string | null = null;
+  if (appId === "claude") {
+    baseUrl = provider.settingsConfig?.env?.ANTHROPIC_BASE_URL ?? null;
+  } else if (appId === "kimi") {
+    baseUrl = provider.settingsConfig?.env?.KIMI_BASE_URL ?? null;
+  }
+
+  const codingPlanProvider = detectCodingPlanProvider(baseUrl);
   if (!codingPlanProvider) return provider;
 
   return {
