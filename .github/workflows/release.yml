@@ -20,9 +20,9 @@ jobs:
       matrix:
         include:
           - os: windows-2022
-          - os: ubuntu-22.04
-          - os: ubuntu-22.04-arm
-            arch: arm64
+          # - os: ubuntu-22.04
+          # - os: ubuntu-22.04-arm
+          #   arch: arm64
           - os: macos-14
 
     steps:
@@ -434,28 +434,28 @@ jobs:
             Write-Warning 'No Windows MSI installer found'
           }
           # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
-          $exeCandidates = @(
-            'src-tauri/target/release/cc-switch.exe',
-            'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
-          )
-          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if ($null -ne $exePath) {
-            $portableDir = 'release-assets/CC-Switch-Portable'
-            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
-            Copy-Item $exePath $portableDir
-            $portableIniPath = Join-Path $portableDir 'portable.ini'
-            $portableContent = @(
-              '# CC Switch portable build marker',
-              'portable=true'
-            )
-            $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
-            $portableZip = "release-assets/CC-Switch-$VERSION-Windows-Portable.zip"
-            Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
-            Remove-Item -Recurse -Force $portableDir
-            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows-Portable.zip"
-          } else {
-            Write-Warning 'Portable exe not found'
-          }
+          # $exeCandidates = @(
+          #   'src-tauri/target/release/cc-switch.exe',
+          #   'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
+          # )
+          # $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          # if ($null -ne $exePath) {
+          #   $portableDir = 'release-assets/CC-Switch-Portable'
+          #   New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          #   Copy-Item $exePath $portableDir
+          #   $portableIniPath = Join-Path $portableDir 'portable.ini'
+          #   $portableContent = @(
+          #     '# CC Switch portable build marker',
+          #     'portable=true'
+          #   )
+          #   $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
+          #   $portableZip = "release-assets/CC-Switch-$VERSION-Windows-Portable.zip"
+          #   Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
+          #   Remove-Item -Recurse -Force $portableDir
+          #   Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows-Portable.zip"
+          # } else {
+          #   Write-Warning 'Portable exe not found'
+          # }
 
       - name: Prepare Linux Assets
         if: runner.os == 'Linux'
