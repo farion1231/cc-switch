@@ -375,7 +375,7 @@ function ProviderFormFull({
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
                   : appId === "kimi"
-                    ? JSON.stringify({ env: { KIMI_BASE_URL: "", KIMI_API_KEY: "" } }, null, 2)
+                    ? JSON.stringify({ env: { KIMI_BASE_URL: "", KIMI_API_KEY: "", KIMI_PROVIDER_NAME: "ccswitch" } }, null, 2)
                     : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
@@ -446,6 +446,30 @@ function ProviderFormFull({
     onSettingsConfigChange: handleSettingsConfigChange,
     onCodexConfigChange: () => {},
   });
+
+  // Kimi provider name state
+  const [kimiProviderName, setKimiProviderName] = useState("ccswitch");
+
+  useEffect(() => {
+    if (appId !== "kimi") return;
+    try {
+      const config = JSON.parse(form.getValues("settingsConfig") || "{}");
+      const envName: unknown = config?.env?.KIMI_PROVIDER_NAME;
+      const nextName = typeof envName === "string" && envName.trim() ? envName.trim() : "ccswitch";
+      setKimiProviderName(nextName);
+    } catch { /* ignore */ }
+  }, [appId, form.watch("settingsConfig")]);
+
+  const handleKimiProviderNameChange = useCallback((name: string) => {
+    const trimmed = name.trim();
+    setKimiProviderName(trimmed);
+    try {
+      const config = JSON.parse(form.getValues("settingsConfig") || "{}");
+      if (!config.env) config.env = {};
+      config.env.KIMI_PROVIDER_NAME = trimmed;
+      handleSettingsConfigChange(JSON.stringify(config, null, 2));
+    } catch { /* ignore */ }
+  }, [form, handleSettingsConfigChange]);
 
   const {
     claudeModel,
@@ -2194,6 +2218,8 @@ function ProviderFormFull({
               )}
               apiKey={apiKey}
               onApiKeyChange={handleApiKeyChange}
+              providerName={kimiProviderName}
+              onProviderNameChange={handleKimiProviderNameChange}
               category={category}
               shouldShowApiKeyLink={shouldShowKimiApiKeyLink}
               websiteUrl={kimiWebsiteUrl}

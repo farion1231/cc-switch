@@ -5,7 +5,7 @@ use crate::error::AppError;
 use serde_json::Value;
 use toml_edit::DocumentMut;
 
-pub const KIMI_PROVIDER_NAME: &str = "ccswitch";
+pub const KIMI_DEFAULT_PROVIDER_NAME: &str = "ccswitch";
 
 /// 获取 Kimi 配置目录路径（支持设置覆盖）
 pub fn get_kimi_dir() -> PathBuf {
@@ -43,19 +43,21 @@ pub fn write_kimi_config(doc: &DocumentMut) -> Result<(), AppError> {
 }
 
 /// 生成最小默认 Kimi 配置
-fn build_default_kimi_config(base_url: &str, api_key: &str) -> DocumentMut {
+fn build_default_kimi_config(base_url: &str, api_key: &str, provider_name: &str) -> DocumentMut {
     let toml_str = format!(
-        r#"default_model = "kimi-for-coding"
+        r#"default_model = "kimi-code/kimi-for-coding"
 
-[providers.{KIMI_PROVIDER_NAME}]
+[providers.{provider_name}]
 type = "kimi"
 base_url = "{base_url}"
 api_key = "{api_key}"
 
-[models.kimi-for-coding]
-provider = "{KIMI_PROVIDER_NAME}"
+[models."kimi-code/kimi-for-coding"]
+provider = "{provider_name}"
 model = "kimi-for-coding"
 max_context_size = 262144
+display_name = "Kimi-k2.6"
+capabilities = ["thinking", "video_in", "image_in"]
 "#
     );
     toml_str
@@ -63,11 +65,12 @@ max_context_size = 262144
         .expect("default kimi config should always be valid toml")
 }
 
-/// 核心：将 provider 配置写入 [providers.ccswitch]
-pub fn write_kimi_live(base_url: &str, api_key: &str) -> Result<(), AppError> {
+/// 核心：将 provider 配置写入 [providers.{provider_name}]
+/// 同时更新 models 中的 provider 指向当前激活的 provider
+pub fn write_kimi_live(base_url: &str, api_key: &str, provider_name: &str) -> Result<(), AppError> {
     let mut doc = match read_kimi_config()? {
         Some(doc) => doc,
-        None => build_default_kimi_config(base_url, api_key),
+        None => build_default_kimi_config(base_url, api_key, provider_name),
     };
 
     // Ensure [providers] table exists
@@ -76,15 +79,50 @@ pub fn write_kimi_live(base_url: &str, api_key: &str) -> Result<(), AppError> {
     }
 
     if let Some(providers) = doc["providers"].as_table_mut() {
-        if !providers.contains_key(KIMI_PROVIDER_NAME) {
-            providers[KIMI_PROVIDER_NAME] = toml_edit::table();
+        if !providers.contains_key(provider_name) {
+            providers[provider_name] = toml_edit::table();
         }
-        if let Some(provider_table) = providers[KIMI_PROVIDER_NAME].as_table_mut() {
+        if let Some(provider_table) = providers[provider_name].as_table_mut() {
             provider_table["type"] = toml_edit::value("kimi");
             provider_table["base_url"] = toml_edit::value(base_url);
             provider_table["api_key"] = toml_edit::value(api_key);
             // Clear any existing OAuth credentials so API key takes precedence
             provider_table.remove("oauth");
+        }
+    }
+
+    // Ensure default_model points to the correct model
+    if doc.get("default_model").is_none() {
+        doc["default_model"] = toml_edit::value("kimi-code/kimi-for-coding");
+    }
+
+    // Update model provider reference to point to the active provider
+    if doc.get("models").is_none() {
+        doc["models"] = toml_edit::table();
+    }
+    if let Some(models) = doc["models"].as_table_mut() {
+        let model_key = "kimi-code/kimi-for-coding";
+        if !models.contains_key(model_key) {
+            models[model_key] = toml_edit::table();
+        }
+        if let Some(model_table) = models[model_key].as_table_mut() {
+            model_table["provider"] = toml_edit::value(provider_name);
+            if !model_table.contains_key("model") {
+                model_table["model"] = toml_edit::value("kimi-for-coding");
+            }
+            if !model_table.contains_key("max_context_size") {
+                model_table["max_context_size"] = toml_edit::value(262144);
+            }
+            if !model_table.contains_key("display_name") {
+                model_table["display_name"] = toml_edit::value("Kimi-k2.6");
+            }
+            if !model_table.contains_key("capabilities") {
+                let mut caps = toml_edit::Array::new();
+                caps.push("thinking");
+                caps.push("video_in");
+                caps.push("image_in");
+                model_table["capabilities"] = toml_edit::value(caps);
+            }
         }
     }
 

@@ -854,7 +854,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let env_map = crate::kimi_config::json_to_env(&provider.settings_config)?;
             let base_url = env_map.get("KIMI_BASE_URL").cloned().unwrap_or_default();
             let api_key = env_map.get("KIMI_API_KEY").cloned().unwrap_or_default();
-            crate::kimi_config::write_kimi_live(&base_url, &api_key)?;
+            let provider_name = env_map.get("KIMI_PROVIDER_NAME").cloned().unwrap_or_else(|| crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME.to_string());
+            crate::kimi_config::write_kimi_live(&base_url, &api_key, &provider_name)?;
             log::debug!("Kimi provider '{}' written to live config", provider.id);
         }
     }

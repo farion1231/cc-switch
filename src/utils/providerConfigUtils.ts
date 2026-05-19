@@ -272,6 +272,10 @@ export const hasApiKeyField = (
       return Object.prototype.hasOwnProperty.call(env, "CODEX_API_KEY");
     }
 
+    if (appType === "kimi") {
+      return Object.prototype.hasOwnProperty.call(env, "KIMI_API_KEY");
+    }
+
     return (
       Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_AUTH_TOKEN") ||
       Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_API_KEY")

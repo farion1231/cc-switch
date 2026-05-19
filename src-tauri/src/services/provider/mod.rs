@@ -1474,7 +1474,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Kimi => {
-                        let _ = crate::kimi_config::write_kimi_live("", "");
+                        let _ = crate::kimi_config::write_kimi_live("", "", crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME);
                     }
                     _ => {}
                 }
@@ -1542,7 +1542,7 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Kimi => {
-                crate::kimi_config::write_kimi_live("", "")?;
+                crate::kimi_config::write_kimi_live("", "", crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME)?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -1757,7 +1757,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Kimi => {
-                        crate::kimi_config::write_kimi_live("", "").map_err(|e| {
+                        crate::kimi_config::write_kimi_live("", "", crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME).map_err(|e| {
                             AppError::Message(format!("Failed to rollback Kimi live config: {e}"))
                         })
                     }

@@ -25,6 +25,7 @@ export const kimiProviderPresets: KimiProviderPreset[] = [
       env: {
         KIMI_BASE_URL: "https://api.moonshot.cn/v1",
         KIMI_API_KEY: "",
+        KIMI_PROVIDER_NAME: "ccswitch",
       },
     },
     endpointCandidates: ["https://api.moonshot.cn/v1"],
@@ -41,6 +42,7 @@ export const kimiProviderPresets: KimiProviderPreset[] = [
       env: {
         KIMI_BASE_URL: "https://api.kimi.com/coding/v1",
         KIMI_API_KEY: "",
+        KIMI_PROVIDER_NAME: "ccswitch",
       },
     },
     endpointCandidates: ["https://api.kimi.com/coding/v1"],
