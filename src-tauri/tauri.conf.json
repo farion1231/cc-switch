@@ -47,6 +47,11 @@
     "windows": {
       "wix": {
         "template": "wix/per-user-main.wxs"
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "displayLanguageSelector": false,
+        "installMode": "both"
       }
     },
     "macOS": {

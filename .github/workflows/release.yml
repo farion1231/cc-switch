@@ -413,25 +413,25 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $VERSION = $env:GITHUB_REF_NAME  # e.g., v3.5.0
-          # 仅打包 MSI 安装器 + .sig（用于 Updater）
-          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle/msi' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -eq $msi) {
-            # 兜底：全局搜索 .msi
-            $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          # 打包 NSIS 安装器 (.exe) + .sig（用于 Updater）
+          $exe = Get-ChildItem -Path 'src-tauri/target/release/bundle/nsis' -Recurse -Include *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $exe) {
+            # 兜底：全局搜索 .exe
+            $exe = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           }
-          if ($null -ne $msi) {
-            $dest = "CC-Switch-$VERSION-Windows.msi"
-            Copy-Item $msi.FullName (Join-Path release-assets $dest)
+          if ($null -ne $exe) {
+            $dest = "CC-Switch-$VERSION-Windows.exe"
+            Copy-Item $exe.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
-            $sigPath = "$($msi.FullName).sig"
+            $sigPath = "$($exe.FullName).sig"
             if (Test-Path $sigPath) {
               Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
               Write-Host "Signature copied: $dest.sig"
             } else {
-              Write-Warning "Signature not found for $($msi.Name)"
+              Write-Warning "Signature not found for $($exe.Name)"
             }
           } else {
-            Write-Warning 'No Windows MSI installer found'
+            Write-Warning 'No Windows NSIS installer found'
           }
           # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
           # $exeCandidates = @(
@@ -566,7 +566,7 @@ jobs:
             ### 下载
 
             - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
-            - **Windows**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **Windows**: `CC-Switch-${{ github.ref_name }}-Windows.exe`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
             - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
             - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
 
