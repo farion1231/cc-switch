@@ -575,20 +575,48 @@ impl ProviderAdapter for ClaudeAdapter {
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
         // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
         //
-        let mut base = format!(
-            "{}/{}",
-            base_url.trim_end_matches('/'),
-            endpoint.trim_start_matches('/')
-        );
+        let base = base_url.trim_end_matches('/');
+        let ep = endpoint.trim_start_matches('/');
+        let (ep_path, ep_query) = ep.split_once('?').unwrap_or((ep, ""));
 
-        // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
-        while base.contains("/v1/v1") {
-            base = base.replace("/v1/v1", "/v1");
+        // 分离 base URL 的 origin 和 path
+        let (origin, base_path) = if let Some(scheme_end) = base.find("://") {
+            let after = &base[scheme_end + 3..];
+            if let Some(path_start) = after.find('/') {
+                (&base[..scheme_end + 3 + path_start], &after[path_start..])
+            } else {
+                (base, "/")
+            }
+        } else {
+            (base, "/")
+        };
+
+        // 将 path 拆为段，计算尾部重叠（防止 /v1/messages + /v1/messages → /v1/messages/v1/messages）
+        let base_segs: Vec<&str> = base_path.split('/').filter(|s| !s.is_empty()).collect();
+        let ep_segs: Vec<&str> = ep_path.split('/').filter(|s| !s.is_empty()).collect();
+
+        // 找最大重叠：base 尾部 N 段 == endpoint 头部 N 段
+        let overlap = (0..=base_segs.len().min(ep_segs.len()))
+            .filter(|&n| n == 0 || base_segs[base_segs.len() - n..] == ep_segs[..n])
+            .max()
+            .unwrap_or(0);
+
+        let mut all_segs = base_segs.clone();
+        all_segs.extend_from_slice(&ep_segs[overlap..]);
+
+        let path = if all_segs.is_empty() {
+            String::new()
+        } else {
+            format!("/{}", all_segs.join("/"))
+        };
+
+        let mut url = format!("{}{}", origin, path);
+        if !ep_query.is_empty() {
+            url.push('?');
+            url.push_str(ep_query);
         }
-
-        base
+        url
     }
-
     fn get_auth_headers(
         &self,
         auth: &AuthInfo,

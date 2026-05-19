@@ -425,7 +425,8 @@ impl StreamCheckService {
                     .header("x-goog-api-key", &auth.api_key)
                     .header("content-type", "application/json")
                     .header("accept", "text/event-stream")
-                    .header("accept-encoding", "identity"),
+                    .header("accept-encoding", "identity")
+                    .header("user-agent", "cc-switch-stream-check/1.0"),
             };
         } else if is_openai_chat || is_openai_responses {
             // OpenAI-compatible targets: Bearer auth + SSE headers only
@@ -636,7 +637,8 @@ impl StreamCheckService {
             .post(&url)
             .header("x-goog-api-key", &auth.api_key)
             .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream");
+            .header("Accept", "text/event-stream")
+            .header("User-Agent", "cc-switch-stream-check/1.0");
 
         // 供应商自定义 headers 最后追加
         if let Some(headers) = extra_headers {
