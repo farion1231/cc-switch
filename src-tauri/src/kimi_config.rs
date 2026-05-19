@@ -126,6 +126,17 @@ pub fn write_kimi_live(base_url: &str, api_key: &str, provider_name: &str) -> Re
         }
     }
 
+    // Sync services api_key with the active provider's api_key
+    if let Some(services) = doc.get_mut("services").and_then(|s| s.as_table_mut()) {
+        for service_name in ["moonshot_fetch", "moonshot_search"] {
+            if let Some(service) = services.get_mut(service_name) {
+                if let Some(service_table) = service.as_table_mut() {
+                    service_table["api_key"] = toml_edit::value(api_key);
+                }
+            }
+        }
+    }
+
     write_kimi_config(&doc)?;
     Ok(())
 }

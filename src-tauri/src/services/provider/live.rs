@@ -852,9 +852,25 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         }
         AppType::Kimi => {
             let env_map = crate::kimi_config::json_to_env(&provider.settings_config)?;
-            let base_url = env_map.get("KIMI_BASE_URL").cloned().unwrap_or_default();
-            let api_key = env_map.get("KIMI_API_KEY").cloned().unwrap_or_default();
+            let mut base_url = env_map.get("KIMI_BASE_URL").cloned().unwrap_or_default();
+            let mut api_key = env_map.get("KIMI_API_KEY").cloned().unwrap_or_default();
             let provider_name = env_map.get("KIMI_PROVIDER_NAME").cloned().unwrap_or_else(|| crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME.to_string());
+
+            // 向后兼容：如果 settingsConfig 是完整 TOML 格式（包含 providers 字段），
+            // 从中提取当前 provider 的 base_url 和 api_key
+            if base_url.is_empty() && api_key.is_empty() {
+                if let Some(providers) = provider.settings_config.get("providers") {
+                    if let Some(provider_table) = providers.get(&provider_name) {
+                        if let Some(b) = provider_table.get("base_url").and_then(|v| v.as_str()) {
+                            base_url = b.to_string();
+                        }
+                        if let Some(a) = provider_table.get("api_key").and_then(|v| v.as_str()) {
+                            api_key = a.to_string();
+                        }
+                    }
+                }
+            }
+
             crate::kimi_config::write_kimi_live(&base_url, &api_key, &provider_name)?;
             log::debug!("Kimi provider '{}' written to live config", provider.id);
         }
@@ -1089,14 +1105,33 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                     "Kimi 配置文件不存在",
                     "Kimi configuration file not found",
                 ))?;
-            let toml_str = doc.to_string();
-            let toml_value: toml::Value = toml::from_str(&toml_str)
-                .map_err(|e| AppError::Message(format!("Failed to parse Kimi config as TOML value: {e}")))?;
-            let json_str = serde_json::to_string(&toml_value)
-                .map_err(|e| AppError::Message(format!("Failed to convert Kimi TOML to JSON: {e}")))?;
-            let value: Value = serde_json::from_str(&json_str)
-                .map_err(|e| AppError::Message(format!("Failed to parse Kimi config as JSON: {e}")))?;
-            Ok(value)
+
+            // Extract active provider info from TOML and return CC Switch internal format
+            let default_model = doc.get("default_model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("kimi-code/kimi-for-coding");
+            let provider_name = doc.get("models")
+                .and_then(|m| m.get(default_model))
+                .or_else(|| doc.get("models").and_then(|m| m.get("kimi-code/kimi-for-coding")))
+                .and_then(|m| m.get("provider"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME);
+            let (base_url, api_key) = doc.get("providers")
+                .and_then(|p| p.get(provider_name))
+                .map(|provider| {
+                    let base_url = provider.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
+                    let api_key = provider.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+                    (base_url, api_key)
+                })
+                .unwrap_or(("", ""));
+
+            Ok(json!({
+                "env": {
+                    "KIMI_BASE_URL": base_url,
+                    "KIMI_API_KEY": api_key,
+                    "KIMI_PROVIDER_NAME": provider_name
+                }
+            }))
         }
     }
 }

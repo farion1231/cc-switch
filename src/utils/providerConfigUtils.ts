@@ -186,7 +186,24 @@ export const getApiKeyFromConfig = (
     // Kimi API Key
     if (appType === "kimi") {
       const kimiKey = env.KIMI_API_KEY;
-      return typeof kimiKey === "string" ? kimiKey : "";
+      if (typeof kimiKey === "string") {
+        return kimiKey;
+      }
+      // 向后兼容：支持完整 TOML 格式（从 providers 中查找 api_key）
+      const providers = config?.providers;
+      if (providers && typeof providers === "object") {
+        for (const name of Object.keys(providers)) {
+          const provider = providers[name];
+          if (
+            provider &&
+            typeof provider === "object" &&
+            typeof provider.api_key === "string"
+          ) {
+            return provider.api_key;
+          }
+        }
+      }
+      return "";
     }
 
     // Claude API Key (优先 ANTHROPIC_AUTH_TOKEN，其次 ANTHROPIC_API_KEY)
@@ -273,7 +290,24 @@ export const hasApiKeyField = (
     }
 
     if (appType === "kimi") {
-      return Object.prototype.hasOwnProperty.call(env, "KIMI_API_KEY");
+      if (Object.prototype.hasOwnProperty.call(env, "KIMI_API_KEY")) {
+        return true;
+      }
+      // 向后兼容：支持完整 TOML 格式（从 providers 中查找 api_key）
+      const providers = config?.providers;
+      if (providers && typeof providers === "object") {
+        for (const name of Object.keys(providers)) {
+          const provider = providers[name];
+          if (
+            provider &&
+            typeof provider === "object" &&
+            Object.prototype.hasOwnProperty.call(provider, "api_key")
+          ) {
+            return true;
+          }
+        }
+      }
+      return false;
     }
 
     return (

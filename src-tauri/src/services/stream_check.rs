@@ -210,7 +210,7 @@ impl StreamCheckService {
         // 或 `npm` 字段显式指定。它们不走 get_adapter 路径，而是直接分发。
         if matches!(
             app_type,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kimi
         ) {
             return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
@@ -278,21 +278,9 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kimi => {
                 // Already handled via early dispatch above
-                unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
-            }
-            AppType::Kimi => {
-                Self::check_codex_stream(
-                    &client,
-                    &base_url,
-                    &auth,
-                    &model_to_test,
-                    test_prompt,
-                    request_timeout,
-                    provider,
-                )
-                .await
+                unreachable!("OpenCode/OpenClaw/Hermes/Kimi 已通过 check_once_without_adapter 处理")
             }
         };
 
@@ -761,7 +749,23 @@ impl StreamCheckService {
                 )
                 .await
             }
-            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes"),
+            AppType::Kimi => {
+                let env_map = crate::kimi_config::json_to_env(&provider.settings_config)?;
+                let base_url = env_map.get("KIMI_BASE_URL").cloned().unwrap_or_default();
+                let api_key = env_map.get("KIMI_API_KEY").cloned().unwrap_or_default();
+                let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
+                Self::check_codex_stream(
+                    &client,
+                    &base_url,
+                    &auth,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                    provider,
+                )
+                .await
+            }
+            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes/Kimi"),
         };
 
         let response_time = start.elapsed().as_millis() as u64;
