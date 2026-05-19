@@ -9,6 +9,9 @@ import {
   Loader2,
   Zap,
   Power,
+  Lock,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -57,12 +60,16 @@ export function ProxyPanel({
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
   const [listenPort, setListenPort] = useState("15721");
+  // 代理密码本地状态
+  const [proxyPassword, setProxyPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   // 同步全局配置到本地状态
   useEffect(() => {
     if (globalConfig) {
       setListenAddress(globalConfig.listenAddress);
       setListenPort(String(globalConfig.listenPort));
+      setProxyPassword(globalConfig.proxyPassword ?? "");
     }
   }, [globalConfig]);
 
@@ -178,6 +185,7 @@ export function ProxyPanel({
         ...globalConfig,
         listenAddress: addressTrimmed,
         listenPort: port,
+        proxyPassword: proxyPassword?.trim() || undefined,
       });
       toast.success(
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),
@@ -405,6 +413,38 @@ export function ProxyPanel({
                 </div>
               </div>
 
+              {/* Password auth status indicator */}
+              <div className="pt-3 border-t border-border">
+                <div className="flex items-center justify-between rounded-md border border-border bg-background/60 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <Lock className="h-4 w-4 text-muted-foreground" />
+                    <div className="space-y-0.5">
+                      <Label className="text-sm font-medium">
+                        {t("proxy.settings.fields.password.status", {
+                          defaultValue: "密码认证",
+                        })}
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        {globalConfig?.proxyPassword
+                          ? t("proxy.settings.fields.password.enabled", {
+                              defaultValue: "已启用，客户端需在 Authorization、x-api-key 或 x-goog-api-key 头中提供密码",
+                            })
+                          : t("proxy.settings.fields.password.disabled", {
+                              defaultValue: "未启用，局域网设备可直接访问",
+                            })}
+                      </p>
+                    </div>
+                  </div>
+                  <div
+                    className={`h-2 w-2 rounded-full ${
+                      globalConfig?.proxyPassword
+                        ? "bg-green-500"
+                        : "bg-muted-foreground/40"
+                    }`}
+                  />
+                </div>
+              </div>
+
               {/* [6] Provider queues */}
               {(claudeQueue.length > 0 ||
                 codexQueue.length > 0 ||
@@ -556,6 +596,48 @@ export function ProxyPanel({
                     })}
                   </p>
                 </div>
+              </div>
+
+              {/* 密码认证 */}
+              <div className="space-y-2">
+                <Label htmlFor="proxy-password">
+                  {t("proxy.settings.fields.password.label", {
+                    defaultValue: "代理密码（可选）",
+                  })}
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="proxy-password"
+                    type={showPassword ? "text" : "password"}
+                    value={proxyPassword}
+                    onChange={(e) => setProxyPassword(e.target.value)}
+                    placeholder={t(
+                      "proxy.settings.fields.password.placeholder",
+                      {
+                        defaultValue: "留空则不启用密码认证",
+                      },
+                    )}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t("proxy.settings.fields.password.description", {
+                    defaultValue:
+                      "设置后局域网设备需在请求头中提供密码才能使用代理。CC Switch 接管模式下会自动配置。",
+                  })}
+                </p>
               </div>
 
               <div className="flex justify-end">

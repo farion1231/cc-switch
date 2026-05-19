@@ -9,6 +9,7 @@ export interface ProxyConfig {
   streaming_first_byte_timeout: number;
   streaming_idle_timeout: number;
   non_streaming_timeout: number;
+  proxy_password?: string;
 }
 
 export interface ProxyStatus {
@@ -121,6 +122,7 @@ export interface GlobalProxyConfig {
   listenAddress: string;
   listenPort: number;
   enableLogging: boolean;
+  proxyPassword?: string;
 }
 
 // 应用级代理配置（每个 app 独立）

@@ -25,6 +25,9 @@ pub struct ProxyConfig {
     /// 非流式总超时（秒）- 非流式请求的总超时时间，范围 60-1200 秒，默认 600 秒（10 分钟）
     #[serde(default = "default_non_streaming_timeout")]
     pub non_streaming_timeout: u64,
+    /// 代理密码认证（空字符串或 None 表示不启用）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_password: Option<String>,
 }
 
 fn default_streaming_first_byte_timeout() -> u64 {
@@ -51,6 +54,7 @@ impl Default for ProxyConfig {
             streaming_first_byte_timeout: 60,
             streaming_idle_timeout: 120,
             non_streaming_timeout: 600,
+            proxy_password: None,
         }
     }
 }
@@ -162,6 +166,9 @@ pub struct GlobalProxyConfig {
     pub listen_port: u16,
     /// 是否启用日志
     pub enable_logging: bool,
+    /// 代理密码认证（空字符串或 None 表示不启用）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_password: Option<String>,
 }
 
 /// 应用级代理配置（每个 app 独立）
