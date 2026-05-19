@@ -1179,6 +1179,60 @@ impl ProxyService {
         Ok(())
     }
 
+    /// Ensure a single app is routed through the local proxy.
+    ///
+    /// This is used when selecting providers that cannot be written directly to
+    /// the client live config, such as Codex GitHub Copilot. The live config is
+    /// backed up once, the selected provider is saved as the current logical
+    /// target, and the client file is rewritten to the local proxy endpoint.
+    pub async fn ensure_takeover_for_app(&self, app_type: &AppType) -> Result<(), String> {
+        let app_type_str = app_type.as_str();
+
+        if !self.is_running().await {
+            self.start().await?;
+        }
+
+        let has_backup = self
+            .db
+            .get_live_backup(app_type_str)
+            .await
+            .map_err(|e| format!("读取 {app_type_str} 备份失败: {e}"))?
+            .is_some();
+        let live_taken_over = self.detect_takeover_in_live_config_for_app(app_type);
+
+        if !has_backup {
+            self.backup_live_config_strict(app_type).await?;
+            if let Err(e) = self.sync_live_to_provider(app_type).await {
+                let _ = self.db.delete_live_backup(app_type_str).await;
+                return Err(e);
+            }
+        }
+
+        if !live_taken_over {
+            if let Err(e) = self.takeover_live_config_strict(app_type).await {
+                if !has_backup {
+                    let _ = self.restore_live_config_for_app(app_type).await;
+                    let _ = self.db.delete_live_backup(app_type_str).await;
+                }
+                return Err(e);
+            }
+        }
+
+        let mut updated_config = self
+            .db
+            .get_proxy_config_for_app(app_type_str)
+            .await
+            .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+        updated_config.enabled = true;
+        self.db
+            .update_proxy_config_for_app(updated_config)
+            .await
+            .map_err(|e| format!("设置 {app_type_str} enabled 状态失败: {e}"))?;
+        let _ = self.db.set_live_takeover_active(true).await;
+
+        Ok(())
+    }
+
     /// 接管指定应用的 Live 配置（尽力而为：配置不存在/读取失败则跳过）
     async fn takeover_live_config_best_effort(&self, app_type: &AppType) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
@@ -1741,10 +1795,18 @@ impl ProxyService {
         crate::settings::set_current_provider(&app_type_enum, Some(provider_id))
             .map_err(|e| format!("更新本地当前供应商失败: {e}"))?;
 
-        if should_sync_backup {
+        if should_sync_backup && !provider.uses_managed_account_auth() {
             self.update_live_backup_from_provider_inner(app_type, &provider)
                 .await?;
+        } else if should_sync_backup {
+            log::info!(
+                "跳过 {} managed-account provider '{}' 的 Live 备份覆盖",
+                app_type,
+                provider.id
+            );
+        }
 
+        if should_sync_backup {
             if matches!(app_type_enum, AppType::Claude) {
                 self.sync_claude_live_from_provider_while_proxy_active(&provider)
                     .await?;
