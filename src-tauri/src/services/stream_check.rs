@@ -718,13 +718,20 @@ impl StreamCheckService {
         };
 
         // Chat Completions API 请求体格式
+        // 添加 max_tokens=1 减少响应开销；temperature=0 确保确定性输出
         let body = json!({
             "model": model,
             "messages": [{ "role": "user", "content": test_prompt }],
-            "stream": true
+            "stream": true,
+            "max_tokens": 1,
+            "temperature": 0.0
         });
 
         let version = env!("CARGO_PKG_VERSION");
+        let request_id = format!("{}-check-{}"
+            , uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("ccsw")
+            , chrono::Utc::now().timestamp_millis()
+        );
         let response = client
             .post(&url)
             .header("authorization", format!("Bearer {}", auth.api_key))
@@ -732,6 +739,9 @@ impl StreamCheckService {
             .header("accept", "text/event-stream")
             .header("accept-encoding", "identity")
             .header("user-agent", format!("CC-Switch/{}", version))
+            .header("x-request-id", &request_id)
+            .header("x-client-name", "cc-switch")
+            .header("x-client-version", version)
             .timeout(timeout)
             .json(&body)
             .send()
