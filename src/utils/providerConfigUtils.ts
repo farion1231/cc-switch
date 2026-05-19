@@ -614,9 +614,7 @@ const CODEX_CHAT_WIRE_API_VALUES = new Set([
 export const isCodexChatWireApi = (
   wireApi: string | undefined | null,
 ): boolean =>
-  CODEX_CHAT_WIRE_API_VALUES.has(
-    (wireApi ?? "").trim().toLowerCase(),
-  );
+  CODEX_CHAT_WIRE_API_VALUES.has((wireApi ?? "").trim().toLowerCase());
 
 // 从 Codex 的 TOML 配置文本中提取 wire_api（支持单/双引号）
 export const extractCodexWireApi = (
