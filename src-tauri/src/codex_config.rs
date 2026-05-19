@@ -418,6 +418,8 @@ pub fn write_codex_live_atomic_with_stable_provider(
 /// Supported fields:
 /// - `"base_url"`: writes to `[model_providers.<current>].base_url` if `model_provider` exists,
 ///   otherwise falls back to top-level `base_url`.
+/// - `"wire_api"`: writes to `[model_providers.<current>].wire_api` if `model_provider` exists,
+///   otherwise falls back to top-level `wire_api`.
 /// - `"model"`: writes to top-level `model` field.
 ///
 /// Empty value removes the field.
@@ -429,7 +431,7 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
     let trimmed = value.trim();
 
     match field {
-        "base_url" => {
+        "base_url" | "wire_api" => {
             let model_provider = doc
                 .get("model_provider")
                 .and_then(|item| item.as_str())
@@ -449,20 +451,20 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
 
                     if let Some(provider_table) = model_providers[&provider_key].as_table_mut() {
                         if trimmed.is_empty() {
-                            provider_table.remove("base_url");
+                            provider_table.remove(field);
                         } else {
-                            provider_table["base_url"] = toml_edit::value(trimmed);
+                            provider_table[field] = toml_edit::value(trimmed);
                         }
                         return Ok(doc.to_string());
                     }
                 }
             }
 
-            // Fallback: no model_provider or structure mismatch → top-level base_url
+            // Fallback: no model_provider or structure mismatch → top-level field
             if trimmed.is_empty() {
-                doc.as_table_mut().remove("base_url");
+                doc.as_table_mut().remove(field);
             } else {
-                doc["base_url"] = toml_edit::value(trimmed);
+                doc[field] = toml_edit::value(trimmed);
             }
         }
         "model" => {
@@ -796,6 +798,36 @@ wire_api = "responses"
             .and_then(|v| v.get("wire_api"))
             .and_then(|v| v.as_str());
         assert_eq!(wire_api, Some("responses"));
+    }
+
+    #[test]
+    fn wire_api_writes_into_correct_model_provider_section() {
+        let input = r#"model_provider = "chat_only"
+model = "gpt-5.1-codex"
+
+[model_providers.chat_only]
+name = "Chat Only"
+base_url = "https://example.com/v1"
+wire_api = "chat"
+"#;
+
+        let result = update_codex_toml_field(input, "wire_api", "responses").unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        let provider = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("chat_only"))
+            .expect("model_providers.chat_only should exist");
+
+        assert_eq!(
+            provider.get("wire_api").and_then(|v| v.as_str()),
+            Some("responses")
+        );
+        assert_eq!(
+            provider.get("base_url").and_then(|v| v.as_str()),
+            Some("https://example.com/v1")
+        );
+        assert!(parsed.get("wire_api").is_none());
     }
 
     #[test]

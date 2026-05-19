@@ -178,6 +178,7 @@
     "noRoutingSupport": "ルーティング非対応"
   },
   "codex": {
+    "needsRouting": "ルーティングが必要",
     "noRoutingSupport": "ルーティング非対応"
   },
   "claudeDesktop": {
@@ -908,6 +909,9 @@
     "apiFormatOpenAIChat": "OpenAI Chat Completions（ルーティングが必要）",
     "apiFormatOpenAIResponses": "OpenAI Responses API（ルーティングが必要）",
     "apiFormatGeminiNative": "Gemini Native generateContent（ルーティングが必要）",
+    "codexApiFormatResponses": "OpenAI Responses API（ネイティブ）",
+    "codexApiFormatOpenAIChat": "OpenAI Chat Completions（ルーティングが必要）",
+    "codexApiFormatHint": "このプロバイダーが実際に対応している Codex API フォーマットを選択します。新しい Codex との互換性のため設定は Responses のままにし、Chat Completions はローカルルーティングで変換します。",
     "authField": "認証フィールド",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（デフォルト）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",

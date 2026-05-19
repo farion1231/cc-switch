@@ -2,6 +2,7 @@
  * Codex 预设供应商配置模板
  */
 import { ProviderCategory } from "../types";
+import type { CodexApiFormat } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 
 export interface CodexProviderPreset {
@@ -24,6 +25,8 @@ export interface CodexProviderPreset {
   // 图标配置
   icon?: string; // 图标名称
   iconColor?: string; // 图标颜色
+  // Codex API 格式
+  apiFormat?: CodexApiFormat;
 }
 
 /**

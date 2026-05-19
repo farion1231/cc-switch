@@ -67,7 +67,30 @@ impl Provider {
     }
 
     pub fn is_codex_oauth(&self) -> bool {
-        self.meta.as_ref().and_then(|m| m.provider_type.as_deref()) == Some("codex_oauth")
+        self.provider_type() == Some("codex_oauth")
+    }
+
+    pub fn is_github_copilot(&self) -> bool {
+        self.provider_type() == Some("github_copilot")
+            || self.claude_base_url_contains("githubcopilot.com")
+    }
+
+    pub fn uses_managed_account_auth(&self) -> bool {
+        self.is_github_copilot()
+            || self.is_codex_oauth()
+            || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
+    }
+
+    fn provider_type(&self) -> Option<&str> {
+        self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
+    }
+
+    fn claude_base_url_contains(&self, needle: &str) -> bool {
+        self.settings_config
+            .pointer("/env/ANTHROPIC_BASE_URL")
+            .and_then(|value| value.as_str())
+            .map(|base_url| base_url.contains(needle))
+            .unwrap_or(false)
     }
 
     pub fn codex_fast_mode_enabled(&self) -> bool {
@@ -808,6 +831,53 @@ mod tests {
         assert!(provider.icon.is_none());
         assert!(provider.icon_color.is_none());
         assert!(!provider.in_failover_queue);
+    }
+
+    #[test]
+    fn provider_managed_account_auth_detection_uses_type_or_known_endpoint() {
+        let mut copilot = Provider::with_id(
+            "copilot".to_string(),
+            "Copilot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+                }
+            }),
+            None,
+        );
+        assert!(copilot.is_github_copilot());
+        assert!(copilot.uses_managed_account_auth());
+
+        let mut codex = Provider::with_id(
+            "codex".to_string(),
+            "Codex".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        codex.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+        assert!(codex.is_codex_oauth());
+        assert!(codex.uses_managed_account_auth());
+
+        let codex_endpoint = Provider::with_id(
+            "codex-endpoint".to_string(),
+            "Codex Endpoint".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        assert!(codex_endpoint.uses_managed_account_auth());
+
+        copilot.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+        assert!(copilot.is_github_copilot());
     }
 
     #[test]
