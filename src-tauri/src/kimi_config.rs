@@ -168,6 +168,17 @@ pub fn validate_kimi_settings(settings: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 从 Kimi config.toml 读取当前默认模型名
+///
+/// 读取 `[models."kimi-code/kimi-for-coding"].model` 字段，
+/// 用于 stream check 时发送正确的测试模型。
+pub fn get_kimi_model_from_config() -> Option<String> {
+    let doc = read_kimi_config().ok()??;
+    let models = doc.get("models")?.as_table()?;
+    let model_table = models.get("kimi-code/kimi-for-coding")?.as_table()?;
+    model_table.get("model")?.as_str().map(|s| s.to_string())
+}
+
 /// 严格验证 Kimi 配置（切换时使用）
 pub fn validate_kimi_settings_strict(settings: &Value) -> Result<(), AppError> {
     validate_kimi_settings(settings)?;

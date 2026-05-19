@@ -724,12 +724,14 @@ impl StreamCheckService {
             "stream": true
         });
 
+        let version = env!("CARGO_PKG_VERSION");
         let response = client
             .post(&url)
             .header("authorization", format!("Bearer {}", auth.api_key))
             .header("content-type", "application/json")
             .header("accept", "text/event-stream")
             .header("accept-encoding", "identity")
+            .header("user-agent", format!("CC-Switch/{}", version))
             .timeout(timeout)
             .json(&body)
             .send()
@@ -1486,7 +1488,8 @@ impl StreamCheckService {
             }
             AppType::Kimi => {
                 Self::extract_env_model(provider, "KIMI_MODEL")
-                    .unwrap_or_else(|| "moonshot-v1-8k".to_string())
+                    .or_else(|| crate::kimi_config::get_kimi_model_from_config())
+                    .unwrap_or_else(|| "kimi-for-coding".to_string())
             }
         }
     }
