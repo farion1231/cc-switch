@@ -1089,6 +1089,23 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/register?aff=cc-switch",
+    settingsConfig: {
+      name: "coderplan",
+      base_url: "https://api.coderplan.ai",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
+    },
+    category: "aggregator",
+    icon: "coderplan",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "coderplan" },
+    },
+  },
+  {
     name: "LemonData",
     websiteUrl: "https://lemondata.cc",
     apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",

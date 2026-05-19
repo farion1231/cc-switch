@@ -817,6 +817,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/register?aff=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "CoderPlan",
+      options: {
+        baseURL: "https://api.coderplan.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-7": { name: "Claude Opus 4.7" },
+      },
+    },
+    category: "aggregator",
+    icon: "coderplan",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "MiniMax",
     websiteUrl: "https://platform.minimaxi.com",
     apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
