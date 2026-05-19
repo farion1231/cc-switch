@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -51,6 +52,7 @@ import type {
   ProviderCategory,
   ClaudeApiFormat,
   ClaudeApiKeyField,
+  ClaudeModelRouting,
 } from "@/types";
 import {
   hasClaudeOneMMarker,
@@ -65,6 +67,11 @@ import {
 
 interface EndpointCandidate {
   url: string;
+}
+
+interface RoutingProviderOption {
+  id: string;
+  name: string;
 }
 
 interface ClaudeFormFieldsProps {
@@ -138,6 +145,25 @@ interface ClaudeFormFieldsProps {
   // Full URL mode
   isFullUrl: boolean;
   onFullUrlChange: (value: boolean) => void;
+
+  // Claude model routing
+  claudeModelRouting: ClaudeModelRouting;
+  claudeModelRoutingEnabled: boolean;
+  onClaudeModelRoutingEnabledChange: (enabled: boolean) => void;
+  onClaudeModelRoutingChange: (
+    field:
+      | "defaultProviderId"
+      | "haikuProviderId"
+      | "sonnetProviderId"
+      | "opusProviderId",
+    value: string,
+  ) => void;
+  routingProviderOptions: RoutingProviderOption[];
+  // Proxy state for inline warnings
+  proxyRunning?: boolean;
+  claudeTakeoverEnabled?: boolean;
+  rectifierEnabled?: boolean;
+  toolUseIdRectifierEnabled?: boolean;
 }
 
 export function ClaudeFormFields({
@@ -190,15 +216,32 @@ export function ClaudeFormFields({
   onApiKeyFieldChange,
   isFullUrl,
   onFullUrlChange,
+  claudeModelRouting,
+  claudeModelRoutingEnabled,
+  onClaudeModelRoutingEnabledChange,
+  onClaudeModelRoutingChange,
+  routingProviderOptions,
+  proxyRunning,
+  claudeTakeoverEnabled,
+  rectifierEnabled,
+  toolUseIdRectifierEnabled,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
+  const inheritValue = "__inherit__";
+  const hasAnyRoutingValue = !!(
+    claudeModelRouting.defaultProviderId ||
+    claudeModelRouting.haikuProviderId ||
+    claudeModelRouting.sonnetProviderId ||
+    claudeModelRouting.opusProviderId
+  );
   const hasAnyAdvancedValue = !!(
     claudeModel ||
     defaultHaikuModel ||
     defaultSonnetModel ||
     defaultOpusModel ||
     apiFormat !== "anthropic" ||
-    apiKeyField !== "ANTHROPIC_AUTH_TOKEN"
+    apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
+    (claudeModelRoutingEnabled && hasAnyRoutingValue)
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
@@ -932,6 +975,200 @@ export function ClaudeFormFields({
                     "仅在 Claude Code 请求没有明确落到 Sonnet、Opus 或 Haiku 角色时使用；通常可以留空。",
                 })}
               </p>
+            </div>
+
+            <div className="space-y-2 border-t pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <FormLabel>
+                    {t("providerForm.claudeModelRouting", {
+                      defaultValue: "模型路由供应商",
+                    })}
+                  </FormLabel>
+                  <p className="text-xs text-muted-foreground">
+                    {t("providerForm.claudeRoutingToggleHint", {
+                      defaultValue: "开启后可按模型类型指定目标供应商。",
+                    })}
+                  </p>
+                </div>
+                <Switch
+                  checked={claudeModelRoutingEnabled}
+                  onCheckedChange={onClaudeModelRoutingEnabledChange}
+                />
+              </div>
+
+              {claudeModelRoutingEnabled ? (
+                <>
+                  {!proxyRunning ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      {t("providerForm.claudeRoutingProxyNotRunningInline", {
+                        defaultValue:
+                          "本地路由服务未启动，模型路由供应商配置保存后暂不会生效。",
+                      })}
+                    </p>
+                  ) : !claudeTakeoverEnabled ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      {t("providerForm.claudeRoutingTakeoverNotEnabledInline", {
+                        defaultValue:
+                          "Claude 接管未开启，模型路由供应商配置保存后暂不会生效。",
+                      })}
+                    </p>
+                  ) : rectifierEnabled === false ||
+                    toolUseIdRectifierEnabled === false ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      {t("providerForm.claudeRoutingRectifierSuggestedInline", {
+                        defaultValue:
+                          "跨供应商继续历史对话时，建议在设置中开启整流器和 Tool Use ID 整流。",
+                      })}
+                    </p>
+                  ) : null}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <FormLabel htmlFor="routingDefaultProvider">
+                        {t("providerForm.claudeRoutingDefault", {
+                          defaultValue: "主模型",
+                        })}
+                      </FormLabel>
+                      <Select
+                        value={claudeModelRouting.defaultProviderId || inheritValue}
+                        onValueChange={(value) =>
+                          onClaudeModelRoutingChange(
+                            "defaultProviderId",
+                            value === inheritValue ? "" : value,
+                          )
+                        }
+                      >
+                        <SelectTrigger id="routingDefaultProvider" className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={inheritValue}>
+                            {t("providerForm.claudeRoutingInheritCurrent", {
+                              defaultValue: "跟随当前供应商",
+                            })}
+                          </SelectItem>
+                          {routingProviderOptions.map((provider) => (
+                            <SelectItem key={provider.id} value={provider.id}>
+                              {provider.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <FormLabel htmlFor="routingHaikuProvider">
+                        {t("providerForm.claudeRoutingHaiku", {
+                          defaultValue: "Haiku",
+                        })}
+                      </FormLabel>
+                      <Select
+                        value={claudeModelRouting.haikuProviderId || inheritValue}
+                        onValueChange={(value) =>
+                          onClaudeModelRoutingChange(
+                            "haikuProviderId",
+                            value === inheritValue ? "" : value,
+                          )
+                        }
+                      >
+                        <SelectTrigger id="routingHaikuProvider" className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={inheritValue}>
+                            {t("providerForm.claudeRoutingInheritCurrent", {
+                              defaultValue: "跟随当前供应商",
+                            })}
+                          </SelectItem>
+                          {routingProviderOptions.map((provider) => (
+                            <SelectItem key={provider.id} value={provider.id}>
+                              {provider.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <FormLabel htmlFor="routingSonnetProvider">
+                        {t("providerForm.claudeRoutingSonnet", {
+                          defaultValue: "Sonnet",
+                        })}
+                      </FormLabel>
+                      <Select
+                        value={claudeModelRouting.sonnetProviderId || inheritValue}
+                        onValueChange={(value) =>
+                          onClaudeModelRoutingChange(
+                            "sonnetProviderId",
+                            value === inheritValue ? "" : value,
+                          )
+                        }
+                      >
+                        <SelectTrigger id="routingSonnetProvider" className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={inheritValue}>
+                            {t("providerForm.claudeRoutingInheritCurrent", {
+                              defaultValue: "跟随当前供应商",
+                            })}
+                          </SelectItem>
+                          {routingProviderOptions.map((provider) => (
+                            <SelectItem key={provider.id} value={provider.id}>
+                              {provider.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <FormLabel htmlFor="routingOpusProvider">
+                        {t("providerForm.claudeRoutingOpus", {
+                          defaultValue: "Opus",
+                        })}
+                      </FormLabel>
+                      <Select
+                        value={claudeModelRouting.opusProviderId || inheritValue}
+                        onValueChange={(value) =>
+                          onClaudeModelRoutingChange(
+                            "opusProviderId",
+                            value === inheritValue ? "" : value,
+                          )
+                        }
+                      >
+                        <SelectTrigger id="routingOpusProvider" className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={inheritValue}>
+                            {t("providerForm.claudeRoutingInheritCurrent", {
+                              defaultValue: "跟随当前供应商",
+                            })}
+                          </SelectItem>
+                          {routingProviderOptions.map((provider) => (
+                            <SelectItem key={provider.id} value={provider.id}>
+                              {provider.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t("providerForm.claudeRoutingHint", {
+                      defaultValue:
+                        "可选：按模型类型将请求优先路由到指定供应商；未设置时跟随当前供应商与故障转移链。",
+                    })}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {t("providerForm.claudeRoutingDisabledHint", {
+                    defaultValue: "已关闭模型路由供应商；请求将跟随当前供应商与故障转移链。",
+                  })}
+                </p>
+              )}
             </div>
           </CollapsibleContent>
         </Collapsible>

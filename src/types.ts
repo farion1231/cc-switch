@@ -137,6 +137,13 @@ export interface ClaudeDesktopModelRoute {
   supports1m?: boolean;
 }
 
+export interface ClaudeModelRouting {
+  defaultProviderId?: string;
+  haikuProviderId?: string;
+  sonnetProviderId?: string;
+  opusProviderId?: string;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -179,6 +186,8 @@ export interface ProviderMeta {
   isFullUrl?: boolean;
   // Prompt cache key for OpenAI Responses-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
+  // Claude 模型级供应商路由（仅 Claude 供应商使用）
+  claudeModelRouting?: ClaudeModelRouting;
   // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
   codexFastMode?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）

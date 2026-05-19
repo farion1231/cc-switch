@@ -238,6 +238,73 @@ pub struct ClaudeDesktopModelRoute {
     pub supports_1m: Option<bool>,
 }
 
+/// Claude Code 模型级路由配置（按模型类型选择目标供应商）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClaudeModelRouting {
+    /// 主模型路由供应商
+    #[serde(rename = "defaultProviderId", skip_serializing_if = "Option::is_none")]
+    pub default_provider_id: Option<String>,
+    /// Haiku 路由供应商
+    #[serde(rename = "haikuProviderId", skip_serializing_if = "Option::is_none")]
+    pub haiku_provider_id: Option<String>,
+    /// Sonnet 路由供应商
+    #[serde(rename = "sonnetProviderId", skip_serializing_if = "Option::is_none")]
+    pub sonnet_provider_id: Option<String>,
+    /// Opus 路由供应商
+    #[serde(rename = "opusProviderId", skip_serializing_if = "Option::is_none")]
+    pub opus_provider_id: Option<String>,
+}
+
+impl ClaudeModelRouting {
+    /// 根据请求模型名和当前供应商的模型映射配置，决定路由到哪个供应商。
+    ///
+    /// 匹配策略：
+    /// 1. 精确匹配：请求 model == 配置的映射值（忽略大小写）
+    /// 2. 关键词兜底：请求 model 含 haiku/sonnet/opus（未设环境变量时 Claude Code 发原始名）
+    /// 3. 都不匹配 → None（留在当前供应商）
+    pub fn resolve_provider_id(
+        &self,
+        model: &str,
+        mapping: &crate::proxy::model_mapper::ModelMapping,
+    ) -> Option<&str> {
+        let model_lower = model.to_lowercase();
+
+        // 1. 精确匹配配置的模型值
+        if let Some(ref v) = mapping.default_model {
+            if model_lower == v.to_lowercase() {
+                return self.default_provider_id.as_deref().filter(|s| !s.is_empty());
+            }
+        }
+        if let Some(ref v) = mapping.haiku_model {
+            if model_lower == v.to_lowercase() {
+                return self.haiku_provider_id.as_deref().filter(|s| !s.is_empty());
+            }
+        }
+        if let Some(ref v) = mapping.sonnet_model {
+            if model_lower == v.to_lowercase() {
+                return self.sonnet_provider_id.as_deref().filter(|s| !s.is_empty());
+            }
+        }
+        if let Some(ref v) = mapping.opus_model {
+            if model_lower == v.to_lowercase() {
+                return self.opus_provider_id.as_deref().filter(|s| !s.is_empty());
+            }
+        }
+
+        // 2. 关键词兜底（Claude Code 未设环境变量时发原始 claude-* 名字）
+        if model_lower.contains("haiku") {
+            return self.haiku_provider_id.as_deref().filter(|s| !s.is_empty());
+        } else if model_lower.contains("sonnet") {
+            return self.sonnet_provider_id.as_deref().filter(|s| !s.is_empty());
+        } else if model_lower.contains("opus") {
+            return self.opus_provider_id.as_deref().filter(|s| !s.is_empty());
+        }
+
+        // 3. 都不匹配 → 不路由
+        None
+    }
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -296,6 +363,9 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// Claude 模型级供应商路由（仅 Claude 供应商使用）
+    #[serde(rename = "claudeModelRouting", skip_serializing_if = "Option::is_none")]
+    pub claude_model_routing: Option<ClaudeModelRouting>,
     /// 通用认证绑定（provider_config / managed_account）
     ///
     /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。

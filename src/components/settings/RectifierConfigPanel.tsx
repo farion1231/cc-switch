@@ -15,6 +15,7 @@ export function RectifierConfigPanel() {
     enabled: true,
     requestThinkingSignature: true,
     requestThinkingBudget: true,
+    requestToolUseId: true,
   });
   const [optimizerConfig, setOptimizerConfig] = useState<OptimizerConfig>({
     enabled: false,
@@ -108,6 +109,21 @@ export function RectifierConfigPanel() {
             disabled={!config.enabled}
             onCheckedChange={(checked) =>
               handleChange({ requestThinkingBudget: checked })
+            }
+          />
+        </div>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.toolUseId")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.toolUseIdDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.requestToolUseId}
+            disabled={!config.enabled}
+            onCheckedChange={(checked) =>
+              handleChange({ requestToolUseId: checked })
             }
           />
         </div>

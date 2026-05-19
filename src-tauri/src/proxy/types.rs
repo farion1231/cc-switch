@@ -213,6 +213,11 @@ pub struct RectifierConfig {
     /// 处理错误：budget_tokens + thinking 相关约束
     #[serde(default = "default_true")]
     pub request_thinking_budget: bool,
+    /// 请求整流：启用 tool_use id 兼容整流器（默认开启）
+    ///
+    /// 处理错误：tool_use.id / tool_result.tool_use_id 不符合 Anthropic 校验
+    #[serde(default = "default_true")]
+    pub request_tool_use_id: bool,
 }
 
 fn default_true() -> bool {
@@ -229,6 +234,7 @@ impl Default for RectifierConfig {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            request_tool_use_id: true,
         }
     }
 }
@@ -386,6 +392,10 @@ mod tests {
             config.request_thinking_budget,
             "thinking budget 整流器默认应为 true"
         );
+        assert!(
+            config.request_tool_use_id,
+            "tool use id 整流器默认应为 true"
+        );
     }
 
     #[test]
@@ -396,17 +406,18 @@ mod tests {
         assert!(config.enabled);
         assert!(config.request_thinking_signature);
         assert!(config.request_thinking_budget);
+        assert!(config.request_tool_use_id);
     }
 
     #[test]
     fn test_rectifier_config_serde_explicit_true() {
         // 验证显式设置 true 时正确反序列化
-        let json =
-            r#"{"enabled": true, "requestThinkingSignature": true, "requestThinkingBudget": true}"#;
+        let json = r#"{"enabled": true, "requestThinkingSignature": true, "requestThinkingBudget": true, "requestToolUseId": true}"#;
         let config: RectifierConfig = serde_json::from_str(json).unwrap();
         assert!(config.enabled);
         assert!(config.request_thinking_signature);
         assert!(config.request_thinking_budget);
+        assert!(config.request_tool_use_id);
     }
 
     #[test]
@@ -417,6 +428,7 @@ mod tests {
         assert!(config.enabled);
         assert!(!config.request_thinking_signature);
         assert!(config.request_thinking_budget);
+        assert!(config.request_tool_use_id);
     }
 
     #[test]

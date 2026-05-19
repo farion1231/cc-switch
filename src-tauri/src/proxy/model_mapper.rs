@@ -52,10 +52,34 @@ impl ModelMapping {
     }
 
     /// 根据原始模型名称获取映射后的模型
+    ///
+    /// 匹配策略：先精确匹配配置值，再关键词兜底
     pub fn map_model(&self, original_model: &str) -> String {
         let model_lower = original_model.to_lowercase();
 
-        // 1. 按模型类型匹配
+        // 1. 精确匹配：请求 model == 配置值（已映射的名字）→ 不再重复映射
+        if let Some(ref m) = self.default_model {
+            if model_lower == m.to_lowercase() {
+                return original_model.to_string();
+            }
+        }
+        if let Some(ref m) = self.haiku_model {
+            if model_lower == m.to_lowercase() {
+                return original_model.to_string();
+            }
+        }
+        if let Some(ref m) = self.sonnet_model {
+            if model_lower == m.to_lowercase() {
+                return original_model.to_string();
+            }
+        }
+        if let Some(ref m) = self.opus_model {
+            if model_lower == m.to_lowercase() {
+                return original_model.to_string();
+            }
+        }
+
+        // 2. 关键词匹配（Claude Code 未设环境变量时发原始 claude-* 名字）
         if model_lower.contains("haiku") {
             if let Some(ref m) = self.haiku_model {
                 return m.clone();
@@ -72,12 +96,7 @@ impl ModelMapping {
             }
         }
 
-        // 2. 默认模型
-        if let Some(ref m) = self.default_model {
-            return m.clone();
-        }
-
-        // 3. 无映射，保持原样
+        // 3. 无匹配，保持原样
         original_model.to_string()
     }
 }
@@ -253,12 +272,34 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_model_uses_default() {
+    fn test_mapped_model_name_passes_through() {
+        // 请求的模型名已经是映射后的值（如 env 写入后 Claude Code 直接发），应透传不再二次映射
         let provider = create_provider_with_mapping();
-        let body = json!({"model": "some-unknown-model"});
+        let body = json!({"model": "haiku-mapped"});
+        let (result, original, mapped) = apply_model_mapping(body, &provider);
+        assert_eq!(result["model"], "haiku-mapped");
+        assert_eq!(original, Some("haiku-mapped".to_string()));
+        assert!(mapped.is_none());
+    }
+
+    #[test]
+    fn test_unknown_model_passes_through() {
+        // 既不匹配配置值也不含关键词的模型，直接透传
+        let provider = create_provider_with_mapping();
+        let body = json!({"model": "some-random-model"});
         let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "default-model");
-        assert_eq!(mapped, Some("default-model".to_string()));
+        assert_eq!(result["model"], "some-random-model");
+        assert!(mapped.is_none());
+    }
+
+    #[test]
+    fn test_unknown_claude_model_passes_through() {
+        // claude 前缀但未命中具体 tier 且不匹配任何配置值，直接透传
+        let provider = create_provider_with_mapping();
+        let body = json!({"model": "claude-unknown-model"});
+        let (result, _, mapped) = apply_model_mapping(body, &provider);
+        assert_eq!(result["model"], "claude-unknown-model");
+        assert!(mapped.is_none());
     }
 
     #[test]

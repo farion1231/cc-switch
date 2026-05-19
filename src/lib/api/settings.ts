@@ -221,6 +221,7 @@ export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
   requestThinkingBudget: boolean;
+  requestToolUseId: boolean;
 }
 
 export interface OptimizerConfig {

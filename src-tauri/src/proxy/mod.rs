@@ -31,6 +31,7 @@ pub(crate) mod switch_lock;
 pub mod thinking_budget_rectifier;
 pub mod thinking_optimizer;
 pub mod thinking_rectifier;
+pub mod tool_use_id_rectifier;
 pub(crate) mod types;
 pub mod usage;
 

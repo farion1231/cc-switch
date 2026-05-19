@@ -7,6 +7,8 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::model_mapper::ModelMapping;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -106,6 +108,81 @@ impl ProviderRouter {
         }
 
         Ok(result)
+    }
+
+    /// 按请求内容选择可用供应商（Claude 支持模型级路由）
+    ///
+    /// 流程：
+    /// 1. 从当前供应商的 env 映射模型名（如 claude-sonnet-4-6 → kimi-k2.6）
+    /// 2. 从当前供应商的 routing 选择目标供应商
+    /// 3. 返回 (供应商列表, 是否路由命中, 已映射的模型名)
+    ///
+    /// 规则：
+    /// - 非 Claude：等同 `select_providers`，不做模型映射
+    /// - Claude 无路由配置：回退默认链路
+    pub async fn select_providers_for_request(
+        &self,
+        app_type: &str,
+        request_body: &Value,
+    ) -> Result<(Vec<Provider>, bool, Option<String>), AppError> {
+        if app_type != AppType::Claude.as_str() {
+            let fallback_chain = self.select_providers(app_type).await?;
+            return Ok((fallback_chain, false, None));
+        }
+
+        let Some((target_provider_id, mapped_model)) =
+            self.resolve_claude_route_target(app_type, request_body)?
+        else {
+            let fallback_chain = self.select_providers(app_type).await?;
+            return Ok((fallback_chain, false, None));
+        };
+
+        let Some(target_provider) = self.db.get_provider_by_id(&target_provider_id, app_type)?
+        else {
+            log::warn!(
+                "[{app_type}] Claude 模型路由命中不存在的 provider_id={target_provider_id}，回退默认链路"
+            );
+            let fallback_chain = self.select_providers(app_type).await?;
+            return Ok((fallback_chain, false, mapped_model));
+        };
+
+        let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(config) => config.auto_failover_enabled,
+            Err(e) => {
+                log::error!("[{app_type}] 读取 proxy_config 失败: {e}，默认禁用故障转移");
+                false
+            }
+        };
+
+        // 关闭自动故障转移时，保持单链路语义：
+        // 命中模型路由后只尝试目标供应商，不参与自动重试/熔断链路切换。
+        if !auto_failover_enabled {
+            return Ok((vec![target_provider], true, mapped_model));
+        }
+
+        // 自动故障转移开启时：
+        // 1) 模型路由决定第一跳（target）
+        // 2) failover 队列作为后续兜底（去重）
+        // 3) 默认链路报错（全熔断/未配置）不应阻断 target 尝试
+        let fallback_chain = match self.select_providers(app_type).await {
+            Ok(chain) => chain,
+            Err(AppError::AllProvidersCircuitOpen) | Err(AppError::NoProvidersConfigured) => {
+                log::warn!(
+                    "[{app_type}] 默认链路不可用，但模型路由命中 provider_id={target_provider_id}，将仅尝试路由目标"
+                );
+                Vec::new()
+            }
+            Err(e) => return Err(e),
+        };
+
+        let mut routed = Vec::with_capacity(fallback_chain.len() + 1);
+        routed.push(target_provider);
+        routed.extend(
+            fallback_chain
+                .into_iter()
+                .filter(|p| p.id != target_provider_id),
+        );
+        Ok((routed, true, mapped_model))
     }
 
     /// 请求执行前获取熔断器“放行许可”
@@ -267,12 +344,76 @@ impl ProviderRouter {
 
         breaker
     }
+
+    fn resolve_current_provider_id(&self, app_type: &str) -> Option<String> {
+        AppType::from_str(app_type)
+            .ok()
+            .and_then(|app_enum| {
+                crate::settings::get_effective_current_provider(&self.db, &app_enum)
+                    .ok()
+                    .flatten()
+            })
+            .or_else(|| self.db.get_current_provider(app_type).ok().flatten())
+    }
+
+    fn resolve_claude_route_target(
+        &self,
+        app_type: &str,
+        request_body: &Value,
+    ) -> Result<Option<(String, Option<String>)>, AppError> {
+        if app_type != AppType::Claude.as_str() {
+            return Ok(None);
+        }
+
+        let Some(current_provider_id) = self.resolve_current_provider_id(app_type) else {
+            return Ok(None);
+        };
+
+        let Some(current_provider) = self.db.get_provider_by_id(&current_provider_id, app_type)?
+        else {
+            return Ok(None);
+        };
+
+        let request_model = request_body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or("");
+
+        // 从当前供应商的 env 映射模型名
+        let model_mapping = ModelMapping::from_provider(&current_provider);
+        let mapped_model = if model_mapping.has_mapping() {
+            let mapped = model_mapping.map_model(request_model);
+            if mapped != request_model {
+                Some(mapped)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // 从当前供应商的 routing 选择目标供应商
+        let target_provider_id = current_provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.claude_model_routing.as_ref())
+            .and_then(|routing| routing.resolve_provider_id(request_model, &model_mapping))
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string);
+
+        match target_provider_id {
+            Some(id) => Ok(Some((id, mapped_model))),
+            None => Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::provider::{ClaudeModelRouting, ProviderMeta};
     use serde_json::json;
     use serial_test::serial;
     use std::env;
@@ -519,5 +660,92 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_claude_model_routing_uses_only_target_when_failover_disabled() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let mut provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        provider_a.meta = Some(ProviderMeta {
+            claude_model_routing: Some(ClaudeModelRouting {
+                sonnet_provider_id: Some("b".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let (providers, route_applied, _mapped_model) = router
+            .select_providers_for_request("claude", &json!({"model": "claude-sonnet-4-6"}))
+            .await
+            .unwrap();
+
+        assert!(route_applied);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_claude_model_routing_still_uses_target_when_failover_chain_is_all_open() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let mut provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        provider_a.meta = Some(ProviderMeta {
+            claude_model_routing: Some(ClaudeModelRouting {
+                sonnet_provider_id: Some("b".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        let provider_c =
+            Provider::with_id("c".to_string(), "Provider C".to_string(), json!({}), None);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.save_provider("claude", &provider_c).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+        db.add_to_failover_queue("claude", "a").unwrap();
+        db.add_to_failover_queue("claude", "c").unwrap();
+
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        config.circuit_failure_threshold = 1;
+        config.circuit_timeout_seconds = 60;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        router
+            .record_result("a", "claude", false, false, Some("fail-a".to_string()))
+            .await
+            .unwrap();
+        router
+            .record_result("c", "claude", false, false, Some("fail-c".to_string()))
+            .await
+            .unwrap();
+
+        let (providers, route_applied, _mapped_model) = router
+            .select_providers_for_request("claude", &json!({"model": "claude-sonnet-4-6"}))
+            .await
+            .unwrap();
+
+        assert!(route_applied);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "b");
     }
 }
