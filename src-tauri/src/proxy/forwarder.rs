@@ -1125,7 +1125,7 @@ impl RequestForwarder {
                 let (path, query) = split_endpoint_and_query(endpoint);
                 let rewritten = if path.ends_with("/responses") {
                     path.replace("/responses", "/chat/completions")
-                } else if path == "/v1/responses" {
+                } else if path.starts_with("/v1/responses") {
                     "/v1/chat/completions".to_string()
                 } else {
                     path.to_string()

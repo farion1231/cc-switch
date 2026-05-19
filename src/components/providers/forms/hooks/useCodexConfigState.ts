@@ -71,6 +71,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       // 提取 chat_compat
       if (typeof (config as any).chat_compat === "boolean") {
         setCodexChatCompat((config as any).chat_compat);
+      } else {
+        setCodexChatCompat(false);
       }
 
       // 提取 model_map
