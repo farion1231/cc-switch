@@ -16,6 +16,7 @@ jobs:
   release:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-2022
@@ -518,6 +519,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-22.04
     needs: release
+    if: always() && !cancelled()
     permissions:
       contents: write
     steps:
