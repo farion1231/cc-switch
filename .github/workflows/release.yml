@@ -152,10 +152,14 @@ jobs:
           echo "✅ Tauri signing key prepared"
 
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
+          if [ -z "${{ secrets.APPLE_CERTIFICATE }}" ]; then
+            echo "⚠️ APPLE_CERTIFICATE not set, skipping certificate import"
+            exit 0
+          fi
           # Decode .p12 certificate from base64
           CERT_PATH="$RUNNER_TEMP/certificate.p12"
           printf '%s' "${{ secrets.APPLE_CERTIFICATE }}" | (base64 --decode 2>/dev/null || base64 -D) > "$CERT_PATH"
@@ -311,7 +315,7 @@ jobs:
           fi
 
       - name: Notarize macOS DMG
-        if: runner.os == 'macOS' && secrets.APPLE_ID != ''
+        if: runner.os == 'macOS'
         shell: bash
         timeout-minutes: 30
         env:
@@ -320,6 +324,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          if [ -z "${{ secrets.APPLE_ID }}" ]; then
+            echo "⚠️ APPLE_ID not set, skipping notarization"
+            exit 0
+          fi
 
           DMG_PATH=$(find release-assets -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
           if [ -z "$DMG_PATH" ]; then
