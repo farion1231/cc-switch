@@ -1155,6 +1155,7 @@
     "preset7d": "7d",
     "preset14d": "14d",
     "preset30d": "30d",
+    "presetAll": "すべて",
     "totalRequests": "総リクエスト数",
     "totalCost": "総コスト",
     "cost": "コスト",

@@ -1155,6 +1155,7 @@
     "preset7d": "7d",
     "preset14d": "14d",
     "preset30d": "30d",
+    "presetAll": "全部",
     "totalRequests": "总请求数",
     "totalCost": "总成本",
     "cost": "成本",

@@ -430,6 +430,80 @@ fn local_day_start_rfc3339(day: NaiveDate) -> String {
     local_midnight.to_rfc3339()
 }
 
+fn local_day_timestamp(
+    day: NaiveDate,
+    hour: u32,
+    minute: u32,
+    second: u32,
+) -> Result<i64, AppError> {
+    day.and_hms_opt(hour, minute, second)
+        .and_then(|naive| match Local.from_local_datetime(&naive) {
+            chrono::LocalResult::Single(dt) => Some(dt),
+            chrono::LocalResult::Ambiguous(earliest, _) => Some(earliest),
+            chrono::LocalResult::None => None,
+        })
+        .map(|dt| dt.timestamp())
+        .ok_or_else(|| AppError::Database(format!("无法解析本地日期: {day}")))
+}
+
+fn all_usage_trend_bounds(
+    conn: &Connection,
+    app_type: Option<&str>,
+) -> Result<Option<(i64, i64)>, AppError> {
+    let effective_filter = effective_usage_log_filter("l");
+    let detail_sql = format!(
+        "SELECT MIN(l.created_at), MAX(l.created_at)
+         FROM proxy_request_logs l
+         WHERE {effective_filter} {}",
+        if app_type.is_some() { "AND l.app_type = ?1" } else { "" }
+    );
+    let detail_bounds: (Option<i64>, Option<i64>) = if let Some(at) = app_type {
+        conn.query_row(&detail_sql, params![at], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+    } else {
+        conn.query_row(&detail_sql, [], |row| Ok((row.get(0)?, row.get(1)?)))?
+    };
+
+    let rollup_sql = format!(
+        "SELECT MIN(date), MAX(date) FROM usage_daily_rollups {}",
+        if app_type.is_some() { "WHERE app_type = ?1" } else { "" }
+    );
+    let rollup_bounds: (Option<String>, Option<String>) = if let Some(at) = app_type {
+        conn.query_row(&rollup_sql, params![at], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+    } else {
+        conn.query_row(&rollup_sql, [], |row| Ok((row.get(0)?, row.get(1)?)))?
+    };
+
+    let rollup_start = rollup_bounds
+        .0
+        .as_deref()
+        .map(|date| {
+            NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                .map_err(|err| AppError::Database(format!("解析 rollup 开始日期失败: {err}")))
+                .and_then(|day| local_day_timestamp(day, 0, 0, 0))
+        })
+        .transpose()?;
+    let rollup_end = rollup_bounds
+        .1
+        .as_deref()
+        .map(|date| {
+            NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                .map_err(|err| AppError::Database(format!("解析 rollup 结束日期失败: {err}")))
+                .and_then(|day| local_day_timestamp(day, 23, 59, 59))
+        })
+        .transpose()?;
+
+    let starts = [detail_bounds.0, rollup_start].into_iter().flatten();
+    let ends = [detail_bounds.1, rollup_end].into_iter().flatten();
+    let start = starts.min();
+    let end = ends.max();
+
+    Ok(start.zip(end))
+}
+
 impl Database {
     /// 获取使用量汇总
     pub fn get_usage_summary(
@@ -705,8 +779,16 @@ impl Database {
     ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let end_ts = end_date.unwrap_or_else(|| Local::now().timestamp());
-        let mut start_ts = start_date.unwrap_or_else(|| end_ts - 24 * 60 * 60);
+        let (mut start_ts, end_ts) = if start_date.is_none() && end_date.is_none() {
+            all_usage_trend_bounds(&conn, app_type)?
+                .unwrap_or_else(|| {
+                    let end = Local::now().timestamp();
+                    (end - 24 * 60 * 60, end)
+                })
+        } else {
+            let end = end_date.unwrap_or_else(|| Local::now().timestamp());
+            (start_date.unwrap_or_else(|| end - 24 * 60 * 60), end)
+        };
 
         if start_ts >= end_ts {
             start_ts = end_ts - 24 * 60 * 60;
@@ -3026,6 +3108,63 @@ mod tests {
         assert_eq!(stats[1].total_tokens, 600);
         assert_eq!(stats[2].request_count, 1);
         assert_eq!(stats[2].total_tokens, 275);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_daily_trends_none_bounds_uses_all_available_usage() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "all-detail",
+                    "p1",
+                    "claude",
+                    "claude-3",
+                    100,
+                    50,
+                    "0.01",
+                    100,
+                    200,
+                    local_ts(2024, 5, 1, 13, 0, 0)
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "2024-05-03",
+                    "claude",
+                    "p1",
+                    "claude-3",
+                    2,
+                    2,
+                    200,
+                    100,
+                    0,
+                    0,
+                    "0.02",
+                    120
+                ],
+            )?;
+        }
+
+        let stats = db.get_daily_trends(None, None, Some("claude"))?;
+        assert_eq!(stats.len(), 3);
+        assert_eq!(stats.iter().map(|stat| stat.request_count).sum::<u64>(), 3);
+        assert_eq!(stats[0].total_tokens, 150);
+        assert_eq!(stats[2].total_tokens, 300);
 
         Ok(())
     }

@@ -47,7 +47,10 @@ export function UsageTrendChart({
     );
   }
 
-  const durationSeconds = Math.max(endDate - startDate, 0);
+  const durationSeconds =
+    startDate !== undefined && endDate !== undefined
+      ? Math.max(endDate - startDate, 0)
+      : Number.POSITIVE_INFINITY;
   const isHourly = durationSeconds <= 24 * 60 * 60;
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const dateLocale = getLocaleFromLanguage(language);

@@ -63,8 +63,8 @@ export function UsageDashboard() {
       return getUsageRangePresetLabel(range.preset, t);
     }
 
-    return `${new Date(resolvedRange.startDate * 1000).toLocaleString(locale)} - ${new Date(
-      resolvedRange.endDate * 1000,
+    return `${new Date(resolvedRange.startDate! * 1000).toLocaleString(locale)} - ${new Date(
+      resolvedRange.endDate! * 1000,
     ).toLocaleString(locale)}`;
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
