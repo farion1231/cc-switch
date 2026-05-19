@@ -58,6 +58,7 @@ import {
 } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { ClaudeLauncherDialog } from "@/components/providers/ClaudeLauncherDialog";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -225,6 +226,9 @@ function App() {
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
+  const [launcherProvider, setLauncherProvider] = useState<Provider | null>(
+    null,
+  );
   const [confirmAction, setConfirmAction] = useState<{
     provider: Provider;
     action: "remove" | "delete";
@@ -833,6 +837,16 @@ function App() {
 
   const handleOpenTerminal = async (provider: Provider) => {
     try {
+      if (activeApp === "claude" && !provider.meta?.parallelConfigEnabled) {
+        setLauncherProvider(provider);
+        toast.info(
+          t("provider.launcherSetupRequired", {
+            defaultValue: "请先启用快捷启动",
+          }),
+        );
+        return;
+      }
+
       const selectedDir = await settingsApi.pickDirectory();
       if (!selectedDir) {
         return;
@@ -1050,6 +1064,11 @@ function App() {
                           : activeApp === "hermes"
                             ? switchProvider
                             : undefined
+                      }
+                      onOpenLauncher={
+                        activeApp === "claude"
+                          ? (provider) => setLauncherProvider(provider)
+                          : undefined
                       }
                     />
                   </motion.div>
@@ -1646,6 +1665,91 @@ function App() {
         }
         onConfirm={() => void handleConfirmAction()}
         onCancel={() => setConfirmAction(null)}
+      />
+
+      <ClaudeLauncherDialog
+        open={Boolean(launcherProvider)}
+        onOpenChange={(open) => {
+          if (!open) setLauncherProvider(null);
+        }}
+        provider={launcherProvider}
+        onSaveLauncherSettings={async (providerId, settings) => {
+          try {
+            const updated = await providersApi.updateClaudeLauncherSettings(
+              providerId,
+              settings,
+            );
+            setLauncherProvider(updated);
+            await queryClient.invalidateQueries({
+              queryKey: ["providers", activeApp],
+            });
+
+            if (settings.enabled !== undefined) {
+              toast.success(
+                settings.enabled
+                  ? t("provider.launcherEnable")
+                  : t("provider.launcherDisable"),
+              );
+            }
+            return updated;
+          } catch (e: any) {
+            toast.error(e?.message || String(e));
+            throw e;
+          }
+        }}
+        onSyncProfile={async (providerId) => {
+          const result = await providersApi.syncClaudeProfile(providerId);
+          // Refresh provider data to pick up updated launch command etc.
+          const freshProviders = await providersApi.getAll(activeApp);
+          const freshProvider = freshProviders[providerId];
+          if (freshProvider) {
+            setLauncherProvider(freshProvider);
+          }
+          if (result.error) {
+            throw new Error(result.error);
+          }
+          return result.profileDir || "ok";
+        }}
+        onOpenProfileDir={(path) => {
+          void invoke("open_path_in_finder", { path });
+        }}
+        onGetLauncherStatus={async (providerId) => {
+          return await providersApi.getClaudeShortcutStatus(providerId);
+        }}
+        onInstallLauncher={async (
+          providerId,
+          shortcutName,
+          launcherPermissionMode,
+          removePreviousShortcut,
+        ) => {
+          const result = await providersApi.installClaudeShortcut(
+            providerId,
+            shortcutName,
+            launcherPermissionMode,
+            removePreviousShortcut,
+          );
+          const freshProviders = await providersApi.getAll(activeApp);
+          const freshProvider = freshProviders[providerId];
+          if (freshProvider) {
+            setLauncherProvider(freshProvider);
+          }
+          await queryClient.invalidateQueries({
+            queryKey: ["providers", activeApp],
+          });
+          return result;
+        }}
+        onRemoveLauncher={async (providerId) => {
+          const result = await providersApi.removeClaudeShortcut(providerId);
+          const freshProviders = await providersApi.getAll(activeApp);
+          const freshProvider = freshProviders[providerId];
+          if (freshProvider) {
+            setLauncherProvider(freshProvider);
+          }
+          await queryClient.invalidateQueries({
+            queryKey: ["providers", activeApp],
+          });
+          return result;
+        }}
       />
 
       <ConfirmDialog

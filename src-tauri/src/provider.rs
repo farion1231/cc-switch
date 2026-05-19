@@ -261,6 +261,36 @@ pub struct ClaudeDesktopModelRoute {
     pub supports_1m: Option<bool>,
 }
 
+/// Claude Code permission mode used by provider launchers.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ClaudeLauncherPermissionMode {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "acceptEdits")]
+    AcceptEdits,
+    #[serde(rename = "plan")]
+    Plan,
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "dontAsk")]
+    DontAsk,
+    #[serde(rename = "bypassPermissions")]
+    BypassPermissions,
+}
+
+impl ClaudeLauncherPermissionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::AcceptEdits => "acceptEdits",
+            Self::Plan => "plan",
+            Self::Auto => "auto",
+            Self::DontAsk => "dontAsk",
+            Self::BypassPermissions => "bypassPermissions",
+        }
+    }
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -351,6 +381,46 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+
+    // ----- Claude launcher/profile fields -----
+    /// Whether the managed Claude launcher profile is enabled for this provider.
+    /// When enabled, CC Switch maintains an isolated `CLAUDE_CONFIG_DIR`
+    /// profile that can be launched concurrently with other providers.
+    #[serde(
+        rename = "parallelConfigEnabled",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parallel_config_enabled: Option<bool>,
+
+    /// Override for the managed profile directory path.
+    /// When `None`, the profile path is derived from the provider slug
+    /// under the default profile root (`~/.claude-cc-switch/<slug>/`).
+    #[serde(rename = "managedProfilePath", skip_serializing_if = "Option::is_none")]
+    pub managed_profile_path: Option<String>,
+
+    /// App-internal command used to open Claude Code with this profile.
+    /// This is kept separate from the user-facing launcher alias so terminal
+    /// launch does not depend on `~/.local/bin` being present on PATH.
+    #[serde(rename = "launchCommand", skip_serializing_if = "Option::is_none")]
+    pub launch_command: Option<String>,
+
+    /// The installed launcher alias (e.g. `claude-kimi`).
+    /// Used to track what was installed and for status display.
+    #[serde(rename = "shortcutName", skip_serializing_if = "Option::is_none")]
+    pub shortcut_name: Option<String>,
+
+    /// The target directory where the launcher was installed.
+    /// Currently fixed to `~/.local/bin`; older metadata may contain legacy paths.
+    #[serde(rename = "shortcutTarget", skip_serializing_if = "Option::is_none")]
+    pub shortcut_target: Option<String>,
+
+    /// Optional Claude Code permission mode applied when this provider's
+    /// launcher starts. `None` means follow Claude Code defaults.
+    #[serde(
+        rename = "launcherPermissionMode",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub launcher_permission_mode: Option<ClaudeLauncherPermissionMode>,
 }
 
 impl ProviderMeta {
@@ -377,6 +447,11 @@ impl ProviderMeta {
         }
 
         None
+    }
+
+    /// Whether the managed Claude launcher profile is enabled for this provider.
+    pub fn parallel_config_enabled(&self) -> bool {
+        self.parallel_config_enabled.unwrap_or(false)
     }
 }
 
@@ -776,8 +851,8 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
-        ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeLauncherPermissionMode, ClaudeModelConfig, CodexModelConfig, GeminiModelConfig,
+        OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
 
@@ -805,6 +880,34 @@ mod tests {
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
         assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_launcher_permission_mode() {
+        let meta = ProviderMeta {
+            launcher_permission_mode: Some(ClaudeLauncherPermissionMode::AcceptEdits),
+            ..ProviderMeta::default()
+        };
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value
+                .get("launcherPermissionMode")
+                .and_then(|item| item.as_str()),
+            Some("acceptEdits")
+        );
+    }
+
+    #[test]
+    fn provider_meta_rejects_invalid_launcher_permission_mode() {
+        let value = json!({
+            "launcherPermissionMode": "invalid"
+        });
+
+        let result = serde_json::from_value::<ProviderMeta>(value);
+
+        assert!(result.is_err());
     }
 
     #[test]

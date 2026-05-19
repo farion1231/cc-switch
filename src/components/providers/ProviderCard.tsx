@@ -7,6 +7,8 @@ import type {
 } from "@dnd-kit/core";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import type { ClaudeShortcutInfo } from "@/lib/api/providers";
+import { providersApi } from "@/lib/api/providers";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -62,6 +64,7 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  onOpenLauncher?: () => void;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -154,6 +157,7 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  onOpenLauncher,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -211,6 +215,14 @@ export function ProviderCard({
   ]);
   const isClaudeThirdParty =
     appId === "claude" && provider.category === "third_party";
+  const launcherEnabled =
+    appId === "claude" && Boolean(provider.meta?.parallelConfigEnabled);
+  const launcherShortcutName = provider.meta?.shortcutName || "";
+  const launcherPermissionMode = provider.meta?.launcherPermissionMode ?? null;
+  const launcherProfilePath = provider.meta?.managedProfilePath || "";
+  const [launcherInfo, setLauncherInfo] = useState<ClaudeShortcutInfo | null>(
+    null,
+  );
 
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
@@ -239,6 +251,37 @@ export function ProviderCard({
       setIsExpanded(true);
     }
   }, [hasMultiplePlans]);
+
+  useEffect(() => {
+    if (!launcherEnabled) {
+      setLauncherInfo(null);
+      return;
+    }
+
+    let cancelled = false;
+    providersApi
+      .getClaudeShortcutStatus(provider.id)
+      .then((result) => {
+        if (!cancelled) {
+          setLauncherInfo(result.info);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLauncherInfo(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    launcherEnabled,
+    launcherPermissionMode,
+    launcherProfilePath,
+    launcherShortcutName,
+    provider.id,
+  ]);
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -270,6 +313,58 @@ export function ProviderCard({
     (!isAnyOmo &&
       !isProxyTakeover &&
       (isActiveProvider || hasPersistentConfigHighlight));
+
+  const launcherAlias =
+    launcherInfo?.name ||
+    launcherShortcutName ||
+    t("provider.launcherConfigured", {
+      defaultValue: "configured",
+    });
+  const launcherStatus = launcherInfo?.status || "missing";
+  const launcherPermissionLabel = launcherPermissionMode
+    ? t(`provider.launcherPermissionModes.${launcherPermissionMode}`, {
+        defaultValue: launcherPermissionMode,
+      })
+    : null;
+  const launcherCardLabel = (() => {
+    if (launcherStatus === "installed" && launcherPermissionLabel) {
+      return t("provider.launcherCardInstalledWithMode", {
+        alias: launcherAlias,
+        mode: launcherPermissionLabel,
+        defaultValue: `Launcher: ${launcherAlias} · ${launcherPermissionLabel}`,
+      });
+    }
+    if (launcherStatus === "installed") {
+      return t("provider.launcherCardInstalled", {
+        alias: launcherAlias,
+        defaultValue: `Launcher: ${launcherAlias}`,
+      });
+    }
+    if (launcherStatus === "stale") {
+      return t("provider.launcherCardStale", {
+        alias: launcherAlias,
+        defaultValue: `Launcher: ${launcherAlias} · needs update`,
+      });
+    }
+    if (launcherStatus === "conflict") {
+      return t("provider.launcherCardConflict", {
+        alias: launcherAlias,
+        defaultValue: `Launcher: ${launcherAlias} · conflict`,
+      });
+    }
+    return t("provider.launcherCardMissing", {
+      alias: launcherAlias,
+      defaultValue: `Launcher: ${launcherAlias} · command missing`,
+    });
+  })();
+  const launcherCardClass =
+    launcherStatus === "installed"
+      ? "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300"
+      : launcherStatus === "stale"
+        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+        : launcherStatus === "conflict"
+          ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
+          : "bg-slate-200 text-slate-700 dark:bg-slate-700/60 dark:text-slate-200";
 
   return (
     <div
@@ -424,6 +519,18 @@ export function ProviderCard({
                   })}
                 </span>
               )}
+
+              {launcherEnabled && (
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                    launcherCardClass,
+                  )}
+                  title={launcherCardLabel}
+                >
+                  {launcherCardLabel}
+                </span>
+              )}
             </div>
 
             {displayUrl && (
@@ -552,6 +659,7 @@ export function ProviderCard({
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
               onSetAsDefault={onSetAsDefault}
+              onOpenLauncher={onOpenLauncher}
             />
           </div>
         </div>

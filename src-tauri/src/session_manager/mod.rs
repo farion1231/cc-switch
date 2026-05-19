@@ -25,6 +25,10 @@ pub struct SessionMeta {
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
+    /// The managed Claude profile directory, if this session belongs to a
+    /// managed profile rather than the default global Claude config.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,6 +152,21 @@ fn delete_session_with_root(
     let validated_source = canonicalize_existing_path(source_path, "session source")?;
 
     if !validated_source.starts_with(&validated_root) {
+        // For Claude, also check if the source is under a managed profile root
+        if provider_id == "claude" {
+            let profile_root = crate::config::get_managed_profile_root();
+            if let Ok(canonical_profile_root) =
+                canonicalize_existing_path(&profile_root, "managed profile root")
+            {
+                if validated_source.starts_with(&canonical_profile_root) {
+                    return claude::delete_session(
+                        &canonical_profile_root,
+                        &validated_source,
+                        session_id,
+                    );
+                }
+            }
+        }
         return Err(format!(
             "Session source path is outside provider root: {}",
             source_path.display()

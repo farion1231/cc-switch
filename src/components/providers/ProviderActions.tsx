@@ -7,6 +7,7 @@ import {
   Minus,
   Play,
   Plus,
+  Rocket,
   ShieldAlert,
   Terminal,
   TestTube2,
@@ -43,6 +44,7 @@ interface ProviderActionsProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  onOpenLauncher?: () => void;
 }
 
 export function ProviderActions({
@@ -69,6 +71,7 @@ export function ProviderActions({
   // OpenClaw: default model
   isDefaultModel = false,
   onSetAsDefault,
+  onOpenLauncher,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
@@ -202,7 +205,10 @@ export function ProviderActions({
         ? "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
         : "",
       icon: <Play className="h-4 w-4" />,
-      text: t("provider.enable"),
+      text:
+        appId === "claude"
+          ? t("provider.setCurrent", { defaultValue: "Set Current" })
+          : t("provider.enable"),
     };
   };
 
@@ -327,6 +333,21 @@ export function ProviderActions({
             )}
           >
             <Terminal className="h-4 w-4" />
+          </Button>
+        )}
+
+        {onOpenLauncher && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onOpenLauncher}
+            title={t("provider.openLauncher", "快捷启动")}
+            className={cn(
+              iconButtonClass,
+              "hover:text-teal-600 dark:hover:text-teal-400",
+            )}
+          >
+            <Rocket className="h-4 w-4" />
           </Button>
         )}
 

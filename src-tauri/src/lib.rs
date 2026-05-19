@@ -4,6 +4,8 @@ mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
+mod claude_profile;
+mod claude_shortcut;
 mod codex_config;
 mod commands;
 mod config;
@@ -1258,6 +1260,14 @@ pub fn run() {
             commands::get_tool_versions,
             // Provider terminal
             commands::open_provider_terminal,
+            commands::open_path_in_finder,
+            // Claude launcher/profile
+            commands::sync_claude_profile,
+            commands::get_claude_profile_status,
+            commands::update_claude_launcher_settings,
+            commands::get_claude_shortcut_status,
+            commands::install_claude_shortcut,
+            commands::remove_claude_shortcut,
             // Universal Provider management
             commands::get_universal_providers,
             commands::get_universal_provider,

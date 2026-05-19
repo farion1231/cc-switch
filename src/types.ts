@@ -137,6 +137,14 @@ export interface ClaudeDesktopModelRoute {
   supports1m?: boolean;
 }
 
+export type ClaudeLauncherPermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "auto"
+  | "dontAsk"
+  | "bypassPermissions";
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -185,6 +193,14 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // Claude launcher/profile metadata. Field names are kept for compatibility
+  // with earlier multi-profile builds.
+  parallelConfigEnabled?: boolean;
+  managedProfilePath?: string;
+  launchCommand?: string;
+  shortcutName?: string;
+  shortcutTarget?: string;
+  launcherPermissionMode?: ClaudeLauncherPermissionMode;
 }
 
 // Skill 同步方式
