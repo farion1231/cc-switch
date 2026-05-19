@@ -42,10 +42,19 @@ import { ListItemRow } from "@/components/common/ListItemRow";
 import { cn } from "@/lib/utils";
 import { SkillsToolbar } from "./SkillsToolbar";
 import { SkillsBulkActionBar } from "./SkillsBulkActionBar";
+import { SkillLoadModeChip } from "./SkillLoadModeChip";
+import { SkillRuntimeSettings } from "./SkillRuntimeSettings";
+import {
+  useClaudeRuntimeConfig,
+  useDiscoverAllSkills,
+  useSetSkillLoadMode,
+} from "@/hooks/useSkillLoadMode";
+import type { DiscoveredSkill, SkillLoadMode } from "@/lib/api/skills";
 import {
   useSkillsFilterSort,
   LOCAL_SOURCE_KEY,
   ALL_GROUP_KEY,
+  UNASSIGNED_GROUP_KEY,
 } from "./useSkillsFilterSort";
 import {
   Dialog,
@@ -115,6 +124,22 @@ const UnifiedSkillsPanel = React.forwardRef<
   const setPinMutation = useSetSkillPin();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
   const [isBulkWorking, setIsBulkWorking] = useState(false);
+
+  // Claude Code 运行时（skill 加载模式）
+  const { data: runtimeConfig } = useClaudeRuntimeConfig();
+  const { data: discoveredSkills } = useDiscoverAllSkills();
+  const setLoadModeMutation = useSetSkillLoadMode();
+
+  const loadModeFor = (name: string): SkillLoadMode =>
+    runtimeConfig?.skillLoadModes[name] ?? "on";
+
+  const handleChangeLoadMode = async (name: string, mode: SkillLoadMode) => {
+    try {
+      await setLoadModeMutation.mutateAsync({ name, mode });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -304,10 +329,18 @@ const UnifiedSkillsPanel = React.forwardRef<
     return `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
   };
 
+  // 批量操作只能作用在“当前可见”的选中项上：用户改变过滤器后，
+  // 不可见但仍记录在 selectedIds 中的 skill 不能被静默卸载/切换/更新。
+  // 清除过滤器后选中状态会重新出现，符合用户预期。
   const getSelectedSkills = (): InstalledSkill[] => {
-    if (!skills) return [];
-    return skills.filter((s) => toolbar.state.selectedIds.has(s.id));
+    return toolbar.filtered.filter((s) => toolbar.state.selectedIds.has(s.id));
   };
+
+  const visibleSelectedCount = useMemo(
+    () => getSelectedSkills().length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toolbar.filtered, toolbar.state.selectedIds],
+  );
 
   const handleBulkUninstall = () => {
     const selected = getSelectedSkills();
@@ -405,7 +438,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   const selectedHasUpdate = useMemo(() => {
     return getSelectedSkills().filter((s) => updatesMap[s.id]).length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toolbar.state.selectedIds, skills, updatesMap]);
+  }, [toolbar.state.selectedIds, toolbar.filtered, updatesMap]);
 
   const handleOpenRestoreFromBackup = async () => {
     setRestoreDialogOpen(true);
@@ -548,6 +581,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                 ? t("skills.checkingUpdates")
                 : t("skills.checkUpdates")}
             </Button>
+            <SkillRuntimeSettings />
           </div>
         </div>
 
@@ -583,7 +617,7 @@ const UnifiedSkillsPanel = React.forwardRef<
         {/* 多选条：与 toolbar 同处 sticky 顶部组合，避免 top-offset 计算 */}
         {toolbar.state.selectionMode && (
           <SkillsBulkActionBar
-            selectedCount={toolbar.state.selectedIds.size}
+            selectedCount={visibleSelectedCount}
             selectedHasUpdate={selectedHasUpdate}
             appIds={SKILLS_APP_IDS}
             onUninstall={handleBulkUninstall}
@@ -592,7 +626,7 @@ const UnifiedSkillsPanel = React.forwardRef<
             onCancel={toolbar.exitSelectionMode}
             onSelectAll={() => {
               if (
-                toolbar.state.selectedIds.size === toolbar.filteredCount &&
+                visibleSelectedCount === toolbar.filteredCount &&
                 toolbar.filteredCount > 0
               ) {
                 toolbar.clearSelection();
@@ -650,7 +684,9 @@ const UnifiedSkillsPanel = React.forwardRef<
                 const collapsed = toolbar.state.collapsed.has(group.key);
                 const groupLabel =
                   toolbar.state.groupKey === "app"
-                    ? (APP_ICON_MAP[group.key as AppId]?.label ?? group.label)
+                    ? group.key === UNASSIGNED_GROUP_KEY
+                      ? t("skills.group.unassigned")
+                      : (APP_ICON_MAP[group.key as AppId]?.label ?? group.label)
                     : group.key === LOCAL_SOURCE_KEY
                       ? t("skills.local")
                       : group.label;
@@ -694,6 +730,10 @@ const UnifiedSkillsPanel = React.forwardRef<
                             onToggleSelect={() =>
                               toolbar.toggleSelected(skill.id)
                             }
+                            loadMode={loadModeFor(skill.name)}
+                            onChangeLoadMode={(mode) =>
+                              handleChangeLoadMode(skill.name, mode)
+                            }
                           />
                         ))}
                       </div>
@@ -728,6 +768,12 @@ const UnifiedSkillsPanel = React.forwardRef<
         />
       )}
 
+      <DiscoveredOnlySection
+        skills={discoveredSkills ?? []}
+        managedNames={new Set((skills ?? []).map((s) => s.name))}
+        onChangeLoadMode={handleChangeLoadMode}
+      />
+
       <RestoreSkillsDialog
         backups={skillBackups}
         isDeleting={deleteBackupMutation.isPending}
@@ -744,6 +790,104 @@ const UnifiedSkillsPanel = React.forwardRef<
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
+/**
+ * 列出非 cc-switch 管理的 skill（plugin、用户级、`~/.agents/skills/`），
+ * 仅暴露加载模式控制；不提供安装/卸载/置顶。
+ */
+const DiscoveredOnlySection: React.FC<{
+  skills: DiscoveredSkill[];
+  /** cc-switch 已经在主列表里渲染过的 skill name，本 section 跳过这些 */
+  managedNames: Set<string>;
+  onChangeLoadMode: (name: string, mode: SkillLoadMode) => void;
+}> = ({ skills, managedNames, onChangeLoadMode }) => {
+  const { t } = useTranslation();
+  const [collapsed, setCollapsed] = useState(false);
+
+  const filtered = useMemo(
+    () =>
+      skills.filter(
+        (s) => s.source.kind !== "cc-switch" && !managedNames.has(s.name),
+      ),
+    [skills, managedNames],
+  );
+
+  if (filtered.length === 0) return null;
+
+  return (
+    <div className="mt-4 mb-6">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+      >
+        {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        <span>{t("skills.discoveredOnly.title")}</span>
+        <span className="text-muted-foreground/60">({filtered.length})</span>
+      </button>
+      {!collapsed && (
+        <div className="mt-2 rounded-xl border border-border-default overflow-hidden">
+          {filtered.map((s, idx) => (
+            <DiscoveredOnlyRow
+              key={`${s.name}:${s.sourcePath}`}
+              skill={s}
+              isLast={idx === filtered.length - 1}
+              onChangeLoadMode={(mode) => onChangeLoadMode(s.name, mode)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const DiscoveredOnlyRow: React.FC<{
+  skill: DiscoveredSkill;
+  isLast: boolean;
+  onChangeLoadMode: (mode: SkillLoadMode) => void;
+}> = ({ skill, isLast, onChangeLoadMode }) => {
+  const { t } = useTranslation();
+
+  const sourceLabel = useMemo(() => {
+    switch (skill.source.kind) {
+      case "plugin":
+        return `${skill.source.marketplace}/${skill.source.plugin}`;
+      case "user-level":
+        return t("skills.discoveredOnly.userLevel");
+      case "agents-dir":
+        return t("skills.discoveredOnly.agentsDir");
+      default:
+        return "";
+    }
+  }, [skill.source, t]);
+
+  return (
+    <ListItemRow isLast={isLast}>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-sm text-foreground truncate">
+            {skill.name}
+          </span>
+          <Badge
+            variant="outline"
+            className="shrink-0 text-[10px] px-1.5 py-0 h-4"
+          >
+            {sourceLabel}
+          </Badge>
+        </div>
+        {skill.description && (
+          <p
+            className="text-xs text-muted-foreground truncate"
+            title={skill.description}
+          >
+            {skill.description}
+          </p>
+        )}
+      </div>
+      <SkillLoadModeChip value={skill.loadMode} onChange={onChangeLoadMode} />
+    </ListItemRow>
+  );
+};
+
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
   hasUpdate?: boolean;
@@ -756,6 +900,8 @@ interface InstalledSkillListItemProps {
   selectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: () => void;
+  loadMode: SkillLoadMode;
+  onChangeLoadMode: (mode: SkillLoadMode) => void;
 }
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
@@ -770,6 +916,8 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   selectionMode,
   isSelected,
   onToggleSelect,
+  loadMode,
+  onChangeLoadMode,
 }) => {
   const { t } = useTranslation();
   const isPinned = !!skill.pinnedAt;
@@ -850,6 +998,15 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           </p>
         )}
       </div>
+
+      <SkillLoadModeChip
+        value={loadMode}
+        onChange={onChangeLoadMode}
+        disabled={!skill.apps.claude}
+        disabledReason={
+          !skill.apps.claude ? t("skills.loadMode.disabledClaude") : undefined
+        }
+      />
 
       <AppToggleGroup
         apps={skill.apps}

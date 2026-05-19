@@ -1964,7 +1964,8 @@
       "none": "No grouping",
       "source": "By source",
       "app": "By app",
-      "appHint": "(a skill may appear in multiple groups)"
+      "appHint": "(a skill may appear in multiple groups)",
+      "unassigned": "Unassigned"
     },
     "bulk": {
       "selected": "{{count}} selected",
@@ -2034,6 +2035,34 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
+    },
+    "loadMode": {
+      "on": "Full",
+      "onDesc": "Name + description loaded into Claude Code system prompt (default)",
+      "nameOnly": "Name only",
+      "nameOnlyDesc": "Only the name is exposed; description is hidden until you invoke it",
+      "userInvocableOnly": "Only on /command",
+      "userInvocableOnlyDesc": "Skill is only triggered when you explicitly type its slash command",
+      "off": "Off",
+      "offDesc": "Skill files remain but Claude Code skips loading them",
+      "ariaLabel": "Load mode: {{mode}}",
+      "disabledClaude": "Skill is not enabled for Claude — load mode has no effect"
+    },
+    "runtime": {
+      "title": "Skill loading settings",
+      "subtitle": "Tune how Claude Code displays the skill list at session start",
+      "budgetFraction": "Listing budget fraction",
+      "budgetHelp": "Portion of total context allocated to the skill list. Skills beyond the budget are collapsed to name-only automatically.",
+      "maxDescChars": "Max description chars",
+      "maxDescHelp": "Truncate each skill description to at most this many characters.",
+      "useDefault": "Use Claude Code default",
+      "default": "Default {{value}}",
+      "reset": "Reset to default"
+    },
+    "discoveredOnly": {
+      "title": "From plugins & user-level",
+      "userLevel": "User-level",
+      "agentsDir": "~/.agents/skills"
     }
   },
   "deeplink": {

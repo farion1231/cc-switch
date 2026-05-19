@@ -12,6 +12,7 @@ import {
   LOCAL_SOURCE_KEY,
   matchSkillBySearch,
   sortSkills,
+  UNASSIGNED_GROUP_KEY,
   useSkillsFilterSort,
   type FilterSortState,
 } from "@/components/skills/useSkillsFilterSort";
@@ -258,6 +259,23 @@ describe("groupSkills", () => {
     expect(totalAcross).toBe(4);
     const claudeGroup = out.find((g) => g.key === "claude")!;
     expect(claudeGroup.items.map((s) => s.id).sort()).toEqual(["a", "b"]);
+  });
+
+  it("app grouping surfaces skills with no enabled app in an unassigned group", () => {
+    const orphan = makeSkill({
+      id: "orphan",
+      name: "Orphan",
+      apps: appsWith([]),
+    });
+    const out = groupSkills([...skills, orphan], "app", APP_IDS);
+    const unassigned = out.find((g) => g.key === UNASSIGNED_GROUP_KEY);
+    expect(unassigned).toBeDefined();
+    expect(unassigned!.items.map((s) => s.id)).toEqual(["orphan"]);
+    // The unassigned group only appears when needed
+    const outNoOrphans = groupSkills(skills, "app", APP_IDS);
+    expect(
+      outNoOrphans.find((g) => g.key === UNASSIGNED_GROUP_KEY),
+    ).toBeUndefined();
   });
 });
 

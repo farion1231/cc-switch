@@ -32,6 +32,24 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("@/hooks/useSkillLoadMode", () => ({
+  useClaudeRuntimeConfig: () => ({
+    data: { skillLoadModes: {} },
+  }),
+  useDiscoverAllSkills: () => ({
+    data: [],
+  }),
+  useSetSkillLoadMode: () => ({
+    mutateAsync: vi.fn(),
+  }),
+  useSetSkillListingBudget: () => ({
+    mutateAsync: vi.fn(),
+  }),
+  useSetMaxSkillDescriptionChars: () => ({
+    mutateAsync: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/useSkills", () => ({
   useInstalledSkills: () => ({
     data: mocks.installed,
@@ -288,5 +306,43 @@ describe("UnifiedSkillsPanel", () => {
     );
     fireEvent.change(input, { target: { value: "ZZZNotMatching" } });
     expect(screen.getByText("skills.noResults")).toBeInTheDocument();
+  });
+
+  it("bulk uninstall only acts on currently visible selections", async () => {
+    mocks.installed = [
+      skill({ id: "a", name: "Apple" }),
+      skill({ id: "b", name: "Banana" }),
+    ];
+    mocks.uninstallSkillMock.mockResolvedValue({ backupPath: null });
+
+    renderPanel();
+
+    // Enter multi-select and select both rows.
+    fireEvent.click(screen.getByTitle("skills.toolbar.multiSelectMode"));
+    const checkboxes = screen.getAllByLabelText("skills.bulk.select");
+    fireEvent.click(checkboxes[0]);
+    fireEvent.click(checkboxes[1]);
+
+    // Filter to hide Banana so only Apple is visible.
+    const input = screen.getByPlaceholderText(
+      "skills.toolbar.searchPlaceholder",
+    );
+    fireEvent.change(input, { target: { value: "Apple" } });
+
+    // Trigger bulk uninstall and confirm.
+    fireEvent.click(screen.getByText("skills.bulk.uninstall"));
+    await waitFor(() => {
+      expect(
+        screen.getByText("skills.bulk.confirmUninstallTitle"),
+      ).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("skills.uninstall"));
+
+    await waitFor(() => {
+      expect(mocks.uninstallSkillMock).toHaveBeenCalledTimes(1);
+    });
+    expect(mocks.uninstallSkillMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "a" }),
+    );
   });
 });

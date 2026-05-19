@@ -1964,7 +1964,8 @@
       "none": "グループ化しない",
       "source": "ソース別",
       "app": "アプリ別",
-      "appHint": "（同じスキルが複数のグループに表示されることがあります）"
+      "appHint": "（同じスキルが複数のグループに表示されることがあります）",
+      "unassigned": "未割り当て"
     },
     "bulk": {
       "selected": "{{count}} 件選択中",
@@ -2034,6 +2035,34 @@
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
       "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
+    },
+    "loadMode": {
+      "on": "フル",
+      "onDesc": "Claude Code のシステムプロンプトに name + description を読み込む（デフォルト）",
+      "nameOnly": "名前のみ",
+      "nameOnlyDesc": "name だけを公開し、description は呼び出すまで隠す",
+      "userInvocableOnly": "/コマンドのみ",
+      "userInvocableOnlyDesc": "スラッシュコマンドを明示的に入力したときだけ有効になる",
+      "off": "オフ",
+      "offDesc": "スキルファイルは残るが、Claude Code は読み込まない",
+      "ariaLabel": "読み込みモード：{{mode}}",
+      "disabledClaude": "このスキルは Claude で無効です — 読み込みモードは効果がありません"
+    },
+    "runtime": {
+      "title": "スキル読み込み設定",
+      "subtitle": "セッション開始時に Claude Code がスキル一覧をどう表示するかを調整します",
+      "budgetFraction": "一覧予算比率",
+      "budgetHelp": "スキル一覧が総コンテキストに占める比率。予算を超えたスキルは自動で name-only に折りたたまれます。",
+      "maxDescChars": "Description 文字上限",
+      "maxDescHelp": "各スキルの description をこの文字数で切り詰めます。",
+      "useDefault": "Claude Code のデフォルトを使用",
+      "default": "デフォルト {{value}}",
+      "reset": "デフォルトにリセット"
+    },
+    "discoveredOnly": {
+      "title": "プラグイン・ユーザーレベル",
+      "userLevel": "ユーザーレベル",
+      "agentsDir": "~/.agents/skills"
     }
   },
   "deeplink": {

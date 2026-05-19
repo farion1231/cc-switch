@@ -1964,7 +1964,8 @@
       "none": "不分组",
       "source": "按来源",
       "app": "按应用",
-      "appHint": "（同一技能可能跨组出现）"
+      "appHint": "（同一技能可能跨组出现）",
+      "unassigned": "未分配"
     },
     "bulk": {
       "selected": "已选 {{count}} 项",
@@ -2034,6 +2035,34 @@
       "successSingle": "技能 {{name}} 已安装",
       "successMultiple": "成功安装 {{count}} 个技能",
       "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
+    },
+    "loadMode": {
+      "on": "完整加载",
+      "onDesc": "在 Claude Code 系统提示中加载 name + description（默认）",
+      "nameOnly": "仅名称",
+      "nameOnlyDesc": "只暴露 name，模型不会主动推荐；需手动 /skill 触发",
+      "userInvocableOnly": "仅 /命令触发",
+      "userInvocableOnlyDesc": "只有显式输入对应斜杠命令才会启用该 skill",
+      "off": "屏蔽",
+      "offDesc": "skill 文件保留，但 Claude Code 跳过加载",
+      "ariaLabel": "加载模式：{{mode}}",
+      "disabledClaude": "Claude 已禁用该 skill — 加载模式当前不生效"
+    },
+    "runtime": {
+      "title": "Skill 加载设置",
+      "subtitle": "调整 Claude Code 启动时如何展示 skill 列表",
+      "budgetFraction": "清单预算占比",
+      "budgetHelp": "skill 清单允许占总上下文的比例。超出预算的 skill 会被自动折叠为 name-only。",
+      "maxDescChars": "Description 字符上限",
+      "maxDescHelp": "每个 skill 的 description 最多保留多少字符。",
+      "useDefault": "使用 Claude Code 默认值",
+      "default": "默认 {{value}}",
+      "reset": "重置为默认"
+    },
+    "discoveredOnly": {
+      "title": "来自 plugin 与用户级",
+      "userLevel": "用户级",
+      "agentsDir": "~/.agents/skills"
     }
   },
   "deeplink": {

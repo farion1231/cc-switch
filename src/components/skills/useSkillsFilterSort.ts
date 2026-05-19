@@ -31,6 +31,7 @@ export interface SkillGroup {
 
 export const LOCAL_SOURCE_KEY = "__local__";
 export const ALL_GROUP_KEY = "__all__";
+export const UNASSIGNED_GROUP_KEY = "__unassigned__";
 
 /** 组成 skill 的来源 key（owner/name 或 LOCAL_SOURCE_KEY） */
 export function getSourceKey(skill: InstalledSkill): string {
@@ -145,12 +146,23 @@ export function groupSkills(
       }));
   }
 
-  // groupKey === "app"：同一 skill 可能出现在多组
-  return appIds.map((app) => ({
+  // groupKey === "app"：同一 skill 可能出现在多组；未启用任何 app 的 skill 收到“未分配”组
+  const groups: SkillGroup[] = appIds.map((app) => ({
     key: app,
     label: app,
     items: skills.filter((s) => s.apps[app as keyof typeof s.apps] === true),
   }));
+  const unassigned = skills.filter(
+    (s) => !appIds.some((app) => s.apps[app as keyof typeof s.apps] === true),
+  );
+  if (unassigned.length > 0) {
+    groups.push({
+      key: UNASSIGNED_GROUP_KEY,
+      label: UNASSIGNED_GROUP_KEY,
+      items: unassigned,
+    });
+  }
+  return groups;
 }
 
 /** 完整流水线：过滤 → 排序 → 分组 */
