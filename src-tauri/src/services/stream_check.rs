@@ -697,6 +697,63 @@ impl StreamCheckService {
         }
     }
 
+    /// Kimi 流式检查
+    ///
+    /// 使用 OpenAI Chat Completions API 格式 (/v1/chat/completions)
+    async fn check_kimi_stream(
+        client: &Client,
+        base_url: &str,
+        auth: &AuthInfo,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(u16, String), AppError> {
+        let base = base_url.trim_end_matches('/');
+
+        // Kimi 使用 OpenAI Chat Completions 端点
+        let url = if base.ends_with("/v1") {
+            format!("{base}/chat/completions")
+        } else {
+            format!("{base}/v1/chat/completions")
+        };
+
+        // Chat Completions API 请求体格式
+        let body = json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": test_prompt }],
+            "stream": true
+        });
+
+        let response = client
+            .post(&url)
+            .header("authorization", format!("Bearer {}", auth.api_key))
+            .header("content-type", "application/json")
+            .header("accept", "text/event-stream")
+            .header("accept-encoding", "identity")
+            .timeout(timeout)
+            .json(&body)
+            .send()
+            .await
+            .map_err(Self::map_request_error)?;
+
+        let status = response.status().as_u16();
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(Self::http_status_error(status, error_text));
+        }
+
+        let mut stream = response.bytes_stream();
+        if let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(_) => Ok((status, model.to_string())),
+                Err(e) => Err(AppError::Message(format!("Stream read failed: {e}"))),
+            }
+        } else {
+            Err(AppError::Message("No response data received".to_string()))
+        }
+    }
+
     /// OpenCode / OpenClaw 的独立分发入口（绕过 `get_adapter`）
     ///
     /// 这两个应用的 `settings_config` 与 Claude/Codex/Gemini 完全不同：
@@ -754,14 +811,13 @@ impl StreamCheckService {
                 let base_url = env_map.get("KIMI_BASE_URL").cloned().unwrap_or_default();
                 let api_key = env_map.get("KIMI_API_KEY").cloned().unwrap_or_default();
                 let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
-                Self::check_codex_stream(
+                Self::check_kimi_stream(
                     &client,
                     &base_url,
                     &auth,
                     &model_to_test,
                     test_prompt,
                     request_timeout,
-                    provider,
                 )
                 .await
             }

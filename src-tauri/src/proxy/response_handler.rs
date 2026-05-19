@@ -134,6 +134,7 @@ impl StreamHandler {
         match session.client_format {
             super::session::ClientFormat::Claude => TokenUsage::from_claude_stream_events(&events),
             super::session::ClientFormat::Codex => TokenUsage::from_codex_stream_events(&events),
+            super::session::ClientFormat::OpenAI => TokenUsage::from_openai_stream_events(&events),
             super::session::ClientFormat::Gemini | super::session::ClientFormat::GeminiCli => {
                 TokenUsage::from_gemini_stream_chunks(&events)
             }
