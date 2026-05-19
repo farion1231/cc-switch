@@ -479,7 +479,7 @@
     },
     "webdavSync": {
       "title": "WebDAV 云同步",
-      "description": "通过 WebDAV 在多设备间同步数据库和技能配置。",
+      "description": "通过 WebDAV 在多设备间同步选定模块。",
       "baseUrl": "WebDAV 服务器地址",
       "baseUrlPlaceholder": "https://dav.jianguoyun.com/dav/",
       "username": "WebDAV 账户",
@@ -522,10 +522,20 @@
       },
       "remoteRootDefault": "默认: cc-switch-sync",
       "profileDefault": "默认: default",
+      "uploadModulesTitle": "上传默认同步模块",
+      "downloadModulesTitle": "下载默认同步模块",
+      "noUploadModules": "请至少选择一个上传模块",
+      "noDownloadModules": "请至少选择一个下载模块",
+      "modules": {
+        "api": "API 供应商",
+        "mcp": "MCP",
+        "prompts": "提示词",
+        "skills": "Skills"
+      },
       "saveAndTestSuccess": "配置已保存，连接正常",
       "saveAndTestFailed": "配置已保存，但连接测试失败：{{error}}",
       "noRemoteData": "云端没有找到同步数据",
-      "incompatibleVersion": "远端数据版本不兼容（协议 v{{protocolVersion}}，数据库 {{dbCompatVersion}}），当前支持协议 v2 / db-v6",
+      "incompatibleVersion": "远端数据版本不兼容（协议 v{{protocolVersion}}，数据库 {{dbCompatVersion}}），当前支持协议 v3 / db-v6",
       "unsaved": "未保存",
       "saved": "已保存",
       "unsavedChanges": "请先保存配置",
@@ -539,7 +549,9 @@
         "path": "远端路径",
         "dbCompat": "数据库兼容层",
         "artifacts": "包含内容",
-        "legacyNotice": "检测到旧版云端路径。恢复完成后，下次上传将写入新路径 v2/db-v6。",
+        "selectedModules": "本次下载模块",
+        "availableModules": "远端可用模块",
+        "legacyNotice": "检测到旧版云端路径。恢复完成后，下次上传将写入新路径 v3/db-v6。",
         "warning": "恢复将覆盖本地所有数据和技能配置",
         "confirm": "确认恢复"
       },
@@ -554,8 +566,9 @@
         "createdAt": "上传时间",
         "path": "远端路径",
         "dbCompat": "数据库兼容层",
+        "availableModules": "远端可用模块",
         "warning": "将覆盖云端已有的同步数据",
-        "legacyNotice": "检测到旧版云端路径数据。本次上传将写入新路径 v2/db-v6，不会覆盖旧路径。",
+        "legacyNotice": "检测到旧版云端路径数据。本次上传将写入新路径 v3/db-v6，不会覆盖旧路径。",
         "confirm": "确认上传"
       }
     },
