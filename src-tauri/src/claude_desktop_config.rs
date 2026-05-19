@@ -696,7 +696,14 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     let routes = proxy_model_routes(provider)?;
-    let route = routes.iter().find(|r| r.route_id == requested);
+
+    // First try exact match, then fall back to prefix matching for versioned
+    // model IDs (e.g. "claude-haiku-4-5-20251001" should match route "claude-haiku-4-5").
+    let route = routes
+        .iter()
+        .find(|r| r.route_id == requested)
+        .or_else(|| find_route_by_prefix(&requested, &routes));
+
     let Some(route) = route else {
         return Err(AppError::localized(
             "claude_desktop.provider.route_unknown",
@@ -707,6 +714,26 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
 
     body["model"] = json!(route.upstream_model);
     Ok(body)
+}
+
+/// Try to match a versioned model ID to a configured generic route prefix.
+///
+/// For example, `claude-haiku-4-5-20251001` matches route `claude-haiku-4-5`.
+/// Uses longest-prefix match to disambiguate when multiple routes share a prefix.
+fn find_route_by_prefix<'a>(
+    requested: &str,
+    routes: &'a [ResolvedModelRoute],
+) -> Option<&'a ResolvedModelRoute> {
+    let requested_bytes = requested.as_bytes();
+    routes
+        .iter()
+        .filter(|r| {
+            let id_bytes = r.route_id.as_bytes();
+            requested_bytes.len() > id_bytes.len()
+                && requested_bytes.starts_with(id_bytes)
+                && requested_bytes[id_bytes.len()] == b'-'
+        })
+        .max_by_key(|r| r.route_id.len())
 }
 
 pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError> {
@@ -1406,6 +1433,146 @@ mod tests {
         )
         .expect_err("1M suffix route should not be accepted");
         assert!(err.to_string().contains("claude-sonnet-4-6 [1M]"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_maps_versioned_model_id_via_prefix() {
+        // Issue #2900: Claude Desktop sub-agents send full Anthropic model IDs
+        // like "claude-haiku-4-5-20251001". These should match the generic route
+        // "claude-haiku-4-5" via prefix-based fallback matching.
+        let mut provider = proxy_provider("proxy");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                (
+                    "claude-sonnet-4-6".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "deepseek-v4-pro".to_string(),
+                        label_override: None,
+                        supports_1m: Some(true),
+                    },
+                ),
+                (
+                    "claude-haiku-4-5".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "deepseek-v4-mini".to_string(),
+                        label_override: None,
+                        supports_1m: Some(false),
+                    },
+                ),
+                (
+                    "claude-opus-4-7".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "deepseek-v4-max".to_string(),
+                        label_override: None,
+                        supports_1m: Some(true),
+                    },
+                ),
+            ]),
+            ..Default::default()
+        });
+
+        // Exact match still works
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-sonnet-4-6", "messages": []}),
+            &provider,
+        )
+        .expect("exact match");
+        assert_eq!(mapped["model"], json!("deepseek-v4-pro"));
+
+        // Versioned haiku matches haiku route
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5-20251001", "messages": []}),
+            &provider,
+        )
+        .expect("versioned haiku");
+        assert_eq!(mapped["model"], json!("deepseek-v4-mini"));
+
+        // Versioned sonnet matches sonnet route
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-sonnet-4-6-20250605", "messages": []}),
+            &provider,
+        )
+        .expect("versioned sonnet");
+        assert_eq!(mapped["model"], json!("deepseek-v4-pro"));
+
+        // Versioned opus matches opus route
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-opus-4-7-20250605", "messages": []}),
+            &provider,
+        )
+        .expect("versioned opus");
+        assert_eq!(mapped["model"], json!("deepseek-v4-max"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_prefix_match_rejects_unknown_unrelated_model() {
+        // A model name that doesn't match any route exactly or via prefix should still error.
+        let mut provider = proxy_provider("proxy");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-mini".to_string(),
+                    label_override: None,
+                    supports_1m: Some(false),
+                },
+            )]),
+            ..Default::default()
+        });
+
+        let err = map_proxy_request_model(json!({"model": "claude-opus-4-7"}), &provider)
+            .expect_err("unrelated model should fail");
+        assert!(err.to_string().contains("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_prefix_match_longest_wins() {
+        // When both "claude-haiku-4-5" and "claude-haiku-4-5-special" are configured,
+        // "claude-haiku-4-5-special-20251001" should match the longer prefix.
+        let mut provider = proxy_provider("proxy");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                (
+                    "claude-haiku-4-5".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "mini".to_string(),
+                        label_override: None,
+                        supports_1m: Some(false),
+                    },
+                ),
+                (
+                    "claude-haiku-4-5-special".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "mini-special".to_string(),
+                        label_override: None,
+                        supports_1m: Some(true),
+                    },
+                ),
+            ]),
+            ..Default::default()
+        });
+
+        // Longer prefix wins
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5-special-20251001", "messages": []}),
+            &provider,
+        )
+        .expect("longest prefix match");
+        assert_eq!(mapped["model"], json!("mini-special"));
+
+        // Shorter prefix still works for simpler version
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5-20251001", "messages": []}),
+            &provider,
+        )
+        .expect("shorter prefix match");
+        assert_eq!(mapped["model"], json!("mini"));
     }
 
     #[test]
