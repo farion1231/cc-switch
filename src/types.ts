@@ -327,6 +327,9 @@ export interface Settings {
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
 
+  // Codex 稳定供应商 ID（用于 Codex config.toml 写回时的默认值）
+  codexStableModelProviderId?: string;
+
   // ===== Skill 同步设置 =====
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
   skillSyncMethod?: SkillSyncMethod;

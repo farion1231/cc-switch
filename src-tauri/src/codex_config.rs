@@ -226,12 +226,16 @@ fn normalize_codex_live_config_model_provider_with_anchors<'a>(
         return Ok(config_text.to_string());
     }
 
-    let stable_provider_id = anchor_config_texts
-        .into_iter()
-        .find_map(stable_codex_model_provider_id_from_config)
+    // Priority for stable provider id:
+    // 1. User-configured stable id (settings)
+    // 2. Anchor config's stable id (backfill/live anchor)
+    // 3. If source provider is a custom id, reuse it
+    // 4. Fallback to CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+    let stable_provider_id = crate::settings::get_stable_codex_model_provider_id()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| anchor_config_texts.into_iter().find_map(stable_codex_model_provider_id_from_config))
         .or_else(|| {
-            is_custom_codex_model_provider_id(&source_provider_id)
-                .then(|| source_provider_id.clone())
+            is_custom_codex_model_provider_id(&source_provider_id).then(|| source_provider_id.clone())
         })
         .unwrap_or_else(|| CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
 

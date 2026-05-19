@@ -257,6 +257,9 @@ pub struct AppSettings {
     /// 当前 Codex 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_codex: Option<String>,
+    /// Codex 稳定 供应商 id（用于避免历史记录摇摆）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_codex_model_provider_id: Option<String>,
     /// 当前 Gemini 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_gemini: Option<String>,
@@ -340,6 +343,7 @@ impl Default for AppSettings {
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
+            stable_codex_model_provider_id: None,
             current_provider_gemini: None,
             current_provider_opencode: None,
             current_provider_openclaw: None,
@@ -582,6 +586,14 @@ pub fn get_codex_override_dir() -> Option<PathBuf> {
         .codex_config_dir
         .as_ref()
         .map(|p| resolve_override_path(p))
+}
+
+/// 获取用户设置的 Codex 稳定供应商 id（若未设置返回 None）
+pub fn get_stable_codex_model_provider_id() -> Option<String> {
+    settings_store()
+        .read()
+        .ok()
+        .and_then(|s| s.stable_codex_model_provider_id.clone())
 }
 
 pub fn get_gemini_override_dir() -> Option<PathBuf> {

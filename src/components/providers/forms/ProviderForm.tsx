@@ -416,6 +416,40 @@ function ProviderFormFull({
     [localApiKeyField, form, handleSettingsConfigChange],
   );
 
+  // Codex 稳定供应商 ID（用户输入时立即保存）
+  const [codexStableModelProviderId, setCodexStableModelProviderId] =
+    useState<string>(() => {
+      return settingsData?.codexStableModelProviderId ?? "";
+    });
+
+  // 从 settingsData 同步初值
+  useEffect(() => {
+    if (appId === "codex" && settingsData) {
+      setCodexStableModelProviderId(
+        settingsData.codexStableModelProviderId ?? "",
+      );
+    }
+  }, [appId, settingsData]);
+
+  // 用户输入时立即保存到 settings
+  const handleStableProviderIdChange = useCallback(
+    async (value: string) => {
+      setCodexStableModelProviderId(value);
+      try {
+        const currentSettings = settingsData ?? (await settingsApi.get());
+        await settingsApi.save({
+          ...currentSettings,
+          codexStableModelProviderId: value.trim() || undefined,
+        });
+        await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      } catch (error) {
+        console.error("Failed to save stable provider id:", error);
+        toast.error(t("failedToSaveSettings"));
+      }
+    },
+    [settingsData, queryClient, t],
+  );
+
   // Copilot OAuth 认证状态（仅 Claude 应用需要）
   const { isAuthenticated: isCopilotAuthenticated } = useCopilotAuth();
 
@@ -1937,6 +1971,8 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
+              stableModelProviderId={codexStableModelProviderId}
+              onStableModelProviderIdChange={handleStableProviderIdChange}
               shouldShowModelField={category !== "official"}
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}

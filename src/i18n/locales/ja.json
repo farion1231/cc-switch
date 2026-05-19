@@ -170,6 +170,11 @@
         "oauthTitle": "OAuth 認証モード",
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
+      },
+      "codex": {
+        "stableModelProviderId": "固定 model_provider ID",
+        "stableModelProviderIdHint": "この provider id は Codex config.toml の model_provider に書き込まれます。プロバイダーごとに値が異なると、Codex の履歴が分かれてしまいます。未設定の場合は既定の ccswitch を使用します。",
+        "stableModelProviderIdPlaceholder": "ccswitch"
       }
     }
   },
