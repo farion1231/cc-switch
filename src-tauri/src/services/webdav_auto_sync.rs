@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -10,7 +11,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::error::AppError;
 use crate::services::webdav_sync as webdav_sync_service;
-use crate::settings::{self, WebDavSyncSettings};
+use crate::settings::{self, WebDavSyncModules, WebDavSyncSettings};
 
 const AUTO_SYNC_DEBOUNCE_MS: u64 = 1000;
 pub(crate) const MAX_AUTO_SYNC_WAIT_MS: u64 = 10_000;
@@ -46,8 +47,10 @@ pub fn should_trigger_for_table(table: &str) -> bool {
         normalized.as_str(),
         "providers"
             | "provider_endpoints"
+            | "model_pricing"
             | "mcp_servers"
             | "prompts"
+            | "session_log_sync"
             | "skills"
             | "skill_repos"
             | "settings"
@@ -79,6 +82,26 @@ fn should_run_auto_sync(settings: Option<&WebDavSyncSettings>) -> bool {
     sync.enabled && sync.auto_sync
 }
 
+fn table_matches_upload_module(selection: &WebDavSyncModules, table: &str) -> bool {
+    match table {
+        "providers" | "provider_endpoints" | "model_pricing" | "session_log_sync" | "settings"
+        | "proxy_config" => selection.api,
+        "mcp_servers" => selection.mcp,
+        "prompts" => selection.prompts,
+        "skills" | "skill_repos" => selection.skills,
+        _ => false,
+    }
+}
+
+pub(crate) fn should_upload_for_changed_tables(
+    selection: &WebDavSyncModules,
+    changed_tables: &BTreeSet<String>,
+) -> bool {
+    changed_tables
+        .iter()
+        .any(|table| table_matches_upload_module(selection, table))
+}
+
 fn persist_auto_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) {
     settings.status.last_error = Some(error.to_string());
     settings.status.last_error_source = Some("auto".to_string());
@@ -106,6 +129,7 @@ fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&s
 async fn run_auto_sync_upload(
     db: &crate::database::Database,
     app: &AppHandle,
+    changed_tables: &BTreeSet<String>,
 ) -> Result<(), AppError> {
     let mut settings = settings::get_webdav_sync_settings();
     if !should_run_auto_sync(settings.as_ref()) {
@@ -116,6 +140,14 @@ async fn run_auto_sync_upload(
         Some(value) => value,
         None => return Ok(()),
     };
+
+    if !should_upload_for_changed_tables(&sync_settings.upload_modules, changed_tables) {
+        log::debug!(
+            "[WebDAV][AutoSync] Skipping upload; changed tables do not match selected modules: {:?}",
+            changed_tables
+        );
+        return Ok(());
+    }
 
     let result = webdav_sync_service::run_with_sync_lock(webdav_sync_service::upload(
         db,
@@ -172,22 +204,27 @@ async fn run_worker_loop(
     while let Some(first_table) = rx.recv().await {
         let started_at = Instant::now();
         let mut merged_count = 1usize;
+        let mut changed_tables = BTreeSet::from([first_table.clone()]);
 
         while let Some(wait_for) = auto_sync_wait_duration(started_at, Instant::now()) {
             let timeout = tokio::time::timeout(wait_for, rx.recv()).await;
 
             match timeout {
-                Ok(Some(_)) => merged_count += 1,
+                Ok(Some(table)) => {
+                    merged_count += 1;
+                    changed_tables.insert(table);
+                }
                 Ok(None) => return,
                 Err(_) => break,
             }
         }
 
         log::debug!(
-            "[WebDAV][AutoSync] Triggered by table={first_table}, merged_changes={merged_count}"
+            "[WebDAV][AutoSync] Triggered by table={first_table}, merged_changes={merged_count}, changed_tables={:?}",
+            changed_tables
         );
 
-        if let Err(err) = run_auto_sync_upload(&db, &app).await {
+        if let Err(err) = run_auto_sync_upload(&db, &app, &changed_tables).await {
             log::warn!("[WebDAV][AutoSync] Upload failed: {err}");
         }
     }
@@ -197,10 +234,11 @@ async fn run_worker_loop(
 mod tests {
     use super::{
         auto_sync_wait_duration, enqueue_change_signal, is_auto_sync_suppressed,
-        should_run_auto_sync, should_trigger_for_table, AutoSyncSuppressionGuard,
-        MAX_AUTO_SYNC_WAIT_MS,
+        should_run_auto_sync, should_trigger_for_table, should_upload_for_changed_tables,
+        AutoSyncSuppressionGuard, MAX_AUTO_SYNC_WAIT_MS,
     };
-    use crate::settings::WebDavSyncSettings;
+    use crate::settings::{WebDavSyncModules, WebDavSyncSettings};
+    use std::collections::BTreeSet;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::channel;
 
@@ -208,6 +246,7 @@ mod tests {
     fn should_trigger_sync_for_config_tables_only() {
         assert!(should_trigger_for_table("providers"));
         assert!(should_trigger_for_table("settings"));
+        assert!(should_trigger_for_table("model_pricing"));
         assert!(!should_trigger_for_table("proxy_request_logs"));
         assert!(!should_trigger_for_table("provider_health"));
     }
@@ -270,5 +309,71 @@ mod tests {
             !source.contains(&needle),
             "services layer should not depend on commands layer"
         );
+    }
+
+    #[test]
+    fn upload_module_selection_controls_auto_sync_trigger() {
+        let changed_tables = BTreeSet::from(["providers".to_string()]);
+
+        let skills_only = WebDavSyncModules {
+            api: false,
+            mcp: false,
+            prompts: false,
+            skills: true,
+        };
+        assert!(
+            !should_upload_for_changed_tables(&skills_only, &changed_tables),
+            "provider changes should not trigger skills-only uploads"
+        );
+
+        let api_enabled = WebDavSyncModules {
+            api: true,
+            ..skills_only
+        };
+        assert!(
+            should_upload_for_changed_tables(&api_enabled, &changed_tables),
+            "provider changes should trigger api uploads"
+        );
+    }
+
+    #[test]
+    fn model_pricing_changes_trigger_upload_only_when_api_module_is_enabled() {
+        let changed_tables = BTreeSet::from(["model_pricing".to_string()]);
+
+        let mcp_only = WebDavSyncModules {
+            api: false,
+            mcp: true,
+            prompts: false,
+            skills: false,
+        };
+        assert!(
+            !should_upload_for_changed_tables(&mcp_only, &changed_tables),
+            "model_pricing changes should not trigger non-api uploads"
+        );
+
+        let api_enabled = WebDavSyncModules {
+            api: true,
+            ..mcp_only
+        };
+        assert!(
+            should_upload_for_changed_tables(&api_enabled, &changed_tables),
+            "model_pricing changes should trigger api uploads"
+        );
+    }
+
+    #[test]
+    fn skills_tables_trigger_upload_when_skills_module_is_enabled() {
+        let changed_tables = BTreeSet::from(["skills".to_string(), "skill_repos".to_string()]);
+        let selection = WebDavSyncModules {
+            api: false,
+            mcp: false,
+            prompts: false,
+            skills: true,
+        };
+
+        assert!(should_upload_for_changed_tables(
+            &selection,
+            &changed_tables
+        ));
     }
 }
