@@ -631,7 +631,7 @@ base_url = "http://localhost:8080"
                 .expect("read auth.json");
             assert_eq!(
                 auth_entry,
-                Some(json!({"key": "updated-FAKE_KEY"})),
+                Some(json!({"type": "api", "key": "updated-FAKE_KEY"})),
                 "credential should be written to auth.json[provider_id] as object"
             );
         });
@@ -869,9 +869,9 @@ base_url = "http://localhost:8080"
             crate::opencode_config::set_provider(&provider.id, provider.settings_config.clone())
                 .expect("seed provider");
 
-            let opencode_dir = home.join(".config").join("opencode");
-            fs::create_dir_all(&opencode_dir).expect("create opencode dir");
-            fs::write(opencode_dir.join("auth.json"), "{invalid json}")
+            let opencode_data_dir = home.join(".local").join("share").join("opencode");
+            fs::create_dir_all(&opencode_data_dir).expect("create opencode data dir");
+            fs::write(opencode_data_dir.join("auth.json"), "{invalid json}")
                 .expect("write malformed auth.json");
 
             let result = import_opencode_providers_from_live(state);
@@ -1023,8 +1023,8 @@ base_url = "http://localhost:8080"
                 .expect("read auth.json");
             assert_eq!(
                 auth_entry,
-                Some(json!({"key": "FAKE_KEY"})),
-                "legacy apiKey should be written to auth.json as object"
+                Some(json!({"type": "api", "key": "FAKE_KEY"})),
+                "legacy apiKey should be written to auth.json as object with type field"
             );
 
             // opencode.json should NOT have options.apiKey
@@ -1171,6 +1171,98 @@ base_url = "http://localhost:8080"
             assert!(
                 !auth_path.exists(),
                 "auth.json should not be created when there is no credential"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn opencode_write_back_empty_api_key_does_not_create_auth_json() {
+        with_test_home(|state, _| {
+            let mut provider = opencode_provider("empty-key-provider");
+            provider.settings_config["options"]["apiKey"] = Value::String("".to_string());
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed provider in db");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect("sync provider");
+
+            let auth_path = crate::opencode_config::get_opencode_auth_path();
+            assert!(
+                !auth_path.exists(),
+                "auth.json should not be created for empty apiKey"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn opencode_write_back_whitespace_api_key_does_not_create_auth_json() {
+        with_test_home(|state, _| {
+            let mut provider = opencode_provider("ws-key-provider");
+            provider.settings_config["options"]["apiKey"] = Value::String("   ".to_string());
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed provider in db");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect("sync provider");
+
+            let auth_path = crate::opencode_config::get_opencode_auth_path();
+            assert!(
+                !auth_path.exists(),
+                "auth.json should not be created for whitespace-only apiKey"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn opencode_write_back_fallback_restores_api_key_from_internal_auth() {
+        with_test_home(|state, _| {
+            // Provider has internal auth object but no inline options.apiKey
+            let mut provider = opencode_provider("auth-only-provider");
+            provider.settings_config["auth"] = json!({
+                "source": "opencode_auth_json",
+                "type": "api",
+                "key": "AUTH_ONLY_FAKE_KEY"
+            });
+            // Remove inline apiKey to simulate auth-only source
+            if let Some(options) = provider.settings_config.get_mut("options").and_then(|v| v.as_object_mut()) {
+                options.remove("apiKey");
+            }
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed provider in db");
+
+            // Write invalid JSON to auth.json
+            let auth_path = crate::opencode_config::get_opencode_auth_path();
+            std::fs::create_dir_all(auth_path.parent().unwrap()).expect("create parent dir");
+            std::fs::write(&auth_path, "not valid json{{{").expect("write invalid auth.json");
+
+            // write_live_snapshot should succeed with fallback
+            let result = crate::services::provider::write_live_snapshot(
+                &AppType::OpenCode,
+                &provider,
+            );
+            assert!(result.is_ok(), "write_live_snapshot should succeed with fallback");
+
+            // auth.json should not be overwritten
+            let content = std::fs::read_to_string(&auth_path).expect("read auth.json");
+            assert_eq!(content, "not valid json{{{", "invalid auth.json should not be overwritten");
+
+            // opencode.json should have options.apiKey restored from internal auth
+            let live_providers =
+                crate::opencode_config::get_providers().expect("read opencode providers");
+            let live = live_providers.get("auth-only-provider").expect("provider exists");
+            assert_eq!(
+                live.pointer("/options/apiKey"),
+                Some(&json!("AUTH_ONLY_FAKE_KEY")),
+                "options.apiKey should be restored from internal auth object when auth.json is invalid"
             );
         });
     }

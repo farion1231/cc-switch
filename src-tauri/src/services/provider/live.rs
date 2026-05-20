@@ -727,13 +727,15 @@ fn extract_opencode_credential(settings_config: &Value) -> Option<Value> {
             return None;
         }
 
-        // Fallback: options.apiKey
+        // Fallback: options.apiKey (skip empty/whitespace-only)
         if let Some(api_key) = obj
             .get("options")
             .and_then(|o| o.get("apiKey"))
             .and_then(|v| v.as_str())
         {
-            return Some(json!({"key": api_key}));
+            if !api_key.trim().is_empty() {
+                return Some(json!({"type": "api", "key": api_key}));
+            }
         }
     }
     None
@@ -840,13 +842,27 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             }
 
             // Only strip credential fields from opencode.json if auth.json
-            // write succeeded; otherwise keep options.apiKey as legacy fallback.
+            // write succeeded; otherwise keep/restore options.apiKey as legacy fallback.
             if auth_json_written {
                 strip_opencode_credential_from_config(&mut config_to_write);
             } else {
                 // Still strip the internal auth field even in legacy fallback
                 if let Some(obj) = config_to_write.as_object_mut() {
                     obj.remove("auth");
+                }
+                // If credential came from internal auth object (not inline apiKey),
+                // restore the API key to options.apiKey so live config remains usable.
+                if credential.is_some() {
+                    if let Some(obj) = config_to_write.as_object_mut() {
+                        if obj.get("options").and_then(|o| o.get("apiKey")).is_none() {
+                            if let Some(key) = credential.as_ref().and_then(|c| c.get("key").and_then(|v| v.as_str())) {
+                                obj.entry("options")
+                                    .or_insert_with(|| json!({}))
+                                    .as_object_mut()
+                                    .map(|opts| opts.insert("apiKey".to_string(), json!(key)));
+                            }
+                        }
+                    }
                 }
             }
 
