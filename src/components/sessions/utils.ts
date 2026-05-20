@@ -81,6 +81,39 @@ export const formatSessionTitle = (session: SessionMeta) => {
   );
 };
 
+export const getRawExportExtension = (sourcePath?: string) => {
+  if (!sourcePath || sourcePath.startsWith("sqlite:")) return null;
+  const match = sourcePath.match(/\.([A-Za-z0-9]+)$/);
+  const ext = match?.[1]?.toLowerCase();
+  if (ext === "jsonl" || ext === "json") return ext;
+  return null;
+};
+
+export const sanitizeExportFilenameSegment = (value: string) => {
+  const sanitized = value
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, " ")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return sanitized.slice(0, 80) || "session";
+};
+
+const formatFilenameTimestamp = (date = new Date()) => {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+};
+
+export const buildSessionExportFilename = (
+  session: SessionMeta,
+  extension: string,
+  raw = false,
+) => {
+  const title = sanitizeExportFilenameSegment(formatSessionTitle(session));
+  const suffix = raw ? "-raw" : "";
+  return `cc-switch-${session.providerId}-${title}-${formatFilenameTimestamp()}${suffix}.${extension}`;
+};
+
 export const highlightText = (text: string, query: string): ReactNode => {
   if (!query) return text;
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

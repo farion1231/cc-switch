@@ -792,7 +792,22 @@
     "messageCopied": "已复制消息内容",
     "conversationHistory": "对话记录",
     "expandContent": "展开完整内容",
-    "collapseContent": "收起"
+    "collapseContent": "收起",
+    "export": "导出",
+    "exporting": "导出中...",
+    "exportTooltip": "导出此会话",
+    "exportAsMarkdown": "导出为 Markdown (.md)",
+    "exportAsHtml": "导出为 HTML (.html)",
+    "exportAsText": "导出为纯文本 (.txt)",
+    "exportOriginal": "导出原始会话文件",
+    "copyAsMarkdown": "复制为 Markdown",
+    "rawExportUnavailableSqlite": "该会话存储在 SQLite 中，暂不支持原始导出。",
+    "rawExportUnavailableUnsupported": "原始导出仅支持 JSON/JSONL 会话文件。",
+    "exportUnavailableNoSource": "该会话没有本地源路径，无法导出。",
+    "sessionExported": "会话已导出到：{{path}}",
+    "exportFailed": "导出会话失败：{{error}}",
+    "markdownCopied": "Markdown 已复制",
+    "copyMarkdownFailed": "复制 Markdown 失败：{{error}}"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",

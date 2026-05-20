@@ -792,7 +792,22 @@
     "messageCopied": "メッセージがコピーされました",
     "conversationHistory": "会話履歴",
     "expandContent": "全文を表示",
-    "collapseContent": "折りたたむ"
+    "collapseContent": "折りたたむ",
+    "export": "エクスポート",
+    "exporting": "エクスポート中...",
+    "exportTooltip": "このセッションをエクスポート",
+    "exportAsMarkdown": "Markdown としてエクスポート (.md)",
+    "exportAsHtml": "HTML としてエクスポート (.html)",
+    "exportAsText": "プレーンテキストとしてエクスポート (.txt)",
+    "exportOriginal": "元のセッションファイルをエクスポート",
+    "copyAsMarkdown": "Markdown としてコピー",
+    "rawExportUnavailableSqlite": "このセッションは SQLite に保存されているため、元ファイルのエクスポートはまだサポートされていません。",
+    "rawExportUnavailableUnsupported": "元ファイルのエクスポートは JSON/JSONL セッションファイルでのみ利用できます。",
+    "exportUnavailableNoSource": "このセッションにはローカルソースパスがないため、エクスポートできません。",
+    "sessionExported": "セッションをエクスポートしました: {{path}}",
+    "exportFailed": "セッションのエクスポートに失敗しました: {{error}}",
+    "markdownCopied": "Markdown をコピーしました",
+    "copyMarkdownFailed": "Markdown のコピーに失敗しました: {{error}}"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",

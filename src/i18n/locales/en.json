@@ -792,7 +792,22 @@
     "messageCopied": "Message copied",
     "conversationHistory": "Conversation History",
     "expandContent": "Expand full content",
-    "collapseContent": "Collapse"
+    "collapseContent": "Collapse",
+    "export": "Export",
+    "exporting": "Exporting...",
+    "exportTooltip": "Export this session",
+    "exportAsMarkdown": "Export as Markdown (.md)",
+    "exportAsHtml": "Export as HTML (.html)",
+    "exportAsText": "Export as Plain Text (.txt)",
+    "exportOriginal": "Export Original Session File",
+    "copyAsMarkdown": "Copy as Markdown",
+    "rawExportUnavailableSqlite": "Stored in SQLite. Raw export is not supported yet.",
+    "rawExportUnavailableUnsupported": "Raw export is only available for JSON/JSONL session files.",
+    "exportUnavailableNoSource": "This session has no local source path and cannot be exported.",
+    "sessionExported": "Session exported to: {{path}}",
+    "exportFailed": "Failed to export session: {{error}}",
+    "markdownCopied": "Markdown copied",
+    "copyMarkdownFailed": "Failed to copy Markdown: {{error}}"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
