@@ -720,6 +720,10 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
 ///
 /// For example, `claude-haiku-4-5-20251001` matches route `claude-haiku-4-5`.
 /// Uses longest-prefix match to disambiguate when multiple routes share a prefix.
+///
+/// Only matches version-like suffixes (starting with a digit) to avoid silently
+/// routing arbitrary model ID variants or typos (e.g. `claude-sonnet-4-6-beta`
+/// will NOT match route `claude-sonnet-4-6`).
 fn find_route_by_prefix<'a>(
     requested: &str,
     routes: &'a [ResolvedModelRoute],
@@ -729,9 +733,12 @@ fn find_route_by_prefix<'a>(
         .iter()
         .filter(|r| {
             let id_bytes = r.route_id.as_bytes();
-            requested_bytes.len() > id_bytes.len()
+            let suffix_start = id_bytes.len();
+            requested_bytes.len() > suffix_start
                 && requested_bytes.starts_with(id_bytes)
-                && requested_bytes[id_bytes.len()] == b'-'
+                && requested_bytes[suffix_start] == b'-'
+                && suffix_start + 1 < requested_bytes.len()
+                && requested_bytes[suffix_start + 1].is_ascii_digit()
         })
         .max_by_key(|r| r.route_id.len())
 }
@@ -1524,9 +1531,20 @@ mod tests {
             ..Default::default()
         });
 
+        // Completely unrelated model
         let err = map_proxy_request_model(json!({"model": "claude-opus-4-7"}), &provider)
             .expect_err("unrelated model should fail");
         assert!(err.to_string().contains("claude-opus-4-7"));
+
+        // Model sharing a prefix but with a non-version suffix (e.g. typo / variant)
+        // should NOT match via prefix fallback (only version-like suffixes with
+        // leading digit are accepted).
+        let err = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5-beta", "messages": []}),
+            &provider,
+        )
+        .expect_err("non-version suffix should fail");
+        assert!(err.to_string().contains("claude-haiku-4-5-beta"));
     }
 
     #[test]
