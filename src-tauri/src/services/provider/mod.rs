@@ -1238,6 +1238,46 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn opencode_write_back_fallback_overrides_empty_inline_with_internal_auth_key() {
+        with_test_home(|state, _| {
+            // Provider has internal auth object AND empty inline placeholder
+            let mut provider = opencode_provider("empty-inline-provider");
+            provider.settings_config["auth"] = json!({
+                "source": "opencode_auth_json",
+                "type": "api",
+                "key": "REAL_FAKE_KEY"
+            });
+            provider.settings_config["options"]["apiKey"] = Value::String("   ".to_string());
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed provider in db");
+
+            // Write invalid JSON to auth.json
+            let auth_path = crate::opencode_config::get_opencode_auth_path();
+            std::fs::create_dir_all(auth_path.parent().unwrap()).expect("create parent dir");
+            std::fs::write(&auth_path, "not valid json{{{").expect("write invalid auth.json");
+
+            let result = crate::services::provider::write_live_snapshot(
+                &AppType::OpenCode,
+                &provider,
+            );
+            assert!(result.is_ok(), "write_live_snapshot should succeed with fallback");
+
+            // opencode.json should have the real key overriding the empty placeholder
+            let live_providers =
+                crate::opencode_config::get_providers().expect("read opencode providers");
+            let live = live_providers.get("empty-inline-provider").expect("provider exists");
+            assert_eq!(
+                live.pointer("/options/apiKey"),
+                Some(&json!("REAL_FAKE_KEY")),
+                "internal auth key should override empty inline placeholder when auth store is invalid"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn import_openclaw_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("imported-openclaw");

@@ -510,7 +510,7 @@ mod auth_tests {
 
     #[test]
     #[serial]
-    fn unknown_entry_shape_preserved_as_raw_value() {
+    fn unknown_object_fields_are_preserved() {
         let th = TempHome::new();
         fs::write(
             th.auth_path(),
