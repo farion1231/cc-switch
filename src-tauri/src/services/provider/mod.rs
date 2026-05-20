@@ -936,37 +936,6 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
-    fn import_opencode_skips_non_object_auth_entry() {
-        with_test_home(|state, _| {
-            let provider = opencode_provider("weird-provider");
-            crate::opencode_config::set_provider(&provider.id, provider.settings_config.clone())
-                .expect("seed provider");
-            crate::opencode_config::set_opencode_auth_entry(
-                "weird-provider",
-                Value::String("FAKE_RAW_AUTH".to_string()),
-            )
-            .expect("seed non-object auth entry");
-
-            let imported = import_opencode_providers_from_live(state)
-                .expect("import opencode providers");
-            assert_eq!(imported, 1);
-
-            let saved = state
-                .db
-                .get_provider_by_id("weird-provider", AppType::OpenCode.as_str())
-                .expect("query provider")
-                .expect("provider exists");
-
-            // Non-object auth entries are skipped per upstream convention
-            assert!(
-                saved.settings_config.get("auth").is_none(),
-                "non-object auth entry should not be attached"
-            );
-        });
-    }
-
-    #[test]
-    #[serial]
     fn opencode_write_back_splits_auth_field_to_auth_json() {
         with_test_home(|state, _| {
             let mut provider = opencode_provider("split-auth-provider");

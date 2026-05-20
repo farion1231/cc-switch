@@ -279,6 +279,12 @@ pub fn get_opencode_auth_entry(provider_id: &str) -> Result<Option<Value>, AppEr
 }
 
 pub fn set_opencode_auth_entry(provider_id: &str, entry: Value) -> Result<(), AppError> {
+    if !entry.is_object() {
+        return Err(AppError::Config(format!(
+            "OpenCode auth.json entry for '{provider_id}' must be a JSON object, got {}",
+            json_type_name(&entry)
+        )));
+    }
     let mut auth = read_opencode_auth()?;
     auth.insert(provider_id.to_string(), entry);
     write_opencode_auth(&auth)
@@ -535,6 +541,19 @@ mod auth_tests {
         assert!(
             data_dir_auth.exists(),
             "auth.json must be written under .local/share/opencode"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn set_auth_entry_rejects_non_object() {
+        let _th = TempHome::new();
+        let result = set_opencode_auth_entry("bad-provider", Value::String("FAKE_RAW_AUTH".to_string()));
+        assert!(result.is_err(), "non-object auth entry should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("must be a JSON object"),
+            "error should mention object requirement, got: {err_msg}"
         );
     }
 }

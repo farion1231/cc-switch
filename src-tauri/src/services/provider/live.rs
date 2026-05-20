@@ -742,12 +742,20 @@ fn extract_opencode_credential(settings_config: &Value) -> Option<Value> {
 }
 
 /// Strip credential fields from an OpenCode provider config so they are
-/// not written to opencode.json. Removes `auth` and `options.apiKey`.
+/// not written to opencode.json. Removes `auth` and non-empty `options.apiKey`.
+/// Empty/whitespace-only `options.apiKey` is preserved to match legacy behavior.
 fn strip_opencode_credential_from_config(config: &mut Value) {
     if let Some(obj) = config.as_object_mut() {
         obj.remove("auth");
         if let Some(options) = obj.get_mut("options").and_then(|v| v.as_object_mut()) {
-            options.remove("apiKey");
+            let should_remove = options
+                .get("apiKey")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            if should_remove {
+                options.remove("apiKey");
+            }
         }
     }
 }
@@ -852,10 +860,17 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 }
                 // If credential came from internal auth object (not inline apiKey),
                 // restore the API key to options.apiKey so live config remains usable.
+                // Also override any empty/whitespace inline placeholder with the real key.
                 if credential.is_some() {
-                    if let Some(obj) = config_to_write.as_object_mut() {
-                        if obj.get("options").and_then(|o| o.get("apiKey")).is_none() {
-                            if let Some(key) = credential.as_ref().and_then(|c| c.get("key").and_then(|v| v.as_str())) {
+                    if let Some(key) = credential.as_ref().and_then(|c| c.get("key").and_then(|v| v.as_str())) {
+                        if let Some(obj) = config_to_write.as_object_mut() {
+                            let existing_is_empty = obj
+                                .get("options")
+                                .and_then(|o| o.get("apiKey"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.trim().is_empty())
+                                .unwrap_or(true);
+                            if existing_is_empty {
                                 obj.entry("options")
                                     .or_insert_with(|| json!({}))
                                     .as_object_mut()
