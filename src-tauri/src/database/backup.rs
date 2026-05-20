@@ -791,8 +791,10 @@ mod tests {
         std::fs::create_dir_all(&test_home).expect("create test home");
         std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
 
-        let mut settings = AppSettings::default();
-        settings.backup_interval_hours = Some(0);
+        let settings = AppSettings {
+            backup_interval_hours: Some(0),
+            ..AppSettings::default()
+        };
         update_settings(settings).expect("disable auto backup");
 
         let db = Database::memory()?;

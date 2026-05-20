@@ -2,6 +2,7 @@
  * Codex 预设供应商配置模板
  */
 import { ProviderCategory } from "../types";
+import type { CodexApiFormat } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 
 export interface CodexProviderPreset {
@@ -24,6 +25,8 @@ export interface CodexProviderPreset {
   // 图标配置
   icon?: string; // 图标名称
   iconColor?: string; // 图标颜色
+  // Codex API 格式
+  apiFormat?: CodexApiFormat;
 }
 
 /**
@@ -93,6 +96,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "shengsuanyun",
     icon: "shengsuanyun",
+  },
+  {
+    name: "PatewayAI",
+    websiteUrl: "https://pateway.ai",
+    apiKeyUrl: "https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "patewayai",
+      "https://api.pateway.ai/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://api.pateway.ai/v1"],
+    isPartner: true,
+    partnerPromotionKey: "patewayai",
+    icon: "pateway",
   },
   {
     name: "Azure OpenAI",
@@ -169,6 +188,49 @@ requires_openai_auth = true`,
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "packycode", // 促销信息 i18n key
     icon: "packycode",
+  },
+  {
+    name: "ClaudeCN",
+    websiteUrl: "https://claudecn.top",
+    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "claudecn",
+      "https://claudecn.top/v1",
+      "gpt-5.5",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "claudecn",
+    icon: "claudecn",
+  },
+  {
+    name: "RunAPI",
+    websiteUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "runapi",
+      "https://runapi.co/v1",
+      "gpt-5.5",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "runapi",
+    icon: "runapi",
+  },
+  {
+    name: "RelaxyCode",
+    websiteUrl: "https://www.relaxycode.com",
+    apiKeyUrl: "https://www.relaxycode.com/register",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "relaxycode",
+      "https://www.relaxycode.com/v1",
+      "gpt-5.5",
+    ),
+    icon: "relaxcode",
   },
   {
     name: "Cubence",
@@ -267,10 +329,10 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "crazyrouter",
-      "https://crazyrouter.com/v1",
+      "https://cn.crazyrouter.com/v1",
       "gpt-5.4",
     ),
-    endpointCandidates: ["https://crazyrouter.com/v1"],
+    endpointCandidates: ["https://cn.crazyrouter.com/v1"],
     isPartner: true,
     partnerPromotionKey: "crazyrouter",
     icon: "crazyrouter",
@@ -337,15 +399,15 @@ requires_openai_auth = true`,
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "micu",
-      "https://www.openclaudecode.cn/v1",
+      "https://www.micuapi.ai/v1",
       "gpt-5.4",
     ),
-    endpointCandidates: ["https://www.openclaudecode.cn/v1"],
+    endpointCandidates: ["https://www.micuapi.ai/v1"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "micu", // 促销信息 i18n key
@@ -367,37 +429,6 @@ requires_openai_auth = true`,
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "ctok", // 促销信息 i18n key
     icon: "ctok",
-    iconColor: "#000000",
-  },
-  {
-    name: "LionCCAPI",
-    websiteUrl: "https://vibecodingapi.ai",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "lionccapi",
-      "https://vibecodingapi.ai/v1",
-      "gpt-5.4",
-    ),
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lionccapi",
-    icon: "lioncc",
-  },
-  {
-    name: "DDSHub",
-    websiteUrl: "https://www.ddshub.cc",
-    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
-    category: "third_party",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "ddshub",
-      "https://www.ddshub.cc",
-      "gpt-5.4",
-    ),
-    endpointCandidates: ["https://www.ddshub.cc"],
-    isPartner: true,
-    partnerPromotionKey: "ddshub",
-    icon: "dds",
     iconColor: "#000000",
   },
   {

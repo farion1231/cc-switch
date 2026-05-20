@@ -12,7 +12,9 @@ pub fn codex_list_account_snapshots() -> Result<Vec<CodexAccountSummary>, String
 
 #[tauri::command]
 pub async fn get_all_codex_quotas() -> Result<HashMap<String, SubscriptionQuota>, String> {
-    crate::codex_accounts::get_all_account_quotas().await.map_err(Into::into)
+    crate::codex_accounts::get_all_account_quotas()
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]

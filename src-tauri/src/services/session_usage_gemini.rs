@@ -18,8 +18,10 @@ use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
-use crate::services::session_usage::{get_sync_state, update_sync_state, SessionSyncResult};
-use crate::services::usage_stats::{should_skip_session_insert, DedupKey};
+use crate::services::session_usage::{
+    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+};
+use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -126,12 +128,7 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
-    let file_modified = metadata
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
     let (last_modified, _last_offset) = get_sync_state(db, &file_path_str)?;
@@ -282,7 +279,7 @@ fn insert_gemini_session_entry(
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
     {
         Some(p) => {
-            let cost = CostCalculator::calculate(&usage, &p, multiplier);
+            let cost = CostCalculator::calculate_for_app("gemini", &usage, &p, multiplier);
             (
                 cost.input_cost.to_string(),
                 cost.output_cost.to_string(),
@@ -358,49 +355,7 @@ fn insert_gemini_session_entry(
 
 /// 查找 Gemini 模型定价
 fn find_gemini_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
-    // 精确匹配
-    if let Some(pricing) = try_find_pricing(conn, model_id) {
-        return Some(pricing);
-    }
-
-    // LIKE 模糊匹配（兜底）
-    let pattern = format!("{model_id}%");
-    conn.query_row(
-        "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing WHERE model_id LIKE ?1 LIMIT 1",
-        rusqlite::params![pattern],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
-    )
-    .ok()
-    .and_then(|(i, o, cr, cc)| ModelPricing::from_strings(&i, &o, &cr, &cc).ok())
-}
-
-/// 精确匹配定价查询
-fn try_find_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
-    conn.query_row(
-        "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing WHERE model_id = ?1",
-        rusqlite::params![model_id],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
-    )
-    .ok()
-    .and_then(|(i, o, cr, cc)| ModelPricing::from_strings(&i, &o, &cr, &cc).ok())
+    find_model_pricing(conn, model_id)
 }
 
 #[cfg(test)]

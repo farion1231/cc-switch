@@ -5,6 +5,7 @@ import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
+export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
 type AppDirectoryKey =
   | "claude"
   | "codex"
@@ -26,7 +27,7 @@ export interface ResolvedDirectories {
 
 // Single source of truth for per-app directory metadata.
 const APP_DIRECTORY_META: Record<
-  AppId,
+  DirectoryAppId,
   { key: AppDirectoryKey; defaultFolder: string }
 > = {
   claude: { key: "claude", defaultFolder: ".claude" },
@@ -69,7 +70,7 @@ const computeDefaultAppConfigDir = async (): Promise<string | undefined> => {
 };
 
 const computeDefaultConfigDir = async (
-  app: AppId,
+  app: DirectoryAppId,
 ): Promise<string | undefined> => {
   try {
     const home = await homeDir();
@@ -93,11 +94,11 @@ export interface UseDirectorySettingsResult {
   resolvedDirs: ResolvedDirectories;
   isLoading: boolean;
   initialAppConfigDir?: string;
-  updateDirectory: (app: AppId, value?: string) => void;
+  updateDirectory: (app: DirectoryAppId, value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
-  browseDirectory: (app: AppId) => Promise<void>;
+  browseDirectory: (app: DirectoryAppId) => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
-  resetDirectory: (app: AppId) => Promise<void>;
+  resetDirectory: (app: DirectoryAppId) => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
   resetAllDirectories: (overrides?: ResolvedAppDirectoryOverrides) => void;
 }
@@ -259,14 +260,14 @@ export function useDirectorySettings({
   );
 
   const updateDirectory = useCallback(
-    (app: AppId, value?: string) => {
+    (app: DirectoryAppId, value?: string) => {
       updateDirectoryState(APP_DIRECTORY_META[app].key, value);
     },
     [updateDirectoryState],
   );
 
   const browseDirectory = useCallback(
-    async (app: AppId) => {
+    async (app: DirectoryAppId) => {
       const key = APP_DIRECTORY_META[app].key;
       const settingsField = DIRECTORY_KEY_TO_SETTINGS_FIELD[key];
       const currentValue =
@@ -310,7 +311,7 @@ export function useDirectorySettings({
   }, [appConfigDir, resolvedDirs.appConfig, t, updateDirectoryState]);
 
   const resetDirectory = useCallback(
-    async (app: AppId) => {
+    async (app: DirectoryAppId) => {
       const key = APP_DIRECTORY_META[app].key;
       if (!defaultsRef.current[key]) {
         const fallback = await computeDefaultConfigDir(app);

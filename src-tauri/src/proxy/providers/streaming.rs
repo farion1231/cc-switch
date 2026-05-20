@@ -33,8 +33,9 @@ struct StreamChoice {
 struct Delta {
     #[serde(default)]
     content: Option<String>,
-    #[serde(default)]
-    reasoning: Option<String>, // OpenRouter 的推理内容
+    // OpenRouter/Kimi/其它 使用 reasoning，DeepSeek 使用 reasoning_content
+    #[serde(default, alias = "reasoning_content")]
+    reasoning: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<DeltaToolCall>>,
 }

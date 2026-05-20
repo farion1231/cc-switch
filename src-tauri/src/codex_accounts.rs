@@ -445,11 +445,11 @@ fn validate_auth_file(path: &Path) -> Result<(), AppError> {
             }
         }
         "apikey" => {
-            if !auth
+            if auth
                 .openai_api_key
                 .as_ref()
                 .and_then(Value::as_str)
-                .is_some()
+                .is_none()
             {
                 return Err(AppError::Config(format!(
                     "API key snapshot is missing OPENAI_API_KEY: {}",
@@ -794,7 +794,9 @@ pub async fn get_account_quota(account_key: &str) -> Result<SubscriptionQuota, A
     }
 
     let tokens = auth.tokens.ok_or_else(|| {
-        AppError::Config(format!("Missing tokens in snapshot for account {account_key}"))
+        AppError::Config(format!(
+            "Missing tokens in snapshot for account {account_key}"
+        ))
     })?;
 
     let access_token = tokens
@@ -823,7 +825,8 @@ pub async fn get_account_quota(account_key: &str) -> Result<SubscriptionQuota, A
 ///
 /// 返回 account_key -> SubscriptionQuota 的映射。
 /// 每个账号独立并发查询。
-pub async fn get_all_account_quotas() -> Result<std::collections::HashMap<String, SubscriptionQuota>, AppError> {
+pub async fn get_all_account_quotas(
+) -> Result<std::collections::HashMap<String, SubscriptionQuota>, AppError> {
     let accounts = list_accounts()?;
     let mut results = std::collections::HashMap::new();
 
@@ -855,7 +858,8 @@ pub async fn get_all_account_quotas() -> Result<std::collections::HashMap<String
                     account.account_key.clone(),
                     SubscriptionQuota {
                         tool: "codex".to_string(),
-                        credential_status: crate::services::subscription::CredentialStatus::ParseError,
+                        credential_status:
+                            crate::services::subscription::CredentialStatus::ParseError,
                         credential_message: Some(e.to_string()),
                         success: false,
                         tiers: vec![],

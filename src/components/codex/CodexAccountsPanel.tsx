@@ -48,7 +48,8 @@ export function CodexAccountsPanel() {
   const settingsQuery = useSettingsQuery();
   const saveSettingsMutation = useSaveSettingsMutation();
 
-  const refreshIntervalSec = settingsQuery.data?.codexQuotaRefreshInterval ?? 300;
+  const refreshIntervalSec =
+    settingsQuery.data?.codexQuotaRefreshInterval ?? 300;
   const quotasQuery = useAllCodexQuotas(true, refreshIntervalSec * 1000);
 
   const accounts = useMemo(
@@ -383,7 +384,12 @@ function getUtilizationColor(utilization: number): string {
   return "text-emerald-500";
 }
 
-function AccountRow({ account, quota, switchingKey, onSwitch }: AccountRowProps) {
+function AccountRow({
+  account,
+  quota,
+  switchingKey,
+  onSwitch,
+}: AccountRowProps) {
   const { t } = useTranslation();
   const isSwitching = switchingKey === account.accountKey;
 

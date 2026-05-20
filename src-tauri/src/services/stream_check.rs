@@ -215,7 +215,11 @@ impl StreamCheckService {
             return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
 
-        let adapter = get_adapter(app_type);
+        let adapter: Box<dyn ProviderAdapter> = if matches!(app_type, AppType::ClaudeDesktop) {
+            Box::new(ClaudeAdapter::new())
+        } else {
+            get_adapter(app_type)
+        };
 
         let base_url = match base_url_override {
             Some(base_url) => base_url,
@@ -236,7 +240,7 @@ impl StreamCheckService {
         let test_prompt = &config.test_prompt;
 
         let result = match app_type {
-            AppType::Claude => {
+            AppType::Claude | AppType::ClaudeDesktop => {
                 Self::check_claude_stream(
                     &client,
                     &base_url,
@@ -440,7 +444,10 @@ impl StreamCheckService {
             // - AuthStrategy::ClaudeAuth → Authorization: Bearer
             // - AuthStrategy::Bearer     → Authorization: Bearer
             // 避免之前"无条件 Bearer + 条件 x-api-key 双发"导致的假阴性 / auth conflict。
-            for (name, value) in ClaudeAdapter::new().get_auth_headers(auth) {
+            let auth_headers = ClaudeAdapter::new()
+                .get_auth_headers(auth)
+                .map_err(|e| AppError::Message(format!("stream check 构造鉴权头失败: {e}")))?;
+            for (name, value) in auth_headers {
                 request_builder = request_builder.header(name, value);
             }
 
@@ -1361,8 +1368,10 @@ impl StreamCheckService {
         config: &StreamCheckConfig,
     ) -> String {
         match app_type {
-            AppType::Claude => Self::extract_env_model(provider, "ANTHROPIC_MODEL")
-                .unwrap_or_else(|| config.claude_model.clone()),
+            AppType::Claude | AppType::ClaudeDesktop => {
+                Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                    .unwrap_or_else(|| config.claude_model.clone())
+            }
             AppType::Codex => {
                 Self::extract_codex_model(provider).unwrap_or_else(|| config.codex_model.clone())
             }
