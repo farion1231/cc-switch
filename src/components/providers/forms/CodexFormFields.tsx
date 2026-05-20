@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { FormLabel } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -51,6 +52,10 @@ interface CodexFormFieldsProps {
   apiFormat: CodexApiFormat;
   onApiFormatChange: (format: CodexApiFormat) => void;
 
+  // Stable provider id
+  stableModelProviderId: string;
+  onStableModelProviderIdChange: (value: string) => void;
+
   // Model Name
   shouldShowModelField?: boolean;
   modelName?: string;
@@ -81,6 +86,8 @@ export function CodexFormFields({
   onAutoSelectChange,
   apiFormat,
   onApiFormatChange,
+  stableModelProviderId,
+  onStableModelProviderIdChange,
   shouldShowModelField = true,
   modelName = "",
   onModelNameChange,
@@ -241,6 +248,32 @@ export function CodexFormFields({
           </p>
         </div>
       )}
+
+      {/* Stable model_provider id */}
+      <div className="space-y-2">
+        <FormLabel htmlFor="codexStableModelProviderId">
+          {t("provider.form.codex.stableModelProviderId", {
+            defaultValue: "Stable model_provider ID",
+          })}
+        </FormLabel>
+        <Input
+          id="codexStableModelProviderId"
+          value={stableModelProviderId}
+          onChange={(e) => onStableModelProviderIdChange(e.target.value)}
+          placeholder={t(
+            "provider.form.codex.stableModelProviderIdPlaceholder",
+            {
+              defaultValue: "ccswitch",
+            },
+          )}
+        />
+        <p className="text-xs text-muted-foreground">
+          {t("provider.form.codex.stableModelProviderIdHint", {
+            defaultValue:
+              "CC Switch writes this value to Codex config.toml as model_provider. Leave empty to use the default ccswitch.",
+          })}
+        </p>
+      </div>
 
       {/* 端点测速弹窗 - Codex */}
       {shouldShowSpeedTest && isEndpointModalOpen && (

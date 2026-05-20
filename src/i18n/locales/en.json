@@ -170,6 +170,11 @@
         "oauthTitle": "OAuth Authentication Mode",
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
+      },
+      "codex": {
+        "stableModelProviderId": "Stable model_provider ID",
+        "stableModelProviderIdHint": "This provider id is written to Codex config.toml as model_provider. If different providers use different values here, Codex will split history. Leave empty to use the default ccswitch, which is fine for most cases.",
+        "stableModelProviderIdPlaceholder": "ccswitch"
       }
     }
   },

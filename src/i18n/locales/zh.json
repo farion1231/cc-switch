@@ -170,6 +170,11 @@
         "oauthTitle": "OAuth 认证模式",
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
+      },
+      "codex": {
+        "stableModelProviderId": "model_provider",
+        "stableModelProviderIdHint": "传递给 Codex 的 provider id。若不同供应商设置中该值不同，会导致丢失对话历史。留空则默认为 ccswitch，适用于大多数情况。",
+        "stableModelProviderIdPlaceholder": "ccswitch"
       }
     }
   },
