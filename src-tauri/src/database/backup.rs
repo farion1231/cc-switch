@@ -9,6 +9,7 @@ use chrono::{Local, Utc};
 use rusqlite::backup::Backup;
 use rusqlite::types::ValueRef;
 use rusqlite::Connection;
+use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
@@ -304,28 +305,66 @@ impl Database {
         sql_content: &str,
         tables: &[&str],
     ) -> Result<(), AppError> {
-        for table in tables {
-            let filtered = sql_content
-                .lines()
-                .filter(|line| {
-                    let quoted = format!("INSERT INTO \"{table}\"");
-                    let plain = format!("INSERT INTO {table}");
-                    line.starts_with(&quoted) || line.starts_with(&plain)
-                })
-                .collect::<Vec<_>>();
+        let statements = Self::split_complete_sql_statements(sql_content)?;
 
-            if filtered.is_empty() {
+        for table in tables {
+            let quoted = format!("INSERT INTO \"{table}\"");
+            let plain = format!("INSERT INTO {table}");
+            let mut cleared = false;
+
+            for statement in &statements {
+                let sql = statement.trim_start();
+                if !sql.starts_with(&quoted) && !sql.starts_with(&plain) {
+                    continue;
+                }
+
+                if !cleared {
+                    conn.execute(&format!("DELETE FROM \"{table}\""), [])
+                        .map_err(|e| AppError::Database(format!("清空表 {table} 失败: {e}")))?;
+                    cleared = true;
+                }
+
+                conn.execute_batch(sql)
+                    .map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn split_complete_sql_statements(sql_content: &str) -> Result<Vec<&str>, AppError> {
+        let mut statements = Vec::new();
+        let mut start = 0;
+
+        for (idx, ch) in sql_content.char_indices() {
+            if ch != ';' {
                 continue;
             }
 
-            conn.execute(&format!("DELETE FROM \"{table}\""), [])
-                .map_err(|e| AppError::Database(format!("清空表 {table} 失败: {e}")))?;
+            let candidate = &sql_content[start..idx + 1];
+            if !Self::is_complete_sql_statement(candidate)? {
+                continue;
+            }
 
-            let batch = filtered.join("\n");
-            conn.execute_batch(&batch)
-                .map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
+            let trimmed = candidate.trim();
+            if !trimmed.is_empty() {
+                statements.push(trimmed);
+            }
+            start = idx + 1;
         }
-        Ok(())
+
+        let trailing = sql_content[start..].trim();
+        if !trailing.is_empty() {
+            return Err(AppError::Database("SQL 导出包含未完成的语句".to_string()));
+        }
+
+        Ok(statements)
+    }
+
+    fn is_complete_sql_statement(sql: &str) -> Result<bool, AppError> {
+        let c_sql = CString::new(sql).map_err(|_| {
+            AppError::Database("SQL 导出包含 NUL 字符，无法解析语句边界".to_string())
+        })?;
+        Ok(unsafe { rusqlite::ffi::sqlite3_complete(c_sql.as_ptr()) == 1 })
     }
 
     /// Periodic backup: create a new backup if the latest one is older than the configured interval
@@ -952,6 +991,67 @@ mod tests {
 
         assert_eq!(provider_count, 1);
         assert_eq!(prompt_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn selective_sync_import_preserves_multiline_prompt_content() -> Result<(), AppError> {
+        let multiline_content = "line1\nline2\nline3";
+
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO prompts (id, app_type, name, content, enabled)
+                 VALUES (?1, 'claude', 'Remote Prompt', ?2, 1)",
+                rusqlite::params!["remote-prompt", multiline_content],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_tables(&["prompts"])?;
+
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('local-provider', 'claude', 'Local Provider', '{}', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO prompts (id, app_type, name, content, enabled)
+                 VALUES ('local-prompt', 'claude', 'Local Prompt', 'hello', 1)",
+                [],
+            )?;
+        }
+
+        local_db.replace_tables_from_sql_strings(&[remote_sql.as_str()], &["prompts"])?;
+
+        let conn = crate::database::lock_conn!(local_db.conn);
+        let provider_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers WHERE id = 'local-provider' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        let local_prompt_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM prompts WHERE id = 'local-prompt' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        let remote_content: String = conn.query_row(
+            "SELECT content FROM prompts WHERE id = 'remote-prompt' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(
+            provider_count, 1,
+            "unselected provider data should stay local"
+        );
+        assert_eq!(
+            local_prompt_count, 0,
+            "selected prompts table should be replaced"
+        );
+        assert_eq!(remote_content, multiline_content);
         Ok(())
     }
 
