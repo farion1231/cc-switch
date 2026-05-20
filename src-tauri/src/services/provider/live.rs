@@ -1297,6 +1297,23 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         return Ok(0);
     }
 
+    // Read auth.json: bind provider credentials via provider-id keyed entries.
+    // If auth.json is missing, import proceeds without credentials.
+    // If auth.json exists but is invalid, abort to avoid silent data loss.
+    let auth_map = match opencode_config::read_opencode_auth() {
+        Ok(map) => Some(map),
+        Err(e) => {
+            let auth_path = opencode_config::get_opencode_auth_path();
+            if auth_path.exists() {
+                return Err(AppError::Config(format!(
+                    "Failed to read OpenCode auth.json: {e}"
+                )));
+            }
+            log::debug!("No OpenCode auth.json found, importing providers without credentials");
+            None
+        }
+    };
+
     let mut imported = 0;
     let existing_ids = state.db.get_provider_ids("opencode")?;
 
@@ -1308,13 +1325,34 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         }
 
         // Convert to Value for settings_config
-        let settings_config = match serde_json::to_value(&config) {
+        let mut settings_config = match serde_json::to_value(&config) {
             Ok(v) => v,
             Err(e) => {
                 log::warn!("Failed to serialize OpenCode provider '{id}': {e}");
                 continue;
             }
         };
+
+        // Attach auth.json[provider_id] as settings_config.auth if present.
+        // Object entries are merged with source marker; non-object entries are
+        // preserved as {"source": "opencode_auth_json", "value": <raw>} so
+        // that unknown auth entry shapes are not silently dropped.
+        if let Some(auth_entry) = auth_map.as_ref().and_then(|m| m.get(&id)) {
+            let auth_value = match auth_entry {
+                Value::Object(map) => {
+                    let mut obj = map.clone();
+                    obj.insert("source".to_string(), json!("opencode_auth_json"));
+                    Value::Object(obj)
+                }
+                other => json!({
+                    "source": "opencode_auth_json",
+                    "value": other
+                }),
+            };
+            if let Some(obj) = settings_config.as_object_mut() {
+                obj.insert("auth".to_string(), auth_value);
+            }
+        }
 
         // Create provider
         let mut provider = Provider::with_id(
