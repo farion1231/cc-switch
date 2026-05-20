@@ -1333,15 +1333,24 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
             }
         };
 
-        // Attach auth.json[provider_id] as settings_config.auth if present
+        // Attach auth.json[provider_id] as settings_config.auth if present.
+        // Object entries are merged with source marker; non-object entries are
+        // preserved as {"source": "opencode_auth_json", "value": <raw>} so
+        // that unknown auth entry shapes are not silently dropped.
         if let Some(auth_entry) = auth_map.as_ref().and_then(|m| m.get(&id)) {
-            let mut auth_value = serde_json::Map::new();
-            auth_value.insert("source".to_string(), json!("opencode_auth_json"));
-            for (k, v) in auth_entry.as_object().cloned().unwrap_or_default() {
-                auth_value.insert(k, v);
-            }
+            let auth_value = match auth_entry {
+                Value::Object(map) => {
+                    let mut obj = map.clone();
+                    obj.insert("source".to_string(), json!("opencode_auth_json"));
+                    Value::Object(obj)
+                }
+                other => json!({
+                    "source": "opencode_auth_json",
+                    "value": other
+                }),
+            };
             if let Some(obj) = settings_config.as_object_mut() {
-                obj.insert("auth".to_string(), Value::Object(auth_value));
+                obj.insert("auth".to_string(), auth_value);
             }
         }
 
