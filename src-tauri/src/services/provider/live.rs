@@ -708,25 +708,21 @@ impl LiveSnapshot {
 /// Extract credential from an OpenCode provider's settings_config.
 ///
 /// Priority:
-/// 1. `settings_config.auth` (new-style, source-tagged)
-/// 2. `settings_config.options.apiKey` (legacy inline)
+/// 1. `settings_config.auth` (new-style, source-tagged object)
+/// 2. `settings_config.options.apiKey` (legacy inline string)
 ///
 /// Returns the auth value to write to `auth.json[provider_id]`, or None.
+/// Auth entries are always objects; unknown fields within the object are preserved.
 fn extract_opencode_credential(settings_config: &Value) -> Option<Value> {
     if let Some(obj) = settings_config.as_object() {
-        // Prefer settings_config.auth
+        // Prefer settings_config.auth (must be an object)
         if let Some(auth) = obj.get("auth") {
-            // Strip the internal source marker before writing to auth.json
             if let Some(auth_obj) = auth.as_object() {
                 let mut cleaned = auth_obj.clone();
                 cleaned.remove("source");
                 if !cleaned.is_empty() {
                     return Some(Value::Object(cleaned));
                 }
-            }
-            // Non-object auth with only source marker: extract raw value
-            if let Some(raw) = auth.get("value") {
-                return Some(raw.clone());
             }
             return None;
         }
@@ -735,9 +731,9 @@ fn extract_opencode_credential(settings_config: &Value) -> Option<Value> {
         if let Some(api_key) = obj
             .get("options")
             .and_then(|o| o.get("apiKey"))
-            .cloned()
+            .and_then(|v| v.as_str())
         {
-            return Some(api_key);
+            return Some(json!({"key": api_key}));
         }
     }
     None
@@ -817,13 +813,42 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             // Extract credential: prefer settings_config.auth, fall back to options.apiKey.
             let credential = extract_opencode_credential(&config_to_write);
 
-            // Write credential to auth.json[provider_id] if present
+            // Try writing credential to auth.json[provider_id].
+            // If auth.json exists but is invalid, fall back to legacy inline
+            // options.apiKey in opencode.json instead of failing entirely.
+            let mut auth_json_written = false;
             if let Some(cred) = &credential {
-                opencode_config::set_opencode_auth_entry(&provider.id, cred.clone())?;
+                match opencode_config::set_opencode_auth_entry(&provider.id, cred.clone()) {
+                    Ok(()) => {
+                        auth_json_written = true;
+                    }
+                    Err(e) => {
+                        let auth_path = opencode_config::get_opencode_auth_path();
+                        if auth_path.exists() {
+                            // auth.json exists but is invalid or unwritable —
+                            // fall back to legacy inline options.apiKey
+                            log::warn!(
+                                "auth.json is not safely editable for provider '{}', \
+                                 falling back to inline options.apiKey: {e}",
+                                provider.id
+                            );
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                }
             }
 
-            // Strip credential fields from provider definition before writing to opencode.json
-            strip_opencode_credential_from_config(&mut config_to_write);
+            // Only strip credential fields from opencode.json if auth.json
+            // write succeeded; otherwise keep options.apiKey as legacy fallback.
+            if auth_json_written {
+                strip_opencode_credential_from_config(&mut config_to_write);
+            } else {
+                // Still strip the internal auth field even in legacy fallback
+                if let Some(obj) = config_to_write.as_object_mut() {
+                    obj.remove("auth");
+                }
+            }
 
             // Convert settings_config to OpenCodeProviderConfig
             let opencode_config_result =
@@ -1396,23 +1421,15 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         };
 
         // Attach auth.json[provider_id] as settings_config.auth if present.
-        // Object entries are merged with source marker; non-object entries are
-        // preserved as {"source": "opencode_auth_json", "value": <raw>} so
-        // that unknown auth entry shapes are not silently dropped.
+        // Only object entries are processed; non-object entries are skipped
+        // since auth.json entries are always objects per upstream convention.
         if let Some(auth_entry) = auth_map.as_ref().and_then(|m| m.get(&id)) {
-            let auth_value = match auth_entry {
-                Value::Object(map) => {
-                    let mut obj = map.clone();
-                    obj.insert("source".to_string(), json!("opencode_auth_json"));
-                    Value::Object(obj)
+            if let Some(map) = auth_entry.as_object() {
+                let mut obj = map.clone();
+                obj.insert("source".to_string(), json!("opencode_auth_json"));
+                if let Some(settings) = settings_config.as_object_mut() {
+                    settings.insert("auth".to_string(), Value::Object(obj));
                 }
-                other => json!({
-                    "source": "opencode_auth_json",
-                    "value": other
-                }),
-            };
-            if let Some(obj) = settings_config.as_object_mut() {
-                obj.insert("auth".to_string(), auth_value);
             }
         }
 

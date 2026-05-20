@@ -626,13 +626,13 @@ base_url = "http://localhost:8080"
                 "options.apiKey should not be written to opencode.json after split write-back"
             );
 
-            // Credential should be in auth.json instead
+            // Credential should be in auth.json instead as object
             let auth_entry = crate::opencode_config::get_opencode_auth_entry(&provider.id)
                 .expect("read auth.json");
             assert_eq!(
                 auth_entry,
-                Some(Value::String("updated-FAKE_KEY".to_string())),
-                "credential should be written to auth.json[provider_id]"
+                Some(json!({"key": "updated-FAKE_KEY"})),
+                "credential should be written to auth.json[provider_id] as object"
             );
         });
     }
@@ -936,7 +936,7 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
-    fn import_opencode_preserves_non_object_auth_entry_as_raw_value() {
+    fn import_opencode_skips_non_object_auth_entry() {
         with_test_home(|state, _| {
             let provider = opencode_provider("weird-provider");
             crate::opencode_config::set_provider(&provider.id, provider.settings_config.clone())
@@ -957,9 +957,11 @@ base_url = "http://localhost:8080"
                 .expect("query provider")
                 .expect("provider exists");
 
-            let auth = saved.settings_config.get("auth").expect("auth should be attached");
-            assert_eq!(auth.get("source").and_then(|v| v.as_str()), Some("opencode_auth_json"));
-            assert_eq!(auth.get("value").and_then(|v| v.as_str()), Some("FAKE_RAW_AUTH"));
+            // Non-object auth entries are skipped per upstream convention
+            assert!(
+                saved.settings_config.get("auth").is_none(),
+                "non-object auth entry should not be attached"
+            );
         });
     }
 
@@ -1016,13 +1018,13 @@ base_url = "http://localhost:8080"
             ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
                 .expect("sync provider");
 
-            // Legacy options.apiKey should be written to auth.json as a plain string
+            // Legacy options.apiKey should be written to auth.json as {"key": "..."}
             let auth_entry = crate::opencode_config::get_opencode_auth_entry("legacy-key-provider")
                 .expect("read auth.json");
             assert_eq!(
                 auth_entry,
-                Some(Value::String("FAKE_KEY".to_string())),
-                "legacy apiKey should be written to auth.json"
+                Some(json!({"key": "FAKE_KEY"})),
+                "legacy apiKey should be written to auth.json as object"
             );
 
             // opencode.json should NOT have options.apiKey
@@ -1069,7 +1071,7 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
-    fn opencode_write_back_fails_on_invalid_auth_json() {
+    fn opencode_write_back_falls_back_to_options_api_key_when_auth_json_invalid() {
         with_test_home(|state, _| {
             let provider = opencode_provider("invalid-auth-provider");
             state
@@ -1082,16 +1084,33 @@ base_url = "http://localhost:8080"
             std::fs::create_dir_all(auth_path.parent().unwrap()).expect("create parent dir");
             std::fs::write(&auth_path, "not valid json{{{").expect("write invalid auth.json");
 
-            // write_live_snapshot should fail on invalid auth.json
+            // write_live_snapshot should succeed but fall back to legacy
             let result = crate::services::provider::write_live_snapshot(
                 &AppType::OpenCode,
                 &provider,
             );
-            assert!(result.is_err(), "write_live_snapshot should fail on invalid auth.json");
+            assert!(result.is_ok(), "write_live_snapshot should succeed with fallback");
 
-            // Invalid auth.json should not be silently overwritten
+            // Invalid auth.json should not be overwritten
             let content = std::fs::read_to_string(&auth_path).expect("read auth.json");
             assert_eq!(content, "not valid json{{{", "invalid auth.json should not be overwritten");
+
+            // opencode.json should have options.apiKey as legacy fallback
+            let live_providers =
+                crate::opencode_config::get_providers().expect("read opencode providers");
+            let live = live_providers.get("invalid-auth-provider").expect("provider exists");
+            assert_eq!(
+                live.pointer("/options/apiKey"),
+                Some(&json!("FAKE_KEY")),
+                "options.apiKey should be in opencode.json as legacy fallback when auth.json is invalid"
+            );
+
+            // Non-secret options should still be present
+            assert_eq!(
+                live.pointer("/options/baseURL"),
+                Some(&json!("https://api.example.com/v1")),
+                "non-secret options should be preserved"
+            );
         });
     }
 
