@@ -231,3 +231,261 @@ pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<(), AppError> {
 
     write_opencode_config(&config)
 }
+
+pub fn get_opencode_auth_path() -> PathBuf {
+    get_opencode_dir().join("auth.json")
+}
+
+pub fn read_opencode_auth() -> Result<Map<String, Value>, AppError> {
+    let path = get_opencode_auth_path();
+
+    if !path.exists() {
+        return Ok(Map::new());
+    }
+
+    let content = std::fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
+    let parsed: Value = serde_json::from_str(&content).map_err(|e| AppError::json(&path, e))?;
+
+    match parsed {
+        Value::Object(map) => Ok(map),
+        other => Err(AppError::Config(format!(
+            "OpenCode auth.json must be a JSON object, got {}",
+            json_type_name(&other)
+        ))),
+    }
+}
+
+pub fn write_opencode_auth(auth: &Map<String, Value>) -> Result<(), AppError> {
+    let path = get_opencode_auth_path();
+    let value = Value::Object(auth.clone());
+    write_json_file(&path, &value)?;
+
+    log::debug!("OpenCode auth written to {:?}", path);
+    Ok(())
+}
+
+pub fn get_opencode_auth_entry(provider_id: &str) -> Result<Option<Value>, AppError> {
+    let auth = read_opencode_auth()?;
+    Ok(auth.get(provider_id).cloned())
+}
+
+pub fn set_opencode_auth_entry(provider_id: &str, entry: Value) -> Result<(), AppError> {
+    let mut auth = read_opencode_auth()?;
+    auth.insert(provider_id.to_string(), entry);
+    write_opencode_auth(&auth)
+}
+
+pub fn remove_opencode_auth_entry(provider_id: &str) -> Result<(), AppError> {
+    let mut auth = read_opencode_auth()?;
+    if auth.remove(provider_id).is_some() {
+        write_opencode_auth(&auth)?;
+    }
+    Ok(())
+}
+
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+    use serial_test::serial;
+    use std::fs;
+
+    fn setup_test_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "cc-switch-auth-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::create_dir_all(&dir);
+        std::env::set_var("CC_SWITCH_TEST_HOME", dir.join("home").to_str().unwrap());
+        let _ = fs::create_dir_all(dir.join("home").join(".config").join("opencode"));
+        dir
+    }
+
+    fn teardown_test_dir(dir: &PathBuf) {
+        std::env::remove_var("CC_SWITCH_TEST_HOME");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn test_auth_path(dir: &PathBuf) -> PathBuf {
+        dir.join("home")
+            .join(".config")
+            .join("opencode")
+            .join("auth.json")
+    }
+
+    #[test]
+    #[serial]
+    fn read_missing_auth_returns_empty_map() {
+        let dir = setup_test_dir();
+        let result = read_opencode_auth().unwrap();
+        assert!(result.is_empty());
+        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn read_valid_auth_file() {
+        let dir = setup_test_dir();
+        let path = test_auth_path(&dir);
+        fs::write(
+            &path,
+            r#"{"orouter-byok": {"type": "api", "key": "sk-test123"}}"#,
+        )
+        .unwrap();
+
+        let auth = read_opencode_auth().unwrap();
+        assert_eq!(auth.len(), 1);
+        assert!(auth.contains_key("orouter-byok"));
+
+        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn read_invalid_json_returns_error() {
+        let dir = setup_test_dir();
+        let path = test_auth_path(&dir);
+        fs::write(&path, "{invalid json}").unwrap();
+
+        let result = read_opencode_auth();
+        assert!(result.is_err());
+
+        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn read_non_object_json_returns_error() {
+        let dir = setup_test_dir();
+        let path = test_auth_path(&dir);
+        fs::write(&path, "[1, 2, 3]").unwrap();
+
+        let result = read_opencode_auth();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("must be a JSON object"));
+
+        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn set_and_get_auth_entry() {
+        let dir = setup_test_dir();
+        let entry = json!({"type": "api", "key": "sk-abc"});
+        set_opencode_auth_entry("test-provider", entry.clone()).unwrap();
+
+        let got = get_opencode_auth_entry("test-provider").unwrap();
+        assert_eq!(got, Some(entry));
+
+        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn set_entry_preserves_other_entries() {
+        let dir = setup_test_dir();
+        let path = test_auth_path(&dir);
+        fs::write(
+            &path,
+            r#"{"existing": {"type": "api", "key": "sk-old"}}"#,
+        )
+        .unwrap();
+
+        set_opencode_auth_entry(
+            "new-provider",
+            json!({"type": "api", "key": "sk-new"}),
+        )
+        .unwrap();
+
+        let auth = read_opencode_auth().unwrap();
+        assert!(auth.contains_key("existing"));
+        assert!(auth.contains_key("new-provider"));
+
+        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn remove_entry_preserves_other_entries() {
+        let dir = setup_test_dir();
+        let path = test_auth_path(&dir);
+        fs::write(
+            &path,
+            r#"{"a": {"type": "api", "key": "sk-a"}, "b": {"type": "api", "key": "sk-b"}}"#,
+        )
+        .unwrap();
+
+        remove_opencode_auth_entry("a").unwrap();
+
+        let auth = read_opencode_auth().unwrap();
+        assert!(!auth.contains_key("a"));
+        assert!(auth.contains_key("b"));
+
+        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn remove_nonexistent_entry_is_noop() {
+        let dir = setup_test_dir();
+        let path = test_auth_path(&dir);
+        fs::write(&path, r#"{"a": {"type": "api", "key": "sk-a"}}"#).unwrap();
+
+        remove_opencode_auth_entry("nonexistent").unwrap();
+
+        let auth = read_opencode_auth().unwrap();
+        assert_eq!(auth.len(), 1);
+        assert!(auth.contains_key("a"));
+
+        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn write_creates_parent_dir_if_missing() {
+        let dir = setup_test_dir();
+        let opencode_dir = dir.join("home").join(".config").join("opencode");
+        let _ = fs::remove_dir_all(&opencode_dir);
+
+        set_opencode_auth_entry("fresh", json!({"type": "api", "key": "sk-fresh"})).unwrap();
+
+        let got = get_opencode_auth_entry("fresh").unwrap();
+        assert!(got.is_some());
+
+        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn unknown_entry_shape_preserved_as_raw_value() {
+        let dir = setup_test_dir();
+        let path = test_auth_path(&dir);
+        fs::write(
+            &path,
+            r#"{"custom": {"unusual": true, "nested": {"deep": 42}}}"#,
+        )
+        .unwrap();
+
+        let entry = get_opencode_auth_entry("custom").unwrap();
+        assert!(entry.is_some());
+        let val = entry.unwrap();
+        assert_eq!(val["unusual"], json!(true));
+        assert_eq!(val["nested"]["deep"], json!(42));
+
+        teardown_test_dir(&dir);
+    }
+}
