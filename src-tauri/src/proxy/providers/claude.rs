@@ -84,7 +84,11 @@ pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
 
 fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
-    value.contains("moonshot") || value.contains("kimi") || value.contains("deepseek")
+    value.contains("moonshot")
+        || value.contains("kimi")
+        || value.contains("deepseek")
+        || value.contains("mimo")
+        || value.contains("xiaomimimo")
 }
 
 fn should_preserve_reasoning_content_for_openai_chat(
