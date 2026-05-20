@@ -20,6 +20,26 @@ use tokio::sync::RwLock;
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+const CLAUDE_TAKEOVER_ENV_KEYS: &[&str] = &[
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ENABLE_TOOL_SEARCH",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+    "API_TIMEOUT_MS",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+];
+const CLAUDE_PROVIDER_ROUTING_ENV_KEYS: &[&str] = &[
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+];
 
 #[derive(Clone)]
 pub struct ProxyService {
@@ -57,14 +77,6 @@ impl ProxyService {
             .as_object_mut()
             .expect("Claude live config should be normalized to an object");
 
-        if let Some(provider_root) = provider_settings.as_object() {
-            for (key, value) in provider_root {
-                if key != "env" {
-                    root.insert(key.clone(), value.clone());
-                }
-            }
-        }
-
         let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
         if !env.is_object() {
             *env = json!({});
@@ -73,26 +85,15 @@ impl ProxyService {
             .as_object_mut()
             .expect("Claude live env should be normalized to an object");
 
-        for key in [
-            "ANTHROPIC_BASE_URL",
-            "ANTHROPIC_AUTH_TOKEN",
-            "ANTHROPIC_API_KEY",
-            "OPENROUTER_API_KEY",
-            "OPENAI_API_KEY",
-            "ANTHROPIC_MODEL",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
-        ] {
-            env.remove(key);
+        for key in CLAUDE_PROVIDER_ROUTING_ENV_KEYS {
+            env.remove(*key);
         }
 
         if let Some(provider_env) = provider_settings.get("env").and_then(Value::as_object) {
-            for (key, value) in provider_env {
-                env.insert(key.clone(), value.clone());
+            for key in CLAUDE_TAKEOVER_ENV_KEYS {
+                if let Some(value) = provider_env.get(*key) {
+                    env.insert((*key).to_string(), value.clone());
+                }
             }
         }
     }
@@ -105,7 +106,6 @@ impl ProxyService {
         let root = config
             .as_object_mut()
             .expect("Claude config should be normalized to an object");
-        root.remove("model");
 
         let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
         if !env.is_object() {
@@ -117,27 +117,10 @@ impl ProxyService {
             .expect("Claude env should be normalized to an object");
         env.insert("ANTHROPIC_BASE_URL".to_string(), json!(proxy_url));
 
-        let token_keys = [
-            "ANTHROPIC_AUTH_TOKEN",
-            "ANTHROPIC_API_KEY",
-            "OPENROUTER_API_KEY",
-            "OPENAI_API_KEY",
-        ];
-
-        let mut replaced_any = false;
-        for key in token_keys {
-            if env.contains_key(key) {
-                env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
-                replaced_any = true;
-            }
-        }
-
-        if !replaced_any {
-            env.insert(
-                "ANTHROPIC_AUTH_TOKEN".to_string(),
-                json!(PROXY_TOKEN_PLACEHOLDER),
-            );
-        }
+        env.insert(
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            json!(PROXY_TOKEN_PLACEHOLDER),
+        );
     }
 
     pub async fn sync_claude_live_from_provider_while_proxy_active(
@@ -1585,11 +1568,12 @@ impl ProxyService {
         for key in [
             "ANTHROPIC_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "ENABLE_TOOL_SEARCH",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+            "API_TIMEOUT_MS",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
         ] {
             if live_env.get(key) != expected_env.get(key) {
                 return Ok(false);
@@ -2622,9 +2606,10 @@ model = "gpt-5.1-codex"
 
         ProxyService::apply_claude_takeover_fields(&mut config, "http://127.0.0.1:15721");
 
-        assert!(
-            config.get("model").is_none(),
-            "takeover should not leave a stale top-level model selector"
+        assert_eq!(
+            config.get("model").and_then(Value::as_str),
+            Some("opus"),
+            "takeover must not modify top-level settings outside the env whitelist"
         );
         let env = config
             .get("env")
@@ -3140,9 +3125,10 @@ model = "gpt-5.1-codex"
             original.get("skipDangerousModePermissionPrompt"),
             "proxy takeover must keep dangerous-mode prompt settings"
         );
-        assert!(
-            taken_over.get("model").is_none(),
-            "takeover should still isolate Claude Code's transient model selector"
+        assert_eq!(
+            taken_over.get("model"),
+            original.get("model"),
+            "proxy takeover must keep top-level Claude Code settings outside the env whitelist"
         );
 
         let mut polluted = taken_over;
@@ -3350,9 +3336,10 @@ model = "gpt-5.1-codex"
             .expect("strict takeover");
 
         let live = service.read_claude_live().expect("read takeover live");
-        assert!(
-            live.get("model").is_none(),
-            "takeover should remove stale Claude Code top-level model selection"
+        assert_eq!(
+            live.get("model").and_then(Value::as_str),
+            Some("opus"),
+            "takeover must preserve top-level Claude Code settings outside the env whitelist"
         );
         assert_eq!(
             live.get("enabledPlugins")
@@ -3828,9 +3815,10 @@ requires_openai_auth = true
             .write_claude_live(&json!({
                 "env": {
                     "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
-                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
                     "ANTHROPIC_MODEL": "stale-model",
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet"
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet",
+                    "CUSTOM_ENV_SHOULD_STAY": "keep-me"
                 },
                 "permissions": { "allow": ["Bash"] }
             }))
@@ -3844,12 +3832,12 @@ requires_openai_auth = true
         let live = service.read_claude_live().expect("read live config");
         assert_eq!(
             live.get("permissions"),
-            provider_b.settings_config.get("permissions"),
-            "provider-derived live settings should be refreshed"
+            Some(&json!({ "allow": ["Bash"] })),
+            "hot switch takeover must preserve top-level settings outside the env whitelist"
         );
         assert_eq!(
             live.get("env")
-                .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN"))
                 .and_then(|v| v.as_str()),
             Some(PROXY_TOKEN_PLACEHOLDER),
             "takeover token placeholder should be preserved"
@@ -3879,12 +3867,9 @@ requires_openai_auth = true
             Some("deepseek-v4-flash"),
             "model menu should show the provider Haiku model directly"
         );
-        assert_eq!(
-            live_env
-                .get("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
-                .and_then(|v| v.as_str()),
-            Some("DeepSeek V4 Flash"),
-            "model menu should show the current provider Haiku display name"
+        assert!(
+            !live_env.contains_key("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"),
+            "takeover must not write model display-name fields outside the env whitelist"
         );
         assert_eq!(
             live_env
@@ -3897,8 +3882,8 @@ requires_openai_auth = true
             live_env
                 .get("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
                 .and_then(|v| v.as_str()),
-            Some("DeepSeek V4 Pro"),
-            "stale model display names should be replaced during hot switch"
+            Some("Stale Sonnet"),
+            "hot switch takeover must not touch env keys outside the whitelist"
         );
         assert_eq!(
             live_env
@@ -3906,6 +3891,13 @@ requires_openai_auth = true
                 .and_then(|v| v.as_str()),
             Some("deepseek-v4-ultra [1m]"),
             "Opus role should keep the provider 1M model visible"
+        );
+        assert_eq!(
+            live_env
+                .get("CUSTOM_ENV_SHOULD_STAY")
+                .and_then(|v| v.as_str()),
+            Some("keep-me"),
+            "custom env outside the whitelist must survive takeover hot switch"
         );
 
         let backup = db

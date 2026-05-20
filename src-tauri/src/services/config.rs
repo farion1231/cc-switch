@@ -191,8 +191,18 @@ impl ConfigService {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
 
-        let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-        write_json_file(&settings_path, &settings)?;
+        // 读-改-写：读取现有 settings.json 保留用户字段（enabledPlugins/hooks/permissions），
+        // 仅更新 env 字段
+        let mut existing = if settings_path.exists() {
+            read_json_file::<serde_json::Value>(&settings_path).unwrap_or_else(|_| serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+        let provider_settings = sanitize_claude_settings_for_live(&provider.settings_config);
+        if let Some(provider_env) = provider_settings.get("env") {
+            existing["env"] = provider_env.clone();
+        }
+        write_json_file(&settings_path, &existing)?;
 
         let live_after = read_json_file::<serde_json::Value>(&settings_path)?;
         let live_sanitized =

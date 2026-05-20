@@ -803,8 +803,18 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-            write_json_file(&path, &settings)?;
+            // 读取现有 settings.json，保留 enabledPlugins/hooks/permissions 等用户字段
+            let mut existing = if path.exists() {
+                read_json_file::<Value>(&path).unwrap_or_else(|_| json!({}))
+            } else {
+                json!({})
+            };
+            // 只更新 env 字段，保留所有其他字段（enabledPlugins, hooks, permissions 等）
+            let provider_settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            if let Some(provider_env) = provider_settings.get("env") {
+                existing["env"] = provider_env.clone();
+            }
+            write_json_file(&path, &existing)?;
         }
         AppType::ClaudeDesktop => {
             return Err(AppError::localized(
