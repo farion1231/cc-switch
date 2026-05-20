@@ -61,9 +61,11 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 }
 
 fn managed_profile_resume_command(profile_dir: &Path, session_id: &str) -> String {
+    let include_launcher_overlay =
+        crate::claude_profile::launcher_settings_overlay_path(profile_dir).is_file();
     format!(
         "{} --resume {}",
-        crate::claude_profile::launch_command_for_profile(profile_dir, false),
+        crate::claude_profile::launch_command_for_profile(profile_dir, include_launcher_overlay),
         session_id
     )
 }
@@ -380,6 +382,29 @@ mod tests {
         assert_eq!(
             command,
             "CLAUDE_CONFIG_DIR='/tmp/profile O'\"'\"'Brien' claude --resume session-123"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn managed_profile_resume_command_includes_launcher_overlay_when_present() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profile");
+        std::fs::create_dir_all(&profile_dir).expect("create profile");
+        std::fs::write(
+            crate::claude_profile::launcher_settings_overlay_path(&profile_dir),
+            "{}",
+        )
+        .expect("write overlay");
+
+        let command = managed_profile_resume_command(&profile_dir, "session-123");
+        let profile = profile_dir.to_string_lossy();
+
+        assert_eq!(
+            command,
+            format!(
+                "CLAUDE_CONFIG_DIR='{profile}' claude --settings '{profile}/cc-switch-launcher-settings.json' --resume session-123"
+            )
         );
     }
 
