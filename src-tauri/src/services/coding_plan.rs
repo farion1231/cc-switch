@@ -185,10 +185,9 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
 
 /// 把智谱 `data` 里的 `limits[]` 解析成 tier 列表。
 ///
-/// 按 `nextResetTime` 升序后：第 0 条 = 五小时桶（`five_hour`）、
-/// 第 1 条 = 每周桶（`weekly_limit`）。老套餐（2026-02-12 前订阅）只回 1 条
-/// `TOKENS_LIMIT`，自然降级为仅展示 `five_hour`；新套餐回 2 条。
-/// 缺失 `nextResetTime` 时按 `i64::MAX` 排到末位。
+/// 老套餐（2026-02-12 前订阅）只回 1 条 `TOKENS_LIMIT`，自然降级为仅展示
+/// `five_hour`；新套餐回 2 条。双桶里若只有一条为 0%，0% 桶归 `five_hour`；
+/// 其余情况沿用 `nextResetTime` 升序启发式。
 fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
     let mut token_limits: Vec<(i64, f64, Option<String>)> = Vec::new();
     if let Some(limits) = data.get("limits").and_then(|v| v.as_array()) {
@@ -217,7 +216,20 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
             token_limits.push((reset_ms, percentage, reset_iso));
         }
     }
-    token_limits.sort_by_key(|(reset, _, _)| *reset);
+    if token_limits.len() == 2 {
+        // Not percentage ordering: only this invariant is safe. If one bucket is
+        // 0% and the other is used, the unused bucket must be the 5h bucket.
+        let first_zero_second_used = token_limits[0].1 == 0.0 && token_limits[1].1 > 0.0;
+        let second_zero_first_used = token_limits[1].1 == 0.0 && token_limits[0].1 > 0.0;
+
+        if second_zero_first_used {
+            token_limits.swap(0, 1);
+        } else if !first_zero_second_used {
+            token_limits.sort_by_key(|(reset, _, _)| *reset);
+        }
+    } else {
+        token_limits.sort_by_key(|(reset, _, _)| *reset);
+    }
 
     token_limits
         .into_iter()
@@ -544,6 +556,24 @@ mod tests {
         assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
         assert_eq!(tiers[1].utilization, 99.0);
         assert!(tiers[1].resets_at.is_none());
+    }
+
+    #[test]
+    fn zhipu_zero_usage_without_reset_is_five_hour() {
+        // Minimal fix for #2958: when the 5h bucket is unused, Zhipu may omit
+        // its nextResetTime while the weekly bucket still has a reset timestamp.
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "percentage": 79.0, "nextResetTime": 2_000_000_000_000_i64 },
+                { "type": "TOKENS_LIMIT", "percentage": 0.0 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 0.0);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 79.0);
     }
 
     #[test]
