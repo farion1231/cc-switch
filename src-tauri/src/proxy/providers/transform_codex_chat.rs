@@ -203,7 +203,11 @@ fn flush_pending_tool_calls(messages: &mut Vec<Value>, pending_tool_calls: &mut 
 }
 
 fn responses_message_item_to_chat_message(item: &Value) -> Value {
-    let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+    let raw_role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+    let role = match raw_role {
+        "developer" => "system",
+        other => other,
+    };
     let content = item
         .get("content")
         .map(|value| responses_content_to_chat_content(role, value))
