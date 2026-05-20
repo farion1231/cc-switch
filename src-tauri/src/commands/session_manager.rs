@@ -83,3 +83,21 @@ pub async fn delete_sessions(
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
 }
+
+#[tauri::command]
+pub async fn export_session(
+    request: session_manager::ExportSessionRequest,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || session_manager::export_session(&request))
+        .await
+        .map_err(|e| format!("Failed to export session: {e}"))?
+}
+
+#[tauri::command]
+pub async fn render_session_export(
+    request: session_manager::RenderSessionExportRequest,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || session_manager::render_session_export(&request))
+        .await
+        .map_err(|e| format!("Failed to render session export: {e}"))?
+}

@@ -1148,6 +1148,7 @@ pub fn run() {
             commands::webdav_sync_save_settings,
             commands::webdav_sync_fetch_remote_info,
             commands::save_file_dialog,
+            commands::save_file_dialog_with_filter,
             commands::open_file_dialog,
             commands::open_zip_file_dialog,
             commands::create_db_backup,
@@ -1254,6 +1255,8 @@ pub fn run() {
             commands::get_session_messages,
             commands::delete_session,
             commands::delete_sessions,
+            commands::export_session,
+            commands::render_session_export,
             commands::launch_session_terminal,
             commands::get_tool_versions,
             // Provider terminal
