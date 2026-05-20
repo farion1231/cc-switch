@@ -300,132 +300,153 @@ mod auth_tests {
     use serial_test::serial;
     use std::fs;
 
-    fn setup_test_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "cc-switch-auth-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = fs::create_dir_all(&dir);
-        std::env::set_var("CC_SWITCH_TEST_HOME", dir.join("home").to_str().unwrap());
-        let _ = fs::create_dir_all(dir.join("home").join(".config").join("opencode"));
-        dir
+    struct TempHome {
+        dir: PathBuf,
+        old_var: Option<std::ffi::OsString>,
     }
 
-    fn teardown_test_dir(dir: &PathBuf) {
-        std::env::remove_var("CC_SWITCH_TEST_HOME");
-        let _ = fs::remove_dir_all(dir);
+    impl TempHome {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "cc-switch-auth-test-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let _ = fs::create_dir_all(&dir);
+            let home = dir.join("home");
+            let _ = fs::create_dir_all(home.join(".config").join("opencode"));
+
+            let old_var = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", home.to_str().unwrap());
+
+            Self { dir, old_var }
+        }
+
+        fn auth_path(&self) -> PathBuf {
+            self.dir
+                .join("home")
+                .join(".config")
+                .join("opencode")
+                .join("auth.json")
+        }
+
+        fn opencode_dir(&self) -> PathBuf {
+            self.dir.join("home").join(".config").join("opencode")
+        }
     }
 
-    fn test_auth_path(dir: &PathBuf) -> PathBuf {
-        dir.join("home")
-            .join(".config")
-            .join("opencode")
-            .join("auth.json")
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.old_var {
+                Some(v) => std::env::set_var("CC_SWITCH_TEST_HOME", v),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = fs::remove_dir_all(&self.dir);
+        }
     }
 
     #[test]
     #[serial]
     fn read_missing_auth_returns_empty_map() {
-        let dir = setup_test_dir();
+        let _th = TempHome::new();
         let result = read_opencode_auth().unwrap();
         assert!(result.is_empty());
-        teardown_test_dir(&dir);
+    }
+
+    #[test]
+    #[serial]
+    fn read_missing_auth_does_not_create_directory() {
+        let th = TempHome::new();
+        let opencode_dir = th.opencode_dir();
+        let _ = fs::remove_dir_all(&opencode_dir);
+        assert!(!opencode_dir.exists());
+
+        let result = read_opencode_auth().unwrap();
+        assert!(result.is_empty());
+        assert!(
+            !opencode_dir.exists(),
+            "read_opencode_auth must not create the opencode directory"
+        );
     }
 
     #[test]
     #[serial]
     fn read_valid_auth_file() {
-        let dir = setup_test_dir();
-        let path = test_auth_path(&dir);
+        let th = TempHome::new();
         fs::write(
-            &path,
-            r#"{"orouter-byok": {"type": "api", "key": "sk-test123"}}"#,
+            th.auth_path(),
+            r#"{"orouter-byok": {"type": "api", "key": "FAKE_KEY"}}"#,
         )
         .unwrap();
 
         let auth = read_opencode_auth().unwrap();
         assert_eq!(auth.len(), 1);
         assert!(auth.contains_key("orouter-byok"));
-
-        teardown_test_dir(&dir);
     }
 
     #[test]
     #[serial]
     fn read_invalid_json_returns_error() {
-        let dir = setup_test_dir();
-        let path = test_auth_path(&dir);
-        fs::write(&path, "{invalid json}").unwrap();
+        let th = TempHome::new();
+        fs::write(th.auth_path(), "{invalid json}").unwrap();
 
         let result = read_opencode_auth();
         assert!(result.is_err());
-
-        teardown_test_dir(&dir);
     }
 
     #[test]
     #[serial]
     fn read_non_object_json_returns_error() {
-        let dir = setup_test_dir();
-        let path = test_auth_path(&dir);
-        fs::write(&path, "[1, 2, 3]").unwrap();
+        let th = TempHome::new();
+        fs::write(th.auth_path(), "[1, 2, 3]").unwrap();
 
         let result = read_opencode_auth();
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("must be a JSON object"));
-
-        teardown_test_dir(&dir);
     }
 
     #[test]
     #[serial]
     fn set_and_get_auth_entry() {
-        let dir = setup_test_dir();
-        let entry = json!({"type": "api", "key": "sk-abc"});
+        let _th = TempHome::new();
+        let entry = json!({"type": "api", "key": "FAKE_KEY"});
         set_opencode_auth_entry("test-provider", entry.clone()).unwrap();
 
         let got = get_opencode_auth_entry("test-provider").unwrap();
         assert_eq!(got, Some(entry));
-
-        teardown_test_dir(&dir);
     }
 
     #[test]
     #[serial]
     fn set_entry_preserves_other_entries() {
-        let dir = setup_test_dir();
-        let path = test_auth_path(&dir);
+        let th = TempHome::new();
         fs::write(
-            &path,
-            r#"{"existing": {"type": "api", "key": "sk-old"}}"#,
+            th.auth_path(),
+            r#"{"existing": {"type": "api", "key": "FAKE_KEY"}}"#,
         )
         .unwrap();
 
         set_opencode_auth_entry(
             "new-provider",
-            json!({"type": "api", "key": "sk-new"}),
+            json!({"type": "api", "key": "TEST_KEY"}),
         )
         .unwrap();
 
         let auth = read_opencode_auth().unwrap();
         assert!(auth.contains_key("existing"));
         assert!(auth.contains_key("new-provider"));
-
-        teardown_test_dir(&dir);
     }
 
     #[test]
     #[serial]
     fn remove_entry_preserves_other_entries() {
-        let dir = setup_test_dir();
-        let path = test_auth_path(&dir);
+        let th = TempHome::new();
         fs::write(
-            &path,
-            r#"{"a": {"type": "api", "key": "sk-a"}, "b": {"type": "api", "key": "sk-b"}}"#,
+            th.auth_path(),
+            r#"{"a": {"type": "api", "key": "FAKE_KEY"}, "b": {"type": "api", "key": "FAKE_KEY"}}"#,
         )
         .unwrap();
 
@@ -434,48 +455,44 @@ mod auth_tests {
         let auth = read_opencode_auth().unwrap();
         assert!(!auth.contains_key("a"));
         assert!(auth.contains_key("b"));
-
-        teardown_test_dir(&dir);
     }
 
     #[test]
     #[serial]
     fn remove_nonexistent_entry_is_noop() {
-        let dir = setup_test_dir();
-        let path = test_auth_path(&dir);
-        fs::write(&path, r#"{"a": {"type": "api", "key": "sk-a"}}"#).unwrap();
+        let th = TempHome::new();
+        fs::write(
+            th.auth_path(),
+            r#"{"a": {"type": "api", "key": "FAKE_KEY"}}"#,
+        )
+        .unwrap();
 
         remove_opencode_auth_entry("nonexistent").unwrap();
 
         let auth = read_opencode_auth().unwrap();
         assert_eq!(auth.len(), 1);
         assert!(auth.contains_key("a"));
-
-        teardown_test_dir(&dir);
     }
 
     #[test]
     #[serial]
     fn write_creates_parent_dir_if_missing() {
-        let dir = setup_test_dir();
-        let opencode_dir = dir.join("home").join(".config").join("opencode");
+        let th = TempHome::new();
+        let opencode_dir = th.opencode_dir();
         let _ = fs::remove_dir_all(&opencode_dir);
 
-        set_opencode_auth_entry("fresh", json!({"type": "api", "key": "sk-fresh"})).unwrap();
+        set_opencode_auth_entry("fresh", json!({"type": "api", "key": "FAKE_KEY"})).unwrap();
 
         let got = get_opencode_auth_entry("fresh").unwrap();
         assert!(got.is_some());
-
-        teardown_test_dir(&dir);
     }
 
     #[test]
     #[serial]
     fn unknown_entry_shape_preserved_as_raw_value() {
-        let dir = setup_test_dir();
-        let path = test_auth_path(&dir);
+        let th = TempHome::new();
         fs::write(
-            &path,
+            th.auth_path(),
             r#"{"custom": {"unusual": true, "nested": {"deep": 42}}}"#,
         )
         .unwrap();
@@ -485,7 +502,5 @@ mod auth_tests {
         let val = entry.unwrap();
         assert_eq!(val["unusual"], json!(true));
         assert_eq!(val["nested"]["deep"], json!(42));
-
-        teardown_test_dir(&dir);
     }
 }
