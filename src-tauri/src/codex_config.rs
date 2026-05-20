@@ -9,6 +9,8 @@ use crate::error::AppError;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use toml_edit::DocumentMut;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
@@ -92,11 +94,14 @@ pub fn write_codex_live_atomic(
     } else {
         None
     };
-    let _old_config = if config_path.exists() {
+    let old_config = if config_path.exists() {
         Some(fs::read(&config_path).map_err(|e| AppError::io(&config_path, e))?)
     } else {
         None
     };
+    let old_config_text = old_config
+        .as_ref()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
 
     // 准备写入内容
     let cfg_text = match config_text_opt {
@@ -121,6 +126,112 @@ pub fn write_codex_live_atomic(
         return Err(e);
     }
 
+    if let Err(err) = sync_codex_launch_env(auth, old_config_text.as_deref(), cfg_text.as_str()) {
+        log::warn!("Failed to sync Codex desktop environment: {err}");
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CodexLaunchEnvAction {
+    Set { key: String, value: String },
+    Unset { key: String },
+}
+
+fn codex_config_env_key(config_text: &str) -> Option<String> {
+    if config_text.trim().is_empty() {
+        return None;
+    }
+
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    let provider_id = active_codex_model_provider_id(&doc)?;
+
+    doc.get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|table| table.get(provider_id.as_str()))
+        .and_then(|item| item.as_table_like())
+        .and_then(|table| table.get("env_key"))
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+}
+
+fn codex_launch_env_actions(
+    auth: &Value,
+    old_config_text: Option<&str>,
+    new_config_text: &str,
+) -> Vec<CodexLaunchEnvAction> {
+    let old_key = old_config_text.and_then(codex_config_env_key);
+    let new_key = codex_config_env_key(new_config_text);
+    let mut actions = Vec::new();
+
+    if old_key.as_deref() != new_key.as_deref() {
+        if let Some(key) = old_key {
+            actions.push(CodexLaunchEnvAction::Unset { key });
+        }
+    }
+
+    if let Some(key) = new_key {
+        match auth.get(&key).and_then(Value::as_str).map(str::trim) {
+            Some(value) if !value.is_empty() => actions.push(CodexLaunchEnvAction::Set {
+                key,
+                value: value.to_string(),
+            }),
+            _ => actions.push(CodexLaunchEnvAction::Unset { key }),
+        }
+    }
+
+    actions
+}
+
+fn sync_codex_launch_env(
+    auth: &Value,
+    old_config_text: Option<&str>,
+    new_config_text: &str,
+) -> Result<(), AppError> {
+    let actions = codex_launch_env_actions(auth, old_config_text, new_config_text);
+    apply_codex_launch_env_actions(&actions)
+}
+
+#[cfg(target_os = "macos")]
+fn apply_codex_launch_env_actions(actions: &[CodexLaunchEnvAction]) -> Result<(), AppError> {
+    if actions.is_empty() || std::env::var_os("CC_SWITCH_TEST_HOME").is_some() {
+        return Ok(());
+    }
+
+    for action in actions {
+        let mut command = Command::new("launchctl");
+        match action {
+            CodexLaunchEnvAction::Set { key, value } => {
+                command.arg("setenv").arg(key).arg(value);
+            }
+            CodexLaunchEnvAction::Unset { key } => {
+                command.arg("unsetenv").arg(key);
+            }
+        }
+
+        let status = command.status().map_err(|e| AppError::io("launchctl", e))?;
+        if !status.success() {
+            let action_name = match action {
+                CodexLaunchEnvAction::Set { .. } => "setenv",
+                CodexLaunchEnvAction::Unset { .. } => "unsetenv",
+            };
+            let key = match action {
+                CodexLaunchEnvAction::Set { key, .. } | CodexLaunchEnvAction::Unset { key } => key,
+            };
+            return Err(AppError::Message(format!(
+                "launchctl {action_name} failed for Codex env key {key}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_codex_launch_env_actions(_actions: &[CodexLaunchEnvAction]) -> Result<(), AppError> {
     Ok(())
 }
 
@@ -531,6 +642,72 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_launch_env_actions_set_active_provider_env_key() {
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.example.com/v1"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+
+[model_providers.other]
+name = "other"
+env_key = "OTHER_API_KEY"
+"#;
+        let auth = serde_json::json!({
+            "OPENAI_API_KEY": "new-key",
+            "OTHER_API_KEY": "wrong-key"
+        });
+
+        assert_eq!(
+            codex_launch_env_actions(&auth, None, config),
+            vec![CodexLaunchEnvAction::Set {
+                key: "OPENAI_API_KEY".to_string(),
+                value: "new-key".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn codex_launch_env_actions_unset_previous_env_key_when_switching_to_official() {
+        let old_config = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.example.com/v1"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+"#;
+
+        assert_eq!(
+            codex_launch_env_actions(&serde_json::json!({}), Some(old_config), ""),
+            vec![CodexLaunchEnvAction::Unset {
+                key: "OPENAI_API_KEY".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn codex_launch_env_actions_unset_missing_new_env_key_value() {
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.example.com/v1"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+"#;
+
+        assert_eq!(
+            codex_launch_env_actions(&serde_json::json!({}), None, config),
+            vec![CodexLaunchEnvAction::Unset {
+                key: "OPENAI_API_KEY".to_string(),
+            }]
+        );
+    }
 
     #[test]
     fn normalize_live_config_preserves_current_custom_model_provider_id() {
