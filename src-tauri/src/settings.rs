@@ -301,6 +301,10 @@ pub struct AppSettings {
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
+
+    /// Windows Terminal Profile GUID（仅当 preferred_terminal 为 "wt" 时使用）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_terminal_profile: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -351,6 +355,7 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            preferred_terminal_profile: None,
         }
     }
 }
@@ -758,6 +763,15 @@ pub fn get_preferred_terminal() -> Option<String> {
             e.into_inner()
         })
         .preferred_terminal
+        .clone()
+}
+
+/// 获取首选终端 Profile（仅 Windows Terminal 使用）
+pub fn get_preferred_terminal_profile() -> Option<String> {
+    settings_store()
+        .read()
+        .ok()?
+        .preferred_terminal_profile
         .clone()
 }
 
