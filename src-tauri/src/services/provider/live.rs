@@ -705,6 +705,55 @@ impl LiveSnapshot {
     }
 }
 
+/// Extract credential from an OpenCode provider's settings_config.
+///
+/// Priority:
+/// 1. `settings_config.auth` (new-style, source-tagged)
+/// 2. `settings_config.options.apiKey` (legacy inline)
+///
+/// Returns the auth value to write to `auth.json[provider_id]`, or None.
+fn extract_opencode_credential(settings_config: &Value) -> Option<Value> {
+    if let Some(obj) = settings_config.as_object() {
+        // Prefer settings_config.auth
+        if let Some(auth) = obj.get("auth") {
+            // Strip the internal source marker before writing to auth.json
+            if let Some(auth_obj) = auth.as_object() {
+                let mut cleaned = auth_obj.clone();
+                cleaned.remove("source");
+                if !cleaned.is_empty() {
+                    return Some(Value::Object(cleaned));
+                }
+            }
+            // Non-object auth with only source marker: extract raw value
+            if let Some(raw) = auth.get("value") {
+                return Some(raw.clone());
+            }
+            return None;
+        }
+
+        // Fallback: options.apiKey
+        if let Some(api_key) = obj
+            .get("options")
+            .and_then(|o| o.get("apiKey"))
+            .cloned()
+        {
+            return Some(api_key);
+        }
+    }
+    None
+}
+
+/// Strip credential fields from an OpenCode provider config so they are
+/// not written to opencode.json. Removes `auth` and `options.apiKey`.
+fn strip_opencode_credential_from_config(config: &mut Value) {
+    if let Some(obj) = config.as_object_mut() {
+        obj.remove("auth");
+        if let Some(options) = obj.get_mut("options").and_then(|v| v.as_object_mut()) {
+            options.remove("apiKey");
+        }
+    }
+}
+
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
     match app_type {
@@ -739,12 +788,14 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             write_gemini_live(provider)?;
         }
         AppType::OpenCode => {
-            // OpenCode uses additive mode - write provider to config
+            // OpenCode uses additive mode - write provider to config.
+            // Credential is split out: auth.json[provider_id] gets the key,
+            // opencode.json gets provider definition without options.apiKey.
             use crate::opencode_config;
             use crate::provider::OpenCodeProviderConfig;
 
             // Defensive check: if settings_config is a full config structure, extract provider fragment
-            let config_to_write = if let Some(obj) = provider.settings_config.as_object() {
+            let mut config_to_write = if let Some(obj) = provider.settings_config.as_object() {
                 // Detect full config structure (has $schema or top-level provider field)
                 if obj.contains_key("$schema") || obj.contains_key("provider") {
                     log::warn!(
@@ -762,6 +813,17 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             } else {
                 provider.settings_config.clone()
             };
+
+            // Extract credential: prefer settings_config.auth, fall back to options.apiKey.
+            let credential = extract_opencode_credential(&config_to_write);
+
+            // Write credential to auth.json[provider_id] if present
+            if let Some(cred) = &credential {
+                opencode_config::set_opencode_auth_entry(&provider.id, cred.clone())?;
+            }
+
+            // Strip credential fields from provider definition before writing to opencode.json
+            strip_opencode_credential_from_config(&mut config_to_write);
 
             // Convert settings_config to OpenCodeProviderConfig
             let opencode_config_result =
