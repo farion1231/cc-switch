@@ -130,9 +130,9 @@ E:\AI_ALL\_projects\CC_Switch_agent\cc-switch-Agent-scheduling-main\build-output
 
 | 文件 | 大小 | MD5 |
 |------|------|-----|
-| `cc-switch.exe` | 30,895,104 bytes | `0262658466EC2C6ADA9AE310698CF59B` |
-| `CC Switch_3.15.0_x64-setup.exe` | 10,013,986 bytes | `5CD089F3AE7A9BC65A66FDD1CFA3715F` |
-| `CC Switch_3.15.0_x64_en-US.msi` | 15,040,512 bytes | `0E601EB60FF4C56E4DB9F171177089BE` |
+| `cc-switch.exe` | 30,895,104 bytes | `C6E4EB4F535667391547DC6E6847D7DC` |
+| `CC Switch_3.15.2_x64-setup.exe` | 10,014,582 bytes | `A1522DC78816A6D5A6C670DAFBD38723` |
+| `CC Switch_3.15.2_x64_en-US.msi` | 15,036,416 bytes | `EEBE622C7D94CEAB7B46E328B022FECF` |
 
 ## 当前运行状态
 

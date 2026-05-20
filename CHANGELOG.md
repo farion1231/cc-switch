@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.2] - 2026-05-20
+
+### Fixed
+
+- Preserve Claude Code `settings.json` user fields during proxy takeover and provider sync. CC Switch now updates only the managed Claude `env` fields and keeps `enabledPlugins`, `hooks`, `permissions`, top-level `model`, and custom user environment variables intact.
+- Narrow Claude proxy takeover hot-switch updates to an explicit environment whitelist, preventing provider switches from overwriting unrelated Claude Code settings.
+
+### Changed
+
+- Replaced the Context7 deep-link example key with a placeholder value in `deplink.html`.
+- Removed a stale copied `cc-switch-main` preset file that was not used by the app build.
+
 ## [3.15.0] - 2026-05-16
 
 Development since v3.14.1 focuses on a dedicated Claude Desktop surface with third-party provider switching through a proxy gateway, a large reverse-proxy hardening pass (reliability, retries, cache, takeover, Gemini/Vertex/Codex paths), expansion of the third-party provider preset catalog (BytePlus / Volcengine / ClaudeAPI / ClaudeCN / RunAPI / RelaxyCode / PatewayAI / Baidu Qianfan), role-based model mapping with a 1M context flag, Codex OAuth live model discovery, and a long tail of usage, OAuth, Codex, and session quality-of-life fixes.
