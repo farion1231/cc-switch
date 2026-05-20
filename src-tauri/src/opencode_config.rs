@@ -233,7 +233,16 @@ pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<(), AppError> {
 }
 
 pub fn get_opencode_auth_path() -> PathBuf {
-    get_opencode_dir().join("auth.json")
+    get_opencode_data_dir().join("auth.json")
+}
+
+/// OpenCode data directory for credential storage.
+/// Resolves to `~/.local/share/opencode`, respecting CC_SWITCH_TEST_HOME.
+pub fn get_opencode_data_dir() -> PathBuf {
+    crate::config::get_home_dir()
+        .join(".local")
+        .join("share")
+        .join("opencode")
 }
 
 pub fn read_opencode_auth() -> Result<Map<String, Value>, AppError> {
@@ -270,6 +279,12 @@ pub fn get_opencode_auth_entry(provider_id: &str) -> Result<Option<Value>, AppEr
 }
 
 pub fn set_opencode_auth_entry(provider_id: &str, entry: Value) -> Result<(), AppError> {
+    if !entry.is_object() {
+        return Err(AppError::Config(format!(
+            "OpenCode auth.json entry for '{provider_id}' must be a JSON object, got {}",
+            json_type_name(&entry)
+        )));
+    }
     let mut auth = read_opencode_auth()?;
     auth.insert(provider_id.to_string(), entry);
     write_opencode_auth(&auth)
@@ -316,6 +331,7 @@ mod auth_tests {
             ));
             let _ = fs::create_dir_all(&dir);
             let home = dir.join("home");
+            let _ = fs::create_dir_all(home.join(".local").join("share").join("opencode"));
             let _ = fs::create_dir_all(home.join(".config").join("opencode"));
 
             let old_var = std::env::var_os("CC_SWITCH_TEST_HOME");
@@ -327,12 +343,17 @@ mod auth_tests {
         fn auth_path(&self) -> PathBuf {
             self.dir
                 .join("home")
-                .join(".config")
+                .join(".local")
+                .join("share")
                 .join("opencode")
                 .join("auth.json")
         }
 
-        fn opencode_dir(&self) -> PathBuf {
+        fn opencode_data_dir(&self) -> PathBuf {
+            self.dir.join("home").join(".local").join("share").join("opencode")
+        }
+
+        fn opencode_config_dir(&self) -> PathBuf {
             self.dir.join("home").join(".config").join("opencode")
         }
     }
@@ -359,15 +380,15 @@ mod auth_tests {
     #[serial]
     fn read_missing_auth_does_not_create_directory() {
         let th = TempHome::new();
-        let opencode_dir = th.opencode_dir();
-        let _ = fs::remove_dir_all(&opencode_dir);
-        assert!(!opencode_dir.exists());
+        let data_dir = th.opencode_data_dir();
+        let _ = fs::remove_dir_all(&data_dir);
+        assert!(!data_dir.exists());
 
         let result = read_opencode_auth().unwrap();
         assert!(result.is_empty());
         assert!(
-            !opencode_dir.exists(),
-            "read_opencode_auth must not create the opencode directory"
+            !data_dir.exists(),
+            "read_opencode_auth must not create the opencode data directory"
         );
     }
 
@@ -478,8 +499,8 @@ mod auth_tests {
     #[serial]
     fn write_creates_parent_dir_if_missing() {
         let th = TempHome::new();
-        let opencode_dir = th.opencode_dir();
-        let _ = fs::remove_dir_all(&opencode_dir);
+        let data_dir = th.opencode_data_dir();
+        let _ = fs::remove_dir_all(&data_dir);
 
         set_opencode_auth_entry("fresh", json!({"type": "api", "key": "FAKE_KEY"})).unwrap();
 
@@ -489,7 +510,7 @@ mod auth_tests {
 
     #[test]
     #[serial]
-    fn unknown_entry_shape_preserved_as_raw_value() {
+    fn unknown_object_fields_are_preserved() {
         let th = TempHome::new();
         fs::write(
             th.auth_path(),
@@ -502,5 +523,37 @@ mod auth_tests {
         let val = entry.unwrap();
         assert_eq!(val["unusual"], json!(true));
         assert_eq!(val["nested"]["deep"], json!(42));
+    }
+
+    #[test]
+    #[serial]
+    fn auth_path_does_not_use_config_dir() {
+        let th = TempHome::new();
+        set_opencode_auth_entry("regression", json!({"type": "api", "key": "FAKE_KEY"})).unwrap();
+
+        let config_dir_auth = th.opencode_config_dir().join("auth.json");
+        assert!(
+            !config_dir_auth.exists(),
+            "auth.json must not be written under .config/opencode"
+        );
+
+        let data_dir_auth = th.auth_path();
+        assert!(
+            data_dir_auth.exists(),
+            "auth.json must be written under .local/share/opencode"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn set_auth_entry_rejects_non_object() {
+        let _th = TempHome::new();
+        let result = set_opencode_auth_entry("bad-provider", Value::String("FAKE_RAW_AUTH".to_string()));
+        assert!(result.is_err(), "non-object auth entry should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("must be a JSON object"),
+            "error should mention object requirement, got: {err_msg}"
+        );
     }
 }
