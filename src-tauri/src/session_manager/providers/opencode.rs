@@ -5,7 +5,9 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{
+    parse_timestamp_to_ms, path_basename, render_json_value, render_tool_call, truncate_summary,
+};
 
 const PROVIDER_ID: &str = "opencode";
 
@@ -149,7 +151,7 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
             created_at: Some(created),
             last_active_at: Some(updated),
             source_path: Some(format!("sqlite:{db_display}:{session_id}")),
-            resume_command: Some(format!("opencode session resume {session_id}")),
+            resume_command: Some(format!("opencode --session {session_id}")),
         });
     }
     sessions
@@ -473,7 +475,7 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at: updated_at.or(created_at),
         source_path: Some(source_path),
-        resume_command: Some(format!("opencode session resume {session_id}")),
+        resume_command: Some(format!("opencode --session {session_id}")),
     })
 }
 
@@ -537,15 +539,64 @@ fn extract_part_text(part_value: &Value) -> Option<String> {
             .and_then(Value::as_str)
             .filter(|t| !t.trim().is_empty())
             .map(|t| t.to_string()),
-        Some("tool") => {
-            let tool = part_value
-                .get("tool")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            Some(format!("[Tool: {tool}]"))
-        }
+        Some("tool") => Some(extract_tool_part_text(part_value)),
         _ => None,
     }
+}
+
+fn extract_tool_part_text(part_value: &Value) -> String {
+    let tool = part_value
+        .get("tool")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let call_id = part_value
+        .get("callID")
+        .or_else(|| part_value.get("call_id"))
+        .and_then(Value::as_str);
+
+    let mut lines = vec![render_tool_call(
+        tool,
+        part_value.get("state").and_then(|state| state.get("input")),
+        call_id,
+    )];
+
+    if let Some(state) = part_value.get("state") {
+        if let Some(status) = state
+            .get("status")
+            .and_then(Value::as_str)
+            .filter(|status| !status.trim().is_empty())
+        {
+            lines.push(format!("Status: {status}"));
+        }
+
+        if let Some(output) = state.get("output") {
+            if let Some(rendered) = render_json_value(output) {
+                lines.push(format!("Output:\n{rendered}"));
+            }
+        }
+
+        if let Some(error) = state.get("error") {
+            if let Some(rendered) = render_json_value(error) {
+                lines.push(format!("Error:\n{rendered}"));
+            }
+        }
+
+        let mut remaining = serde_json::Map::new();
+        if let Some(obj) = state.as_object() {
+            for (key, value) in obj {
+                if key != "input" && key != "output" && key != "error" && key != "status" {
+                    remaining.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        if !remaining.is_empty() {
+            if let Some(rendered) = render_json_value(&Value::Object(remaining)) {
+                lines.push(format!("State:\n{rendered}"));
+            }
+        }
+    }
+
+    lines.join("\n")
 }
 
 fn collect_parts_text(part_dir: &Path) -> String {
@@ -761,6 +812,9 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "assistant");
         assert!(msgs[0].content.contains("[Tool: bash]"));
+        assert!(msgs[0].content.contains("Status: completed"));
+        assert!(msgs[0].content.contains("Command: ls"));
+        assert!(msgs[0].content.contains("Output:\nfile.txt"));
         assert!(msgs[0].content.contains("Here are the files."));
     }
 
@@ -861,7 +915,7 @@ mod tests {
                 "ses_1",
                 "msg_2",
                 2000_i64,
-                r#"{"type":"tool","tool":"bash"}"#,
+                r#"{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"ls"},"output":"file.txt"}}"#,
             ),
         )
         .expect("insert part 2");
@@ -886,7 +940,11 @@ mod tests {
         assert_eq!(messages[0].content, "Hello");
         assert_eq!(messages[0].ts, Some(1000));
         assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].content, "[Tool: bash]\nDone");
+        assert!(messages[1].content.contains("[Tool: bash]"));
+        assert!(messages[1].content.contains("Status: completed"));
+        assert!(messages[1].content.contains("Command: ls"));
+        assert!(messages[1].content.contains("Output:\nfile.txt"));
+        assert!(messages[1].content.contains("Done"));
         assert_eq!(messages[1].ts, Some(2000));
     }
 

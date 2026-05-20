@@ -348,6 +348,7 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "assistant");
         assert!(msgs[0].content.contains("[Tool: Write]"));
+        assert!(msgs[0].content.contains("File: a.txt"));
         assert_eq!(msgs[1].role, "tool");
         assert_eq!(msgs[1].content, "File written");
     }

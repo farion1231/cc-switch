@@ -20,11 +20,29 @@ const PROVIDER_ID: &str = "openclaw";
 
 /// Strip trailing `\n[message_id: ...]` metadata injected by OpenClaw gateway.
 fn strip_message_id_suffix(text: &str) -> &str {
-    if let Some(pos) = text.rfind("\n[message_id:") {
-        text[..pos].trim_end()
+    let trimmed_end = text.trim_end();
+    let Some(pos) = trimmed_end.rfind('\n') else {
+        return text;
+    };
+
+    let suffix = &trimmed_end[pos + 1..];
+    if is_message_id_metadata_line(suffix) {
+        &text[..pos]
     } else {
         text
     }
+}
+
+fn is_message_id_metadata_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    let Some(id) = trimmed
+        .strip_prefix("[message_id:")
+        .and_then(|value| value.strip_suffix(']'))
+    else {
+        return false;
+    };
+
+    !id.trim().is_empty()
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
@@ -110,6 +128,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         };
 
         let content = message.get("content").map(extract_text).unwrap_or_default();
+        let content = strip_message_id_suffix(&content).to_string();
         if content.trim().is_empty() {
             continue;
         }
@@ -427,6 +446,66 @@ mod tests {
         let title = meta.title.unwrap();
         assert!(title.len() <= TITLE_MAX_CHARS + 3); // +3 for "..."
         assert!(title.ends_with("..."));
+    }
+
+    #[test]
+    fn load_messages_strips_message_id_suffix_and_renders_tool_input() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Bash\",\"input\":{\"command\":\"pwd\"}}]},\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"content\":\"/tmp/project\\n[message_id: msg_1]\"},\"timestamp\":\"2026-03-06T10:00:01Z\"}\n"
+            ),
+        )
+        .expect("write session");
+
+        let messages = load_messages(&path).expect("load messages");
+        assert_eq!(messages.len(), 2);
+        assert!(messages[0].content.contains("[Tool: Bash]"));
+        assert!(messages[0].content.contains("Command: pwd"));
+        assert_eq!(messages[1].role, "tool");
+        assert_eq!(messages[1].content, "/tmp/project");
+    }
+
+    #[test]
+    fn load_messages_preserves_content_whitespace_without_message_id_suffix() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"content\":\"  indented output\\nline\\n  \"},\"timestamp\":\"2026-03-06T10:00:01Z\"}\n",
+        )
+        .expect("write session");
+
+        let messages = load_messages(&path).expect("load messages");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "tool");
+        assert_eq!(messages[0].content, "  indented output\nline\n  ");
+    }
+
+    #[test]
+    fn strip_message_id_suffix_preserves_embedded_message_id_lines() {
+        let content = "command output\n[message_id: visible]\nmore output";
+
+        assert_eq!(strip_message_id_suffix(content), content);
+        assert_eq!(
+            strip_message_id_suffix("command output\n[message_id: msg_1] trailing"),
+            "command output\n[message_id: msg_1] trailing"
+        );
+    }
+
+    #[test]
+    fn strip_message_id_suffix_allows_trailing_whitespace_after_metadata() {
+        assert_eq!(
+            strip_message_id_suffix("command output\n[message_id: msg_1]\n  "),
+            "command output"
+        );
+        assert_eq!(
+            strip_message_id_suffix("command output\n\n[message_id: msg_1]\n  "),
+            "command output\n"
+        );
     }
 
     #[test]

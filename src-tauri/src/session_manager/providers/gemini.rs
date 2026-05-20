@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, truncate_summary};
+use super::utils::{parse_timestamp_to_ms, render_json_value, render_tool_call, truncate_summary};
 
 const PROVIDER_ID: &str = "gemini";
 
@@ -84,14 +84,23 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             _ => String::new(),
         };
 
-        // Append tool call names from the optional toolCalls array
+        // Append tool calls from the optional toolCalls array, including args so
+        // history/search/export do not lose what was invoked.
         if let Some(Value::Array(calls)) = msg.get("toolCalls") {
             for call in calls {
                 if let Some(name) = call.get("name").and_then(Value::as_str) {
                     if !content.is_empty() {
                         content.push('\n');
                     }
-                    content.push_str(&format!("[Tool: {name}]"));
+                    let args = call.get("args").or_else(|| call.get("arguments"));
+                    let call_id = call.get("id").and_then(Value::as_str);
+                    content.push_str(&render_tool_call(name, args, call_id));
+                    if let Some(result) = call.get("result") {
+                        if let Some(rendered_result) = render_gemini_tool_result(result) {
+                            content.push('\n');
+                            content.push_str(&rendered_result);
+                        }
+                    }
                 }
             }
         }
@@ -110,6 +119,165 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(result)
+}
+
+fn render_gemini_tool_result(result: &Value) -> Option<String> {
+    let mut lines = Vec::new();
+    collect_gemini_tool_result(result, &mut lines);
+
+    if !lines.is_empty() {
+        return Some(format!("Result:\n{}", lines.join("\n")));
+    }
+
+    let sanitized = sanitize_gemini_result_value(result);
+    render_json_value(&sanitized).map(|rendered| format!("Result:\n{rendered}"))
+}
+
+fn collect_gemini_tool_result(value: &Value, lines: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_gemini_tool_result(item, lines);
+            }
+        }
+        Value::Object(obj) => {
+            if let Some(function_response) = obj.get("functionResponse") {
+                collect_gemini_function_response(function_response, lines);
+                return;
+            }
+
+            if let Some(output) = obj
+                .get("response")
+                .and_then(|response| response.get("output"))
+            {
+                if let Some(rendered) = render_json_value(output) {
+                    lines.push(format!("Output:\n{rendered}"));
+                }
+            } else if let Some(output) = obj.get("output") {
+                if let Some(rendered) = render_json_value(output) {
+                    lines.push(format!("Output:\n{rendered}"));
+                }
+            }
+
+            append_gemini_part_summaries(obj.get("parts"), lines);
+        }
+        Value::String(text) if !text.trim().is_empty() => {
+            lines.push(format!("Output:\n{text}"));
+        }
+        _ => {}
+    }
+}
+
+fn collect_gemini_function_response(value: &Value, lines: &mut Vec<String>) {
+    let Some(obj) = value.as_object() else {
+        collect_gemini_tool_result(value, lines);
+        return;
+    };
+
+    let before_len = lines.len();
+    if let Some(output) = obj
+        .get("response")
+        .and_then(|response| response.get("output"))
+    {
+        if let Some(rendered) = render_json_value(output) {
+            lines.push(format!("Output:\n{rendered}"));
+        }
+    } else if let Some(response) = obj.get("response") {
+        let sanitized = sanitize_gemini_result_value(response);
+        if let Some(rendered) = render_json_value(&sanitized) {
+            lines.push(format!("Response:\n{rendered}"));
+        }
+    }
+
+    append_gemini_part_summaries(obj.get("parts"), lines);
+
+    if lines.len() == before_len {
+        let sanitized = sanitize_gemini_result_value(value);
+        if let Some(rendered) = render_json_value(&sanitized) {
+            lines.push(rendered);
+        }
+    }
+}
+
+fn append_gemini_part_summaries(parts: Option<&Value>, lines: &mut Vec<String>) {
+    let Some(Value::Array(parts)) = parts else {
+        return;
+    };
+
+    let mut summaries = Vec::new();
+    for part in parts {
+        if let Some(summary) = summarize_gemini_part(part) {
+            summaries.push(summary);
+        }
+    }
+
+    if !summaries.is_empty() {
+        lines.push(format!("Attachments:\n{}", summaries.join("\n")));
+    }
+}
+
+fn summarize_gemini_part(part: &Value) -> Option<String> {
+    let inline_data = part.get("inlineData").or_else(|| part.get("inline_data"));
+    if let Some(inline_data) = inline_data.and_then(Value::as_object) {
+        let mime = inline_data
+            .get("mimeType")
+            .or_else(|| inline_data.get("mime_type"))
+            .and_then(Value::as_str)
+            .unwrap_or("inline data");
+        let byte_count = inline_data
+            .get("data")
+            .and_then(Value::as_str)
+            .map(estimated_base64_bytes)
+            .unwrap_or(0);
+        if byte_count > 0 {
+            return Some(format!(
+                "- inlineData: {mime}, ~{byte_count} bytes (base64 omitted)"
+            ));
+        }
+        return Some(format!("- inlineData: {mime} (base64 omitted)"));
+    }
+
+    if let Some(file_data) = part.get("fileData").or_else(|| part.get("file_data")) {
+        let sanitized = sanitize_gemini_result_value(file_data);
+        return render_json_value(&sanitized).map(|rendered| format!("- fileData: {rendered}"));
+    }
+
+    None
+}
+
+fn sanitize_gemini_result_value(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => {
+            Value::Array(items.iter().map(sanitize_gemini_result_value).collect())
+        }
+        Value::Object(obj) => {
+            let mut sanitized = Map::new();
+            for (key, value) in obj {
+                if key == "data" {
+                    if let Some(data) = value.as_str() {
+                        if data.len() > 512 {
+                            sanitized.insert(
+                                key.clone(),
+                                Value::String(format!(
+                                    "<base64 omitted: ~{} bytes>",
+                                    estimated_base64_bytes(data)
+                                )),
+                            );
+                            continue;
+                        }
+                    }
+                }
+                sanitized.insert(key.clone(), sanitize_gemini_result_value(value));
+            }
+            Value::Object(sanitized)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn estimated_base64_bytes(data: &str) -> usize {
+    let trimmed = data.trim_end_matches('=');
+    trimmed.len() * 3 / 4
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
@@ -240,8 +408,8 @@ mod tests {
             r#"{
               "sessionId": "test",
               "messages": [
-                {"id":"1","timestamp":"2026-03-10T08:24:50Z","type":"gemini","content":"","toolCalls":[{"id":"call_1","name":"web_search","args":{"query":"test"}}]},
-                {"id":"2","timestamp":"2026-03-10T08:25:00Z","type":"gemini","content":"Here are the results.","toolCalls":[{"id":"call_2","name":"web_fetch","args":{"url":"http://example.com"}}]}
+                {"id":"1","timestamp":"2026-03-10T08:24:50Z","type":"gemini","content":"","toolCalls":[{"id":"call_1","name":"web_search","args":{"query":"test"},"result":[{"functionResponse":{"id":"call_1","name":"web_search","response":{"output":"result text"}}}]}]},
+                {"id":"2","timestamp":"2026-03-10T08:25:00Z","type":"gemini","content":"Here are the results.","toolCalls":[{"id":"call_2","name":"web_fetch","args":{"url":"http://example.com"},"result":[{"functionResponse":{"id":"call_2","name":"web_fetch","response":{"output":"Binary content provided (1 item(s))."},"parts":[{"inlineData":{"mimeType":"application/pdf","data":"QUJDRA=="}}]}}]}]}
               ]
             }"#,
         )
@@ -251,8 +419,17 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "assistant");
         assert!(msgs[0].content.contains("[Tool: web_search]"));
+        assert!(msgs[0].content.contains("Call ID: call_1"));
+        assert!(msgs[0].content.contains("Query: test"));
+        assert!(msgs[0].content.contains("Result:\nOutput:\nresult text"));
         assert_eq!(msgs[1].role, "assistant");
         assert!(msgs[1].content.contains("Here are the results."));
         assert!(msgs[1].content.contains("[Tool: web_fetch]"));
+        assert!(msgs[1].content.contains("URL: http://example.com"));
+        assert!(msgs[1].content.contains("Output:\nBinary content provided"));
+        assert!(msgs[1]
+            .content
+            .contains("inlineData: application/pdf, ~4 bytes"));
+        assert!(!msgs[1].content.contains("QUJDRA=="));
     }
 }
