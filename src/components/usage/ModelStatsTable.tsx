@@ -9,21 +9,23 @@ import {
 } from "@/components/ui/table";
 import { useModelStats } from "@/lib/query/usage";
 import { fmtUsd } from "./format";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { UsageRangeSelection, UsageSourceFilter } from "@/types/usage";
 
 interface ModelStatsTableProps {
   range: UsageRangeSelection;
   appType?: string;
+  source?: UsageSourceFilter;
   refreshIntervalMs: number;
 }
 
 export function ModelStatsTable({
   range,
   appType,
+  source,
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t } = useTranslation();
-  const { data: stats, isLoading } = useModelStats(range, appType, {
+  const { data: stats, isLoading } = useModelStats(range, appType, source, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 

@@ -255,6 +255,13 @@ fn normalize_codex_live_config_model_provider_with_anchors<'a>(
     Ok(doc.to_string())
 }
 
+pub fn normalize_codex_config_text_with_anchor(
+    config_text: &str,
+    anchor_config_text: Option<&str>,
+) -> Result<String, AppError> {
+    normalize_codex_live_config_model_provider_with_anchors(config_text, anchor_config_text)
+}
+
 fn rewrite_codex_profile_model_provider_refs(
     doc: &mut DocumentMut,
     source_provider_id: &str,
