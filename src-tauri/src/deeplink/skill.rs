@@ -36,10 +36,12 @@ pub fn import_skill_from_deeplink(
 
     // Create SkillRepo
     let repo = SkillRepo {
+        host: request.host.unwrap_or_else(|| "github.com".to_string()),
         owner: owner.clone(),
         name: name.clone(),
         branch: request.branch.unwrap_or_else(|| "main".to_string()),
         enabled: request.enabled.unwrap_or(true),
+        token: None,
     };
 
     // Save using Database
