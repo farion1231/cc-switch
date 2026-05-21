@@ -238,6 +238,50 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
+  it("warns but still switches OpenCode full URL providers when proxy is not running", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        isFullUrl: true,
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("opencode", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("warns but still switches OpenClaw full URL providers when proxy is not running", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        isFullUrl: true,
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("openclaw", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     settingsApiGetMock.mockResolvedValueOnce({
@@ -546,17 +590,17 @@ describe("useProviderActions", () => {
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
     expect(toastSuccessMock.mock.calls[0]?.[1]).toEqual({ closeButton: true });
   });
-});
-it("clears loading flag when all mutations idle", () => {
-  addProviderMutation.isPending = false;
-  updateProviderMutation.isPending = false;
-  deleteProviderMutation.isPending = false;
-  switchProviderMutation.isPending = false;
+  it("clears loading flag when all mutations idle", () => {
+    addProviderMutation.isPending = false;
+    updateProviderMutation.isPending = false;
+    deleteProviderMutation.isPending = false;
+    switchProviderMutation.isPending = false;
 
-  const { wrapper } = createWrapper();
-  const { result } = renderHook(() => useProviderActions("claude"), {
-    wrapper,
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("claude"), {
+      wrapper,
+    });
+
+    expect(result.current.isLoading).toBe(false);
   });
-
-  expect(result.current.isLoading).toBe(false);
 });

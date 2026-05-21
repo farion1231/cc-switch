@@ -107,6 +107,10 @@ import {
   OPENCLAW_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
+import {
+  shouldPersistFullUrl,
+  supportsFullUrlMode,
+} from "./helpers/fullUrlSupport";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
@@ -230,9 +234,15 @@ function ProviderFormFull({
   const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
     () => initialData?.meta?.endpointAutoSelect ?? true,
   );
-  const supportsFullUrl = appId === "claude" || appId === "codex";
   const [localIsFullUrl, setLocalIsFullUrl] = useState<boolean>(() => {
-    if (!supportsFullUrl) return false;
+    if (
+      appId !== "claude" &&
+      appId !== "codex" &&
+      appId !== "opencode" &&
+      appId !== "openclaw"
+    ) {
+      return false;
+    }
     return initialData?.meta?.isFullUrl ?? false;
   });
 
@@ -272,7 +282,12 @@ function ProviderFormFull({
     }
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setLocalIsFullUrl(
-      supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
+      appId === "claude" ||
+        appId === "codex" ||
+        appId === "opencode" ||
+        appId === "openclaw"
+        ? (initialData?.meta?.isFullUrl ?? false)
+        : false,
     );
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setPricingConfig({
@@ -284,7 +299,7 @@ function ProviderFormFull({
         initialData?.meta?.pricingModelSource,
       ),
     });
-  }, [appId, initialData, supportsFullUrl]);
+  }, [appId, initialData]);
 
   const defaultValues: ProviderFormData = useMemo(
     () => ({
@@ -743,6 +758,49 @@ function ProviderFormFull({
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
+  const watchedSettingsConfig = form.watch("settingsConfig");
+  const currentFullUrlSupportInputs = useMemo(() => {
+    let parsedSettingsConfig: Record<string, unknown> | null = null;
+
+    try {
+      parsedSettingsConfig = JSON.parse(
+        watchedSettingsConfig || "{}",
+      ) as Record<string, unknown>;
+    } catch {
+      parsedSettingsConfig = null;
+    }
+
+    return {
+      opencodeNpm:
+        typeof parsedSettingsConfig?.npm === "string"
+          ? parsedSettingsConfig.npm
+          : opencodeForm.opencodeNpm,
+      openclawApi:
+        typeof parsedSettingsConfig?.api === "string"
+          ? parsedSettingsConfig.api
+          : openclawForm.openclawApi,
+    };
+  }, [
+    watchedSettingsConfig,
+    opencodeForm.opencodeNpm,
+    openclawForm.openclawApi,
+  ]);
+  const supportsFullUrl = useMemo(
+    () =>
+      supportsFullUrlMode({
+        appId,
+        category,
+        opencodeNpm: currentFullUrlSupportInputs.opencodeNpm,
+        openclawApi: currentFullUrlSupportInputs.openclawApi,
+      }),
+    [
+      appId,
+      category,
+      currentFullUrlSupportInputs.openclawApi,
+      currentFullUrlSupportInputs.opencodeNpm,
+    ],
+  );
+  const effectiveIsFullUrl = supportsFullUrl && localIsFullUrl;
   const {
     data: openclawLiveProviderIds = [],
     isLoading: isOpenclawLiveProviderIdsLoading,
@@ -1161,6 +1219,26 @@ function ProviderFormFull({
       settingsConfig = values.settingsConfig.trim();
     }
 
+    let submittedSettingsConfig: Record<string, unknown> | null = null;
+    try {
+      submittedSettingsConfig = JSON.parse(settingsConfig) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      submittedSettingsConfig = null;
+    }
+
+    const submittedOpencodeNpm =
+      typeof submittedSettingsConfig?.npm === "string"
+        ? submittedSettingsConfig.npm
+        : opencodeForm.opencodeNpm;
+
+    const submittedOpenclawApi =
+      typeof submittedSettingsConfig?.api === "string"
+        ? submittedSettingsConfig.api
+        : openclawForm.openclawApi;
+
     const payload: ProviderFormValues = {
       ...values,
       name: values.name.trim(),
@@ -1309,10 +1387,15 @@ function ProviderFormFull({
         localApiKeyField !== "ANTHROPIC_AUTH_TOKEN"
           ? localApiKeyField
           : undefined,
-      isFullUrl:
-        supportsFullUrl && category !== "official" && localIsFullUrl
-          ? true
-          : undefined,
+      isFullUrl: shouldPersistFullUrl({
+        appId,
+        category,
+        opencodeNpm: submittedOpencodeNpm,
+        openclawApi: submittedOpenclawApi,
+        isFullUrl: localIsFullUrl,
+      })
+        ? true
+        : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -1986,6 +2069,9 @@ function ProviderFormFull({
               partnerPromotionKey={opencodePartnerPromotionKey}
               baseUrl={opencodeForm.opencodeBaseUrl}
               onBaseUrlChange={opencodeForm.handleOpencodeBaseUrlChange}
+              showFullUrlToggle={supportsFullUrl}
+              isFullUrl={effectiveIsFullUrl}
+              onFullUrlChange={setLocalIsFullUrl}
               models={opencodeForm.opencodeModels}
               onModelsChange={opencodeForm.handleOpencodeModelsChange}
               extraOptions={opencodeForm.opencodeExtraOptions}
@@ -2020,6 +2106,9 @@ function ProviderFormFull({
             <OpenClawFormFields
               baseUrl={openclawForm.openclawBaseUrl}
               onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
+              showFullUrlToggle={supportsFullUrl}
+              isFullUrl={effectiveIsFullUrl}
+              onFullUrlChange={setLocalIsFullUrl}
               apiKey={openclawForm.openclawApiKey}
               onApiKeyChange={openclawForm.handleOpenclawApiKeyChange}
               category={category}

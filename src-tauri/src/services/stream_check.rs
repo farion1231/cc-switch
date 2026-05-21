@@ -1128,8 +1128,23 @@ impl StreamCheckService {
         timeout: std::time::Duration,
     ) -> Result<(u16, String), AppError> {
         let npm = Self::extract_opencode_npm(provider);
+        let explicit_base_url = Self::extract_opencode_base_url(provider);
         // 若用户未显式填 baseURL，则根据 npm 回退到 AI SDK 包自带的默认端点
         let base_url = Self::resolve_opencode_base_url(provider, npm.as_deref())?;
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+
+        if is_full_url && explicit_base_url.is_none() {
+            return Err(AppError::localized(
+                "opencode_full_url_requires_explicit_base_url",
+                "OpenCode 的 full URL 模式要求显式配置 `options.baseURL`，不能使用 SDK 回退默认端点。",
+                "OpenCode full URL mode requires an explicit `options.baseURL` and cannot use the SDK fallback endpoint.",
+            ));
+        }
+
         let api_key = Self::extract_opencode_api_key(provider)?;
         let extra_headers = Self::extract_opencode_headers(provider);
 
@@ -1537,6 +1552,11 @@ impl StreamCheckService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ProviderMeta;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
 
     fn make_provider(settings_config: serde_json::Value) -> Provider {
         Provider::with_id(
@@ -1545,6 +1565,91 @@ mod tests {
             settings_config,
             None,
         )
+    }
+
+    struct TestServer {
+        base_url: String,
+        captured_path: Arc<Mutex<Option<String>>>,
+        handle: JoinHandle<()>,
+    }
+
+    impl TestServer {
+        async fn wait_for_path(self) -> String {
+            self.handle.await.unwrap();
+            self.captured_path
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("server should capture request path")
+        }
+    }
+
+    async fn start_test_server() -> TestServer {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let captured_path = Arc::new(Mutex::new(None));
+        let captured_path_for_task = Arc::clone(&captured_path);
+
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0_u8; 8192];
+            let mut received = 0_usize;
+            let header_end;
+            loop {
+                let read = socket.read(&mut buf[received..]).await.unwrap();
+                assert!(read > 0, "request closed before headers were complete");
+                received += read;
+                if let Some(pos) = buf[..received]
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                {
+                    header_end = pos + 4;
+                    break;
+                }
+                if received == buf.len() {
+                    buf.resize(buf.len() * 2, 0);
+                }
+            }
+
+            let headers = String::from_utf8_lossy(&buf[..header_end]);
+            let request_line = headers.lines().next().unwrap();
+            let path = request_line.split_whitespace().nth(1).unwrap().to_string();
+            *captured_path_for_task.lock().unwrap() = Some(path);
+
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+
+            while received < header_end + content_length {
+                if received == buf.len() {
+                    buf.resize(buf.len() * 2, 0);
+                }
+                let read = socket.read(&mut buf[received..]).await.unwrap();
+                assert!(read > 0, "request closed before body was complete");
+                received += read;
+            }
+
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nok",
+                )
+                .await
+                .unwrap();
+        });
+
+        TestServer {
+            base_url: format!("http://127.0.0.1:{}", addr.port()),
+            captured_path,
+            handle,
+        }
     }
 
     #[test]
@@ -1828,6 +1933,96 @@ mod tests {
         );
 
         assert_eq!(url, "https://relay.example/v1/chat/completions");
+    }
+
+    #[tokio::test]
+    async fn test_openclaw_full_url_uses_configured_url() {
+        let server = start_test_server().await;
+        let mut provider = make_provider(serde_json::json!({
+            "baseUrl": format!("{}/custom/chat/completions", server.base_url),
+            "apiKey": "k",
+            "api": "openai-completions",
+            "models": [],
+        }));
+        provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..ProviderMeta::default()
+        });
+
+        let client = crate::proxy::http_client::get();
+        let result = StreamCheckService::check_additive_app_stream(
+            &client,
+            &provider,
+            "gpt-5.4",
+            "ping",
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.0, 200);
+        assert_eq!(server.wait_for_path().await, "/custom/chat/completions");
+    }
+
+    #[tokio::test]
+    async fn test_opencode_full_url_uses_configured_url() {
+        let server = start_test_server().await;
+        let mut provider = make_provider(serde_json::json!({
+            "npm": "@ai-sdk/openai",
+            "options": {
+                "baseURL": format!("{}/custom/responses", server.base_url),
+                "apiKey": "k",
+            },
+            "models": {},
+        }));
+        provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..ProviderMeta::default()
+        });
+
+        let client = crate::proxy::http_client::get();
+        let result = StreamCheckService::check_opencode_stream(
+            &client,
+            &provider,
+            "gpt-5.4",
+            "ping",
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.0, 200);
+        assert_eq!(server.wait_for_path().await, "/custom/responses");
+    }
+
+    #[tokio::test]
+    async fn opencode_full_url_with_fallback_base_url_returns_helpful_error() {
+        let mut provider = make_provider(serde_json::json!({
+            "npm": "@ai-sdk/openai",
+            "options": {
+                "apiKey": "k",
+            },
+            "models": {},
+        }));
+        provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..ProviderMeta::default()
+        });
+
+        let client = crate::proxy::http_client::get();
+        let error = StreamCheckService::check_opencode_stream(
+            &client,
+            &provider,
+            "gpt-5.4",
+            "ping",
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("full URL"));
+        assert!(error_text.contains("baseURL"));
     }
 
     #[test]

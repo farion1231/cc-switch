@@ -34,7 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ApiKeySection } from "./shared";
+import { ApiKeySection, EndpointField } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -47,6 +47,9 @@ interface OpenClawFormFieldsProps {
   // Base URL
   baseUrl: string;
   onBaseUrlChange: (value: string) => void;
+  showFullUrlToggle?: boolean;
+  isFullUrl: boolean;
+  onFullUrlChange: (value: boolean) => void;
 
   // API Key
   apiKey: string;
@@ -73,6 +76,9 @@ interface OpenClawFormFieldsProps {
 export function OpenClawFormFields({
   baseUrl,
   onBaseUrlChange,
+  showFullUrlToggle,
+  isFullUrl,
+  onFullUrlChange,
   apiKey,
   onApiKeyChange,
   category,
@@ -140,7 +146,7 @@ export function OpenClawFormFields({
       return;
     }
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey)
+    fetchModelsForConfig(baseUrl, apiKey, isFullUrl)
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
@@ -156,7 +162,7 @@ export function OpenClawFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, t]);
+  }, [baseUrl, apiKey, isFullUrl, t]);
 
   // Remove a model entry
   const handleRemoveModel = (index: number) => {
@@ -235,23 +241,20 @@ export function OpenClawFormFields({
         </p>
       </div>
 
-      {/* Base URL */}
-      <div className="space-y-2">
-        <FormLabel htmlFor="openclaw-baseurl">
-          {t("openclaw.baseUrl", { defaultValue: "API 端点" })}
-        </FormLabel>
-        <Input
-          id="openclaw-baseurl"
-          value={baseUrl}
-          onChange={(e) => onBaseUrlChange(e.target.value)}
-          placeholder="https://api.example.com/v1"
-        />
-        <p className="text-xs text-muted-foreground">
-          {t("openclaw.baseUrlHint", {
-            defaultValue: "供应商的 API 端点地址。",
-          })}
-        </p>
-      </div>
+      <EndpointField
+        id="openclaw-baseurl"
+        label={t("openclaw.baseUrl", { defaultValue: "API 端点" })}
+        value={baseUrl}
+        onChange={onBaseUrlChange}
+        placeholder="https://api.example.com/v1"
+        hint={t("openclaw.baseUrlHint", {
+          defaultValue: "供应商的 API 端点地址。",
+        })}
+        showManageButton={false}
+        showFullUrlToggle={showFullUrlToggle}
+        isFullUrl={isFullUrl}
+        onFullUrlChange={onFullUrlChange}
+      />
 
       {/* API Key */}
       <ApiKeySection
