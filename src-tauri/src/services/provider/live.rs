@@ -807,6 +807,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             // (api, oauth, wellknown). Non-object entries are not supported.
             // JSONC is intentionally out of scope for auth.json in this stage.
             // Full DB migration from existing options.apiKey is not required yet.
+            use crate::opencode_auth;
             use crate::opencode_config;
             use crate::provider::OpenCodeProviderConfig;
 
@@ -838,12 +839,12 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             // options.apiKey in opencode.json instead of failing entirely.
             let mut auth_json_written = false;
             if let Some(cred) = &credential {
-                match opencode_config::set_opencode_auth_entry(&provider.id, cred.clone()) {
+                match opencode_auth::set_opencode_auth_entry(&provider.id, cred.clone()) {
                     Ok(()) => {
                         auth_json_written = true;
                     }
                     Err(e) => {
-                        let auth_path = opencode_config::get_opencode_auth_path();
+                        let auth_path = opencode_auth::get_opencode_auth_path();
                         if auth_path.exists() {
                             // auth.json exists but is invalid or unwritable —
                             // fall back to legacy inline options.apiKey
@@ -872,7 +873,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 // restore the API key to options.apiKey so live config remains usable.
                 // Also override any empty/whitespace inline placeholder with the real key.
                 if credential.is_some() {
-                    if let Some(key) = credential.as_ref().and_then(|c| c.get("key").and_then(|v| v.as_str())) {
+                    if let Some(key) = credential
+                        .as_ref()
+                        .and_then(|c| c.get("key").and_then(|v| v.as_str()))
+                    {
                         if let Some(obj) = config_to_write.as_object_mut() {
                             let existing_is_empty = obj
                                 .get("options")
@@ -1418,6 +1422,7 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
 /// into the CC Switch database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::opencode_auth;
     use crate::opencode_config;
 
     let providers = opencode_config::get_typed_providers()?;
@@ -1428,10 +1433,10 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     // Read auth.json: bind provider credentials via provider-id keyed entries.
     // If auth.json is missing, import proceeds without credentials.
     // If auth.json exists but is invalid, abort to avoid silent data loss.
-    let auth_map = match opencode_config::read_opencode_auth() {
+    let auth_map = match opencode_auth::read_opencode_auth() {
         Ok(map) => Some(map),
         Err(e) => {
-            let auth_path = opencode_config::get_opencode_auth_path();
+            let auth_path = opencode_auth::get_opencode_auth_path();
             if auth_path.exists() {
                 return Err(AppError::Config(format!(
                     "Failed to read OpenCode auth.json: {e}"

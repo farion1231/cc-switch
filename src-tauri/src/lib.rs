@@ -19,6 +19,7 @@ mod lightweight;
 mod linux_fix;
 mod mcp;
 mod openclaw_config;
+mod opencode_auth;
 mod opencode_config;
 mod panic_hook;
 mod prompt;
