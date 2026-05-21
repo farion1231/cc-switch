@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/tooltip";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
+import { copyText } from "@/lib/clipboard";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { SessionItem } from "./SessionItem";
 import { SessionMessageItem } from "./SessionMessageItem";
@@ -202,7 +203,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const handleCopy = useCallback(
     async (text: string, successMessage: string) => {
       try {
-        await navigator.clipboard.writeText(text);
+        await copyText(text);
         toast.success(successMessage);
       } catch (error) {
         toast.error(
@@ -317,7 +318,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         sourcePath: selectedSession.sourcePath,
         format: "markdown",
       });
-      await navigator.clipboard.writeText(content);
+      await copyText(content);
       toast.success(
         t("sessionManager.markdownCopied", {
           defaultValue: "Markdown copied",

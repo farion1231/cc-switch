@@ -93,6 +93,10 @@ fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     Some((db_path, session_id))
 }
 
+pub(crate) fn sqlite_source_db_path(source: &str) -> Option<PathBuf> {
+    parse_sqlite_source(source).map(|(db_path, _)| db_path)
+}
+
 fn scan_sessions_sqlite() -> Vec<SessionMeta> {
     let db_path = get_opencode_db_path();
     if !db_path.exists() {

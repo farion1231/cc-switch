@@ -175,10 +175,17 @@ pub fn export_session(request: &ExportSessionRequest) -> Result<bool, String> {
         &request.format,
     )?;
 
+    let source_path = Path::new(&request.source_path);
     let output_path = Path::new(&request.output_path);
+    if request.provider_id == "opencode" && request.source_path.starts_with("sqlite:") {
+        reject_opencode_sqlite_export_target(&request.source_path, output_path)?;
+    } else if !request.source_path.starts_with("sqlite:") {
+        reject_same_export_target(source_path, output_path)?;
+    }
+
     match request.format {
         SessionExportFormat::Raw => {
-            std::fs::copy(&request.source_path, output_path)
+            std::fs::copy(source_path, output_path)
                 .map_err(|e| format!("Failed to copy raw session file: {e}"))?;
         }
         SessionExportFormat::Markdown | SessionExportFormat::Html | SessionExportFormat::Text => {
@@ -203,6 +210,38 @@ pub fn render_session_export(request: &RenderSessionExportRequest) -> Result<Str
         &request.format,
     )?;
     render_session_export_with_meta(&meta, &request.format)
+}
+
+fn reject_same_export_target(source_path: &Path, output_path: &Path) -> Result<(), String> {
+    let output_exists = output_path.try_exists().map_err(|e| {
+        format!(
+            "Failed to inspect export target {}: {e}",
+            output_path.display()
+        )
+    })?;
+
+    if !output_exists {
+        return Ok(());
+    }
+
+    let is_same_file = same_file::is_same_file(source_path, output_path)
+        .map_err(|e| format!("Failed to compare export target with session source: {e}"))?;
+
+    if is_same_file {
+        return Err("Export target must be different from the source session file".to_string());
+    }
+
+    Ok(())
+}
+
+fn reject_opencode_sqlite_export_target(
+    source_path: &str,
+    output_path: &Path,
+) -> Result<(), String> {
+    let db_path = opencode::sqlite_source_db_path(source_path)
+        .ok_or_else(|| format!("Invalid SQLite source reference: {source_path}"))?;
+
+    reject_same_export_target(&db_path, output_path)
 }
 
 fn validate_export_request(
@@ -597,6 +636,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     #[test]
@@ -621,6 +661,93 @@ mod tests {
             .expect_err("expected missing source path to fail");
 
         assert!(err.contains("session source not found"));
+    }
+
+    #[test]
+    fn raw_export_target_may_be_new_file() {
+        let root = tempdir().expect("tempdir");
+        let source = root.path().join("session.jsonl");
+        let output = root.path().join("export.jsonl");
+        std::fs::write(&source, "{}").expect("write source");
+
+        reject_same_export_target(&source, &output).expect("new output path should be accepted");
+    }
+
+    #[test]
+    fn raw_export_rejects_source_as_target() {
+        let root = tempdir().expect("tempdir");
+        let source = root.path().join("session.jsonl");
+        std::fs::write(&source, "{}").expect("write source");
+
+        let err = reject_same_export_target(&source, &source)
+            .expect_err("same source and target should be rejected");
+
+        assert!(err.contains("different from the source session file"));
+    }
+
+    #[test]
+    fn raw_export_rejects_hard_linked_target() {
+        let root = tempdir().expect("tempdir");
+        let source = root.path().join("session.jsonl");
+        let output = root.path().join("export.jsonl");
+        std::fs::write(&source, "{}").expect("write source");
+        if let Err(error) = std::fs::hard_link(&source, &output) {
+            eprintln!("skipping hard-link assertion: {error}");
+            return;
+        }
+
+        let err = reject_same_export_target(&source, &output)
+            .expect_err("hard-linked target should be rejected");
+
+        assert!(err.contains("different from the source session file"));
+    }
+
+    #[test]
+    fn sqlite_export_rejects_opencode_db_as_target() {
+        let root = tempdir().expect("tempdir");
+        let db_path = root.path().join("opencode.db");
+        std::fs::write(&db_path, "sqlite").expect("write db");
+        let source = format!("sqlite:{}:ses_123", db_path.display());
+
+        let err = reject_opencode_sqlite_export_target(&source, &db_path)
+            .expect_err("sqlite db target should be rejected");
+
+        assert!(err.contains("different from the source session file"));
+    }
+
+    #[test]
+    #[serial]
+    fn markdown_export_rejects_source_as_target_without_overwriting_session() {
+        let temp_home = tempdir().expect("tempdir");
+        let session_dir = temp_home.path().join(".codex").join("sessions");
+        std::fs::create_dir_all(&session_dir).expect("create sessions dir");
+        let source = session_dir.join("session.jsonl");
+        let source_content = concat!(
+            "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"session-1\",\"cwd\":\"/tmp/project\"}}\n",
+            "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"hello\"}}\n"
+        );
+        std::fs::write(&source, source_content).expect("write source");
+
+        let original_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+        let result = export_session(&ExportSessionRequest {
+            provider_id: "codex".to_string(),
+            session_id: "session-1".to_string(),
+            source_path: source.to_string_lossy().to_string(),
+            format: SessionExportFormat::Markdown,
+            output_path: source.to_string_lossy().to_string(),
+        });
+        match original_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+
+        let err = result.expect_err("source target should be rejected");
+        assert!(err.contains("different from the source session file"));
+        assert_eq!(
+            std::fs::read_to_string(&source).expect("read source"),
+            source_content
+        );
     }
 
     #[test]
