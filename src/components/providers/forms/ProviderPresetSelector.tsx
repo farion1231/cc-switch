@@ -6,6 +6,9 @@ import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
 import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
+import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
+import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
+import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
 import type { ProviderCategory } from "@/types";
 import {
   universalProviderPresets,
@@ -17,7 +20,10 @@ type AnyPreset =
   | ProviderPreset
   | CodexProviderPreset
   | GeminiProviderPreset
-  | ClaudeDesktopProviderPreset;
+  | ClaudeDesktopProviderPreset
+  | OpenCodeProviderPreset
+  | OpenClawProviderPreset
+  | HermesProviderPreset;
 
 type PresetEntry = {
   id: string;
@@ -26,8 +32,7 @@ type PresetEntry = {
 
 interface ProviderPresetSelectorProps {
   selectedPresetId: string | null;
-  groupedPresets: Record<string, PresetEntry[]>;
-  categoryKeys: string[];
+  presetEntries: PresetEntry[];
   presetCategoryLabels: Record<string, string>;
   onPresetChange: (value: string) => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
@@ -37,8 +42,7 @@ interface ProviderPresetSelectorProps {
 
 export function ProviderPresetSelector({
   selectedPresetId,
-  groupedPresets,
-  categoryKeys,
+  presetEntries,
   presetCategoryLabels,
   onPresetChange,
   onUniversalPresetSelect,
@@ -140,35 +144,33 @@ export function ProviderPresetSelector({
           {t("providerPreset.custom")}
         </button>
 
-        {categoryKeys.map((category) => {
-          const entries = groupedPresets[category];
-          if (!entries || entries.length === 0) return null;
-          return entries.map((entry) => {
-            const isSelected = selectedPresetId === entry.id;
-            const isPartner = entry.preset.isPartner;
-            return (
-              <button
-                key={entry.id}
-                type="button"
-                onClick={() => onPresetChange(entry.id)}
-                className={`${getPresetButtonClass(isSelected, entry.preset)} relative`}
-                style={getPresetButtonStyle(isSelected, entry.preset)}
-                title={
-                  presetCategoryLabels[category] ?? t("providerPreset.other")
-                }
-              >
-                {renderPresetIcon(entry.preset)}
-                {entry.preset.nameKey
-                  ? t(entry.preset.nameKey)
-                  : entry.preset.name}
-                {isPartner && (
-                  <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
-                    <Star className="h-2.5 w-2.5 fill-current" />
-                  </span>
-                )}
-              </button>
-            );
-          });
+        {presetEntries.map((entry) => {
+          const isSelected = selectedPresetId === entry.id;
+          const isPartner = entry.preset.isPartner;
+          const presetCategory = entry.preset.category ?? "others";
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => onPresetChange(entry.id)}
+              className={`${getPresetButtonClass(isSelected, entry.preset)} relative`}
+              style={getPresetButtonStyle(isSelected, entry.preset)}
+              title={
+                presetCategoryLabels[presetCategory] ??
+                t("providerPreset.other")
+              }
+            >
+              {renderPresetIcon(entry.preset)}
+              {entry.preset.nameKey
+                ? t(entry.preset.nameKey)
+                : entry.preset.name}
+              {isPartner && (
+                <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
+                  <Star className="h-2.5 w-2.5 fill-current" />
+                </span>
+              )}
+            </button>
+          );
         })}
       </div>
 

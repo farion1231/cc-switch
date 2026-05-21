@@ -2,11 +2,11 @@
 
 use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
-use crate::database::Database;
+use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
-use crate::services::usage_stats::find_model_pricing_row;
+use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
 use rust_decimal::Decimal;
-use std::{str::FromStr, time::SystemTime};
+use std::str::FromStr;
 
 /// 请求日志
 #[derive(Debug, Clone)]
@@ -64,13 +64,7 @@ impl<'a> UsageLogger<'a> {
                 )
             };
 
-        let created_at = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or_else(|e| {
-                log::warn!("SystemTime is before UNIX_EPOCH, falling back to 0: {e}");
-                0
-            });
+        let created_at = chrono::Utc::now().timestamp();
 
         conn.execute(
             "INSERT OR REPLACE INTO proxy_request_logs (
@@ -227,18 +221,19 @@ impl<'a> UsageLogger<'a> {
             Ok(value) => value,
             Err(e) => {
                 log::warn!("[USG-003] 获取默认计费模式失败 (app_type={app_type}): {e}");
-                "response".to_string()
+                PRICING_SOURCE_RESPONSE.to_string()
             }
         };
-        let default_pricing_source =
-            if matches!(default_pricing_source_raw.as_str(), "response" | "request") {
-                default_pricing_source_raw
-            } else {
-                log::warn!(
+        let default_pricing_source = if default_pricing_source_raw == PRICING_SOURCE_RESPONSE
+            || default_pricing_source_raw == PRICING_SOURCE_REQUEST
+        {
+            default_pricing_source_raw
+        } else {
+            log::warn!(
                 "[USG-003] 默认计费模式无效 (app_type={app_type}): {default_pricing_source_raw}"
             );
-                "response".to_string()
-            };
+            PRICING_SOURCE_RESPONSE.to_string()
+        };
 
         let provider = self
             .db
@@ -271,7 +266,9 @@ impl<'a> UsageLogger<'a> {
         };
 
         let pricing_model_source = match provider_pricing_source {
-            Some(value) if matches!(value, "response" | "request") => value.to_string(),
+            Some(value) if value == PRICING_SOURCE_RESPONSE || value == PRICING_SOURCE_REQUEST => {
+                value.to_string()
+            }
             Some(value) => {
                 log::warn!("[USG-003] 供应商计费模式无效 (provider_id={provider_id}): {value}");
                 default_pricing_source.clone()
@@ -303,11 +300,21 @@ impl<'a> UsageLogger<'a> {
     ) -> Result<(), AppError> {
         let pricing = self.get_model_pricing(&pricing_model)?;
 
-        if pricing.is_none() {
+        let has_usage = usage.input_tokens > 0
+            || usage.output_tokens > 0
+            || usage.cache_read_tokens > 0
+            || usage.cache_creation_tokens > 0;
+
+        if pricing.is_none() && has_usage && !is_placeholder_pricing_model(&pricing_model) {
             log::warn!("[USG-002] 模型定价未找到，成本将记录为 0: {pricing_model}");
         }
 
-        let cost = CostCalculator::try_calculate(&usage, pricing.as_ref(), cost_multiplier);
+        let cost = CostCalculator::try_calculate_for_app(
+            &app_type,
+            &usage,
+            pricing.as_ref(),
+            cost_multiplier,
+        );
 
         let log = RequestLog {
             request_id,

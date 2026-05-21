@@ -2,6 +2,7 @@
 //!
 //! 在请求转发前，根据 Provider 配置替换请求中的模型名称
 
+use crate::claude_desktop_config::ONE_M_CONTEXT_MARKER;
 use crate::provider::Provider;
 use serde_json::Value;
 
@@ -110,6 +111,33 @@ pub fn apply_model_mapping(
     }
 
     (body, original_model, None)
+}
+
+/// Claude Code 通过 `[1M]` 后缀声明 100 万上下文能力；上游 API
+/// 通常不接受这个本地能力标记，转发前需要剥离。
+pub fn strip_one_m_suffix_for_upstream(model: &str) -> &str {
+    let trimmed = model.trim_end();
+    let marker = ONE_M_CONTEXT_MARKER.as_bytes();
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= marker.len()
+        && bytes[bytes.len() - marker.len()..].eq_ignore_ascii_case(marker)
+    {
+        return trimmed[..trimmed.len() - marker.len()].trim_end();
+    }
+    model
+}
+
+pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
+    let Some(model) = body.get("model").and_then(Value::as_str) else {
+        return body;
+    };
+
+    let stripped = strip_one_m_suffix_for_upstream(model);
+    if stripped != model {
+        log::debug!("[ModelMapper] 去除本地 1M 标记: {model} → {stripped}");
+        body["model"] = serde_json::json!(stripped);
+    }
+    body
 }
 
 #[cfg(test)]
@@ -250,5 +278,35 @@ mod tests {
         let (result, _, mapped) = apply_model_mapping(body, &provider);
         assert_eq!(result["model"], "sonnet-mapped");
         assert_eq!(mapped, Some("sonnet-mapped".to_string()));
+    }
+
+    #[test]
+    fn strips_one_m_suffix_before_upstream() {
+        let body = json!({"model": "deepseek-v4-pro[1M]"});
+        let result = strip_one_m_suffix_for_upstream_from_body(body);
+        assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn strips_one_m_suffix_after_mapping() {
+        let mut provider = create_provider_with_mapping();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro [1M]"
+            }
+        });
+
+        let body = json!({"model": "claude-sonnet-4-6"});
+        let (mapped, _, _) = apply_model_mapping(body, &provider);
+        let result = strip_one_m_suffix_for_upstream_from_body(mapped);
+
+        assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn keeps_model_without_one_m_suffix() {
+        let body = json!({"model": "deepseek-v4-pro"});
+        let result = strip_one_m_suffix_for_upstream_from_body(body);
+        assert_eq!(result["model"], "deepseek-v4-pro");
     }
 }

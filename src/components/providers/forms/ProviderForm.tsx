@@ -14,6 +14,7 @@ import type {
   ProviderMeta,
   ProviderTestConfig,
   ClaudeApiFormat,
+  CodexApiFormat,
   ClaudeApiKeyField,
 } from "@/types";
 import {
@@ -34,6 +35,7 @@ import {
 } from "@/config/opencodeProviderPresets";
 import {
   openclawProviderPresets,
+  rebaseOpenClawSuggestedDefaults,
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
@@ -50,6 +52,11 @@ import {
   hasApiKeyField,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
+import {
+  extractCodexWireApi,
+  setCodexWireApi,
+} from "@/utils/providerConfigUtils";
+import { isNonNegativeDecimalString } from "@/types/usage";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -114,6 +121,25 @@ type PresetEntry = {
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
     | HermesProviderPreset;
+};
+
+const codexApiFormatFromWireApi = (
+  wireApi: string | undefined,
+): CodexApiFormat | undefined => {
+  switch (wireApi?.trim().toLowerCase()) {
+    case "chat":
+    case "chat_completions":
+    case "chat-completions":
+    case "openai_chat":
+    case "openai-chat":
+      return "openai_chat";
+    case "responses":
+    case "openai_responses":
+    case "openai-responses":
+      return "openai_responses";
+    default:
+      return undefined;
+  }
 };
 
 export interface ProviderFormProps {
@@ -350,8 +376,11 @@ function ProviderFormFull({
   const {
     claudeModel,
     defaultHaikuModel,
+    defaultHaikuModelName,
     defaultSonnetModel,
+    defaultSonnetModelName,
     defaultOpusModel,
+    defaultOpusModelName,
     handleModelChange,
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
@@ -418,6 +447,7 @@ function ProviderFormFull({
     codexModelName,
     codexAuthError,
     setCodexAuth,
+    setCodexConfig,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelNameChange,
@@ -425,15 +455,50 @@ function ProviderFormFull({
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
 
+  const [localCodexApiFormat, setLocalCodexApiFormat] =
+    useState<CodexApiFormat>(() => {
+      if (initialData?.meta?.apiFormat === "openai_chat") {
+        return "openai_chat";
+      }
+      if (initialData?.meta?.apiFormat === "openai_responses") {
+        return "openai_responses";
+      }
+      return (
+        codexApiFormatFromWireApi(
+          extractCodexWireApi(
+            typeof initialData?.settingsConfig?.config === "string"
+              ? initialData.settingsConfig.config
+              : "",
+          ),
+        ) ?? "openai_responses"
+      );
+    });
+
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
 
   const handleCodexConfigChange = useCallback(
     (value: string) => {
       originalHandleCodexConfigChange(value);
+      const nextFormat = codexApiFormatFromWireApi(extractCodexWireApi(value));
+      if (nextFormat) {
+        setLocalCodexApiFormat(nextFormat);
+      }
       debouncedValidate(value);
     },
     [originalHandleCodexConfigChange, debouncedValidate],
+  );
+
+  const handleCodexApiFormatChange = useCallback(
+    (format: CodexApiFormat) => {
+      setLocalCodexApiFormat(format);
+      setCodexConfig((prev) => {
+        const updated = setCodexWireApi(prev, "responses");
+        debouncedValidate(updated);
+        return updated;
+      });
+    },
+    [setCodexConfig, debouncedValidate],
   );
 
   useEffect(() => {
@@ -815,6 +880,20 @@ function ProviderFormFull({
       );
     }
 
+    const costMultiplier = pricingConfig.costMultiplier?.trim();
+    if (
+      pricingConfig.enabled &&
+      costMultiplier &&
+      !isNonNegativeDecimalString(costMultiplier)
+    ) {
+      toast.error(
+        t("settings.globalProxy.defaultCostMultiplierInvalid", {
+          defaultValue: "成本倍率必须为非负数",
+        }),
+      );
+      return;
+    }
+
     // opencode / openclaw / hermes: providerKey 相关
     // A 类（空）归到 issues；B 类（正则不合法 / 重复 / 状态加载中）仍硬拒绝
     const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -1034,9 +1113,13 @@ function ProviderFormFull({
     if (appId === "codex") {
       try {
         const authJson = JSON.parse(codexAuth);
+        const normalizedCodexConfig =
+          category !== "official" && (codexConfig ?? "").trim()
+            ? setCodexWireApi(codexConfig ?? "", "responses")
+            : (codexConfig ?? "");
         const configObj = {
           auth: authJson,
-          config: codexConfig ?? "",
+          config: normalizedCodexConfig,
         };
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -1116,9 +1199,15 @@ function ProviderFormFull({
       if (activePreset.isPartner) {
         payload.isPartner = activePreset.isPartner;
       }
-      // OpenClaw: 传递预设的 suggestedDefaults 到提交数据
+      // OpenClaw: align preset model refs with the actual submitted provider key.
       if (activePreset.suggestedDefaults) {
-        payload.suggestedDefaults = activePreset.suggestedDefaults;
+        payload.suggestedDefaults =
+          appId === "openclaw" && payload.providerKey
+            ? rebaseOpenClawSuggestedDefaults(
+                activePreset.suggestedDefaults,
+                payload.providerKey,
+              )
+            : activePreset.suggestedDefaults;
       }
     }
 
@@ -1215,7 +1304,9 @@ function ProviderFormFull({
       apiFormat:
         appId === "claude" && category !== "official"
           ? localApiFormat
-          : undefined,
+          : appId === "codex" && category !== "official"
+            ? localCodexApiFormat
+            : undefined,
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&
@@ -1237,23 +1328,6 @@ function ProviderFormFull({
 
     await onSubmit(payload);
   };
-
-  const groupedPresets = useMemo(() => {
-    return presetEntries.reduce<Record<string, PresetEntry[]>>((acc, entry) => {
-      const category = entry.preset.category ?? "others";
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(entry);
-      return acc;
-    }, {});
-  }, [presetEntries]);
-
-  const categoryKeys = useMemo(() => {
-    return Object.keys(groupedPresets).filter(
-      (key) => key !== "custom" && groupedPresets[key]?.length,
-    );
-  }, [groupedPresets]);
 
   const shouldShowSpeedTest =
     category !== "official" && category !== "cloud_provider";
@@ -1357,6 +1431,10 @@ function ProviderFormFull({
       if (appId === "codex") {
         const template = getCodexCustomTemplate();
         resetCodexConfig(template.auth, template.config);
+        setLocalCodexApiFormat(
+          codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
+            "openai_responses",
+        );
       }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
@@ -1393,6 +1471,11 @@ function ProviderFormFull({
       const config = preset.config ?? "";
 
       resetCodexConfig(auth, config);
+      setLocalCodexApiFormat(
+        preset.apiFormat ??
+          codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
+          "openai_responses",
+      );
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -1540,8 +1623,7 @@ function ProviderFormFull({
           {!initialData && (
             <ProviderPresetSelector
               selectedPresetId={selectedPresetId}
-              groupedPresets={groupedPresets}
-              categoryKeys={categoryKeys}
+              presetEntries={presetEntries}
               presetCategoryLabels={presetCategoryLabels}
               onPresetChange={handlePresetChange}
               onUniversalPresetSelect={onUniversalPresetSelect}
@@ -1820,8 +1902,11 @@ function ProviderFormFull({
               shouldShowModelSelector={category !== "official"}
               claudeModel={claudeModel}
               defaultHaikuModel={defaultHaikuModel}
+              defaultHaikuModelName={defaultHaikuModelName}
               defaultSonnetModel={defaultSonnetModel}
+              defaultSonnetModelName={defaultSonnetModelName}
               defaultOpusModel={defaultOpusModel}
+              defaultOpusModelName={defaultOpusModelName}
               onModelChange={handleModelChange}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
@@ -1855,6 +1940,8 @@ function ProviderFormFull({
               }
               autoSelect={endpointAutoSelect}
               onAutoSelectChange={setEndpointAutoSelect}
+              apiFormat={localCodexApiFormat}
+              onApiFormatChange={handleCodexApiFormatChange}
               shouldShowModelField={category !== "official"}
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}

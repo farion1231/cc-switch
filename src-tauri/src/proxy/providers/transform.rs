@@ -3,7 +3,7 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
-use crate::proxy::error::ProxyError;
+use crate::proxy::{error::ProxyError, json_canonical::canonical_json_string};
 use serde_json::{json, Value};
 
 const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
@@ -228,10 +228,47 @@ pub fn anthropic_to_openai_with_reasoning_content(
     }
 
     if let Some(v) = body.get("tool_choice") {
-        result["tool_choice"] = v.clone();
+        result["tool_choice"] = map_tool_choice_to_chat(v);
     }
 
     Ok(result)
+}
+
+/// Translate an Anthropic `tool_choice` into the OpenAI Chat Completions form.
+///
+/// Anthropic forms:
+///   "auto" / "any" / "none"           (string enum)
+///   {"type": "auto" | "any" | "none"}
+///   {"type": "tool", "name": "<X>"}
+///
+/// OpenAI Chat forms:
+///   "auto" / "none" / "required"      (note: no "any" — use "required")
+///   {"type": "function", "function": {"name": "<X>"}}
+///
+/// The Responses API uses a flatter `{"type":"function","name":"X"}` selector,
+/// so it has a sibling `map_tool_choice_to_responses` in `transform_responses.rs`.
+/// Keep the two in sync.
+fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
+    match tool_choice {
+        Value::String(s) => match s.as_str() {
+            "any" => json!("required"),
+            _ => json!(s),
+        },
+        Value::Object(obj) => match obj.get("type").and_then(|t| t.as_str()) {
+            Some("any") => json!("required"),
+            Some("auto") => json!("auto"),
+            Some("none") => json!("none"),
+            Some("tool") => {
+                let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                json!({
+                    "type": "function",
+                    "function": { "name": name }
+                })
+            }
+            _ => tool_choice.clone(),
+        },
+        _ => tool_choice.clone(),
+    }
 }
 
 fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
@@ -371,7 +408,7 @@ fn convert_message_to_openai(
                         "type": "function",
                         "function": {
                             "name": name,
-                            "arguments": serde_json::to_string(&input).unwrap_or_default()
+                            "arguments": canonical_json_string(&input)
                         }
                     }));
                 }
@@ -384,7 +421,7 @@ fn convert_message_to_openai(
                     let content_val = block.get("content");
                     let content_str = match content_val {
                         Some(Value::String(s)) => s.clone(),
-                        Some(v) => serde_json::to_string(v).unwrap_or_default(),
+                        Some(v) => canonical_json_string(v),
                         None => String::new(),
                     };
                     result.push(json!({
@@ -1509,5 +1546,52 @@ mod tests {
         let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["max_tokens"], 1024);
         assert!(result.get("max_completion_tokens").is_none());
+    }
+
+    fn run_tool_choice(value: Value) -> Value {
+        let input = json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "tools": [{
+                "name": "search",
+                "description": "search the web",
+                "input_schema": {"type": "object", "properties": {}}
+            }],
+            "tool_choice": value,
+        });
+        anthropic_to_openai(input).unwrap()["tool_choice"].clone()
+    }
+
+    #[test]
+    fn tool_choice_string_any_maps_to_required() {
+        assert_eq!(run_tool_choice(json!("any")), json!("required"));
+    }
+
+    #[test]
+    fn tool_choice_string_auto_and_none_pass_through() {
+        assert_eq!(run_tool_choice(json!("auto")), json!("auto"));
+        assert_eq!(run_tool_choice(json!("none")), json!("none"));
+    }
+
+    #[test]
+    fn tool_choice_object_any_maps_to_required() {
+        assert_eq!(run_tool_choice(json!({"type": "any"})), json!("required"));
+    }
+
+    #[test]
+    fn tool_choice_object_auto_and_none_collapse_to_string() {
+        assert_eq!(run_tool_choice(json!({"type": "auto"})), json!("auto"));
+        assert_eq!(run_tool_choice(json!({"type": "none"})), json!("none"));
+    }
+
+    #[test]
+    fn tool_choice_forced_tool_maps_to_nested_function_selector() {
+        // Anthropic {"type":"tool","name":"X"} must become OpenAI Chat
+        // {"type":"function","function":{"name":"X"}} — the *nested* form, not
+        // the flat Responses-API form.
+        assert_eq!(
+            run_tool_choice(json!({"type": "tool", "name": "search"})),
+            json!({"type": "function", "function": {"name": "search"}}),
+        );
     }
 }

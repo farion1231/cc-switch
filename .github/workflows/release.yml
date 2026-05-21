@@ -543,6 +543,8 @@ jobs:
           body: |
             ## CC Switch ${{ github.ref_name }}
 
+            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [ccswitch.io](https://ccswitch.io)
+
             Claude Code 供应商切换工具
 
             ### 下载

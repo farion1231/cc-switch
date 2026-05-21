@@ -7,9 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-05-16
+
+Development since v3.14.1 focuses on a dedicated Claude Desktop surface with third-party provider switching through a proxy gateway, a large reverse-proxy hardening pass (reliability, retries, cache, takeover, Gemini/Vertex/Codex paths), expansion of the third-party provider preset catalog (BytePlus / Volcengine / ClaudeAPI / ClaudeCN / RunAPI / RelaxyCode / PatewayAI / Baidu Qianfan), role-based model mapping with a 1M context flag, Codex OAuth live model discovery, and a long tail of usage, OAuth, Codex, and session quality-of-life fixes.
+
+**Stats**: 127 commits | 211 files changed | +17,980 insertions | -2,748 deletions
+
+### Highlights
+
+- **Claude Desktop becomes a first-class managed surface** with third-party provider switching through an in-app proxy gateway, role-based model mapping (sonnet / opus / haiku) with a 1M context flag, Copilot/Codex OAuth provider reuse, and 44 imported provider presets translated from the Claude Code catalog. Note: 20 Claude Desktop presets now default to direct mode instead of routing through the proxy — verify connectivity if you previously relied on proxy routing for these presets.
+- **Major reverse-proxy hardening**: P0–P3 lifecycle, retry, failover, and rectifier patches; pooled HTTPS reuse for non-Anthropic backends; Codex/Responses cache hit-rate improvements; correct Anthropic ↔ OpenAI `tool_choice` mapping; Vertex AI URL preservation; Gemini path-based model extraction; takeover detection refinement; IPv6 listen address support.
+- **Provider Ecosystem Expansion**: Added BytePlus, Volcengine Agentplan, ClaudeAPI, ClaudeCN, RunAPI, RelaxyCode, PatewayAI, and Baidu Qianfan Coding Plan partner presets; promoted DouBao Seed to partner status; routing-support badges now surface on provider cards.
+- **Role-Based Model Mapping for Claude Code**: Display-name-aware sonnet / opus / haiku route mapping with a `supports1m` flag replaces the legacy `[1M]` suffix and decouples routing from raw model IDs.
+- **Codex OAuth Live Model Discovery**: ChatGPT Codex providers now fetch the live model list from the ChatGPT backend on demand instead of relying on a static list.
+- **Usage Dashboard Filter-Driven Hero**: A new filter-driven Hero card with cache-normalized totals replaces the legacy summary block, paired with cache-cost-semantics fixes that silence a noisy pricing warning storm.
+- **DeepSeek tool-call reasoning and zero-usage final deltas**: DeepSeek tool calls now return `reasoning_content` alongside `tool_calls` (#2543), and the final `message_delta` event always includes a usage block (even when zero) so strict Anthropic clients no longer crash on `null` (#2485).
+
+### Added
+
+- **Claude Desktop Third-Party Provider Switching via Proxy Gateway**: Added a dedicated Claude Desktop surface that brokers third-party Claude providers through CC Switch's in-app proxy, with a routing-support badge for providers that need it, role-based model route mapping locked to `sonnet` / `opus` / `haiku`, Copilot/Codex OAuth provider reuse, a redesigned Claude Code import flow, app-switcher differentiation between "Claude Code" and "Claude Desktop", and 44 provider presets translated from the Claude Code catalog.
+- **Routing Support Badges on Provider Cards**: Provider cards in both Claude Code and Codex panels now show a routing-support badge so users can tell at a glance which providers can be served through Local Routing.
+- **Codex OAuth Live Model List**: ChatGPT Codex providers now fetch the current model list from the ChatGPT backend on demand, replacing the previously hardcoded selection.
+- **Role-Based Model Mapping with 1M Flag**: Claude Code model mapping is now role-based (`sonnet` / `opus` / `haiku`) with display names and a `supports1m` flag, replacing the legacy `[1M]` suffix to decouple routing from raw model IDs.
+- **Filter-Driven Usage Hero**: The usage dashboard's Hero summary is now filter-driven with cache-normalized totals so the figures line up with the active date range and provider filters.
+- **Provider Form "Save Anyway" Prompt**: Softened provider form validation with a "save anyway" prompt so non-blocking input issues no longer prevent saving (#2307).
+- **Universal Provider Duplicate Action**: Added a duplicate action for universal providers from the provider list (#2416).
+- **Persisted Tauri Window State**: Window position and size now persist across launches (#2377).
+- **Tray Icon Tooltip**: The system tray icon now shows a tooltip on hover for clearer at-a-glance state (#2417).
+- **Warp Terminal Session Launch**: Added support for launching Warp and executing a saved session inside it (#2466).
+- **DeepSeek `reasoning_content` for Tool Calls**: DeepSeek tool-calling responses now return `reasoning_content` together with `tool_calls` so callers can render both (#2543).
+- **Baidu Qianfan Coding Plan for Claude Code**: Added a Baidu Qianfan Coding Plan preset for Claude Code (#2322).
+- **Compshare Coding Plan Preset (Cross-App)**: Added Compshare Coding Plan preset across claude / codex / hermes / openclaw.
+- **Partner Provider Presets**: Added BytePlus, Volcengine Agentplan, ClaudeAPI, ClaudeCN, RunAPI, RelaxyCode, and PatewayAI provider presets; promoted DouBao Seed to partner status with refreshed endpoint and links.
+- **44 Claude Desktop Provider Presets**: Translated 44 provider presets from the Claude Code catalog into the new Claude Desktop surface.
+
+### Changed
+
+- **20 Claude Desktop Presets Switched from Proxy to Direct Mode**: 20 Claude Desktop presets now ship in direct mode instead of routing through the proxy by default, reducing setup friction for users who don't need proxy-specific compatibility shims. Verify connectivity if you previously relied on proxy routing for these presets.
+- **Claude Desktop Operational Notes**: Switching a Claude Desktop provider now writes CC Switch's managed 3P profile and requires restarting Claude Desktop to take effect; proxy-mode providers require CC Switch Local Routing to stay running.
+- **Failover / Local Routing Guardrails**: Failover controls now require the target app's Local Routing takeover to be enabled, and stopping only the proxy service is blocked while any app still depends on takeover state.
+- **Usage Accounting Semantics**: Usage summaries now report cache-normalized real total tokens and cache hit rate; historical token and cost totals may shift after deduplication and pricing recalculation, but should be more accurate.
+- **Provider Preset Rendering Order**: Provider preset lists now render in author-defined array order with partners prioritized at the top, replacing the previous implicit sort.
+- **Model Mapping Hint Copy Simplified**: `modelMappingOffHint` was rewritten as action-oriented copy across zh / en / ja.
+- **CC Switch Brand Surface Unified to ccswitch.io**: All in-app and README references now point at ccswitch.io as the sole official website; the release notes template also surfaces ccswitch.io.
+- **Theme Switch Simplified**: Removed the circular reveal animation; theme changes are now an instant cross-fade.
+- **Claude Code App Switcher Differentiation**: The app switcher now visually distinguishes "Claude Code" from "Claude Desktop" and uses the "Claude Code" label in the app visibility settings.
+- **CI: Claude Review on Opus 4.7**: Upgraded the Claude review GitHub Action to Opus 4.7, tuned the prompt to reduce nitpick noise, added an `@claude` review-only Code Action, pinned PR head SHA for checkout, and dropped a `--max-turns 5` limit.
+- **Dependency Bumps**: `actions/checkout` 4 → 6 (#2517), `pnpm/action-setup` 5 → 6 (#2518), `softprops/action-gh-release` 2 → 3 (#2519), `actions/stale` 9 → 10 (#2520).
+- **DeepSeek Presets Switched to V4**: DeepSeek presets now ship V4 (flash / pro) with refreshed pricing seeds.
+- **Codex 1M Context Toggle Hidden in Provider Edit Form**: The 1M context-window toggle is no longer surfaced in the Codex provider edit form to reduce knob count for a setting that has no effect in current Codex deployments.
+- **OpenClaudeCode Migrated to MicuAPI Domain**: Updated the OpenClaudeCode preset to the MicuAPI domain; refreshed Micu API links to `micuapi.ai`.
+- **CrazyRouter Endpoints Switched to `cn` Subdomain**: Updated CrazyRouter preset endpoints to the `cn` subdomain.
+- **RelaxyCode Custom Icon**: Switched RelaxyCode preset icon to a custom `relaxcode.png` asset.
+- **Kimi For Coding Doc URL**: Updated Kimi For Coding website URL to the `/code/docs/` path.
+- **SiliconFlow International Site Shows USD**: Balance display now correctly shows USD for the SiliconFlow international site (was incorrectly displaying CNY).
+
 ### Fixed
 
-- **OpenAI Responses API usage parsing robustness**: Hardened `build_anthropic_usage_from_responses()` and the Responses → Anthropic SSE translator so a missing or malformed upstream `usage` no longer produces `"usage": null` in `message_delta`. This unblocks strict Anthropic clients (notably the VSCode Claude Code extension) that crashed with "Cannot read properties of null (reading 'output_tokens')" against providers such as Codex OAuth and DashScope's `compatible-mode/v1/responses` endpoint. Added OpenAI field-name fallbacks (`prompt_tokens` / `completion_tokens`), null/empty/partial object handling, and preserved cache token fields even when input/output tokens are missing (#2422).
+- **OpenAI Responses API Usage Parsing Robustness**: Hardened `build_anthropic_usage_from_responses()` and the Responses → Anthropic SSE translator so a missing or malformed upstream `usage` no longer produces `"usage": null` in `message_delta`. This unblocks strict Anthropic clients (notably the VSCode Claude Code extension) that crashed with "Cannot read properties of null (reading 'output_tokens')" against providers such as Codex OAuth and DashScope's `compatible-mode/v1/responses` endpoint. Added OpenAI field-name fallbacks (`prompt_tokens` / `completion_tokens`), null/empty/partial object handling, and preserved cache token fields even when input/output tokens are missing (#2422).
+- **Proxy Reliability Patches (P0–P3)**: Multiple rounds of routing, lifecycle, retry, and rectifier patches across the request-forwarder paths; extracted a shared `handle_rectifier_retry_failure` helper and a shared `auth_header_value` helper across provider adapters.
+- **Proxy: Pooled HTTPS Connection Reuse**: Non-Anthropic backends now reuse pooled HTTPS connections instead of opening a fresh TLS session per request, materially reducing per-request latency.
+- **Proxy: Forward Client HTTP Method**: The proxy forwards the client's actual HTTP method instead of hard-coding `POST`, so non-POST upstream endpoints (e.g. GET `/v1/models`) work correctly.
+- **Proxy: Per-Attempt Counters and `max_retries` Wiring**: Client-request counters moved out of the per-attempt loop, and `AppProxyConfig.max_retries` is now correctly wired into the request forwarder.
+- **Proxy: Failover Decision Refinements**: Refined failover decision logic in the forwarder so retryable / unretryable errors are classified more accurately.
+- **Proxy: Takeover Detection Tightening**: Tightened takeover detection and use fallback restore when disabling takeover so leftover state no longer strands a provider.
+- **Proxy: Anthropic ↔ OpenAI `tool_choice` Mapping**: Anthropic `tool_choice` is now correctly mapped to the OpenAI Chat nested form during format conversion.
+- **Proxy: Gemini Request Model Extraction**: Gemini request model is now correctly extracted from the URI path (not the body) so transformed traffic reports the right model.
+- **Proxy: Auth Header Error Handling**: `get_auth_headers` now returns `Result` instead of panicking on bad credentials.
+- **Proxy: IPv6 Listen Address Validation**: The Proxy panel now accepts IPv6 listen addresses.
+- **Proxy: Codex / Responses Cache Hit Rate**: Improved cache hit rate for Codex and OpenAI Responses requests by stabilizing cache key derivation; only emit `prompt_cache_key` when a real client-provided session identity is available so unrelated conversations no longer collapse onto a single key; canonicalize (sort) JSON keys in outgoing request bodies and `tool_call` arguments / `tool_result` content for byte-identical prefix-cache reuse; thread `session_id` into the usage logger for request correlation.
+- **Proxy: JSON Schema Underscore Fields Preserved**: Private-parameter filtering now preserves underscore-prefixed field names inside JSON Schema name maps such as `properties`, `patternProperties`, `definitions`, and `$defs`, so user-defined schema keys like `_id` and `_meta` survive the filter.
+- **Proxy: Read Tool Empty Pages**: Drop empty pages from `Read` tool inputs so providers don't reject the request (#2472).
+- **Proxy: Per-Request Hot-Path Trim**: Trimmed per-request hot-path work and database wait time.
+- **Proxy: Real Provider Model Names Under Takeover**: The Claude Code menu now exposes the real provider model names when running under takeover, instead of a stale alias.
+- **Proxy: Zero Usage in Final Message Delta**: The final `message_delta` event always includes a usage block (even when zero) so strict Anthropic clients no longer crash on `null` (#2485).
+- **Proxy: Streaming `message_delta` Deduplication**: Deduplicated streaming `message_delta` events that some upstreams emit twice (#2366).
+- **Proxy: Scoped `reasoning_content` Preserved for Tool Calls**: Tool-call paths now correctly preserve the scoped `reasoning_content` field during transformation; Kimi / Moonshot OpenAI Chat compatibility paths keep the field while generic OpenAI-compatible requests stay free of it (#2367).
+- **Proxy: Vertex AI Full URL Preserved**: Full Vertex AI URLs are no longer truncated during proxy forwarding (#2415).
+- **Proxy: Leading Billing Header Stripped from System Content**: Strips the leading billing-header content that some upstreams prepend to the system message (#2350).
+- **Proxy: Claude Auth Strategy from `ANTHROPIC_*` Env Var**: The Claude auth strategy is now derived from the actual `ANTHROPIC_*` env variable name rather than an opaque heuristic.
+- **Third-Party Claude Providers: Disable Model Test**: Model probing is now disabled for third-party Claude providers where the gateway doesn't implement `/v1/models` consistently.
+- **Model-Fetch: `/models` Subpath for Anthropic-Compatible Providers**: `/models` discovery now works for Anthropic-compatible subpath providers.
+- **Copilot: Claude Model ID Resolution Against Live `/models`**: Copilot-backed providers now resolve Claude model IDs against the live `/models` list to avoid stale ID mismatches.
+- **Codex: Skip `environment_context` Injection When Extracting Session Title**: Session title extraction no longer pulls in `environment_context` noise (#2439).
+- **Codex: Hide Subagent Sessions**: Codex subagent sessions are now hidden from the main session list (#2445).
+- **Codex Startup Live Import Duplication**: Fixed a duplicate-import bug in the Codex startup live-import path (#2590).
+- **Codex Provider Switch History Drift**: Switching the active Codex provider no longer changes existing session history (#2349).
+- **Codex Usage Log Message**: Corrected a misleading log message for Codex session usage (#2473).
+- **Claude: Persist Max Effort via Env**: `max` effort now correctly persists via the env variable on restart (#2493).
+- **Claude Desktop: Match Proxy Model Route Without `[1M]` Suffix**: Route matching no longer requires the legacy `[1M]` suffix.
+- **Claude Desktop: Provider Form Focus Loss**: Fixed an input that lost focus while editing in the Claude Desktop provider form.
+- **Claude Desktop: Spurious Proxy-Stopped Status Alert**: Removed an alert that fired spuriously when the proxy was intentionally stopped.
+- **Claude Desktop: Empty Toolbar Capsule Hidden**: Hides the empty toolbar capsule when Claude Desktop is the active app.
+- **UI: Monitor Badge Icon Centering**: Centered the Monitor badge icon in the app switcher.
+- **Linux: Theme Selection Segfault**: Prevented selecting a theme from causing a segfault on Linux (#2502).
+- **Terminal: iTerm Fallback on Cold Launch**: Prevented iTerm from being selected as a fallback on cold launch when not actually present (#2448).
+- **Config: Sort JSON Keys Alphabetically**: Config writes now sort JSON keys alphabetically for deterministic output (#2469).
+- **Import Existing Side-Effect Free**: Made "import existing" side-effect free (#2429).
+- **Coding Plan: Zhipu Weekly Tier by Reset Time**: Corrected the Zhipu weekly tier name to match the actual reset time (#2420).
+- **DashScope: Usage Parsing Robustness**: Hardened DashScope usage parsing so a malformed payload no longer crashes the VSCode Claude Code extension (#2425).
+- **Usage: Prevent Double-Counting Between Proxy and Session-Log Sources**: Deduplicated usage records sourced from both the proxy and session logs.
+- **Usage: Cache Cost Semantics + Pricing Warn Storm**: Corrected cache-cost semantics and silenced a noisy pricing warning storm that fired on every request.
+- **CI: Frontend Formatting and Linux Clippy Restored**: Restored frontend formatting and Linux clippy checks in CI.
+- **Proxy Test Helper Clippy Warning**: Fixed a clippy warning in the proxy test helper.
+
+### Removed
+
+- **Hermes Agent Usage Tracking Integration**: Removed the in-cycle Hermes Agent usage tracking integration after upstream behavior changes made it impractical to keep in sync. The integration was never enabled in any released version — a zero-cost rendering bug found during its development was fixed before the integration was rolled back.
+- **Theme Switch Circular Reveal Animation**: Removed the circular reveal animation used during theme switching; the animation caused jank on slower compositors and added little visible value.
+- **DDSHub Partner Integration**: Removed DDSHub as a partner preset and dropped the cross-link blurbs across READMEs.
+
+### Docs
+
+- **README Sponsor Refresh (zh / en / ja)**: Added BytePlus, ClaudeCN, RunAPI, and PatewayAI sponsor entries; cross-linked BytePlus and Volcengine entries; refreshed the Crazyrouter $2 credit claim flow, the Compshare blurb, the Right Code blurb, and other sponsor logos and listings; flattened the LionCC logo onto a white background; switched the Chinese README's sponsor logo to the Volcengine artwork; added Hermes Agent to the README subtitles.
+- **Release Notes Template**: Surfaces `ccswitch.io` in the release notes template.
+- **Brand Surface**: Documented `ccswitch.io` as the sole official website across READMEs and in-app references.
 
 ## [3.14.1] - 2026-04-23
 
