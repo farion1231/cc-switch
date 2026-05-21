@@ -1278,6 +1278,184 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn opencode_round_trip_clean_split() {
+        with_test_home(|state, _| {
+            // Seed live: provider definition in opencode.json, credential in auth.json
+            let mut settings = serde_json::Map::new();
+            settings.insert("npm".to_string(), json!("@ai-sdk/openai-compatible"));
+            settings.insert("name".to_string(), json!("RoundTrip Provider"));
+            settings.insert(
+                "options".to_string(),
+                json!({"baseURL": "https://api.example.com/v1"}),
+            );
+            settings.insert("models".to_string(), json!({"gpt-4o": {"name": "GPT-4o"}}));
+            crate::opencode_config::set_provider(
+                "round-trip-provider",
+                Value::Object(settings),
+            )
+            .expect("seed provider definition");
+            crate::opencode_config::set_opencode_auth_entry(
+                "round-trip-provider",
+                json!({"type": "api", "key": "ROUND_TRIP_FAKE_KEY"}),
+            )
+            .expect("seed auth entry");
+
+            // Import
+            let imported = import_opencode_providers_from_live(state).expect("import");
+            assert_eq!(imported, 1);
+            let saved = state
+                .db
+                .get_provider_by_id("round-trip-provider", AppType::OpenCode.as_str())
+                .expect("query")
+                .expect("exists");
+            assert_eq!(
+                saved.settings_config.pointer("/auth/key").and_then(|v| v.as_str()),
+                Some("ROUND_TRIP_FAKE_KEY"),
+                "import should bind credential from auth.json"
+            );
+
+            // Write-back
+            let result = crate::services::provider::write_live_snapshot(
+                &AppType::OpenCode,
+                &saved,
+            );
+            assert!(result.is_ok(), "write-back should succeed");
+
+            // Verify clean split: credential in auth.json, no apiKey in opencode.json
+            let auth_entry = crate::opencode_config::get_opencode_auth_entry("round-trip-provider")
+                .expect("read auth.json");
+            assert_eq!(
+                auth_entry,
+                Some(json!({"type": "api", "key": "ROUND_TRIP_FAKE_KEY"})),
+                "credential should remain in auth.json"
+            );
+            let live_providers =
+                crate::opencode_config::get_providers().expect("read opencode providers");
+            let live = live_providers.get("round-trip-provider").expect("provider exists");
+            assert_eq!(
+                live.pointer("/options/apiKey"),
+                None,
+                "opencode.json should not contain options.apiKey in normal path"
+            );
+            assert_eq!(
+                live.pointer("/options/baseURL"),
+                Some(&json!("https://api.example.com/v1")),
+                "non-secret options should be preserved"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn opencode_write_back_still_writes_provider_definition_when_auth_json_invalid() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("def-only-provider");
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed provider in db");
+
+            let auth_path = crate::opencode_config::get_opencode_auth_path();
+            std::fs::create_dir_all(auth_path.parent().unwrap()).expect("create parent dir");
+            std::fs::write(&auth_path, "not valid json{{{").expect("write invalid auth.json");
+
+            let result = crate::services::provider::write_live_snapshot(
+                &AppType::OpenCode,
+                &provider,
+            );
+            assert!(result.is_ok(), "write_live_snapshot should succeed");
+
+            // Provider definition must be in opencode.json even though auth.json is invalid
+            let live_providers =
+                crate::opencode_config::get_providers().expect("read opencode providers");
+            let live = live_providers.get("def-only-provider").expect("provider definition should exist");
+            assert_eq!(
+                live.pointer("/options/baseURL"),
+                Some(&json!("https://api.example.com/v1")),
+                "non-secret provider definition should be written to opencode.json"
+            );
+            assert_eq!(
+                live.pointer("/options/apiKey"),
+                Some(&json!("FAKE_KEY")),
+                "credential falls back to inline options.apiKey when auth.json is invalid"
+            );
+
+            // auth.json should remain untouched
+            let content = std::fs::read_to_string(&auth_path).expect("read auth.json");
+            assert_eq!(content, "not valid json{{{", "invalid auth.json should not be overwritten");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn opencode_oauth_fields_preserved_in_auth_json() {
+        with_test_home(|state, _| {
+            // Seed an OAuth-style auth entry with extra fields
+            crate::opencode_config::set_opencode_auth_entry(
+                "oauth-provider",
+                json!({
+                    "type": "oauth",
+                    "refresh": "FAKE_REFRESH",
+                    "access": "FAKE_ACCESS",
+                    "expires": 1234567890,
+                    "accountId": "acct_FAKE"
+                }),
+            )
+            .expect("seed oauth auth entry");
+
+            let mut settings = serde_json::Map::new();
+            settings.insert("npm".to_string(), json!("@ai-sdk/openai-compatible"));
+            settings.insert("name".to_string(), json!("OAuth Provider"));
+            settings.insert(
+                "options".to_string(),
+                json!({"baseURL": "https://oauth.example.com"}),
+            );
+            settings.insert("models".to_string(), json!({"gpt-4o": {"name": "GPT-4o"}}));
+            crate::opencode_config::set_provider(
+                "oauth-provider",
+                Value::Object(settings),
+            )
+            .expect("seed provider definition");
+
+            // Import — should bind the full OAuth object
+            let imported = import_opencode_providers_from_live(state).expect("import");
+            assert_eq!(imported, 1);
+            let saved = state
+                .db
+                .get_provider_by_id("oauth-provider", AppType::OpenCode.as_str())
+                .expect("query")
+                .expect("exists");
+            assert_eq!(
+                saved.settings_config.pointer("/auth/type").and_then(|v| v.as_str()),
+                Some("oauth"),
+                "imported auth should have type=oauth"
+            );
+            assert_eq!(
+                saved.settings_config.pointer("/auth/accountId").and_then(|v| v.as_str()),
+                Some("acct_FAKE"),
+                "OAuth extension fields should be preserved on import"
+            );
+
+            // Write-back — should preserve all fields in auth.json
+            let result = crate::services::provider::write_live_snapshot(
+                &AppType::OpenCode,
+                &saved,
+            );
+            assert!(result.is_ok(), "write-back should succeed");
+
+            let auth_entry = crate::opencode_config::get_opencode_auth_entry("oauth-provider")
+                .expect("read auth.json")
+                .expect("entry exists");
+            assert_eq!(auth_entry.get("type").and_then(|v| v.as_str()), Some("oauth"));
+            assert_eq!(auth_entry.get("refresh").and_then(|v| v.as_str()), Some("FAKE_REFRESH"));
+            assert_eq!(auth_entry.get("access").and_then(|v| v.as_str()), Some("FAKE_ACCESS"));
+            assert_eq!(auth_entry.get("expires").and_then(|v| v.as_u64()), Some(1234567890));
+            assert_eq!(auth_entry.get("accountId").and_then(|v| v.as_str()), Some("acct_FAKE"));
+        });
+    }
+
+    #[test]
+    #[serial]
     fn import_openclaw_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("imported-openclaw");

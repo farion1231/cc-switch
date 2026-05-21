@@ -794,9 +794,19 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             write_gemini_live(provider)?;
         }
         AppType::OpenCode => {
-            // OpenCode uses additive mode - write provider to config.
-            // Credential is split out: auth.json[provider_id] gets the key,
-            // opencode.json gets provider definition without options.apiKey.
+            // OpenCode additive mode — provider definition vs credential split:
+            //
+            //   ~/.config/opencode/opencode.json  provider[provider_id]  →  provider definition
+            //   ~/.local/share/opencode/auth.json  [provider_id]         →  credential (when auth.json is missing or valid)
+            //
+            // If auth.json exists but is invalid, do not overwrite it;
+            // fall back to legacy inline options.apiKey in opencode.json instead.
+            // provider_id is the binding key between both files.
+            //
+            // Current OpenCode auth entries are object-shaped Auth.Info values
+            // (api, oauth, wellknown). Non-object entries are not supported.
+            // JSONC is intentionally out of scope for auth.json in this stage.
+            // Full DB migration from existing options.apiKey is not required yet.
             use crate::opencode_config;
             use crate::provider::OpenCodeProviderConfig;
 
