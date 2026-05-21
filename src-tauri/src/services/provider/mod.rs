@@ -987,7 +987,7 @@ base_url = "http://localhost:8080"
             ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
                 .expect("sync provider");
 
-            // Legacy options.apiKey should be written to auth.json as {"key": "..."}
+            // Legacy options.apiKey should be written to auth.json as an object-shaped API auth entry
             let auth_entry = crate::opencode_config::get_opencode_auth_entry("legacy-key-provider")
                 .expect("read auth.json");
             assert_eq!(
