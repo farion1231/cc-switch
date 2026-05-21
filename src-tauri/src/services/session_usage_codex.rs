@@ -11,7 +11,7 @@
 //! ## 解析的事件类型
 //! - `session_meta` → 提取 session_id
 //! - `turn_context` → 提取当前 model
-//! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
+//! - `event_msg` (type=token_count) → 优先提取单次 token 用量，必要时用累计值兜底
 
 use crate::codex_config::get_codex_config_dir;
 use crate::database::{lock_conn, Database};
@@ -28,8 +28,11 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-/// 累计 token 用量（跟踪 total_token_usage 字段）
-#[derive(Debug, Clone, Default)]
+/// Codex token 用量字段。
+///
+/// `last_token_usage` 和 `total_token_usage` 共用同一组字段名；前者表示单次请求，
+/// 后者表示运行时累计快照。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CumulativeTokens {
     input: u64,
     cached_input: u64,
@@ -37,7 +40,7 @@ struct CumulativeTokens {
 }
 
 /// 单次 API 调用的 token 增量
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct DeltaTokens {
     input: u32,
     cached_input: u32,
@@ -54,7 +57,7 @@ impl DeltaTokens {
 struct FileParseState {
     session_id: Option<String>,
     current_model: String,
-    prev_total: Option<CumulativeTokens>,
+    total_high_water: Option<CumulativeTokens>,
     event_index: u32,
 }
 
@@ -107,16 +110,72 @@ fn normalize_codex_model(raw: &str) -> String {
 fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) -> DeltaTokens {
     match prev {
         None => DeltaTokens {
-            input: current.input as u32,
-            cached_input: current.cached_input as u32,
-            output: current.output as u32,
+            input: u64_to_u32_saturating(current.input),
+            cached_input: u64_to_u32_saturating(current.cached_input),
+            output: u64_to_u32_saturating(current.output),
         },
         Some(p) => DeltaTokens {
-            input: current.input.saturating_sub(p.input) as u32,
-            cached_input: current.cached_input.saturating_sub(p.cached_input) as u32,
-            output: current.output.saturating_sub(p.output) as u32,
+            input: u64_to_u32_saturating(current.input.saturating_sub(p.input)),
+            cached_input: u64_to_u32_saturating(
+                current.cached_input.saturating_sub(p.cached_input),
+            ),
+            output: u64_to_u32_saturating(current.output.saturating_sub(p.output)),
         },
     }
+}
+
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    value.min(u32::MAX as u64) as u32
+}
+
+fn tokens_to_delta(tokens: &CumulativeTokens) -> DeltaTokens {
+    DeltaTokens {
+        input: u64_to_u32_saturating(tokens.input),
+        cached_input: u64_to_u32_saturating(tokens.cached_input),
+        output: u64_to_u32_saturating(tokens.output),
+    }
+}
+
+fn update_total_high_water(high_water: &mut Option<CumulativeTokens>, current: &CumulativeTokens) {
+    match high_water {
+        Some(previous) => {
+            previous.input = previous.input.max(current.input);
+            previous.cached_input = previous.cached_input.max(current.cached_input);
+            previous.output = previous.output.max(current.output);
+        }
+        None => {
+            *high_water = Some(current.clone());
+        }
+    }
+}
+
+/// 从 token_count.info 中提取本次应写入的 token delta。
+///
+/// Codex 的 `total_token_usage` 是运行时累计快照，在真实会话中可能回退或重放，
+/// 不能当作可靠的 append-only 账本。只要存在 `last_token_usage`，就直接使用它；
+/// 仅在缺失 last 时，才用 `total_token_usage` 相对历史高水位的增量兜底。
+fn parse_token_count_delta(
+    info: &serde_json::Value,
+    total_high_water: &mut Option<CumulativeTokens>,
+) -> Option<DeltaTokens> {
+    let total = info
+        .get("total_token_usage")
+        .and_then(parse_cumulative_tokens);
+    let last = info
+        .get("last_token_usage")
+        .and_then(parse_cumulative_tokens);
+
+    if let Some(last) = last {
+        if let Some(total) = total {
+            update_total_high_water(total_high_water, &total);
+        }
+        return Some(tokens_to_delta(&last));
+    }
+
+    let total = total?;
+    let delta = compute_delta(total_high_water, &total);
+    update_total_high_water(total_high_water, &total);
+    Some(delta)
 }
 
 /// 从 JSON Value 中提取累计 token 用量
@@ -252,7 +311,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
     let mut state = FileParseState {
         session_id: None,
         current_model: "unknown".to_string(),
-        prev_total: None,
+        total_high_water: None,
         event_index: 0,
     };
 
@@ -344,32 +403,9 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     state.current_model = normalize_codex_model(model);
                 }
 
-                // 优先用 total_token_usage（累计值），fallback 到 last_token_usage（增量值）
-                let (cumulative, is_total) = if let Some(total) = info.get("total_token_usage") {
-                    (parse_cumulative_tokens(total), true)
-                } else if let Some(last) = info.get("last_token_usage") {
-                    (parse_cumulative_tokens(last), false)
-                } else {
-                    continue;
-                };
-
-                let cumulative = match cumulative {
-                    Some(c) => c,
+                let delta = match parse_token_count_delta(info, &mut state.total_high_water) {
+                    Some(delta) => delta,
                     None => continue,
-                };
-
-                let delta = if is_total {
-                    // 累计值模式：计算与上次的 delta
-                    let d = compute_delta(&state.prev_total, &cumulative);
-                    state.prev_total = Some(cumulative);
-                    d
-                } else {
-                    // 增量值模式：直接使用 last_token_usage 的值
-                    DeltaTokens {
-                        input: cumulative.input as u32,
-                        cached_input: cumulative.cached_input as u32,
-                        output: cumulative.output as u32,
-                    }
                 };
 
                 // 钳制：cached 不应超过 input（防护异常数据）
@@ -543,6 +579,7 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_delta_first_event() {
@@ -615,6 +652,145 @@ mod tests {
     }
 
     #[test]
+    fn test_token_count_prefers_last_usage_over_total() {
+        let mut total_high_water = None;
+        let info = serde_json::json!({
+            "total_token_usage": {
+                "input_tokens": 65_307_561_u64,
+                "cache_read_input_tokens": 63_340_544_u64,
+                "output_tokens": 250_346_u64
+            },
+            "last_token_usage": {
+                "input_tokens": 116_294_u64,
+                "cache_read_input_tokens": 114_560_u64,
+                "output_tokens": 1_072_u64
+            }
+        });
+
+        let delta = parse_token_count_delta(&info, &mut total_high_water).unwrap();
+        assert_eq!(
+            delta,
+            DeltaTokens {
+                input: 116_294,
+                cached_input: 114_560,
+                output: 1_072,
+            }
+        );
+        assert_eq!(
+            total_high_water,
+            Some(CumulativeTokens {
+                input: 65_307_561,
+                cached_input: 63_340_544,
+                output: 250_346,
+            })
+        );
+    }
+
+    #[test]
+    fn test_total_usage_fallback_uses_high_water_after_regression() {
+        let mut total_high_water = None;
+
+        let first = serde_json::json!({
+            "total_token_usage": {
+                "input_tokens": 100_u64,
+                "cache_read_input_tokens": 50_u64,
+                "output_tokens": 10_u64
+            }
+        });
+        assert_eq!(
+            parse_token_count_delta(&first, &mut total_high_water).unwrap(),
+            DeltaTokens {
+                input: 100,
+                cached_input: 50,
+                output: 10,
+            }
+        );
+
+        let replayed_lower = serde_json::json!({
+            "total_token_usage": {
+                "input_tokens": 80_u64,
+                "cache_read_input_tokens": 40_u64,
+                "output_tokens": 8_u64
+            }
+        });
+        assert!(
+            parse_token_count_delta(&replayed_lower, &mut total_high_water)
+                .unwrap()
+                .is_zero()
+        );
+
+        let replayed_growth_below_high_water = serde_json::json!({
+            "total_token_usage": {
+                "input_tokens": 90_u64,
+                "cache_read_input_tokens": 45_u64,
+                "output_tokens": 9_u64
+            }
+        });
+        assert!(
+            parse_token_count_delta(&replayed_growth_below_high_water, &mut total_high_water)
+                .unwrap()
+                .is_zero()
+        );
+
+        let new_high_water = serde_json::json!({
+            "total_token_usage": {
+                "input_tokens": 120_u64,
+                "cache_read_input_tokens": 60_u64,
+                "output_tokens": 12_u64
+            }
+        });
+        assert_eq!(
+            parse_token_count_delta(&new_high_water, &mut total_high_water).unwrap(),
+            DeltaTokens {
+                input: 20,
+                cached_input: 10,
+                output: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn test_mixed_last_then_total_fallback_does_not_recount_seen_total() {
+        let mut total_high_water = None;
+        let with_last = serde_json::json!({
+            "total_token_usage": {
+                "input_tokens": 100_u64,
+                "cache_read_input_tokens": 80_u64,
+                "output_tokens": 10_u64
+            },
+            "last_token_usage": {
+                "input_tokens": 10_u64,
+                "cache_read_input_tokens": 8_u64,
+                "output_tokens": 1_u64
+            }
+        });
+        assert_eq!(
+            parse_token_count_delta(&with_last, &mut total_high_water).unwrap(),
+            DeltaTokens {
+                input: 10,
+                cached_input: 8,
+                output: 1,
+            }
+        );
+
+        let total_only = serde_json::json!({
+            "total_token_usage": {
+                "input_tokens": 130_u64,
+                "cache_read_input_tokens": 100_u64,
+                "output_tokens": 15_u64
+            }
+        });
+        assert_eq!(
+            parse_token_count_delta(&total_only, &mut total_high_water).unwrap(),
+            DeltaTokens {
+                input: 30,
+                cached_input: 20,
+                output: 5,
+            }
+        );
+    }
+
+    #[test]
     fn test_parse_cumulative_tokens_valid() {
         let json: serde_json::Value = serde_json::json!({
             "input_tokens": 17934,
@@ -651,6 +827,55 @@ mod tests {
     fn test_collect_codex_session_files_nonexistent() {
         let files = collect_codex_session_files(Path::new("/nonexistent/path"));
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_sync_single_codex_file_prefers_last_token_usage() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut file = tempfile::NamedTempFile::new().expect("create temp codex session");
+
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"id":"session-3011"}},"timestamp":"2026-05-21T00:00:00Z"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"turn_context","payload":{{"model":"openai/gpt-5.5-2026-05-21"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-05-21T00:00:01Z","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":1000,"cache_read_input_tokens":900,"output_tokens":100}},"last_token_usage":{{"input_tokens":10,"cache_read_input_tokens":8,"output_tokens":1}}}}}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-05-21T00:00:02Z","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":2000,"cache_read_input_tokens":1800,"output_tokens":200}},"last_token_usage":{{"input_tokens":20,"cache_read_input_tokens":16,"output_tokens":2}}}}}}}}"#
+        )
+        .unwrap();
+        file.flush().unwrap();
+
+        let (imported, skipped) = sync_single_codex_file(&db, file.path())?;
+        assert_eq!(imported, 2);
+        assert_eq!(skipped, 0);
+
+        let conn = lock_conn!(db.conn);
+        let (count, input, cache_read, output): (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0),
+                    COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(output_tokens), 0)
+             FROM proxy_request_logs
+             WHERE data_source = 'codex_session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+
+        assert_eq!(count, 2);
+        assert_eq!(input, 30);
+        assert_eq!(cache_read, 24);
+        assert_eq!(output, 3);
+
+        Ok(())
     }
 
     #[test]
