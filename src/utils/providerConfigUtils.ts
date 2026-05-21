@@ -418,6 +418,8 @@ const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
 const TOML_BASE_URL_PATTERN =
   /^\s*base_url\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_MODEL_PATTERN = /^\s*model\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_WIRE_API_PATTERN =
+  /^\s*wire_api\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_MODEL_PROVIDER_LINE_PATTERN =
   /^\s*model_provider\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_MODEL_PROVIDER_PATTERN =
@@ -585,6 +587,8 @@ const getRecoverableBaseUrlAssignments = (
       !isOtherProviderSection(sectionName, targetSectionName),
   );
 
+const getRecoverableCodexProviderAssignments = getRecoverableBaseUrlAssignments;
+
 const getTopLevelModelProviderLineIndex = (lines: string[]): number => {
   const topLevelEndIndex = getTopLevelEndIndex(lines);
 
@@ -595,6 +599,147 @@ const getTopLevelModelProviderLineIndex = (lines: string[]): number => {
   }
 
   return -1;
+};
+
+const CODEX_CHAT_WIRE_API_VALUES = new Set([
+  "chat",
+  "chat_completions",
+  "chat-completions",
+  "openai_chat",
+  "openai-chat",
+  "openai_chat_completions",
+]);
+
+// 判断给定的 wire_api 字符串是否表示 Codex 的 Chat Completions 协议
+export const isCodexChatWireApi = (
+  wireApi: string | undefined | null,
+): boolean =>
+  CODEX_CHAT_WIRE_API_VALUES.has((wireApi ?? "").trim().toLowerCase());
+
+// 从 Codex 的 TOML 配置文本中提取 wire_api（支持单/双引号）
+export const extractCodexWireApi = (
+  configText: string | undefined | null,
+): string | undefined => {
+  try {
+    const raw = typeof configText === "string" ? configText : "";
+    const text = normalizeTomlText(raw);
+    if (!text) return undefined;
+
+    const lines = text.split("\n");
+    const targetSectionName = getCodexProviderSectionName(text);
+
+    if (targetSectionName) {
+      const sectionRange = getTomlSectionRange(lines, targetSectionName);
+      if (sectionRange) {
+        const match = findTomlAssignmentInRange(
+          lines,
+          TOML_WIRE_API_PATTERN,
+          sectionRange.bodyStartIndex,
+          sectionRange.bodyEndIndex,
+          targetSectionName,
+        );
+        if (match?.value) {
+          return match.value;
+        }
+      }
+    }
+
+    const topLevelMatch = findTomlAssignmentInRange(
+      lines,
+      TOML_WIRE_API_PATTERN,
+      0,
+      getTopLevelEndIndex(lines),
+    );
+    if (topLevelMatch?.value) {
+      return topLevelMatch.value;
+    }
+
+    const fallbackAssignments = getRecoverableCodexProviderAssignments(
+      findTomlAssignments(lines, TOML_WIRE_API_PATTERN),
+      targetSectionName,
+    );
+    return fallbackAssignments.length === 1
+      ? fallbackAssignments[0].value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+// 在 Codex 的 TOML 配置文本中写入或更新 wire_api 字段
+export const setCodexWireApi = (
+  configText: string,
+  wireApi: "responses" | "chat",
+): string => {
+  const normalizedText = normalizeTomlText(configText);
+  const lines = normalizedText ? normalizedText.split("\n") : [];
+  const targetSectionName = getCodexProviderSectionName(normalizedText);
+  const replacementLine = `wire_api = "${wireApi}"`;
+  const allAssignments = findTomlAssignments(lines, TOML_WIRE_API_PATTERN);
+  const recoverableAssignments = getRecoverableCodexProviderAssignments(
+    allAssignments,
+    targetSectionName,
+  );
+
+  if (targetSectionName) {
+    let targetSectionRange = getTomlSectionRange(lines, targetSectionName);
+    const targetMatch = targetSectionRange
+      ? findTomlAssignmentInRange(
+          lines,
+          TOML_WIRE_API_PATTERN,
+          targetSectionRange.bodyStartIndex,
+          targetSectionRange.bodyEndIndex,
+          targetSectionName,
+        )
+      : undefined;
+
+    if (targetMatch) {
+      lines[targetMatch.index] = replacementLine;
+      return finalizeTomlText(lines);
+    }
+
+    if (recoverableAssignments.length === 1) {
+      lines.splice(recoverableAssignments[0].index, 1);
+      targetSectionRange = getTomlSectionRange(lines, targetSectionName);
+    }
+
+    if (targetSectionRange) {
+      const insertIndex = getTomlSectionInsertIndex(lines, targetSectionRange);
+      lines.splice(insertIndex, 0, replacementLine);
+      return finalizeTomlText(lines);
+    }
+
+    if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
+      lines.push("");
+    }
+    lines.push(`[${targetSectionName}]`, replacementLine);
+    return finalizeTomlText(lines);
+  }
+
+  const topLevelEndIndex = getTopLevelEndIndex(lines);
+  const topLevelMatch = findTomlAssignmentInRange(
+    lines,
+    TOML_WIRE_API_PATTERN,
+    0,
+    topLevelEndIndex,
+  );
+  if (topLevelMatch) {
+    lines[topLevelMatch.index] = replacementLine;
+    return finalizeTomlText(lines);
+  }
+
+  const modelProviderIndex = getTopLevelModelProviderLineIndex(lines);
+  if (modelProviderIndex !== -1) {
+    lines.splice(modelProviderIndex + 1, 0, replacementLine);
+    return finalizeTomlText(lines);
+  }
+
+  if (lines.length === 0) {
+    return `${replacementLine}\n`;
+  }
+
+  lines.splice(topLevelEndIndex, 0, replacementLine);
+  return finalizeTomlText(lines);
 };
 
 // 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）
