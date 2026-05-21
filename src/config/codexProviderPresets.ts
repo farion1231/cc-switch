@@ -2,6 +2,7 @@
  * Codex 预设供应商配置模板
  */
 import { ProviderCategory } from "../types";
+import type { CodexApiFormat } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 
 export interface CodexProviderPreset {
@@ -24,6 +25,8 @@ export interface CodexProviderPreset {
   // 图标配置
   icon?: string; // 图标名称
   iconColor?: string; // 图标颜色
+  // Codex API 格式
+  apiFormat?: CodexApiFormat;
 }
 
 /**
@@ -427,20 +430,6 @@ requires_openai_auth = true`,
     partnerPromotionKey: "ctok", // 促销信息 i18n key
     icon: "ctok",
     iconColor: "#000000",
-  },
-  {
-    name: "LionCCAPI",
-    websiteUrl: "https://vibecodingapi.ai",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "lionccapi",
-      "https://vibecodingapi.ai/v1",
-      "gpt-5.4",
-    ),
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lionccapi",
-    icon: "lioncc",
   },
   {
     name: "E-FlowCode",

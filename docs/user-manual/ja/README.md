@@ -1,6 +1,6 @@
 # CC Switch ユーザーマニュアル
 
-> Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw オールインワンアシスタント
+> Claude Code / Claude Desktop / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes オールインワンアシスタント
 
 ## 目次構成
 
@@ -115,13 +115,16 @@ CC Switch ユーザーマニュアル
 - **Claude Desktop の一等管理パネル**：サードパーティプロバイダー、直結 / モデルマッピングの 2 モード、Copilot / Codex OAuth 再利用、3P profile 書き込みに対応 — 詳細は [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
 - **役割別モデルマッピング**：Sonnet / Opus / Haiku ルートと `supports1m` フラグで Claude Desktop のモデル検証に対応
 - **Claude Desktop ローカルルーティング**：変換が必要なプロバイダー向けに `127.0.0.1:15721/claude-desktop` のローカルゲートウェイを提供
+- **ルーティング対応バッジ**：Claude Code / Codex のプロバイダーカードで Local Routing 対応可否を確認可能
+- **Codex OAuth ライブモデル検出**：ChatGPT Codex 系プロバイダーは必要に応じて ChatGPT バックエンドから利用可能モデルを取得
+- **フィルター連動 Usage Hero**：キャッシュ正規化後の実消費 Token とキャッシュヒット率を表示し、日付 / プロバイダー / モデルフィルターに追従 — 詳細は [4.4 使用量統計](./4-proxy/4.4-usage.md)
 - **軽量モード**：トレイへ最小化時にメインウィンドウを破棄、アイドル時のリソース使用量をほぼゼロに — 詳細は [1.5 個人設定](./1-getting-started/1.5-settings.md)
 - **クォータ・残高表示**：公式サブスクリプション系（Claude/Codex/Gemini/Copilot/Codex OAuth）はカードに自動表示、Token Plan および第三者残高は内蔵テンプレートでワンクリック有効化 — 詳細は [2.5 使用量クエリ](./2-providers/2.5-usage-query.md)
 - **Codex OAuth リバースプロキシ**：ChatGPT アカウントで Claude Code 内から Codex サービスを再利用 — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
-- **アプリ別トレイサブメニュー**：5 アプリ独立サブメニュー、メニューのオーバーフローを防止 — 詳細は [2.2 プロバイダーの切り替え](./2-providers/2.2-switch.md)
+- **アプリ別トレイサブメニュー**：Claude / Codex / Gemini のサブメニューで現在のプロバイダーと使用量サマリーを確認可能 — 詳細は [2.2 プロバイダーの切り替え](./2-providers/2.2-switch.md)
 - **Skills の発見と一括更新**：SHA-256 ハッシュによる更新検出、一括更新、skills.sh 公式レジストリ検索 — 詳細は [3.3 Skills スキル管理](./3-extensions/3.3-skills.md)
 - **完全URLエンドポイントモード**：高度なオプションで `base_url` を完全なアップストリームエンドポイントとして扱う — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
-- **OpenCode / OpenClaw ストリームチェック完全対応**：Stream Check パネルを 5 アプリ全対応に拡張 — 詳細は [4.5 モデルテスト](./4-proxy/4.5-model-test.md)
+- **OpenCode / OpenClaw ストリームチェック対応**：Stream Check は Claude / Codex / Gemini / OpenCode / OpenClaw をカバー — 詳細は [4.5 モデルテスト](./4-proxy/4.5-model-test.md)
 
 ## コントリビュート
 

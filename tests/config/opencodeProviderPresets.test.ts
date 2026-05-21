@@ -80,4 +80,22 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
       "https://api.kimi.com/coding/v1",
     );
   });
+
+  it("Xiaomi MiMo presets should include official OpenCode model metadata", () => {
+    const presets = ["Xiaomi MiMo", "Xiaomi MiMo Token Plan (China)"].map(
+      (name) => opencodeProviderPresets.find((preset) => preset.name === name),
+    );
+
+    for (const preset of presets) {
+      expect(preset).toBeDefined();
+      expect(preset!.settingsConfig.models["mimo-v2.5-pro"]).toMatchObject({
+        limit: { context: 1048576, output: 131072 },
+        modalities: { input: ["text"], output: ["text"] },
+      });
+      expect(preset!.settingsConfig.models["mimo-v2.5"]).toMatchObject({
+        limit: { context: 1048576, output: 131072 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+      });
+    }
+  });
 });

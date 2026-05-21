@@ -919,7 +919,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "mimo-v2-pro": { name: "MiMo V2 Pro" },
+        "mimo-v2.5-pro": {
+          name: "MiMo V2.5 Pro",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "mimo-v2.5": {
+          name: "MiMo V2.5",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -929,6 +938,42 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Xiaomi MiMo Token Plan (China)",
+    websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Xiaomi MiMo Token Plan (China)",
+      options: {
+        baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "mimo-v2.5-pro": {
+          name: "MiMo V2.5 Pro",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "mimo-v2.5": {
+          name: "MiMo V2.5",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "cn_official",
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "Token Plan API Key",
+        placeholder: "tp-...",
         editorValue: "",
       },
     },
@@ -1482,34 +1527,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "ctok",
     icon: "ctok",
     iconColor: "#000000",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "LionCCAPI",
-    websiteUrl: "https://vibecodingapi.ai",
-    settingsConfig: {
-      npm: "@ai-sdk/anthropic",
-      name: "LionCCAPI",
-      options: {
-        baseURL: "https://vibecodingapi.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "claude-opus-4-7": { name: "Claude Opus 4.7" },
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lionccapi",
-    icon: "lioncc",
     templateValues: {
       apiKey: {
         label: "API Key",

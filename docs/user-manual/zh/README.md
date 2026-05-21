@@ -1,6 +1,6 @@
 # CC Switch 用户手册
 
-> Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw 全方位辅助工具
+> Claude Code / Claude Desktop / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes 全方位辅助工具
 
 ## 目录结构
 
@@ -115,13 +115,16 @@
 - **Claude Desktop 一等管理面板**：支持第三方供应商、直连 / 模型映射两种模式、Copilot / Codex OAuth 复用与 3P profile 写入 — 详见 [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
 - **按角色的模型映射**：用 Sonnet / Opus / Haiku 路由和 `supports1m` 标志适配 Claude Desktop 的模型校验
 - **Claude Desktop 本地路由**：通过 `127.0.0.1:15721/claude-desktop` 为需要转换的供应商提供本地网关
+- **路由支持徽章**：Claude Code / Codex 供应商卡片会标明是否支持 Local Routing，便于选择可代理的供应商
+- **Codex OAuth 实时模型发现**：ChatGPT Codex 类供应商按需从 ChatGPT 后端拉取最新模型列表
+- **用量看板筛选驱动 Hero**：展示缓存归一化后的真实总 token 与缓存命中率，并跟随日期 / 供应商 / 模型筛选实时更新 — 详见 [4.4 用量统计](./4-proxy/4.4-usage.md)
 - **轻量模式**：退出到托盘时销毁主窗口，空闲占用接近零 — 详见 [1.5 个性化配置](./1-getting-started/1.5-settings.md)
 - **配额与余额展示**：官方订阅类（Claude/Codex/Gemini/Copilot/Codex OAuth）自动展示剩余额度；Token Plan 和第三方余额通过内置模板一键启用 — 详见 [2.5 用量查询](./2-providers/2.5-usage-query.md)
 - **Codex OAuth 反向代理**：用 ChatGPT 账号在 Claude Code 中复用 Codex 服务 — 详见 [2.1 添加供应商](./2-providers/2.1-add.md)
-- **托盘按应用分级菜单**：五应用独立子菜单，防止菜单溢出 — 详见 [2.2 切换供应商](./2-providers/2.2-switch.md)
+- **托盘按应用分级菜单**：Claude / Codex / Gemini 独立子菜单，标题展示当前供应商与可用用量摘要 — 详见 [2.2 切换供应商](./2-providers/2.2-switch.md)
 - **Skills 发现与批量更新**：SHA-256 更新检测、批量更新、skills.sh 公共注册表搜索 — 详见 [3.3 Skills 技能管理](./3-extensions/3.3-skills.md)
 - **完整 URL 端点模式**：高级选项支持将 base_url 视作完整上游端点 — 详见 [2.1 添加供应商](./2-providers/2.1-add.md)
-- **OpenCode / OpenClaw 流式检测全覆盖**：Stream Check 面板扩展到全部五个应用 — 详见 [4.5 模型检查](./4-proxy/4.5-model-test.md)
+- **OpenCode / OpenClaw 流式检测覆盖**：Stream Check 面板覆盖 Claude / Codex / Gemini / OpenCode / OpenClaw — 详见 [4.5 模型检查](./4-proxy/4.5-model-test.md)
 
 ## 贡献
 

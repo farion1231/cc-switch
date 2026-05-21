@@ -178,6 +178,7 @@
     "noRoutingSupport": "No Routing Support"
   },
   "codex": {
+    "needsRouting": "Needs Routing",
     "noRoutingSupport": "No Routing Support"
   },
   "claudeDesktop": {
@@ -854,7 +855,6 @@
       "ucloud": "Compshare offers an exclusive bonus for CC Switch users — register via this link to get ¥5 platform trial credit!",
       "micu": "Micu is an official partner of CC Switch",
       "ctok": "Join the CTok community on the official website and subscribe to a plan.",
-      "lionccapi": "LionCCAPI offers exclusive benefits for CC Switch users. After registration, add WeChat HSQBJ088888888 and mention 'cc-switch' to receive $10 free credits!",
       "shengsuanyun": "Shengsuanyun offers exclusive benefits for CC Switch users. New users who register via this link get ¥10 free credits and 10% bonus on first top-up!",
       "lemondata": "Lemon Code offers a special promotion for CC Switch users. Sign up via this link to receive $1 in free credits.",
       "doubaoseed": "DouBao offers exclusive benefits for CC Switch users: register via this link to get 500K tokens of inference credits for all DouBao text models and 5M tokens of free Seedance 2.0 credits.",
@@ -909,6 +909,9 @@
     "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires routing)",
     "apiFormatOpenAIResponses": "OpenAI Responses API (Requires routing)",
     "apiFormatGeminiNative": "Gemini Native generateContent (Requires routing)",
+    "codexApiFormatResponses": "OpenAI Responses API (Native)",
+    "codexApiFormatOpenAIChat": "OpenAI Chat Completions (Requires routing)",
+    "codexApiFormatHint": "Select the Codex API format actually supported by this provider; the config stays on Responses for newer Codex versions, while Chat Completions is converted through local routing.",
     "authField": "Auth Field",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN (Default)",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
