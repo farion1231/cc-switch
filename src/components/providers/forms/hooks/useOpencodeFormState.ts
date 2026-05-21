@@ -4,6 +4,7 @@ import {
   OPENCODE_DEFAULT_NPM,
   OPENCODE_DEFAULT_CONFIG,
   isKnownOpencodeOptionKey,
+  isManagedOpencodeSecretOptionKey,
   parseOpencodeConfig,
   toOpencodeExtraOptions,
 } from "../helpers/opencodeFormUtils";
@@ -168,14 +169,21 @@ export function useOpencodeFormState({
         if (!config.options) config.options = {};
 
         for (const k of Object.keys(config.options)) {
-          if (!isKnownOpencodeOptionKey(k)) {
+          if (
+            !isKnownOpencodeOptionKey(k) ||
+            isManagedOpencodeSecretOptionKey(k)
+          ) {
             delete config.options[k];
           }
         }
 
         for (const [k, v] of Object.entries(options)) {
           const trimmedKey = k.trim();
-          if (trimmedKey && !trimmedKey.startsWith("option-")) {
+          if (
+            trimmedKey &&
+            !trimmedKey.startsWith("option-") &&
+            !isManagedOpencodeSecretOptionKey(trimmedKey)
+          ) {
             try {
               config.options[trimmedKey] = JSON.parse(v);
             } catch {
