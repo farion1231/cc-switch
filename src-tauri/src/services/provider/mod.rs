@@ -11,6 +11,8 @@ use indexmap::IndexMap;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::app_config::AppType;
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
@@ -52,6 +54,78 @@ pub struct SwitchResult {
     pub warnings: Vec<String>,
 }
 
+fn normal_switch_lock_for_app(app_type: &AppType) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = locks.lock().unwrap_or_else(|err| err.into_inner());
+    guard
+        .entry(app_type.as_str().to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+#[cfg(test)]
+type NormalSwitchTestHook = Arc<dyn Fn(&AppType, &str) + Send + Sync + 'static>;
+
+#[cfg(test)]
+#[derive(Default, Clone)]
+struct NormalSwitchTestHooks {
+    before_lock: Option<NormalSwitchTestHook>,
+    before_live_write: Option<NormalSwitchTestHook>,
+}
+
+#[cfg(test)]
+struct NormalSwitchTestHookGuard;
+
+#[cfg(test)]
+impl Drop for NormalSwitchTestHookGuard {
+    fn drop(&mut self) {
+        let mut hooks = normal_switch_test_hooks()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        *hooks = NormalSwitchTestHooks::default();
+    }
+}
+
+#[cfg(test)]
+fn normal_switch_test_hooks() -> &'static Mutex<NormalSwitchTestHooks> {
+    static HOOKS: OnceLock<Mutex<NormalSwitchTestHooks>> = OnceLock::new();
+    HOOKS.get_or_init(|| Mutex::new(NormalSwitchTestHooks::default()))
+}
+
+#[cfg(test)]
+fn install_normal_switch_test_hooks(hooks: NormalSwitchTestHooks) -> NormalSwitchTestHookGuard {
+    let mut guard = normal_switch_test_hooks()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    *guard = hooks;
+    NormalSwitchTestHookGuard
+}
+
+#[cfg(test)]
+fn run_normal_switch_before_lock_hook(app_type: &AppType, id: &str) {
+    let hook = normal_switch_test_hooks()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .before_lock
+        .clone();
+    if let Some(hook) = hook {
+        hook(app_type, id);
+    }
+}
+
+#[cfg(test)]
+fn run_normal_switch_before_live_write_hook(app_type: &AppType, id: &str) {
+    let hook = normal_switch_test_hooks()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .before_live_write
+        .clone();
+    if let Some(hook) = hook {
+        hook(app_type, id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,7 +139,8 @@ mod tests {
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
+    use std::time::Duration;
     use tempfile::TempDir;
 
     struct TempHome {
@@ -195,6 +270,21 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    fn claude_provider(id: &str, token: &str, base_url: &str, model: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            format!("Claude {id}"),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": token,
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_MODEL": model
+                }
+            }),
+            None,
+        )
     }
 
     fn opencode_omo_provider(id: &str, category: &str) -> Provider {
@@ -735,6 +825,145 @@ base_url = "http://localhost:8080"
                     .and_then(|meta| meta.live_config_managed),
                 Some(true),
                 "providers imported from live should be treated as live-managed"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn normal_switch_serializes_same_app_switches() {
+        with_test_home(|_, home| {
+            crate::settings::reload_settings().expect("reload settings");
+
+            let db = Arc::new(Database::memory().expect("init db"));
+            let state = Arc::new(AppState::new(db.clone()));
+
+            let provider_a = claude_provider("a", "token-a", "https://api.a.example", "model-a");
+            let provider_b = claude_provider("b", "token-b", "https://api.b.example", "model-b");
+            let provider_c = claude_provider("c", "token-c", "https://api.c.example", "model-c");
+
+            for provider in [&provider_a, &provider_b, &provider_c] {
+                db.save_provider(AppType::Claude.as_str(), provider)
+                    .expect("save provider");
+            }
+            db.set_current_provider(AppType::Claude.as_str(), "a")
+                .expect("set db current");
+            crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+                .expect("set local current");
+            write_json_file(&get_claude_settings_path(), &provider_a.settings_config)
+                .expect("seed live config");
+
+            let (first_before_live_tx, first_before_live_rx) = mpsc::channel();
+            let (second_checked_tx, second_checked_rx) = mpsc::channel();
+            let release_first = Arc::new((Mutex::new(false), Condvar::new()));
+
+            let release_first_for_hook = release_first.clone();
+            let _hook_guard = install_normal_switch_test_hooks(NormalSwitchTestHooks {
+                before_lock: Some(Arc::new(move |app_type, id| {
+                    if matches!(app_type, AppType::Claude) && id == "c" {
+                        let lock = normal_switch_lock_for_app(app_type);
+                        let second_switch_would_block = lock.try_lock().is_err();
+                        second_checked_tx
+                            .send(second_switch_would_block)
+                            .expect("send second switch lock check");
+                    }
+                })),
+                before_live_write: Some(Arc::new(move |app_type, id| {
+                    if matches!(app_type, AppType::Claude) && id == "b" {
+                        first_before_live_tx
+                            .send(())
+                            .expect("send first switch checkpoint");
+
+                        let (lock, cvar) = &*release_first_for_hook;
+                        let mut released = lock.lock().unwrap_or_else(|err| err.into_inner());
+                        while !*released {
+                            let (next_released, wait_result) = cvar
+                                .wait_timeout(released, Duration::from_secs(5))
+                                .unwrap_or_else(|err| err.into_inner());
+                            assert!(
+                                !wait_result.timed_out(),
+                                "timed out waiting to release first switch"
+                            );
+                            released = next_released;
+                        }
+                    }
+                })),
+            });
+
+            let first_state = state.clone();
+            let first = std::thread::spawn(move || {
+                ProviderService::switch(&first_state, AppType::Claude, "b")
+            });
+            first_before_live_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("first switch should stop before writing live");
+
+            let second_state = state.clone();
+            let second = std::thread::spawn(move || {
+                ProviderService::switch(&second_state, AppType::Claude, "c")
+            });
+
+            assert!(
+                second_checked_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("second switch should check the shared lock"),
+                "second switch must be blocked by the first switch's per-app lock"
+            );
+
+            {
+                let (lock, cvar) = &*release_first;
+                let mut released = lock.lock().unwrap_or_else(|err| err.into_inner());
+                *released = true;
+                cvar.notify_all();
+            }
+
+            first
+                .join()
+                .expect("first switch thread should not panic")
+                .expect("first switch should succeed");
+            second
+                .join()
+                .expect("second switch thread should not panic")
+                .expect("second switch should succeed");
+
+            let stored_a = db
+                .get_provider_by_id("a", AppType::Claude.as_str())
+                .expect("query provider a")
+                .expect("provider a exists");
+            assert_eq!(
+                stored_a
+                    .settings_config
+                    .get("env")
+                    .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                    .and_then(|value| value.as_str()),
+                Some("token-a"),
+                "concurrent switches must not backfill a later target provider into the old provider"
+            );
+
+            let stored_b = db
+                .get_provider_by_id("b", AppType::Claude.as_str())
+                .expect("query provider b")
+                .expect("provider b exists");
+            assert_eq!(
+                stored_b
+                    .settings_config
+                    .get("env")
+                    .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                    .and_then(|value| value.as_str()),
+                Some("token-b"),
+                "the second switch may backfill provider b, but only with provider b's own live config"
+            );
+
+            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+            let live_token = live
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                .and_then(|value| value.as_str());
+            assert_eq!(
+                live_token,
+                Some("token-c"),
+                "live config should end at the second requested target under {}",
+                home.display()
             );
         });
     }
@@ -1409,6 +1638,12 @@ impl ProviderService {
     ///    d. Write target provider config to live files
     ///    e. Sync MCP configuration
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
+        #[cfg(test)]
+        run_normal_switch_before_lock_hook(&app_type, id);
+
+        let switch_lock = normal_switch_lock_for_app(&app_type);
+        let _switch_guard = switch_lock.lock().unwrap_or_else(|err| err.into_inner());
+
         // Check if provider exists
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let _provider = providers
@@ -1556,6 +1791,8 @@ impl ProviderService {
         }
 
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
+        #[cfg(test)]
+        run_normal_switch_before_live_write_hook(&app_type, id);
         write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
@@ -2470,7 +2707,6 @@ pub struct ProviderSortUpdate {
 // ============================================================================
 
 use crate::provider::UniversalProvider;
-use std::collections::HashMap;
 
 impl ProviderService {
     /// 获取所有统一供应商
