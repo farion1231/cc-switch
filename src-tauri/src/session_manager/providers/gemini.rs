@@ -150,11 +150,13 @@ fn collect_gemini_tool_result(value: &Value, lines: &mut Vec<String>) {
                 .get("response")
                 .and_then(|response| response.get("output"))
             {
-                if let Some(rendered) = render_json_value(output) {
+                let sanitized = sanitize_gemini_result_value(output);
+                if let Some(rendered) = render_json_value(&sanitized) {
                     lines.push(format!("Output:\n{rendered}"));
                 }
             } else if let Some(output) = obj.get("output") {
-                if let Some(rendered) = render_json_value(output) {
+                let sanitized = sanitize_gemini_result_value(output);
+                if let Some(rendered) = render_json_value(&sanitized) {
                     lines.push(format!("Output:\n{rendered}"));
                 }
             }
@@ -179,7 +181,8 @@ fn collect_gemini_function_response(value: &Value, lines: &mut Vec<String>) {
         .get("response")
         .and_then(|response| response.get("output"))
     {
-        if let Some(rendered) = render_json_value(output) {
+        let sanitized = sanitize_gemini_result_value(output);
+        if let Some(rendered) = render_json_value(&sanitized) {
             lines.push(format!("Output:\n{rendered}"));
         }
     } else if let Some(response) = obj.get("response") {
@@ -431,5 +434,27 @@ mod tests {
             .content
             .contains("inlineData: application/pdf, ~4 bytes"));
         assert!(!msgs[1].content.contains("QUJDRA=="));
+    }
+
+    #[test]
+    fn load_messages_sanitizes_function_response_output_data() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.json");
+        let large_data = "QUJD".repeat(200);
+        let session = format!(
+            r#"{{
+              "sessionId": "test",
+              "messages": [
+                {{"id":"1","timestamp":"2026-03-10T08:24:50Z","type":"gemini","content":"","toolCalls":[{{"id":"call_1","name":"read_image","args":{{"path":"image.png"}},"result":[{{"functionResponse":{{"id":"call_1","name":"read_image","response":{{"output":{{"mimeType":"image/png","data":"{large_data}"}}}}}}}}]}}]}}
+              ]
+            }}"#
+        );
+        std::fs::write(&path, session).expect("write");
+
+        let msgs = load_messages(&path).expect("load");
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].content.contains("Output:"));
+        assert!(msgs[0].content.contains("<base64 omitted: ~600 bytes>"));
+        assert!(!msgs[0].content.contains(&large_data));
     }
 }

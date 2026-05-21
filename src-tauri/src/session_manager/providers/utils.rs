@@ -132,12 +132,24 @@ fn extract_text_from_item(item: &Value) -> Option<String> {
 }
 
 fn extract_tool_result_content(content: &Value) -> Option<String> {
+    let mut parts = Vec::new();
+
     let text = extract_text_without_json_fallback(content);
     if !text.trim().is_empty() {
-        return Some(text);
+        parts.push(text);
     }
 
-    summarize_tool_result_content(content).or_else(|| render_json_value(content))
+    if let Some(summary) = summarize_tool_result_content(content) {
+        if !summary.trim().is_empty() {
+            parts.push(summary);
+        }
+    }
+
+    if parts.is_empty() {
+        render_json_value(content)
+    } else {
+        Some(parts.join("\n"))
+    }
 }
 
 fn extract_text_without_json_fallback(content: &Value) -> String {
@@ -170,8 +182,17 @@ fn summarize_tool_result_content(content: &Value) -> Option<String> {
                 return None;
             }
 
-            let summaries = items
+            let non_text_items = items
                 .iter()
+                .filter(|item| extract_text_without_json_fallback(item).trim().is_empty())
+                .collect::<Vec<_>>();
+
+            if non_text_items.is_empty() {
+                return None;
+            }
+
+            let summaries = non_text_items
+                .into_iter()
                 .filter_map(summarize_tool_result_item)
                 .collect::<Vec<_>>();
 
@@ -181,7 +202,16 @@ fn summarize_tool_result_content(content: &Value) -> Option<String> {
                 Some(summaries.join("\n"))
             }
         }
-        Value::Object(_) => summarize_tool_result_item(content),
+        Value::Object(_) => {
+            if !extract_text_without_json_fallback(content)
+                .trim()
+                .is_empty()
+            {
+                None
+            } else {
+                summarize_tool_result_item(content)
+            }
+        }
         _ => None,
     }
 }
@@ -433,6 +463,31 @@ mod tests {
         assert_eq!(text, "[Image: image/png]");
         assert!(!text.contains("iVBORw0KGgo"));
         assert!(!text.contains("\"data\""));
+    }
+
+    #[test]
+    fn extract_text_preserves_mixed_tool_result_text_and_attachments() {
+        let content = json!([{
+            "type": "tool_result",
+            "tool_use_id": "toolu_1",
+            "content": [
+                {"type": "text", "text": "Created screenshot"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "iVBORw0KGgoAAAANSUhEUgAA"
+                    }
+                }
+            ]
+        }]);
+
+        let text = extract_text(&content);
+        assert!(text.contains("Created screenshot"));
+        assert!(text.contains("[Image: image/png]"));
+        assert!(!text.contains("iVBORw0KGgo"));
+        assert!(!text.contains("[Tool result: text]"));
     }
 
     #[test]
