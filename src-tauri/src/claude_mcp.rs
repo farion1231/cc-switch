@@ -103,19 +103,28 @@ fn user_config_path() -> PathBuf {
 }
 
 fn ensure_mcp_override_migrated() {
-    if crate::settings::get_claude_override_dir().is_none() {
+    let Some(override_dir) = crate::settings::get_claude_override_dir() else {
         return;
-    }
+    };
 
     let new_path = get_claude_mcp_path();
     if new_path.exists() {
         return;
     }
 
-    let legacy_path = get_default_claude_mcp_path();
-    if !legacy_path.exists() {
-        return;
-    }
+    // 迁移来源优先级：
+    //   1. 旧版本（v3.15.x 及更早）写错的"覆盖目录同级"位置——这是本次修复
+    //      的主要历史包袱，先尝试它，避免老用户配置看似消失。
+    //   2. 默认位置 `~/.claude.json`——首次为已有 Claude Code 用户启用覆盖目录时的兜底。
+    let candidates = [
+        crate::config::derive_legacy_sibling_mcp_path(&override_dir),
+        Some(get_default_claude_mcp_path()),
+    ];
+    let source = candidates
+        .into_iter()
+        .flatten()
+        .find(|p| p.exists() && p != &new_path);
+    let Some(source) = source else { return };
 
     if let Some(parent) = new_path.parent() {
         if let Err(err) = fs::create_dir_all(parent) {
@@ -124,18 +133,18 @@ fn ensure_mcp_override_migrated() {
         }
     }
 
-    match fs::copy(&legacy_path, &new_path) {
+    match fs::copy(&source, &new_path) {
         Ok(_) => {
             log::info!(
                 "已根据覆盖目录复制 MCP 配置: {} -> {}",
-                legacy_path.display(),
+                source.display(),
                 new_path.display()
             );
         }
         Err(err) => {
             log::warn!(
                 "复制 MCP 配置失败: {} -> {}: {}",
-                legacy_path.display(),
+                source.display(),
                 new_path.display(),
                 err
             );

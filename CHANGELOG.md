@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP sync ignored when `claudeConfigDir` is set**: when users configured a custom Claude config directory (matching Claude Code's `CLAUDE_CONFIG_DIR` env var), cc-switch wrote `mcpServers` updates to `<override>.json` *next to* the override directory instead of to `<override>/.claude.json` *inside* it. Claude Code reads the latter, so toggling MCP servers in cc-switch silently had no effect on the running Claude Code instance. cc-switch now writes to the correct in-directory path, and migrates existing data from the legacy sibling location on first launch after upgrade.
+
 ## [3.15.0] - 2026-05-16
 
 Development since v3.14.1 focuses on a dedicated Claude Desktop surface with third-party provider switching through a proxy gateway, a large reverse-proxy hardening pass (reliability, retries, cache, takeover, Gemini/Vertex/Codex paths), expansion of the third-party provider preset catalog (BytePlus / Volcengine / ClaudeAPI / ClaudeCN / RunAPI / RelaxyCode / PatewayAI / Baidu Qianfan), role-based model mapping with a 1M context flag, Codex OAuth live model discovery, and a long tail of usage, OAuth, Codex, and session quality-of-life fixes.
