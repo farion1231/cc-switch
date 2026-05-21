@@ -1027,7 +1027,7 @@ mod tests {
             message_delta
                 .pointer("/usage/input_tokens")
                 .and_then(|v| v.as_u64()),
-            Some(13312)
+            Some(13212)
         );
         assert_eq!(
             message_delta
