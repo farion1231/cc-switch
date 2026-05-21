@@ -129,10 +129,8 @@ export function useOpencodeFormState({
           if (
             existingAuth &&
             typeof existingAuth === "object" &&
-            (existingAuth as Record<string, unknown>).type !== "api"
+            (existingAuth as Record<string, unknown>).type === "api"
           ) {
-            delete (existingAuth as Record<string, unknown>).key;
-          } else {
             delete config.auth;
           }
         }
