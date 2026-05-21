@@ -37,7 +37,6 @@ export const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
     npm: OPENCODE_DEFAULT_NPM,
     options: {
       baseURL: "",
-      apiKey: "",
       setCacheKey: true,
     },
     models: {},
@@ -47,7 +46,6 @@ export const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
 );
 export const OPENCODE_KNOWN_OPTION_KEYS = [
   "baseURL",
-  "apiKey",
   "headers",
 ] as const;
 
@@ -85,6 +83,7 @@ export function parseOpencodeConfig(
       parsed.models && typeof parsed.models === "object"
         ? (parsed.models as Record<string, OpenCodeModel>)
         : {},
+    ...(parsed.auth ? { auth: parsed.auth } : {}),
   });
 
   try {
@@ -117,6 +116,7 @@ export function parseOpencodeConfigStrict(
       parsed.models && typeof parsed.models === "object"
         ? (parsed.models as Record<string, OpenCodeModel>)
         : {},
+    ...(parsed.auth ? { auth: parsed.auth } : {}),
   };
 }
 
