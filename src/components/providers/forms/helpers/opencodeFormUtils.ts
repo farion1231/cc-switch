@@ -44,10 +44,8 @@ export const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
   null,
   2,
 );
-export const OPENCODE_KNOWN_OPTION_KEYS = [
-  "baseURL",
-  "headers",
-] as const;
+export const OPENCODE_KNOWN_OPTION_KEYS = ["baseURL", "headers"] as const;
+export const OPENCODE_MANAGED_SECRET_OPTION_KEYS = ["apiKey"] as const;
 
 export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
   {
@@ -65,6 +63,12 @@ export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
 export function isKnownOpencodeOptionKey(key: string): boolean {
   return OPENCODE_KNOWN_OPTION_KEYS.includes(
     key as (typeof OPENCODE_KNOWN_OPTION_KEYS)[number],
+  );
+}
+
+export function isManagedOpencodeSecretOptionKey(key: string): boolean {
+  return OPENCODE_MANAGED_SECRET_OPTION_KEYS.includes(
+    key as (typeof OPENCODE_MANAGED_SECRET_OPTION_KEYS)[number],
   );
 }
 
@@ -145,7 +149,7 @@ export function toOpencodeExtraOptions(
 ): Record<string, string> {
   const extra: Record<string, string> = {};
   for (const [k, v] of Object.entries(options || {})) {
-    if (!isKnownOpencodeOptionKey(k)) {
+    if (!isKnownOpencodeOptionKey(k) && !isManagedOpencodeSecretOptionKey(k)) {
       extra[k] = typeof v === "string" ? v : JSON.stringify(v);
     }
   }
