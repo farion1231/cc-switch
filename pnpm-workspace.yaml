@@ -1,8 +1,4 @@
 packages: []
 
-allowBuilds:
-  esbuild: true
-  msw: true
-
 onlyBuiltDependencies:
   - '@tailwindcss/oxide'
