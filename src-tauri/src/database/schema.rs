@@ -214,6 +214,16 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        if Self::has_column(conn, "proxy_request_logs", "data_source")?
+            && Self::has_column(conn, "proxy_request_logs", "created_at")?
+        {
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_request_logs_source_created_at
+                 ON proxy_request_logs(data_source, created_at DESC)",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
         Self::create_request_logs_usage_indexes_if_supported(conn)?;
 
         // 11. Model Pricing 表
@@ -260,6 +270,7 @@ impl Database {
                 date TEXT NOT NULL,
                 app_type TEXT NOT NULL,
                 provider_id TEXT NOT NULL,
+                data_source TEXT NOT NULL DEFAULT 'proxy',
                 model TEXT NOT NULL,
                 request_count INTEGER NOT NULL DEFAULT 0,
                 success_count INTEGER NOT NULL DEFAULT 0,
@@ -269,7 +280,7 @@ impl Database {
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (date, app_type, provider_id, model)
+                PRIMARY KEY (date, app_type, provider_id, data_source, model)
             )",
             [],
         )
@@ -430,6 +441,11 @@ impl Database {
                         log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
+                    }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（使用统计来源筛选支持）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1016,6 +1032,7 @@ impl Database {
                 date TEXT NOT NULL,
                 app_type TEXT NOT NULL,
                 provider_id TEXT NOT NULL,
+                data_source TEXT NOT NULL DEFAULT 'proxy',
                 model TEXT NOT NULL,
                 request_count INTEGER NOT NULL DEFAULT 0,
                 success_count INTEGER NOT NULL DEFAULT 0,
@@ -1025,7 +1042,7 @@ impl Database {
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (date, app_type, provider_id, model)
+                PRIMARY KEY (date, app_type, provider_id, data_source, model)
             )",
             [],
         )
@@ -1197,6 +1214,90 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11: add usage source filtering support for local and remote SSH hosts.
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            Self::add_column_if_missing(
+                conn,
+                "usage_daily_rollups",
+                "data_source",
+                "TEXT NOT NULL DEFAULT 'proxy'",
+            )?;
+            Self::rebuild_usage_daily_rollups_with_data_source_key(conn)?;
+        }
+
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "data_source",
+                "TEXT NOT NULL DEFAULT 'proxy'",
+            )?;
+            if Self::has_column(conn, "proxy_request_logs", "created_at")? {
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_request_logs_source_created_at
+                     ON proxy_request_logs(data_source, created_at DESC)",
+                    [],
+                )
+                .map_err(|e| AppError::Database(format!("创建使用量来源索引失败: {e}")))?;
+            }
+        }
+
+        log::info!("v10 -> v11 迁移完成：已添加使用量来源筛选字段");
+        Ok(())
+    }
+
+    fn rebuild_usage_daily_rollups_with_data_source_key(conn: &Connection) -> Result<(), AppError> {
+        conn.execute("DROP TABLE IF EXISTS usage_daily_rollups_v11", [])
+            .map_err(|e| AppError::Database(format!("清理旧聚合迁移临时表失败: {e}")))?;
+        conn.execute(
+            "CREATE TABLE usage_daily_rollups_v11 (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                data_source TEXT NOT NULL DEFAULT 'proxy',
+                model TEXT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (date, app_type, provider_id, data_source, model)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建聚合迁移临时表失败: {e}")))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO usage_daily_rollups_v11 (
+                date, app_type, provider_id, data_source, model,
+                request_count, success_count,
+                input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, avg_latency_ms
+             )
+             SELECT
+                date, app_type, provider_id, COALESCE(data_source, 'proxy'), model,
+                request_count, success_count,
+                input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, avg_latency_ms
+             FROM usage_daily_rollups",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("复制聚合数据到新表失败: {e}")))?;
+        conn.execute("DROP TABLE usage_daily_rollups", [])
+            .map_err(|e| AppError::Database(format!("删除旧聚合表失败: {e}")))?;
+        conn.execute(
+            "ALTER TABLE usage_daily_rollups_v11 RENAME TO usage_daily_rollups",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("重命名新聚合表失败: {e}")))?;
         Ok(())
     }
 

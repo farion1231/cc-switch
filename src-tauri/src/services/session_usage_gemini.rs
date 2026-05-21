@@ -19,9 +19,12 @@ use crate::gemini_config::get_gemini_dir;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    get_sync_state, metadata_modified_nanos, retag_legacy_remote_session_log, session_sync_key,
+    update_sync_state, SessionSyncResult, SessionUsageImportOptions,
 };
-use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
+use crate::services::usage_stats::{
+    find_model_pricing, should_skip_session_insert_with_proxy_dedup, DedupKey,
+};
 use rust_decimal::Decimal;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,8 +42,25 @@ struct GeminiTokens {
 /// 同步 Gemini 使用数据（从 JSON 会话日志）
 pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let gemini_dir = get_gemini_dir();
+    sync_gemini_usage_from_dir(db, &gemini_dir)
+}
 
-    let files = collect_gemini_session_files(&gemini_dir);
+/// Syncs session logs from a specific Gemini config directory.
+pub fn sync_gemini_usage_from_dir(
+    db: &Database,
+    gemini_dir: &Path,
+) -> Result<SessionSyncResult, AppError> {
+    let options =
+        SessionUsageImportOptions::local("gemini_session", "_gemini_session", "gemini_session");
+    sync_gemini_usage_from_dir_with_options(db, gemini_dir, &options)
+}
+
+pub fn sync_gemini_usage_from_dir_with_options(
+    db: &Database,
+    gemini_dir: &Path,
+    options: &SessionUsageImportOptions,
+) -> Result<SessionSyncResult, AppError> {
+    let files = collect_gemini_session_files(gemini_dir);
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -54,7 +74,7 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     }
 
     for file_path in &files {
-        match sync_single_gemini_file(db, file_path) {
+        match sync_single_gemini_file(db, file_path, gemini_dir, options) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -122,16 +142,20 @@ fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
 }
 
 /// 同步单个 Gemini 会话 JSON 文件，返回 (imported, skipped)
-fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
-    let file_path_str = file_path.to_string_lossy().to_string();
-
+fn sync_single_gemini_file(
+    db: &Database,
+    file_path: &Path,
+    sync_root: &Path,
+    options: &SessionUsageImportOptions,
+) -> Result<(u32, u32), AppError> {
+    let sync_key = session_sync_key(file_path, sync_root, options);
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
-    let (last_modified, _last_offset) = get_sync_state(db, &file_path_str)?;
+    let (last_modified, _last_offset) = get_sync_state(db, &sync_key)?;
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -189,7 +213,8 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
 
         // 生成唯一 request_id
         let session_id_str = session_id.as_deref().unwrap_or("unknown");
-        let request_id = format!("gemini_session:{session_id_str}:{message_id}");
+        let request_id =
+            options.request_id(&format!("gemini_session:{session_id_str}:{message_id}"));
 
         match insert_gemini_session_entry(
             db,
@@ -198,6 +223,7 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
             model,
             session_id.as_deref(),
             timestamp,
+            options,
         ) {
             Ok(true) => imported += 1,
             Ok(false) => skipped += 1,
@@ -209,7 +235,7 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
     }
 
     // 更新同步状态
-    update_sync_state(db, &file_path_str, file_modified, gemini_msg_count)?;
+    update_sync_state(db, &sync_key, file_modified, gemini_msg_count)?;
 
     Ok((imported, skipped))
 }
@@ -232,6 +258,7 @@ fn insert_gemini_session_entry(
     model: &str,
     session_id: Option<&str>,
     timestamp: Option<&str>,
+    options: &SessionUsageImportOptions,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
@@ -260,7 +287,17 @@ fn insert_gemini_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if let Some(result) =
+        retag_legacy_remote_session_log(&conn, request_id, "gemini", model, options)?
+    {
+        return Ok(result);
+    }
+    if should_skip_session_insert_with_proxy_dedup(
+        &conn,
+        request_id,
+        &dedup_key,
+        options.dedup_with_proxy,
+    )? {
         return Ok(false);
     }
 
@@ -322,7 +359,7 @@ fn insert_gemini_session_entry(
            OR model != excluded.model",
         rusqlite::params![
             request_id,
-            "_gemini_session",   // provider_id
+            options.provider_id.as_str(),
             "gemini",            // app_type
             model,
             model,               // request_model = model
@@ -340,11 +377,11 @@ fn insert_gemini_session_entry(
             200i64,              // status_code
             Option::<String>::None, // error_message
             session_id.map(|s| s.to_string()),
-            Some("gemini_session"), // provider_type
+            Some(options.provider_type.clone()),
             1i64,                // is_streaming
             "1.0",               // cost_multiplier
             created_at,
-            "gemini_session",    // data_source
+            options.data_source.as_str(),
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
@@ -408,6 +445,8 @@ mod tests {
             cached: 1,
             thoughts: 5,
         };
+        let options =
+            SessionUsageImportOptions::local("gemini_session", "_gemini_session", "gemini_session");
         let inserted = insert_gemini_session_entry(
             &db,
             "gemini-session-dup",
@@ -415,6 +454,7 @@ mod tests {
             "gemini-2.5-pro",
             Some("session-1"),
             Some("1970-01-01T00:16:45Z"),
+            &options,
         )?;
         assert!(!inserted);
 

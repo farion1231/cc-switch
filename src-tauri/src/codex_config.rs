@@ -292,6 +292,109 @@ pub fn should_restore_codex_provider_token_for_backfill(
     !has_oauth_login || has_provider_api_key
 }
 
+fn stable_codex_model_provider_id_from_config(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    let provider_id = active_codex_model_provider_id(&doc)?;
+
+    if is_custom_codex_model_provider_id(&provider_id) {
+        Some(provider_id)
+    } else {
+        None
+    }
+}
+
+fn normalize_codex_live_config_model_provider_with_anchors<'a>(
+    config_text: &str,
+    anchor_config_texts: impl IntoIterator<Item = &'a str>,
+) -> Result<String, AppError> {
+    if config_text.trim().is_empty() {
+        return Ok(config_text.to_string());
+    }
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    let Some(source_provider_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(config_text.to_string());
+    };
+
+    let has_source_provider_table = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|table| table.get(source_provider_id.as_str()))
+        .is_some();
+    if !has_source_provider_table {
+        return Ok(config_text.to_string());
+    }
+
+    let stable_provider_id = anchor_config_texts
+        .into_iter()
+        .find_map(stable_codex_model_provider_id_from_config)
+        .or_else(|| {
+            is_custom_codex_model_provider_id(&source_provider_id)
+                .then(|| source_provider_id.clone())
+        })
+        .unwrap_or_else(|| CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+
+    if stable_provider_id == source_provider_id {
+        return Ok(config_text.to_string());
+    }
+
+    if let Some(model_providers) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut())
+    {
+        let Some(provider_table) = model_providers.remove(source_provider_id.as_str()) else {
+            return Ok(config_text.to_string());
+        };
+        model_providers[stable_provider_id.as_str()] = provider_table;
+    }
+
+    rewrite_codex_profile_model_provider_refs(&mut doc, &source_provider_id, &stable_provider_id);
+    doc["model_provider"] = toml_edit::value(stable_provider_id.as_str());
+
+    Ok(doc.to_string())
+}
+
+pub fn normalize_codex_config_text_with_anchor(
+    config_text: &str,
+    anchor_config_text: Option<&str>,
+) -> Result<String, AppError> {
+    normalize_codex_live_config_model_provider_with_anchors(config_text, anchor_config_text)
+}
+
+fn rewrite_codex_profile_model_provider_refs(
+    doc: &mut DocumentMut,
+    source_provider_id: &str,
+    stable_provider_id: &str,
+) {
+    let Some(profiles) = doc
+        .get_mut("profiles")
+        .and_then(|item| item.as_table_like_mut())
+    else {
+        return;
+    };
+
+    let profile_keys: Vec<String> = profiles.iter().map(|(key, _)| key.to_string()).collect();
+    for profile_key in profile_keys {
+        let Some(profile_table) = profiles
+            .get_mut(&profile_key)
+            .and_then(|item| item.as_table_like_mut())
+        else {
+            continue;
+        };
+
+        let references_source = profile_table
+            .get("model_provider")
+            .and_then(|item| item.as_str())
+            == Some(source_provider_id);
+        if references_source {
+            profile_table.insert("model_provider", toml_edit::value(stable_provider_id));
+        }
+    }
+}
+
 fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
     match value {
         Some(Value::Number(n)) => n.as_u64().filter(|v| *v > 0),

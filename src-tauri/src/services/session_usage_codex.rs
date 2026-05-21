@@ -19,9 +19,12 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    get_sync_state, metadata_modified_nanos, retag_legacy_remote_session_log, session_sync_key,
+    update_sync_state, SessionSyncResult, SessionUsageImportOptions,
 };
-use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
+use crate::services::usage_stats::{
+    find_model_pricing, should_skip_session_insert_with_proxy_dedup, DedupKey,
+};
 use rust_decimal::Decimal;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -65,7 +68,7 @@ struct FileParseState {
 /// 2. 剥离 provider 前缀：`openai/gpt-5.4` → `gpt-5.4`
 /// 3. 剥离 ISO 日期后缀：`gpt-5.4-2026-03-05` → `gpt-5.4`
 /// 4. 剥离紧凑日期后缀：`gpt-5.4-20260305` → `gpt-5.4`
-fn normalize_codex_model(raw: &str) -> String {
+pub(crate) fn normalize_codex_model(raw: &str) -> String {
     // Step 1: 小写
     let mut name = raw.to_lowercase();
 
@@ -145,8 +148,25 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
 pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
+    sync_codex_usage_from_dir(db, &codex_dir)
+}
 
-    let files = collect_codex_session_files(&codex_dir);
+/// Syncs session logs from a specific Codex config directory.
+pub fn sync_codex_usage_from_dir(
+    db: &Database,
+    codex_dir: &Path,
+) -> Result<SessionSyncResult, AppError> {
+    let options =
+        SessionUsageImportOptions::local("codex_session", "_codex_session", "codex_session");
+    sync_codex_usage_from_dir_with_options(db, codex_dir, &options)
+}
+
+pub fn sync_codex_usage_from_dir_with_options(
+    db: &Database,
+    codex_dir: &Path,
+    options: &SessionUsageImportOptions,
+) -> Result<SessionSyncResult, AppError> {
+    let files = collect_codex_session_files(codex_dir);
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -160,7 +180,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     }
 
     for file_path in &files {
-        match sync_single_codex_file(db, file_path) {
+        match sync_single_codex_file(db, file_path, codex_dir, options) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -229,16 +249,20 @@ fn collect_jsonl_recursive(dir: &Path, files: &mut Vec<PathBuf>, depth: u32, max
 }
 
 /// 同步单个 Codex JSONL 文件，返回 (imported, skipped)
-fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
-    let file_path_str = file_path.to_string_lossy().to_string();
-
+fn sync_single_codex_file(
+    db: &Database,
+    file_path: &Path,
+    sync_root: &Path,
+    options: &SessionUsageImportOptions,
+) -> Result<(u32, u32), AppError> {
+    let sync_key = session_sync_key(file_path, sync_root, options);
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
+    let (last_modified, last_offset) = get_sync_state(db, &sync_key)?;
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -392,7 +416,10 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
 
                 // 生成唯一 request_id
                 let session_id_str = state.session_id.as_deref().unwrap_or("unknown");
-                let request_id = format!("codex_session:{}:{}", session_id_str, state.event_index);
+                let request_id = options.request_id(&format!(
+                    "codex_session:{}:{}",
+                    session_id_str, state.event_index
+                ));
 
                 // 提取时间戳
                 let timestamp = value
@@ -407,6 +434,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     &state.current_model,
                     state.session_id.as_deref(),
                     timestamp.as_deref(),
+                    options,
                 ) {
                     Ok(true) => imported += 1,
                     Ok(false) => skipped += 1,
@@ -421,7 +449,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
     }
 
     // 更新同步状态
-    update_sync_state(db, &file_path_str, file_modified, line_offset)?;
+    update_sync_state(db, &sync_key, file_modified, line_offset)?;
 
     Ok((imported, skipped))
 }
@@ -434,6 +462,7 @@ fn insert_codex_session_entry(
     model: &str,
     session_id: Option<&str>,
     timestamp: Option<&str>,
+    options: &SessionUsageImportOptions,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
@@ -459,7 +488,17 @@ fn insert_codex_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if let Some(result) =
+        retag_legacy_remote_session_log(&conn, request_id, "codex", model, options)?
+    {
+        return Ok(result);
+    }
+    if should_skip_session_insert_with_proxy_dedup(
+        &conn,
+        request_id,
+        &dedup_key,
+        options.dedup_with_proxy,
+    )? {
         return Ok(false);
     }
 
@@ -507,7 +546,7 @@ fn insert_codex_session_entry(
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             rusqlite::params![
                 request_id,
-                "_codex_session",    // provider_id
+                options.provider_id.as_str(),
                 "codex",             // app_type
                 model,
                 model,               // request_model = model
@@ -525,11 +564,11 @@ fn insert_codex_session_entry(
                 200i64,              // status_code
                 Option::<String>::None, // error_message
                 session_id.map(|s| s.to_string()),
-                Some("codex_session"), // provider_type
+                Some(options.provider_type.clone()),
                 1i64,                // is_streaming
                 "1.0",               // cost_multiplier
                 created_at,
-                "codex_session",     // data_source
+                options.data_source.as_str(),
             ],
         )
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
@@ -694,6 +733,8 @@ mod tests {
             cached_input: 1,
             output: 2,
         };
+        let options =
+            SessionUsageImportOptions::local("codex_session", "_codex_session", "codex_session");
         let inserted = insert_codex_session_entry(
             &db,
             "codex-session-dup",
@@ -701,6 +742,7 @@ mod tests {
             "gpt-5.4",
             Some("session-1"),
             Some("1970-01-01T00:16:45Z"),
+            &options,
         )?;
         assert!(!inserted);
 

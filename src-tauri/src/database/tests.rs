@@ -346,6 +346,80 @@ fn schema_migration_v4_adds_pricing_model_columns() {
 }
 
 #[test]
+fn schema_migration_v10_to_v11_adds_usage_source_columns() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::set_user_version(&conn, 10).expect("set user_version=10");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE proxy_request_logs (
+            request_id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            model TEXT NOT NULL,
+            session_id TEXT,
+            status_code INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE TABLE usage_daily_rollups (
+            date TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            request_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            total_cost_usd TEXT NOT NULL DEFAULT '0',
+            avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, app_type, provider_id, model)
+        );
+        "#,
+    )
+    .expect("seed v10 usage schema");
+
+    // Startup calls create_tables before the versioned migration. Existing v10
+    // tables do not have data_source yet, so create_tables must not create
+    // indexes that require the new column before migrate_v10_to_v11 runs.
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(
+        Database::has_column(&conn, "proxy_request_logs", "data_source").expect("check logs"),
+        "proxy_request_logs.data_source should be added by v11 migration"
+    );
+    assert!(
+        Database::has_column(&conn, "usage_daily_rollups", "data_source").expect("check rollups"),
+        "usage_daily_rollups.data_source should be added by v11 migration"
+    );
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(\"usage_daily_rollups\")")
+        .expect("rollup table info");
+    let pk_columns = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(5)?, row.get::<_, String>(1)?))
+        })
+        .expect("query rollup table info")
+        .filter_map(|row| {
+            let (pk_order, name) = row.expect("rollup table info row");
+            (pk_order > 0).then_some((pk_order, name))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pk_columns
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>(),
+        vec!["date", "app_type", "provider_id", "data_source", "model"]
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 

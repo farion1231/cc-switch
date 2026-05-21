@@ -1,9 +1,11 @@
 //! 使用统计相关命令
 
+use crate::database::Database;
 use crate::error::AppError;
 use crate::services::usage_stats::*;
 use crate::store::AppState;
 use rust_decimal::Decimal;
+use serde::Serialize;
 use std::str::FromStr;
 use tauri::State;
 
@@ -14,10 +16,11 @@ pub fn get_usage_summary(
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
+    source: Option<String>,
 ) -> Result<UsageSummary, AppError> {
     state
         .db
-        .get_usage_summary(start_date, end_date, app_type.as_deref())
+        .get_usage_summary(start_date, end_date, app_type.as_deref(), source.as_deref())
 }
 
 /// 获取按 app_type 拆分的使用量汇总
@@ -26,8 +29,11 @@ pub fn get_usage_summary_by_app(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
+    source: Option<String>,
 ) -> Result<Vec<UsageSummaryByApp>, AppError> {
-    state.db.get_usage_summary_by_app(start_date, end_date)
+    state
+        .db
+        .get_usage_summary_by_app(start_date, end_date, source.as_deref())
 }
 
 /// 获取每日趋势
@@ -37,10 +43,11 @@ pub fn get_usage_trends(
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
+    source: Option<String>,
 ) -> Result<Vec<DailyStats>, AppError> {
     state
         .db
-        .get_daily_trends(start_date, end_date, app_type.as_deref())
+        .get_daily_trends(start_date, end_date, app_type.as_deref(), source.as_deref())
 }
 
 /// 获取 Provider 统计
@@ -50,10 +57,11 @@ pub fn get_provider_stats(
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
+    source: Option<String>,
 ) -> Result<Vec<ProviderStats>, AppError> {
     state
         .db
-        .get_provider_stats(start_date, end_date, app_type.as_deref())
+        .get_provider_stats(start_date, end_date, app_type.as_deref(), source.as_deref())
 }
 
 /// 获取模型统计
@@ -63,10 +71,11 @@ pub fn get_model_stats(
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
+    source: Option<String>,
 ) -> Result<Vec<ModelStats>, AppError> {
     state
         .db
-        .get_model_stats(start_date, end_date, app_type.as_deref())
+        .get_model_stats(start_date, end_date, app_type.as_deref(), source.as_deref())
 }
 
 /// 获取请求日志列表
@@ -298,6 +307,152 @@ pub fn get_usage_data_sources(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
     crate::services::session_usage::get_data_source_breakdown(&state.db)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteRemoteUsageDataResult {
+    pub data_source: String,
+    pub deleted_request_logs: usize,
+    pub deleted_rollups: usize,
+    pub deleted_sync_states: usize,
+}
+
+/// Deletes locally stored usage data for one remote source.
+#[tauri::command]
+pub fn delete_remote_usage_data(
+    state: State<'_, AppState>,
+    data_source: String,
+) -> Result<DeleteRemoteUsageDataResult, AppError> {
+    delete_remote_usage_data_for_source(&state.db, data_source)
+}
+
+fn delete_remote_usage_data_for_source(
+    db: &Database,
+    data_source: String,
+) -> Result<DeleteRemoteUsageDataResult, AppError> {
+    let data_source = data_source.trim().to_string();
+    let host_alias = data_source
+        .strip_prefix("remote:")
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| {
+            AppError::localized(
+                "usage.sourceFilter.deleteInvalidSource",
+                "只能删除远端用量数据",
+                "Only remote usage data can be deleted",
+            )
+        })?;
+
+    let sync_prefix = format!("remote://{host_alias}/");
+    let sync_prefix_len = sync_prefix.len() as i64;
+    let conn = crate::database::lock_conn!(db.conn);
+
+    let deleted_request_logs = conn
+        .execute(
+            "DELETE FROM proxy_request_logs WHERE COALESCE(data_source, 'proxy') = ?1",
+            rusqlite::params![data_source],
+        )
+        .map_err(|e| AppError::Database(format!("删除远端用量明细失败: {e}")))?;
+
+    let deleted_rollups = conn
+        .execute(
+            "DELETE FROM usage_daily_rollups WHERE data_source = ?1",
+            rusqlite::params![data_source],
+        )
+        .map_err(|e| AppError::Database(format!("删除远端用量聚合失败: {e}")))?;
+
+    let deleted_sync_states = conn
+        .execute(
+            "DELETE FROM session_log_sync WHERE substr(file_path, 1, ?1) = ?2",
+            rusqlite::params![sync_prefix_len, sync_prefix],
+        )
+        .map_err(|e| AppError::Database(format!("删除远端同步状态失败: {e}")))?;
+
+    Ok(DeleteRemoteUsageDataResult {
+        data_source,
+        deleted_request_logs,
+        deleted_rollups,
+        deleted_sync_states,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::lock_conn;
+
+    #[test]
+    fn delete_remote_usage_data_removes_only_selected_host() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (request_id, source) in [
+                ("remote-pjlab-1", "remote:pjlab"),
+                ("remote-jd-1", "remote:jd"),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        latency_ms, status_code, created_at, data_source
+                    ) VALUES (?1, ?2, 'codex', 'gpt-5.4', 0, 200, 1000, ?3)",
+                    rusqlite::params![request_id, "_remote:codex:test", source],
+                )?;
+            }
+            for source in ["remote:pjlab", "remote:jd"] {
+                conn.execute(
+                    "INSERT INTO usage_daily_rollups (
+                        date, app_type, provider_id, data_source, model
+                    ) VALUES ('2026-05-22', 'codex', '_remote:codex:test', ?1, 'gpt-5.4')",
+                    rusqlite::params![source],
+                )?;
+            }
+            for path in [
+                "remote://pjlab/codex/session.jsonl",
+                "remote://jd/codex/session.jsonl",
+            ] {
+                conn.execute(
+                    "INSERT INTO session_log_sync (
+                        file_path, last_modified, last_line_offset, last_synced_at
+                    ) VALUES (?1, 1, 2, 3)",
+                    rusqlite::params![path],
+                )?;
+            }
+        }
+
+        let result = delete_remote_usage_data_for_source(&db, "remote:pjlab".to_string())?;
+        assert_eq!(result.deleted_request_logs, 1);
+        assert_eq!(result.deleted_rollups, 1);
+        assert_eq!(result.deleted_sync_states, 1);
+
+        let conn = lock_conn!(db.conn);
+        let pjlab_logs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'remote:pjlab'",
+            [],
+            |row| row.get(0),
+        )?;
+        let jd_logs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'remote:jd'",
+            [],
+            |row| row.get(0),
+        )?;
+        let pjlab_sync: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_log_sync WHERE file_path LIKE 'remote://pjlab/%'",
+            [],
+            |row| row.get(0),
+        )?;
+        let jd_sync: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_log_sync WHERE file_path LIKE 'remote://jd/%'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(pjlab_logs, 0);
+        assert_eq!(jd_logs, 1);
+        assert_eq!(pjlab_sync, 0);
+        assert_eq!(jd_sync, 1);
+        Ok(())
+    }
 }
 
 /// 模型定价信息
