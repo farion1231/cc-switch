@@ -343,10 +343,7 @@ async fn handle_claude_transform(
                 Some(claude_stream_usage_event_filter),
                 move |events, first_token_ms| {
                     if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
-                        let model = usage
-                            .model
-                            .clone()
-                            .unwrap_or(request_model.clone());
+                        let model = usage.model.clone().unwrap_or(request_model.clone());
                         let latency_ms = start_time.elapsed().as_millis() as u64;
                         let state = state.clone();
                         let provider_id = provider_id.clone();
