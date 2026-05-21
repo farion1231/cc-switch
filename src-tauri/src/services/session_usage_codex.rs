@@ -180,23 +180,23 @@ fn parse_token_count_delta(
 
 /// 从 JSON Value 中提取累计 token 用量
 fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<CumulativeTokens> {
-    if total_usage.is_null() || !total_usage.is_object() {
+    let total_usage = total_usage.as_object()?;
+
+    let input = total_usage.get("input_tokens").and_then(|v| v.as_u64());
+    let cached_input = total_usage
+        .get("cached_input_tokens")
+        .or_else(|| total_usage.get("cache_read_input_tokens"))
+        .and_then(|v| v.as_u64());
+    let output = total_usage.get("output_tokens").and_then(|v| v.as_u64());
+
+    if input.is_none() && cached_input.is_none() && output.is_none() {
         return None;
     }
+
     Some(CumulativeTokens {
-        input: total_usage
-            .get("input_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
-        cached_input: total_usage
-            .get("cached_input_tokens")
-            .or_else(|| total_usage.get("cache_read_input_tokens"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
-        output: total_usage
-            .get("output_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
+        input: input.unwrap_or(0),
+        cached_input: cached_input.unwrap_or(0),
+        output: output.unwrap_or(0),
     })
 }
 
@@ -791,6 +791,41 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_last_token_usage_falls_back_to_total_usage() {
+        let mut total_high_water = Some(CumulativeTokens {
+            input: 100,
+            cached_input: 80,
+            output: 10,
+        });
+
+        let info = serde_json::json!({
+            "total_token_usage": {
+                "input_tokens": 130_u64,
+                "cache_read_input_tokens": 100_u64,
+                "output_tokens": 15_u64
+            },
+            "last_token_usage": {}
+        });
+
+        assert_eq!(
+            parse_token_count_delta(&info, &mut total_high_water).unwrap(),
+            DeltaTokens {
+                input: 30,
+                cached_input: 20,
+                output: 5,
+            }
+        );
+        assert_eq!(
+            total_high_water,
+            Some(CumulativeTokens {
+                input: 130,
+                cached_input: 100,
+                output: 15,
+            })
+        );
+    }
+
+    #[test]
     fn test_parse_cumulative_tokens_valid() {
         let json: serde_json::Value = serde_json::json!({
             "input_tokens": 17934,
@@ -809,6 +844,25 @@ mod tests {
     fn test_parse_cumulative_tokens_null() {
         let json = serde_json::Value::Null;
         assert!(parse_cumulative_tokens(&json).is_none());
+    }
+
+    #[test]
+    fn test_parse_cumulative_tokens_empty_object() {
+        let json = serde_json::json!({});
+        assert!(parse_cumulative_tokens(&json).is_none());
+    }
+
+    #[test]
+    fn test_parse_cumulative_tokens_explicit_zero_fields() {
+        let json = serde_json::json!({
+            "input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 0
+        });
+        let tokens = parse_cumulative_tokens(&json).unwrap();
+        assert_eq!(tokens.input, 0);
+        assert_eq!(tokens.cached_input, 0);
+        assert_eq!(tokens.output, 0);
     }
 
     #[test]
