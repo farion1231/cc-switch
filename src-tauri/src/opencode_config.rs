@@ -232,6 +232,18 @@ pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<(), AppError> {
     write_opencode_config(&config)
 }
 
+/// OpenCode additive-mode auth.json helpers.
+///
+/// Credential storage layout (first-stage):
+///   ~/.config/opencode/opencode.json  provider[provider_id]  →  provider definition
+///   ~/.local/share/opencode/auth.json [provider_id]          →  credential when auth.json is missing or valid
+///
+/// If auth.json exists but is invalid, do not overwrite it; fall back to
+/// legacy inline options.apiKey in opencode.json.
+///
+/// Auth entries are object-shaped (Auth.Info: api, oauth, wellknown).
+/// Non-object entries are rejected by set_opencode_auth_entry.
+/// JSONC is out of scope. Full DB migration from options.apiKey is not required yet.
 pub fn get_opencode_auth_path() -> PathBuf {
     get_opencode_data_dir().join("auth.json")
 }
