@@ -117,6 +117,7 @@ impl FailoverSwitchManager {
                         }
                     }
                 }
+                crate::tray_icon::refresh_tray_icon(app);
             }
 
             // 发射事件到前端

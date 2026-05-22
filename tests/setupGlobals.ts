@@ -9,10 +9,16 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 
 const storage = new Map<string, string>();
 
-if (
-  typeof globalThis.localStorage === "undefined" ||
-  typeof globalThis.localStorage?.getItem !== "function"
-) {
+let hasUsableLocalStorage = false;
+try {
+  hasUsableLocalStorage =
+    typeof globalThis.localStorage !== "undefined" &&
+    typeof globalThis.localStorage?.getItem === "function";
+} catch {
+  hasUsableLocalStorage = false;
+}
+
+if (!hasUsableLocalStorage) {
   Object.defineProperty(globalThis, "localStorage", {
     value: {
       getItem: (key: string) => storage.get(key) ?? null,

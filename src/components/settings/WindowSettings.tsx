@@ -3,7 +3,7 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { AnimatePresence, motion } from "framer-motion";
-import { isLinux } from "@/lib/platform";
+import { isLinux, isMac } from "@/lib/platform";
 
 interface WindowSettingsProps {
   settings: SettingsFormState;
@@ -76,6 +76,18 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
             onChange({ minimizeToTrayOnClose: value })
           }
         />
+
+        {isMac() && (
+          <ToggleRow
+            icon={<AppWindow className="h-4 w-4 text-teal-500" />}
+            title={t("settings.dynamicTrayIcon")}
+            description={t("settings.dynamicTrayIconDescription")}
+            checked={!!settings.dynamicTrayIconEnabled}
+            onCheckedChange={(value) =>
+              onChange({ dynamicTrayIconEnabled: value })
+            }
+          />
+        )}
 
         {isLinux() && (
           <ToggleRow

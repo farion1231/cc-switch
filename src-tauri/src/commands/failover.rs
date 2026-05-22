@@ -177,6 +177,7 @@ pub async fn set_auto_failover_enabled(
             let _ = tray.set_menu(Some(new_menu));
         }
     }
+    crate::tray_icon::refresh_tray_icon(&app);
 
     Ok(())
 }
