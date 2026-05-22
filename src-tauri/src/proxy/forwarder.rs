@@ -1148,7 +1148,7 @@ impl RequestForwarder {
         let request_body = if codex_responses_to_chat {
             let input_items = mapped_body.get("input").and_then(|v| v.as_array());
             if let Some(items) = input_items {
-                log::warn!(
+                log::debug!(
                     "[codex->chat] converting {} input items: {}",
                     items.len(),
                     items.iter().enumerate().map(|(i, item)| {
