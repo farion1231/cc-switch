@@ -113,6 +113,11 @@ pub struct DeepLinkImportRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_url: Option<String>,
 
+    // ============ Extra env variables (v3.10+) ============
+    /// Base64 encoded JSON object with extra environment variables to merge into env
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_env: Option<String>,
+
     // ============ Usage script fields (v3.9+) ============
     /// Whether to enable usage query (default: true if usage_script is provided)
     #[serde(skip_serializing_if = "Option::is_none")]

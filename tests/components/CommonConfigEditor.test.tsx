@@ -65,8 +65,28 @@ function renderEditor(value: string, onChange = vi.fn()) {
 
 const effortCheckbox = () =>
   screen.getByRole("checkbox", { name: "claudeConfig.effortMax" });
+const teammatesCheckbox = () =>
+  screen.getByRole("checkbox", { name: "claudeConfig.enableTeammates" });
+const toolSearchCheckbox = () =>
+  screen.getByRole("checkbox", { name: "claudeConfig.enableToolSearch" });
 
 describe("CommonConfigEditor max effort toggle", () => {
+  it("treats CLAUDE_CODE_EFFORT_LEVEL=max as checked", () => {
+    renderEditor(
+      JSON.stringify(
+        {
+          env: {
+            CLAUDE_CODE_EFFORT_LEVEL: "max",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(effortCheckbox()).toBeChecked();
+  });
+
   it("does not treat legacy top-level effortLevel=max as checked", () => {
     renderEditor(JSON.stringify({ effortLevel: "max" }, null, 2));
 
@@ -113,5 +133,55 @@ describe("CommonConfigEditor max effort toggle", () => {
         ENABLE_TOOL_SEARCH: "true",
       },
     });
+  });
+});
+
+describe("CommonConfigEditor imported env toggles", () => {
+  it("treats CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 as checked", () => {
+    renderEditor(
+      JSON.stringify(
+        {
+          env: {
+            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(teammatesCheckbox()).toBeChecked();
+  });
+
+  it("treats CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=true as checked", () => {
+    renderEditor(
+      JSON.stringify(
+        {
+          env: {
+            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "true",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(teammatesCheckbox()).toBeChecked();
+  });
+
+  it("treats ENABLE_TOOL_SEARCH=true as checked", () => {
+    renderEditor(
+      JSON.stringify(
+        {
+          env: {
+            ENABLE_TOOL_SEARCH: "true",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(toolSearchCheckbox()).toBeChecked();
   });
 });

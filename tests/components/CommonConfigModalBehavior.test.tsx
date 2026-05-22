@@ -118,4 +118,36 @@ describe("Common config modals", () => {
       ).not.toBeInTheDocument(),
     );
   });
+
+  it("does not render Claude-only toggles in GeminiConfigEditor", () => {
+    render(
+      <GeminiConfigEditor
+        envValue="{}"
+        configValue="{}"
+        onEnvChange={() => {}}
+        onConfigChange={() => {}}
+        useCommonConfig={false}
+        onCommonConfigToggle={() => {}}
+        commonConfigSnippet="{}"
+        onCommonConfigSnippetChange={() => true}
+        onCommonConfigErrorClear={() => {}}
+        commonConfigError=""
+        envError=""
+        configError=""
+      />,
+    );
+
+    expect(
+      screen.getByText(/geminiConfig.envFile|环境变量 \(\.env\)|Environment Variables \(\.env\)/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "claudeConfig.enableTeammates" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "claudeConfig.enableToolSearch" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "claudeConfig.effortMax" }),
+    ).not.toBeInTheDocument();
+  });
 });
