@@ -121,8 +121,6 @@ fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
 ) -> Result<(), ProxyError> {
-    let mut pending_tool_calls = Vec::new();
-
     match input {
         Value::String(text) => {
             messages.push(json!({
@@ -130,57 +128,107 @@ fn append_responses_input_as_chat_messages(
                 "content": text
             }));
         }
-        Value::Array(items) => {
-            for item in items {
-                append_responses_item_as_chat_message(item, messages, &mut pending_tool_calls)?;
-            }
-        }
+        Value::Array(items) => append_responses_items_as_chat_messages(items, messages)?,
         Value::Object(_) => {
-            append_responses_item_as_chat_message(input, messages, &mut pending_tool_calls)?;
+            append_responses_item_as_chat_message(input, messages)?;
         }
         _ => {}
     }
-
-    flush_pending_tool_calls(messages, &mut pending_tool_calls);
     Ok(())
+}
+
+fn append_responses_items_as_chat_messages(
+    items: &[Value],
+    messages: &mut Vec<Value>,
+) -> Result<(), ProxyError> {
+    let mut index = 0;
+    while index < items.len() {
+        if is_responses_function_call(&items[index]) {
+            index = append_contiguous_tool_block(items, index, messages);
+            continue;
+        }
+
+        append_responses_item_as_chat_message(&items[index], messages)?;
+        index += 1;
+    }
+
+    Ok(())
+}
+
+fn append_contiguous_tool_block(items: &[Value], start: usize, messages: &mut Vec<Value>) -> usize {
+    let mut next_index = start;
+    let mut tool_calls = Vec::new();
+    let mut call_id_to_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    while next_index < items.len() && is_responses_function_call(&items[next_index]) {
+        let tc = responses_function_call_to_chat_tool_call(&items[next_index]);
+        if let Some(id) = tc.get("id").and_then(|v| v.as_str()).filter(|id| !id.is_empty()) {
+            call_id_to_index.insert(id.to_string(), tool_calls.len());
+        }
+        tool_calls.push(tc);
+        next_index += 1;
+    }
+
+    if tool_calls.is_empty() {
+        return next_index;
+    }
+
+    let mut output_index = next_index;
+    let mut paired_call_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut tool_messages: Vec<Value> = Vec::new();
+    while output_index < items.len() {
+        let output_item = &items[output_index];
+        if !is_responses_function_call_output(output_item) {
+            break;
+        };
+        let Some(output_call_id) = responses_call_id(output_item) else {
+            break;
+        };
+        if let Some(&call_index) = call_id_to_index.get(output_call_id) {
+            if !paired_call_indices.contains(&call_index) {
+                paired_call_indices.insert(call_index);
+                tool_messages.push(responses_function_call_output_to_chat_message(output_item));
+                output_index += 1;
+                continue;
+            }
+        }
+        break;
+    }
+
+    if paired_call_indices.is_empty() {
+        return next_index;
+    }
+
+    let final_tool_calls: Vec<Value> = tool_calls.into_iter().enumerate()
+        .filter(|(i, _)| paired_call_indices.contains(&i))
+        .map(|(_, tc)| tc)
+        .collect();
+
+    messages.push(json!({
+        "role": "assistant",
+        "content": null,
+        "tool_calls": final_tool_calls
+    }));
+    messages.extend(tool_messages);
+    output_index
 }
 
 fn append_responses_item_as_chat_message(
     item: &Value,
     messages: &mut Vec<Value>,
-    pending_tool_calls: &mut Vec<Value>,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
     match item_type {
-        Some("function_call") => {
-            pending_tool_calls.push(responses_function_call_to_chat_tool_call(item));
-        }
-        Some("function_call_output") => {
-            flush_pending_tool_calls(messages, pending_tool_calls);
-            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let output = match item.get("output") {
-                Some(Value::String(s)) => s.clone(),
-                Some(v) => canonical_json_string(v),
-                None => String::new(),
-            };
-            messages.push(json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": output
-            }));
-        }
+        Some("function_call") | Some("function_call_output") => {}
         Some("reasoning") => {
             // Reasoning items are Responses-specific context. Chat-only providers
             // cannot consume encrypted reasoning state, so omit it.
         }
         Some("message") | None => {
-            flush_pending_tool_calls(messages, pending_tool_calls);
             if item.get("role").is_some() || item.get("content").is_some() {
                 messages.push(responses_message_item_to_chat_message(item));
             }
         }
         _ => {
-            flush_pending_tool_calls(messages, pending_tool_calls);
             if item.get("role").is_some() || item.get("content").is_some() {
                 messages.push(responses_message_item_to_chat_message(item));
             }
@@ -190,16 +238,32 @@ fn append_responses_item_as_chat_message(
     Ok(())
 }
 
-fn flush_pending_tool_calls(messages: &mut Vec<Value>, pending_tool_calls: &mut Vec<Value>) {
-    if pending_tool_calls.is_empty() {
-        return;
-    }
+fn is_responses_function_call(item: &Value) -> bool {
+    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+}
 
-    messages.push(json!({
-        "role": "assistant",
-        "content": null,
-        "tool_calls": std::mem::take(pending_tool_calls)
-    }));
+fn is_responses_function_call_output(item: &Value) -> bool {
+    item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+}
+
+fn responses_call_id(item: &Value) -> Option<&str> {
+    item.get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(|value| value.as_str())
+}
+
+fn responses_function_call_output_to_chat_message(item: &Value) -> Value {
+    let call_id = responses_call_id(item).unwrap_or("");
+    let output = match item.get("output") {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => canonical_json_string(v),
+        None => String::new(),
+    };
+    json!({
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": output
+    })
 }
 
 fn responses_message_item_to_chat_message(item: &Value) -> Value {
@@ -867,6 +931,78 @@ mod tests {
             result["usage"]["output_tokens_details"]["reasoning_tokens"],
             18
         );
+    }
+
+    #[test]
+    fn orphan_function_call_without_output_is_dropped() {
+        // function_call with no matching function_call_output must not produce an
+        // assistant.tool_calls entry, as that would cause a 400 from Chat Completions.
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "orphan_1",
+                    "name": "no_result_tool",
+                    "arguments": "{}"
+                },
+                {
+                    "role": "user",
+                    "content": "Hello"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Only the user message should appear; orphan tool call must be gone.
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+    }
+
+    #[test]
+    fn partial_tool_calls_only_paired_ones_are_kept() {
+        // call_1 has an output; call_2 does not. Only call_1 must appear.
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "tool_a",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_2",
+                    "name": "tool_b",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "ok"
+                },
+                {
+                    "role": "user",
+                    "content": "Done"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // assistant message with only call_1, then tool result for call_1, then user.
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "assistant");
+        let tool_calls = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "call_1");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
+        assert_eq!(messages[2]["role"], "user");
     }
 
     #[test]
