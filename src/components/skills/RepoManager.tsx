@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { parseRepoUrl } from "@/lib/utils/parseRepoUrl";
 import {
   Dialog,
   DialogContent,
@@ -44,32 +45,6 @@ export function RepoManager({
         skill.repoName === repo.name &&
         (skill.repoBranch || "main") === (repo.branch || "main"),
     ).length;
-
-  const parseRepoUrl = (
-    url: string,
-  ): { host: string; owner: string; name: string } | null => {
-    // 支持格式:
-    // - https://github.com/owner/name
-    // - https://ghes.example.com/owner/name
-    // - owner/name (默认 github.com)
-    // - https://github.com/owner/name.git
-
-    let cleaned = url.trim().replace(/\.git$/, "");
-
-    // 完整 URL: https://host/owner/name
-    const urlMatch = cleaned.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)/);
-    if (urlMatch) {
-      return { host: urlMatch[1], owner: urlMatch[2], name: urlMatch[3] };
-    }
-
-    // 短格式: owner/name (默认 github.com)
-    const parts = cleaned.split("/");
-    if (parts.length === 2 && parts[0] && parts[1]) {
-      return { host: "github.com", owner: parts[0], name: parts[1] };
-    }
-
-    return null;
-  };
 
   const handleAdd = async () => {
     setError("");
