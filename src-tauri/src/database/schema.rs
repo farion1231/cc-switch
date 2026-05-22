@@ -1210,25 +1210,35 @@ impl Database {
 
     /// v10 -> v11 迁移：添加 GitHub Enterprise 支持
     fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
-        // skill_repos 表添加 host 和 token 列
+        // skill_repos 表：重建为 (host, owner, name) 三元主键
+        // SQLite 不支持 ALTER TABLE 修改主键，必须 rename + recreate + copy
         if Self::table_exists(conn, "skill_repos")? {
-            Self::add_column_if_missing(
-                conn,
-                "skill_repos",
-                "host",
-                "TEXT NOT NULL DEFAULT 'github.com'",
-            )?;
-            Self::add_column_if_missing(conn, "skill_repos", "token", "TEXT")?;
+            let needs_rebuild = !Self::has_column(conn, "skill_repos", "host")?;
+            if needs_rebuild {
+                conn.execute_batch(
+                    "ALTER TABLE skill_repos RENAME TO skill_repos_v10_backup;
 
-            // 重建主键为 (host, owner, name)
-            // SQLite 不支持直接修改主键，需要重建表
-            let has_old_pk = !Self::has_column(conn, "skill_repos", "host")
-                .unwrap_or(true);
-            // 如果 host 列是新加的（上面 add_column_if_missing 返回 true），需要重建主键
-            // 由于 SQLite ALTER TABLE 限制，我们通过 rename + recreate + copy 的方式重建
-            // 但因为 add_column_if_missing 已经添加了列，且旧数据 host 全是默认值，
-            // 主键冲突的可能性极低，这里暂不重建主键（破坏性操作），
-            // 新建的表已使用正确的主键定义。
+                    CREATE TABLE skill_repos (
+                        host    TEXT NOT NULL DEFAULT 'github.com',
+                        owner   TEXT NOT NULL,
+                        name    TEXT NOT NULL,
+                        branch  TEXT NOT NULL DEFAULT 'main',
+                        enabled BOOLEAN NOT NULL DEFAULT 1,
+                        token   TEXT,
+                        PRIMARY KEY (host, owner, name)
+                    );
+
+                    INSERT INTO skill_repos (host, owner, name, branch, enabled)
+                    SELECT 'github.com', owner, name, branch, enabled
+                    FROM skill_repos_v10_backup;
+
+                    DROP TABLE skill_repos_v10_backup;",
+                )
+                .map_err(|e| AppError::Database(format!("skill_repos 主键迁移失败: {e}")))?;
+            } else {
+                // host 列已存在（重复迁移场景），只补充 token 列
+                Self::add_column_if_missing(conn, "skill_repos", "token", "TEXT")?;
+            }
         }
 
         // skills 表添加 repo_host 列
@@ -1241,7 +1251,7 @@ impl Database {
             )?;
         }
 
-        log::info!("v10 -> v11 迁移完成：已添加 GitHub Enterprise 支持（host, token 列）");
+        log::info!("v10 -> v11 迁移完成：已添加 GitHub Enterprise 支持（host, token 列，主键已重建）");
         Ok(())
     }
 
