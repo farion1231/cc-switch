@@ -6,6 +6,8 @@ use std::process::{Command, Stdio};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -1922,6 +1924,7 @@ fn run_ssh_output(
     stdin: Option<&[u8]>,
 ) -> Result<std::process::Output, AppError> {
     let mut command = Command::new("ssh");
+    hide_ssh_console_window(&mut command);
     configure_ssh_command(&mut command, target, remote_command);
     let _askpass = configure_ssh_password(&mut command, target)?;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -1959,6 +1962,15 @@ fn run_ssh_output(
 
     Ok(output)
 }
+
+#[cfg(windows)]
+fn hide_ssh_console_window(command: &mut Command) {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_ssh_console_window(_command: &mut Command) {}
 
 fn configure_ssh_command(command: &mut Command, target: &ResolvedSshTarget, remote_command: &str) {
     command.arg("-C");
