@@ -69,6 +69,9 @@ const NON_ANTHROPIC_ROUTE_MARKERS: &[&str] = &[
     "mercury",
 ];
 
+const CLAUDE_DESKTOP_DATED_ROUTE_ALIASES: &[(&str, &str)] =
+    &[("claude-haiku-4-5", "claude-haiku-4-5-20251001")];
+
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeDesktopDefaultRoute {
@@ -696,7 +699,11 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     let routes = proxy_model_routes(provider)?;
-    let route = routes.iter().find(|r| r.route_id == requested);
+    let route = routes.iter().find(|r| r.route_id == requested).or_else(|| {
+        routes
+            .iter()
+            .find(|route| is_dated_claude_route_alias(&route.route_id, &requested))
+    });
     let Some(route) = route else {
         return Err(AppError::localized(
             "claude_desktop.provider.route_unknown",
@@ -707,6 +714,15 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
 
     body["model"] = json!(route.upstream_model);
     Ok(body)
+}
+
+fn is_dated_claude_route_alias(route_id: &str, requested: &str) -> bool {
+    let route_id = route_id.trim().to_ascii_lowercase();
+    let requested = requested.trim().to_ascii_lowercase();
+
+    CLAUDE_DESKTOP_DATED_ROUTE_ALIASES
+        .iter()
+        .any(|(base_route, dated_alias)| *base_route == route_id && *dated_alias == requested)
 }
 
 pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError> {
@@ -1349,6 +1365,58 @@ mod tests {
         let err = map_proxy_request_model(json!({"model": "claude-opus-4-7"}), &provider)
             .expect_err("unknown route should fail");
         assert!(err.to_string().contains("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_maps_dated_alias_to_short_route() {
+        let mut provider = proxy_provider("proxy");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-pro".to_string(),
+                    label_override: Some("deepseek-v4-pro".to_string()),
+                    supports_1m: Some(true),
+                },
+            )]),
+            ..Default::default()
+        });
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5-20251001", "messages": []}),
+            &provider,
+        )
+        .expect("dated alias should map to the configured short route");
+
+        assert_eq!(mapped["model"], json!("deepseek-v4-pro"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_rejects_unlisted_dated_route_alias() {
+        let mut provider = proxy_provider("proxy");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-pro".to_string(),
+                    label_override: Some("deepseek-v4-pro".to_string()),
+                    supports_1m: Some(true),
+                },
+            )]),
+            ..Default::default()
+        });
+
+        let err = map_proxy_request_model(
+            json!({"model": "claude-sonnet-4-6-20260101", "messages": []}),
+            &provider,
+        )
+        .expect_err("unlisted dated alias should fail");
+
+        assert!(err.to_string().contains("claude-sonnet-4-6-20260101"));
     }
 
     #[test]
