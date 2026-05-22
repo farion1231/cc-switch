@@ -142,6 +142,11 @@ const codexApiFormatFromWireApi = (
   }
 };
 
+const codexWireApiFromApiFormat = (
+  apiFormat: CodexApiFormat,
+): "responses" | "chat" =>
+  apiFormat === "openai_chat" ? "chat" : "responses";
+
 export interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
@@ -489,7 +494,10 @@ function ProviderFormFull({
     (format: CodexApiFormat) => {
       setLocalCodexApiFormat(format);
       setCodexConfig((prev) => {
-        const updated = setCodexWireApi(prev, "responses");
+        const updated = setCodexWireApi(
+          prev,
+          codexWireApiFromApiFormat(format),
+        );
         debouncedValidate(updated);
         return updated;
       });
@@ -1111,7 +1119,10 @@ function ProviderFormFull({
         const authJson = JSON.parse(codexAuth);
         const normalizedCodexConfig =
           category !== "official" && (codexConfig ?? "").trim()
-            ? setCodexWireApi(codexConfig ?? "", "responses")
+            ? setCodexWireApi(
+                codexConfig ?? "",
+                codexWireApiFromApiFormat(localCodexApiFormat),
+              )
             : (codexConfig ?? "");
         const configObj = {
           auth: authJson,

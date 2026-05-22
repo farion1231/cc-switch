@@ -1146,7 +1146,45 @@ impl RequestForwarder {
 
         // 转换请求体（如果需要）
         let request_body = if codex_responses_to_chat {
-            super::providers::transform_codex_chat::responses_to_chat_completions(mapped_body)?
+            let input_items = mapped_body.get("input").and_then(|v| v.as_array());
+            if let Some(items) = input_items {
+                log::debug!(
+                    "[codex->chat] converting {} input items: {}",
+                    items.len(),
+                    items.iter().enumerate().map(|(i, item)| {
+                        let t = item.get("type").and_then(|v| v.as_str()).unwrap_or("message");
+                        let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("-");
+                        let call_id = item.get("call_id").or_else(|| item.get("id"))
+                            .and_then(|v| v.as_str()).unwrap_or("-");
+                        format!("[{i}] type={t} role={role} call_id={call_id}")
+                    }).collect::<Vec<_>>().join(", ")
+                );
+            }
+            let converted = super::providers::transform_codex_chat::responses_to_chat_completions(mapped_body)?;
+            if let Some(msgs) = converted.get("messages").and_then(|v| v.as_array()) {
+                log::debug!(
+                    "[codex->chat] produced {} chat messages: {}",
+                    msgs.len(),
+                    msgs.iter().enumerate().map(|(i, m)| {
+                        let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+                        let tc_ids: Vec<&str> = m.get("tool_calls")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter()
+                                .filter_map(|tc| tc.get("id").and_then(|v| v.as_str()))
+                                .collect())
+                            .unwrap_or_default();
+                        let tid = m.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("-");
+                        if !tc_ids.is_empty() {
+                            format!("[{i}] role={role} tool_calls={}", tc_ids.join("+"))
+                        } else if tid != "-" {
+                            format!("[{i}] role={role} tool_call_id={tid}")
+                        } else {
+                            format!("[{i}] role={role}")
+                        }
+                    }).collect::<Vec<_>>().join(", ")
+                );
+            }
+            converted
         } else if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
