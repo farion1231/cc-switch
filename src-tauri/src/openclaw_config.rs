@@ -928,14 +928,19 @@ mod tests {
         let _guard = test_guard();
         let temp = tempfile::tempdir().unwrap();
         let openclaw_dir = temp.path().join(".openclaw");
+        let app_config_dir = temp.path().join(".cc-switch");
         fs::create_dir_all(&openclaw_dir).unwrap();
+        fs::create_dir_all(&app_config_dir).unwrap();
         let config_path = openclaw_dir.join("openclaw.json");
         fs::write(&config_path, source).unwrap();
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let old_home = std::env::var_os("HOME");
+        let old_override = crate::app_store::get_app_config_dir_override();
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
+        crate::app_store::set_app_config_dir_override_for_tests(Some(app_config_dir));
         let result = test(&config_path);
+        crate::app_store::set_app_config_dir_override_for_tests(old_override);
         match old_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),

@@ -91,6 +91,10 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     onApiKeyFieldChange: vi.fn(),
     isFullUrl: false,
     onFullUrlChange: vi.fn(),
+    profileDir: "",
+    onProfileDirChange: vi.fn(),
+    activationMode: "legacy",
+    onActivationModeChange: vi.fn(),
     ...overrides,
   };
 

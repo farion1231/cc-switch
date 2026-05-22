@@ -51,6 +51,7 @@ import type {
   ProviderCategory,
   ClaudeApiFormat,
   ClaudeApiKeyField,
+  ClaudeActivationMode,
 } from "@/types";
 import {
   hasClaudeOneMMarker,
@@ -138,6 +139,10 @@ interface ClaudeFormFieldsProps {
   // Full URL mode
   isFullUrl: boolean;
   onFullUrlChange: (value: boolean) => void;
+  profileDir: string;
+  onProfileDirChange: (value: string) => void;
+  activationMode: ClaudeActivationMode;
+  onActivationModeChange: (value: ClaudeActivationMode) => void;
 }
 
 export function ClaudeFormFields({
@@ -190,6 +195,10 @@ export function ClaudeFormFields({
   onApiKeyFieldChange,
   isFullUrl,
   onFullUrlChange,
+  profileDir,
+  onProfileDirChange,
+  activationMode,
+  onActivationModeChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasAnyAdvancedValue = !!(
@@ -198,7 +207,9 @@ export function ClaudeFormFields({
     defaultSonnetModel ||
     defaultOpusModel ||
     apiFormat !== "anthropic" ||
-    apiKeyField !== "ANTHROPIC_AUTH_TOKEN"
+    apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
+    activationMode !== "legacy" ||
+    profileDir
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
@@ -760,6 +771,72 @@ export function ClaudeFormFields({
               <p className="text-xs text-muted-foreground">
                 {t("providerForm.authFieldHint", {
                   defaultValue: "选择写入配置的认证环境变量名",
+                })}
+              </p>
+            </div>
+
+            <div className="space-y-2 border-t pt-4">
+              <FormLabel htmlFor="claudeActivationMode">
+                {t("providerForm.claudeActivationMode", {
+                  defaultValue: "Claude switch mode",
+                })}
+              </FormLabel>
+              <Select
+                value={activationMode}
+                onValueChange={(value) =>
+                  onActivationModeChange(value as ClaudeActivationMode)
+                }
+              >
+                <SelectTrigger id="claudeActivationMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="legacy">
+                    {t("providerForm.claudeActivationModeLegacy")}
+                  </SelectItem>
+                  <SelectItem value="profile-only">
+                    {t("providerForm.claudeActivationModeProfileOnly")}
+                  </SelectItem>
+                  <SelectItem value="profile-and-config">
+                    {t("providerForm.claudeActivationModeProfileAndConfig")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.claudeActivationModeHint", {
+                  defaultValue:
+                    "Official/Auth recommended: Legacy. API provider recommended: Profile + Config.",
+                })}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <FormLabel htmlFor="claudeProfileDir">
+                {t("providerForm.claudeProfileDir", {
+                  defaultValue: "Claude profile directory",
+                })}
+              </FormLabel>
+              <Input
+                id="claudeProfileDir"
+                type="text"
+                value={profileDir}
+                onChange={(e) => onProfileDirChange(e.target.value)}
+                disabled={activationMode === "legacy"}
+                placeholder={t("providerForm.claudeProfileDirPlaceholder", {
+                  defaultValue: "C:\\Users\\<user>\\.claude-profiles\\official",
+                })}
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.claudeProfileDirHint", {
+                  defaultValue:
+                    "Claude-only. Legacy keeps the default profile location.",
+                })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.claudeProfileDirRestartHint", {
+                  defaultValue:
+                    "Switching only affects newly started terminals. Close and reopen PowerShell, cmd, or Windows Terminal after switching.",
                 })}
               </p>
             </div>
