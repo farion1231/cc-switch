@@ -1615,6 +1615,16 @@ impl ProviderService {
         // Sync MCP
         McpService::sync_all_enabled(state)?;
 
+        // Signal running Claude Code CLI processes to terminate so the next
+        // invocation inherits the updated settings.json env vars.
+        // Failures are non-fatal: the user can restart their terminal manually.
+        if matches!(app_type, AppType::Claude) {
+            if let Err(e) = signal_claude_cli_processes() {
+                log::warn!("Could not signal Claude CLI processes after provider switch: {e}");
+                result.warnings.push("claude_restart_skipped".to_string());
+            }
+        }
+
         Ok(result)
     }
 
@@ -2382,6 +2392,30 @@ impl ProviderService {
             }
         }
     }
+}
+
+/// Send SIGTERM to running Claude Code CLI processes so they exit cleanly.
+///
+/// After a provider switch, settings.json is updated on disk but any already-running
+/// `claude` process still holds the old env vars in memory. Terminating those processes
+/// ensures the next invocation picks up the new configuration.
+///
+/// Exit code 1 from pkill/killall means "no matching processes" — treated as success.
+fn signal_claude_cli_processes() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        // -TERM: graceful shutdown; -x: exact process name match
+        std::process::Command::new("pkill")
+            .args(["-TERM", "-x", "claude"])
+            .status()?;
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("taskkill")
+            .args(["/F", "/IM", "claude.exe"])
+            .status()?;
+    }
+    Ok(())
 }
 
 /// Normalize Claude model keys in a JSON value
