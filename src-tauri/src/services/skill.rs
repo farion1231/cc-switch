@@ -672,13 +672,23 @@ impl SkillService {
 
         // 如果已存在则跳过下载
         if !dest.exists() {
+            let token = db
+                .get_skill_repos()
+                .unwrap_or_default()
+                .into_iter()
+                .find(|r| {
+                    r.host == skill.repo_host
+                        && r.owner == skill.repo_owner
+                        && r.name == skill.repo_name
+                })
+                .and_then(|r| r.token);
             let repo = SkillRepo {
                 host: skill.repo_host.clone(),
                 owner: skill.repo_owner.clone(),
                 name: skill.repo_name.clone(),
                 branch: skill.repo_branch.clone(),
                 enabled: true,
-                token: None,
+                token,
             };
 
             // 下载仓库
@@ -928,15 +938,24 @@ impl SkillService {
         }
 
         let ssot_dir = Self::get_ssot_dir()?;
+        let stored_repos: HashMap<(String, String, String), Option<String>> = db
+            .get_skill_repos()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| ((r.host, r.owner, r.name), r.token))
+            .collect();
 
         for ((host, owner, name, branch), group_skills) in &repo_groups {
+            let token = stored_repos
+                .get(&(host.clone(), owner.clone(), name.clone()))
+                .and_then(|t| t.clone());
             let repo = SkillRepo {
                 host: host.clone(),
                 owner: owner.clone(),
                 name: name.clone(),
                 branch: branch.clone(),
                 enabled: true,
-                token: None,
+                token,
             };
 
             // 下载仓库 ZIP
@@ -1043,13 +1062,20 @@ impl SkillService {
             .clone()
             .unwrap_or_else(|| "github.com".to_string());
 
+        let token = db
+            .get_skill_repos()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|r| r.host == host && r.owner == owner && r.name == name)
+            .and_then(|r| r.token);
+
         let repo = SkillRepo {
             host: host.clone(),
             owner: owner.clone(),
             name: name.clone(),
             branch: branch.clone(),
             enabled: true,
-            token: None,
+            token,
         };
 
         let ssot_dir = Self::get_ssot_dir()?;
