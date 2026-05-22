@@ -2,7 +2,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
-import type { DeleteSessionOptions } from "@/lib/api/sessions";
+import type {
+  DeleteSessionOptions,
+  RenameSessionOptions,
+} from "@/lib/api/sessions";
 import type { SwitchResult } from "@/lib/api/providers";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -335,6 +338,43 @@ export const useDeleteSessionMutation = () => {
       toast.error(
         t("sessionManager.deleteFailed", {
           defaultValue: "删除会话失败: {{error}}",
+          error: detail,
+        }),
+      );
+    },
+  });
+};
+
+export const useRenameSessionMutation = () => {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: async (input: RenameSessionOptions) => {
+      return await sessionsApi.rename(input);
+    },
+    onSuccess: (renamed) => {
+      queryClient.setQueryData<SessionMeta[]>(["sessions"], (current) =>
+        (current ?? []).map((session) =>
+          session.providerId === renamed.providerId &&
+          session.sessionId === renamed.sessionId &&
+          session.sourcePath === renamed.sourcePath
+            ? { ...session, title: renamed.title }
+            : session,
+        ),
+      );
+
+      toast.success(
+        t("sessionManager.renameSuccess", {
+          defaultValue: "会话已重命名",
+        }),
+      );
+    },
+    onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+      toast.error(
+        t("sessionManager.renameFailed", {
+          defaultValue: "重命名会话失败: {{error}}",
           error: detail,
         }),
       );

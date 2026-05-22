@@ -429,6 +429,31 @@ export const deleteSession = (
   return true;
 };
 
+export const renameSession = (
+  providerId: string,
+  sessionId: string,
+  sourcePath: string,
+  title: string,
+) => {
+  const index = sessionsState.findIndex(
+    (session) =>
+      session.providerId === providerId &&
+      session.sessionId === sessionId &&
+      session.sourcePath === sourcePath,
+  );
+
+  if (index === -1) {
+    throw new Error("Session not found");
+  }
+
+  sessionsState[index] = {
+    ...sessionsState[index],
+    title,
+  };
+
+  return JSON.parse(JSON.stringify(sessionsState[index])) as SessionMeta;
+};
+
 export const setSessionFixtures = (
   sessions: SessionMeta[],
   messages: Record<string, SessionMessage[]>,
