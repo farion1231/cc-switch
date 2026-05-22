@@ -50,10 +50,6 @@ pub struct ProviderService;
 #[serde(rename_all = "camelCase")]
 pub struct SwitchResult {
     pub warnings: Vec<String>,
-    /// True when the app type reads settings.json at process startup (env vars are
-    /// baked into the process environment). The frontend should surface a prompt
-    /// asking the user to restart their active sessions.
-    pub requires_session_restart: bool,
 }
 
 #[cfg(test)]
@@ -1619,11 +1615,18 @@ impl ProviderService {
         // Sync MCP
         McpService::sync_all_enabled(state)?;
 
-        // Claude Code reads settings.json at process startup and bakes the env
-        // section into the process environment. Changing the file has no effect
-        // on already-running sessions. Signal the frontend to prompt the user.
+        // Idle spare processes were spawned before the provider switch and still
+        // hold the old provider's env vars (e.g. ANTHROPIC_BASE_URL). Kill only
+        // those idle spares so the daemon re-spawns fresh ones that read the
+        // updated settings.json. Active sessions (whose claim.sock is already
+        // taken) are unaffected.
         if matches!(app_type, AppType::Claude) {
-            result.requires_session_restart = true;
+            if let Err(e) = kill_idle_claude_spare_processes() {
+                log::warn!("Could not refresh Claude spare pool after provider switch: {e}");
+                result
+                    .warnings
+                    .push("claude_spare_refresh_failed".to_string());
+            }
         }
 
         Ok(result)
@@ -2393,6 +2396,108 @@ impl ProviderService {
             }
         }
     }
+}
+
+/// Kill idle (unclaimed) Claude Code spare processes so the daemon re-spawns fresh ones.
+///
+/// ## Why this is needed
+///
+/// Claude Code's daemon pre-warms a pool of `--bg-spare` worker processes. Each spare reads
+/// `settings.json` **at spawn time** and bakes the `env` section into its process environment.
+/// When CC Switch updates `settings.json` (e.g. switching from DeepSeek back to Claude
+/// Official), already-spawned spares still carry the old env vars (e.g. `ANTHROPIC_BASE_URL`
+/// pointing at DeepSeek). New sessions that are assigned one of those stale spares will
+/// continue to use the previous provider even though the config file on disk is correct.
+///
+/// ## How we distinguish idle vs active spares
+///
+/// The daemon's spare directory (`.../spare/`) contains two socket files per spare:
+///
+/// * `<id>.claim.sock` — present while the spare is **idle** (waiting to be claimed)
+/// * `<id>.pty.sock`   — present for the lifetime of the spare process
+///
+/// When a spare is claimed (assigned to a live session), the daemon removes `<id>.claim.sock`.
+/// So we only kill processes whose `claim.sock` still exists — active sessions are untouched.
+///
+/// ## What happens next
+///
+/// The daemon detects the exited spare processes and immediately re-spawns replacements that
+/// read the updated `settings.json`, completing the provider switch for all future sessions.
+fn kill_idle_claude_spare_processes() -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::fs;
+
+        // Discover all cc-daemon socket roots under /tmp (covers any uid on this machine).
+        // Typical path: /tmp/cc-daemon-<uid>/<hash>/spare/
+        let tmp = std::path::Path::new("/tmp");
+        let daemon_roots: Vec<std::path::PathBuf> = fs::read_dir(tmp)
+            .map_err(|e| AppError::io(tmp, e))?
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("cc-daemon-")
+            })
+            .map(|e| e.path())
+            .collect();
+
+        // Enumerate hash subdirectories under each daemon root (normally just one)
+        for daemon_root in daemon_roots {
+            let hash_dirs = match fs::read_dir(&daemon_root) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            for hash_entry in hash_dirs.flatten() {
+                let spare_dir = hash_entry.path().join("spare");
+                if !spare_dir.is_dir() {
+                    continue;
+                }
+
+                // Collect full paths of every claim.sock → these are idle spares
+                let claim_socks: Vec<String> = fs::read_dir(&spare_dir)
+                    .map_err(|e| AppError::io(&spare_dir, e))?
+                    .flatten()
+                    .filter_map(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        if name.ends_with(".claim.sock") {
+                            Some(e.path().to_string_lossy().to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                for sock_path in &claim_socks {
+                    // pkill -f matches the full command line, targeting exactly
+                    // the spare process that owns this specific socket file.
+                    let status = std::process::Command::new("pkill")
+                        .args(["-TERM", "-f", &format!("--bg-spare {sock_path}")])
+                        .status();
+
+                    match status {
+                        Ok(s) if s.code() == Some(0) || s.code() == Some(1) => {
+                            // 0 = process killed, 1 = no matching process — both OK
+                            log::debug!("Refreshed idle spare for claim sock: {sock_path}");
+                        }
+                        Ok(s) => {
+                            log::warn!(
+                                "pkill exited with unexpected code {:?} for {sock_path}",
+                                s.code()
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("pkill failed for {sock_path}: {e}");
+                        }
+                    }
+                }
+            }
+        }
+    } // end #[cfg(unix)]
+
+    // On Windows there is no spare-pool mechanism for Claude Code CLI; no-op.
+    Ok(())
 }
 
 /// Normalize Claude model keys in a JSON value
