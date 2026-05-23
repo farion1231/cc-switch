@@ -451,24 +451,31 @@ function ProviderFormFull({
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
 
+  const getInitialCodexApiFormat = useCallback((): CodexApiFormat => {
+    if (initialData?.meta?.apiFormat === "openai_chat") {
+      return "openai_chat";
+    }
+    if (initialData?.meta?.apiFormat === "openai_responses") {
+      return "openai_responses";
+    }
+    return (
+      codexApiFormatFromWireApi(
+        extractCodexWireApi(
+          typeof initialData?.settingsConfig?.config === "string"
+            ? initialData.settingsConfig.config
+            : "",
+        ),
+      ) ?? "openai_responses"
+    );
+  }, [initialData]);
+
   const [localCodexApiFormat, setLocalCodexApiFormat] =
-    useState<CodexApiFormat>(() => {
-      if (initialData?.meta?.apiFormat === "openai_chat") {
-        return "openai_chat";
-      }
-      if (initialData?.meta?.apiFormat === "openai_responses") {
-        return "openai_responses";
-      }
-      return (
-        codexApiFormatFromWireApi(
-          extractCodexWireApi(
-            typeof initialData?.settingsConfig?.config === "string"
-              ? initialData.settingsConfig.config
-              : "",
-          ),
-        ) ?? "openai_responses"
-      );
-    });
+    useState<CodexApiFormat>(getInitialCodexApiFormat);
+  const [localToolCompatEnabled, setLocalToolCompatEnabled] = useState<boolean>(
+    () =>
+      initialData?.meta?.toolCompatEnabled ??
+      getInitialCodexApiFormat() === "openai_chat",
+  );
 
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
@@ -479,6 +486,7 @@ function ProviderFormFull({
       const nextFormat = codexApiFormatFromWireApi(extractCodexWireApi(value));
       if (nextFormat) {
         setLocalCodexApiFormat(nextFormat);
+        setLocalToolCompatEnabled(nextFormat === "openai_chat");
       }
       debouncedValidate(value);
     },
@@ -488,6 +496,7 @@ function ProviderFormFull({
   const handleCodexApiFormatChange = useCallback(
     (format: CodexApiFormat) => {
       setLocalCodexApiFormat(format);
+      setLocalToolCompatEnabled(format === "openai_chat");
       setCodexConfig((prev) => {
         const updated = setCodexWireApi(prev, "responses");
         debouncedValidate(updated);
@@ -1303,6 +1312,12 @@ function ProviderFormFull({
           : appId === "codex" && category !== "official"
             ? localCodexApiFormat
             : undefined,
+      toolCompatEnabled:
+        appId === "codex" &&
+        category !== "official" &&
+        localCodexApiFormat === "openai_chat"
+          ? localToolCompatEnabled
+          : undefined,
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&
@@ -1425,11 +1440,12 @@ function ProviderFormFull({
 
       if (appId === "codex") {
         const template = getCodexCustomTemplate();
-        resetCodexConfig(template.auth, template.config);
-        setLocalCodexApiFormat(
+        const nextFormat =
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
-            "openai_responses",
-        );
+          "openai_responses";
+        resetCodexConfig(template.auth, template.config);
+        setLocalCodexApiFormat(nextFormat);
+        setLocalToolCompatEnabled(nextFormat === "openai_chat");
       }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
@@ -1464,13 +1480,14 @@ function ProviderFormFull({
       const preset = entry.preset as CodexProviderPreset;
       const auth = preset.auth ?? {};
       const config = preset.config ?? "";
+      const nextFormat =
+        preset.apiFormat ??
+        codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
+        "openai_responses";
 
       resetCodexConfig(auth, config);
-      setLocalCodexApiFormat(
-        preset.apiFormat ??
-          codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
-          "openai_responses",
-      );
+      setLocalCodexApiFormat(nextFormat);
+      setLocalToolCompatEnabled(nextFormat === "openai_chat");
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -1937,6 +1954,8 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
+              toolCompatEnabled={localToolCompatEnabled}
+              onToolCompatChange={setLocalToolCompatEnabled}
               shouldShowModelField={category !== "official"}
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}

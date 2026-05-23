@@ -1144,9 +1144,24 @@ impl RequestForwarder {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
+        let tool_ctx = if codex_responses_to_chat
+            && super::providers::tool_compat_enabled_for_provider(provider)
+        {
+            Some(super::providers::tool_compat::ToolCompatContext::from_request(&mapped_body))
+        } else {
+            None
+        };
+
         // 转换请求体（如果需要）
         let request_body = if codex_responses_to_chat {
-            super::providers::transform_codex_chat::responses_to_chat_completions(mapped_body)?
+            if let Some(tool_ctx) = tool_ctx.as_ref() {
+                super::providers::transform_codex_chat::responses_to_chat_completions_with_context(
+                    mapped_body,
+                    Some(tool_ctx),
+                )?
+            } else {
+                super::providers::transform_codex_chat::responses_to_chat_completions(mapped_body)?
+            }
         } else if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format

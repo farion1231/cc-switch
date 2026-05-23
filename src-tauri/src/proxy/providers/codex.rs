@@ -82,6 +82,19 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     ) && codex_provider_uses_chat_completions(provider)
 }
 
+pub fn tool_compat_enabled_for_provider(provider: &Provider) -> bool {
+    let default_enabled = codex_provider_uses_chat_completions(provider);
+    if let Some(meta) = provider.meta.as_ref() {
+        return meta.tool_compat_enabled(default_enabled);
+    }
+
+    provider
+        .settings_config
+        .get("toolCompatEnabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(default_enabled)
+}
+
 fn is_chat_wire_api(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -480,5 +493,32 @@ wire_api = "chat"
             &provider,
             "/responses/compact?stream=true"
         ));
+    }
+
+    #[test]
+    fn tool_compat_defaults_on_for_chat_format() {
+        let mut provider = create_provider(json!({
+            "base_url": "https://example.com/v1"
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_chat".to_string()),
+            ..Default::default()
+        });
+
+        assert!(tool_compat_enabled_for_provider(&provider));
+    }
+
+    #[test]
+    fn tool_compat_can_be_disabled_for_chat_format() {
+        let mut provider = create_provider(json!({
+            "base_url": "https://example.com/v1"
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_chat".to_string()),
+            tool_compat_enabled: Some(false),
+            ..Default::default()
+        });
+
+        assert!(!tool_compat_enabled_for_provider(&provider));
     }
 }

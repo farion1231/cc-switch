@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { FormLabel } from "@/components/ui/form";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -9,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
@@ -50,6 +52,8 @@ interface CodexFormFieldsProps {
   // API Format
   apiFormat: CodexApiFormat;
   onApiFormatChange: (format: CodexApiFormat) => void;
+  toolCompatEnabled: boolean;
+  onToolCompatChange: (enabled: boolean) => void;
 
   // Model Name
   shouldShowModelField?: boolean;
@@ -81,6 +85,8 @@ export function CodexFormFields({
   onAutoSelectChange,
   apiFormat,
   onApiFormatChange,
+  toolCompatEnabled,
+  onToolCompatChange,
   shouldShowModelField = true,
   modelName = "",
   onModelNameChange,
@@ -191,6 +197,28 @@ export function CodexFormFields({
                 "选择供应商真实支持的 Codex API 格式；Chat Completions 会通过本地路由自动转换为 Responses。",
             })}
           </p>
+          {apiFormat === "openai_chat" && (
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <div className="space-y-0.5">
+                <Label htmlFor="toolCompatEnabled" className="text-sm">
+                  {t("providerForm.toolCompatEnabled", {
+                    defaultValue: "Tool compatibility",
+                  })}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t("providerForm.toolCompatHint", {
+                    defaultValue:
+                      "Map custom, namespace, and built-in tools to Chat functions, then restore them on response.",
+                  })}
+                </p>
+              </div>
+              <Switch
+                id="toolCompatEnabled"
+                checked={toolCompatEnabled}
+                onCheckedChange={onToolCompatChange}
+              />
+            </div>
+          )}
         </div>
       )}
 

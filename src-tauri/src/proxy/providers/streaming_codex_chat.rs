@@ -1,5 +1,6 @@
 //! OpenAI Chat Completions SSE → OpenAI Responses SSE conversion.
 
+use super::tool_compat::ToolCompatContext;
 use super::transform_codex_chat::{
     chat_usage_to_responses_usage, response_id_from_chat_id, response_status_from_finish_reason,
     split_leading_think_block, strip_leading_think_open_tag,
@@ -68,6 +69,7 @@ struct ChatToResponsesState {
     output_items: Vec<(u32, Value)>,
     latest_usage: Option<Value>,
     finish_reason: Option<String>,
+    tool_ctx: Option<ToolCompatContext>,
 }
 
 impl Default for ChatToResponsesState {
@@ -86,11 +88,19 @@ impl Default for ChatToResponsesState {
             output_items: Vec::new(),
             latest_usage: None,
             finish_reason: None,
+            tool_ctx: None,
         }
     }
 }
 
 impl ChatToResponsesState {
+    fn with_tool_context(tool_ctx: Option<ToolCompatContext>) -> Self {
+        Self {
+            tool_ctx,
+            ..Default::default()
+        }
+    }
+
     fn handle_chat_chunk(&mut self, chunk: &Value) -> Vec<Bytes> {
         let mut events = Vec::new();
 
@@ -396,6 +406,7 @@ impl ChatToResponsesState {
         let mut output_index = None;
         let mut item_id = String::new();
         let mut pending_arguments = String::new();
+        let current_name;
 
         {
             let state = self.tools.entry(chat_index).or_default();
@@ -408,6 +419,7 @@ impl ChatToResponsesState {
             if !args_delta.is_empty() {
                 state.arguments.push_str(&args_delta);
             }
+            current_name = state.name.clone();
 
             if !state.added && (!state.call_id.is_empty() || !state.name.is_empty()) {
                 should_add = true;
@@ -419,9 +431,15 @@ impl ChatToResponsesState {
         }
 
         let mut events = Vec::new();
+        let is_custom = self
+            .tool_ctx
+            .as_ref()
+            .map(|ctx| ctx.is_custom_proxy(&current_name))
+            .unwrap_or(false);
 
         if should_add {
             let assigned = self.next_output_index();
+            let tool_ctx = self.tool_ctx.clone();
             let state = self.tools.get_mut(&chat_index).expect("tool state exists");
             state.added = true;
             if state.call_id.is_empty() {
@@ -431,26 +449,47 @@ impl ChatToResponsesState {
                 state.name = "unknown_tool".to_string();
             }
             state.output_index = Some(assigned);
-            state.item_id = format!("fc_{}", state.call_id);
+            state.item_id = if is_custom {
+                format!("ctc_{}", state.call_id)
+            } else {
+                format!("fc_{}", state.call_id)
+            };
             item_id = state.item_id.clone();
+
+            let item = if is_custom {
+                let name = tool_ctx
+                    .as_ref()
+                    .map(|ctx| ctx.original_custom_name(&state.name))
+                    .unwrap_or_else(|| state.name.clone());
+                json!({
+                    "id": item_id,
+                    "type": "custom_tool_call",
+                    "status": "in_progress",
+                    "call_id": state.call_id,
+                    "name": name,
+                    "input": ""
+                })
+            } else {
+                json!({
+                    "id": item_id,
+                    "type": "function_call",
+                    "status": "in_progress",
+                    "call_id": state.call_id,
+                    "name": state.name,
+                    "arguments": ""
+                })
+            };
 
             events.push(sse_event(
                 "response.output_item.added",
                 json!({
                     "type": "response.output_item.added",
                     "output_index": assigned,
-                    "item": {
-                        "id": item_id,
-                        "type": "function_call",
-                        "status": "in_progress",
-                        "call_id": state.call_id,
-                        "name": state.name,
-                        "arguments": ""
-                    }
+                    "item": item
                 }),
             ));
 
-            if !pending_arguments.is_empty() {
+            if !pending_arguments.is_empty() && !is_custom {
                 events.push(sse_event(
                     "response.function_call_arguments.delta",
                     json!({
@@ -461,7 +500,7 @@ impl ChatToResponsesState {
                     }),
                 ));
             }
-        } else if !args_delta.is_empty() {
+        } else if !args_delta.is_empty() && !is_custom {
             if let Some(output_index) = output_index {
                 events.push(sse_event(
                     "response.function_call_arguments.delta",
@@ -633,6 +672,7 @@ impl ChatToResponsesState {
                 .unwrap_or(false)
             {
                 let assigned = self.next_output_index();
+                let tool_ctx = self.tool_ctx.clone();
                 let state = self.tools.get_mut(&key).expect("tool state exists");
                 state.added = true;
                 if state.call_id.is_empty() {
@@ -641,21 +681,45 @@ impl ChatToResponsesState {
                 if state.name.is_empty() {
                     state.name = "unknown_tool".to_string();
                 }
+                let is_custom = tool_ctx
+                    .as_ref()
+                    .map(|ctx| ctx.is_custom_proxy(&state.name))
+                    .unwrap_or(false);
                 state.output_index = Some(assigned);
-                state.item_id = format!("fc_{}", state.call_id);
+                state.item_id = if is_custom {
+                    format!("ctc_{}", state.call_id)
+                } else {
+                    format!("fc_{}", state.call_id)
+                };
+                let item = if is_custom {
+                    let name = tool_ctx
+                        .as_ref()
+                        .map(|ctx| ctx.original_custom_name(&state.name))
+                        .unwrap_or_else(|| state.name.clone());
+                    json!({
+                        "id": state.item_id,
+                        "type": "custom_tool_call",
+                        "status": "in_progress",
+                        "call_id": state.call_id,
+                        "name": name,
+                        "input": ""
+                    })
+                } else {
+                    json!({
+                        "id": state.item_id,
+                        "type": "function_call",
+                        "status": "in_progress",
+                        "call_id": state.call_id,
+                        "name": state.name,
+                        "arguments": ""
+                    })
+                };
                 add_event = Some(sse_event(
                     "response.output_item.added",
                     json!({
                         "type": "response.output_item.added",
                         "output_index": assigned,
-                        "item": {
-                            "id": state.item_id,
-                            "type": "function_call",
-                            "status": "in_progress",
-                            "call_id": state.call_id,
-                            "name": state.name,
-                            "arguments": ""
-                        }
+                        "item": item
                     }),
                 ));
             }
@@ -666,7 +730,57 @@ impl ChatToResponsesState {
 
             let state = self.tools.get_mut(&key).expect("tool state exists");
             let output_index = state.output_index.unwrap_or(0);
-            let item = json!({
+            let tool_ctx = self.tool_ctx.clone();
+            if let Some(ctx) = tool_ctx
+                .as_ref()
+                .filter(|ctx| ctx.is_custom_proxy(&state.name))
+            {
+                let input = ctx.reconstruct_custom_input(&state.name, &state.arguments);
+                let item = json!({
+                    "id": state.item_id,
+                    "type": "custom_tool_call",
+                    "status": "completed",
+                    "call_id": state.call_id,
+                    "name": ctx.original_custom_name(&state.name),
+                    "input": input.clone()
+                });
+                state.done = true;
+                self.output_items.push((output_index, item.clone()));
+
+                if !input.is_empty() {
+                    events.push(sse_event(
+                        "response.custom_tool_call_input.delta",
+                        json!({
+                            "type": "response.custom_tool_call_input.delta",
+                            "item_id": state.item_id,
+                            "call_id": state.call_id,
+                            "output_index": output_index,
+                            "delta": input.clone()
+                        }),
+                    ));
+                }
+                events.push(sse_event(
+                    "response.custom_tool_call_input.done",
+                    json!({
+                        "type": "response.custom_tool_call_input.done",
+                        "item_id": state.item_id,
+                        "call_id": state.call_id,
+                        "output_index": output_index,
+                        "input": input.clone()
+                    }),
+                ));
+                events.push(sse_event(
+                    "response.output_item.done",
+                    json!({
+                        "type": "response.output_item.done",
+                        "output_index": output_index,
+                        "item": item
+                    }),
+                ));
+                continue;
+            }
+
+            let mut item = json!({
                 "id": state.item_id,
                 "type": "function_call",
                 "status": "completed",
@@ -674,6 +788,9 @@ impl ChatToResponsesState {
                 "name": state.name,
                 "arguments": state.arguments
             });
+            if let Some(ctx) = tool_ctx.as_ref() {
+                ctx.apply_namespace_to_response_item(&mut item);
+            }
             state.done = true;
             self.output_items.push((output_index, item.clone()));
 
@@ -800,10 +917,17 @@ fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
 pub fn create_responses_sse_stream_from_chat<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_responses_sse_stream_from_chat_with_context(stream, None)
+}
+
+pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    tool_ctx: Option<ToolCompatContext>,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
-        let mut state = ChatToResponsesState::default();
+        let mut state = ChatToResponsesState::with_tool_context(tool_ctx);
         let mut stream_failed = false;
 
         tokio::pin!(stream);
@@ -926,6 +1050,18 @@ mod tests {
         String::from_utf8(bytes.concat()).unwrap()
     }
 
+    async fn collect_with_tools(chunks: Vec<&str>, tool_ctx: ToolCompatContext) -> String {
+        let chunks: Vec<Result<Bytes, std::io::Error>> = chunks
+            .into_iter()
+            .map(|chunk| Ok(Bytes::copy_from_slice(chunk.as_bytes())))
+            .collect();
+        let upstream = stream::iter(chunks);
+        let converted =
+            create_responses_sse_stream_from_chat_with_context(upstream, Some(tool_ctx));
+        let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
+        String::from_utf8(bytes.concat()).unwrap()
+    }
+
     #[tokio::test]
     async fn converts_text_chat_sse_to_responses_sse() {
         let output = collect(vec![
@@ -996,6 +1132,30 @@ mod tests {
         assert!(output.contains("event: response.function_call_arguments.done"));
         assert!(output.contains("\"type\":\"function_call\""));
         assert!(output.contains("\"call_id\":\"call_1\""));
+    }
+
+    #[tokio::test]
+    async fn converts_custom_tool_stream_without_function_argument_events() {
+        let tool_ctx = ToolCompatContext::from_tools(&[json!({
+            "type": "custom",
+            "name": "apply_patch"
+        })]);
+        let output = collect_with_tools(
+            vec![
+                "data: {\"id\":\"chatcmpl_custom\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"apply_patch_add_file\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_custom\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"docs/test.md\\\",\\\"content\\\":\\\"# Test\\\\n\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            tool_ctx,
+        )
+        .await;
+
+        assert!(output.contains("event: response.custom_tool_call_input.delta"));
+        assert!(output.contains("event: response.custom_tool_call_input.done"));
+        assert!(output.contains("\"type\":\"custom_tool_call\""));
+        assert!(output.contains("*** Add File: docs/test.md"));
+        assert!(!output.contains("response.function_call_arguments.delta"));
+        assert!(!output.contains("response.function_call_arguments.done"));
     }
 
     #[tokio::test]

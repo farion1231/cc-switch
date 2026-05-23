@@ -319,6 +319,8 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    #[serde(rename = "toolCompatEnabled", skip_serializing_if = "Option::is_none")]
+    pub tool_compat_enabled: Option<bool>,
     /// 通用认证绑定（provider_config / managed_account）
     ///
     /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。
@@ -358,6 +360,10 @@ impl ProviderMeta {
     /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
     pub fn codex_fast_mode_enabled(&self) -> bool {
         self.codex_fast_mode.unwrap_or(false)
+    }
+
+    pub fn tool_compat_enabled(&self, default_enabled: bool) -> bool {
+        self.tool_compat_enabled.unwrap_or(default_enabled)
     }
 
     /// 解析指定托管认证供应商绑定的账号 ID。
@@ -805,6 +811,24 @@ mod tests {
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
         assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_tool_compat_flag() {
+        let meta = ProviderMeta {
+            tool_compat_enabled: Some(true),
+            ..ProviderMeta::default()
+        };
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value
+                .get("toolCompatEnabled")
+                .and_then(|item| item.as_bool()),
+            Some(true)
+        );
+        assert!(value.get("tool_compat_enabled").is_none());
     }
 
     #[test]

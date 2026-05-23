@@ -219,6 +219,7 @@ export function EditProviderDialog({
       }
     >
       <ProviderForm
+        key={`${provider.id}:${open ? "open" : "closed"}`}
         appId={appId}
         providerId={provider.id}
         submitLabel={t("common.save")}

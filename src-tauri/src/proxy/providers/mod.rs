@@ -26,6 +26,7 @@ pub mod streaming;
 pub mod streaming_codex_chat;
 pub mod streaming_gemini;
 pub mod streaming_responses;
+pub mod tool_compat;
 pub mod transform;
 pub mod transform_codex_chat;
 pub mod transform_gemini;
@@ -43,6 +44,7 @@ pub use claude::{
     transform_claude_request_for_api_format, ClaudeAdapter,
 };
 pub use codex::should_convert_codex_responses_to_chat;
+pub use codex::tool_compat_enabled_for_provider;
 pub use codex::CodexAdapter;
 pub use gemini::GeminiAdapter;
 

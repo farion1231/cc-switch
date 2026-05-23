@@ -17,7 +17,7 @@ use super::{
     handler_context::RequestContext,
     providers::{
         get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
-        streaming_codex_chat::create_responses_sse_stream_from_chat,
+        streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
         transform_codex_chat, transform_gemini, transform_responses,
@@ -503,7 +503,7 @@ pub async fn handle_chat_completions(
             &AppType::Codex,
             method,
             &endpoint,
-            body,
+            body.clone(),
             headers,
             extensions,
             ctx.get_providers(),
@@ -567,7 +567,7 @@ pub async fn handle_responses(
             &AppType::Codex,
             method,
             &endpoint,
-            body,
+            body.clone(),
             headers,
             extensions,
             ctx.get_providers(),
@@ -593,6 +593,7 @@ pub async fn handle_responses(
             response,
             &ctx,
             &state,
+            &body,
             is_stream,
             connection_guard,
         )
@@ -642,7 +643,7 @@ pub async fn handle_responses_compact(
             &AppType::Codex,
             method,
             &endpoint,
-            body,
+            body.clone(),
             headers,
             extensions,
             ctx.get_providers(),
@@ -668,6 +669,7 @@ pub async fn handle_responses_compact(
             response,
             &ctx,
             &state,
+            &body,
             is_stream,
             connection_guard,
         )
@@ -688,6 +690,7 @@ async fn handle_codex_chat_to_responses_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
+    original_body: &Value,
     is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
@@ -698,9 +701,16 @@ async fn handle_codex_chat_to_responses_transform(
             .await;
     }
 
+    let tool_ctx = if super::providers::tool_compat_enabled_for_provider(&ctx.provider) {
+        Some(super::providers::tool_compat::ToolCompatContext::from_request(original_body))
+    } else {
+        None
+    };
+
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
-        let sse_stream = create_responses_sse_stream_from_chat(stream);
+        let sse_stream =
+            create_responses_sse_stream_from_chat_with_context(stream, tool_ctx.clone());
 
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
@@ -781,11 +791,18 @@ async fn handle_codex_chat_to_responses_transform(
         log::error!("[Codex] 解析 Chat 上游响应失败: {e}, body: {body_str}");
         ProxyError::TransformError(format!("Failed to parse upstream chat response: {e}"))
     })?;
-    let responses_response = transform_codex_chat::chat_completion_to_response(chat_response)
-        .map_err(|e| {
-            log::error!("[Codex] Chat → Responses 响应转换失败: {e}");
-            e
-        })?;
+    let responses_response = if let Some(tool_ctx) = tool_ctx.as_ref() {
+        transform_codex_chat::chat_completion_to_response_with_context(
+            chat_response,
+            Some(tool_ctx),
+        )
+    } else {
+        transform_codex_chat::chat_completion_to_response(chat_response)
+    }
+    .map_err(|e| {
+        log::error!("[Proxy] Chat → Responses 响应转换失败: {e}");
+        e
+    })?;
 
     if let Some(usage) = TokenUsage::from_codex_response_auto(&responses_response) {
         let model = responses_response

@@ -171,6 +171,7 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
+  toolCompatEnabled?: boolean;
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名

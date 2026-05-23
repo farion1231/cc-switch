@@ -912,6 +912,8 @@
     "codexApiFormatResponses": "OpenAI Responses API (原生)",
     "codexApiFormatOpenAIChat": "OpenAI Chat Completions (需开启路由)",
     "codexApiFormatHint": "选择供应商真实支持的 Codex API 格式；配置仍保持 Responses 以兼容新版 Codex，Chat Completions 会通过本地路由自动转换。",
+    "toolCompatEnabled": "工具兼容",
+    "toolCompatHint": "将自定义、命名空间和内置工具映射为 Chat 函数，并在响应时还原。",
     "authField": "认证字段",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（默认）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",

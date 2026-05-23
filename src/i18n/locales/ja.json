@@ -912,6 +912,8 @@
     "codexApiFormatResponses": "OpenAI Responses API（ネイティブ）",
     "codexApiFormatOpenAIChat": "OpenAI Chat Completions（ルーティングが必要）",
     "codexApiFormatHint": "このプロバイダーが実際に対応している Codex API フォーマットを選択します。新しい Codex との互換性のため設定は Responses のままにし、Chat Completions はローカルルーティングで変換します。",
+    "toolCompatEnabled": "ツール互換",
+    "toolCompatHint": "カスタム、名前空間、組み込みツールを Chat 関数に変換し、応答時に元の形式へ戻します。",
     "authField": "認証フィールド",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（デフォルト）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",

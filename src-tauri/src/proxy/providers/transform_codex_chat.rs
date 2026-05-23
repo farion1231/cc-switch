@@ -7,6 +7,8 @@
 use crate::proxy::{error::ProxyError, json_canonical::canonical_json_string};
 use serde_json::{json, Value};
 
+use super::tool_compat::ToolCompatContext;
+
 const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
     "frequency_penalty",
     "logit_bias",
@@ -28,6 +30,13 @@ const THINK_CLOSE_TAG: &str = "</think>";
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
+    responses_to_chat_completions_with_context(body, None)
+}
+
+pub fn responses_to_chat_completions_with_context(
+    body: Value,
+    tool_ctx: Option<&ToolCompatContext>,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
     if let Some(model) = body.get("model") {
@@ -46,7 +55,7 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
     }
 
     if let Some(input) = body.get("input") {
-        append_responses_input_as_chat_messages(input, &mut messages)?;
+        append_responses_input_as_chat_messages(input, &mut messages, tool_ctx)?;
     }
     result["messages"] = json!(messages);
 
@@ -78,17 +87,25 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
     }
 
     if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
-        let tools: Vec<Value> = tools
-            .iter()
-            .filter_map(responses_tool_to_chat_tool)
-            .collect();
+        let tools: Vec<Value> = tool_ctx
+            .map(|ctx| ctx.convert_tools_to_chat(tools))
+            .unwrap_or_else(|| {
+                tools
+                    .iter()
+                    .filter_map(responses_tool_to_chat_tool)
+                    .collect()
+            });
         if !tools.is_empty() {
             result["tools"] = json!(tools);
         }
     }
 
     if let Some(tool_choice) = body.get("tool_choice") {
-        result["tool_choice"] = responses_tool_choice_to_chat(tool_choice);
+        if let Some(converted) = tool_ctx.and_then(|ctx| ctx.convert_tool_choice(tool_choice)) {
+            result["tool_choice"] = converted;
+        } else if tool_ctx.is_none() {
+            result["tool_choice"] = responses_tool_choice_to_chat(tool_choice);
+        }
     }
 
     for key in EXTRA_CHAT_PASSTHROUGH_FIELDS {
@@ -120,6 +137,7 @@ fn instruction_text(value: &Value) -> String {
 fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
+    tool_ctx: Option<&ToolCompatContext>,
 ) -> Result<(), ProxyError> {
     let mut pending_tool_calls = Vec::new();
 
@@ -132,11 +150,21 @@ fn append_responses_input_as_chat_messages(
         }
         Value::Array(items) => {
             for item in items {
-                append_responses_item_as_chat_message(item, messages, &mut pending_tool_calls)?;
+                append_responses_item_as_chat_message(
+                    item,
+                    messages,
+                    &mut pending_tool_calls,
+                    tool_ctx,
+                )?;
             }
         }
         Value::Object(_) => {
-            append_responses_item_as_chat_message(input, messages, &mut pending_tool_calls)?;
+            append_responses_item_as_chat_message(
+                input,
+                messages,
+                &mut pending_tool_calls,
+                tool_ctx,
+            )?;
         }
         _ => {}
     }
@@ -149,25 +177,27 @@ fn append_responses_item_as_chat_message(
     item: &Value,
     messages: &mut Vec<Value>,
     pending_tool_calls: &mut Vec<Value>,
+    tool_ctx: Option<&ToolCompatContext>,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
     match item_type {
         Some("function_call") => {
-            pending_tool_calls.push(responses_function_call_to_chat_tool_call(item));
+            pending_tool_calls.push(responses_function_call_to_chat_tool_call(item, tool_ctx));
+        }
+        Some("custom_tool_call") => {
+            if let Some(ctx) = tool_ctx {
+                pending_tool_calls.push(responses_custom_tool_call_to_chat_tool_call(item, ctx));
+            }
         }
         Some("function_call_output") => {
             flush_pending_tool_calls(messages, pending_tool_calls);
-            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let output = match item.get("output") {
-                Some(Value::String(s)) => s.clone(),
-                Some(v) => canonical_json_string(v),
-                None => String::new(),
-            };
-            messages.push(json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": output
-            }));
+            messages.push(responses_tool_output_to_chat_message(item));
+        }
+        Some("custom_tool_call_output") => {
+            if tool_ctx.is_some() {
+                flush_pending_tool_calls(messages, pending_tool_calls);
+                messages.push(responses_tool_output_to_chat_message(item));
+            }
         }
         Some("reasoning") => {
             // Reasoning items are Responses-specific context. Chat-only providers
@@ -188,6 +218,20 @@ fn append_responses_item_as_chat_message(
     }
 
     Ok(())
+}
+
+fn responses_tool_output_to_chat_message(item: &Value) -> Value {
+    let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+    let output = match item.get("output") {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => canonical_json_string(v),
+        None => String::new(),
+    };
+    json!({
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": output
+    })
 }
 
 fn flush_pending_tool_calls(messages: &mut Vec<Value>, pending_tool_calls: &mut Vec<Value>) {
@@ -281,18 +325,55 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
     Value::Array(chat_parts)
 }
 
-fn responses_function_call_to_chat_tool_call(item: &Value) -> Value {
+fn responses_function_call_to_chat_tool_call(
+    item: &Value,
+    tool_ctx: Option<&ToolCompatContext>,
+) -> Value {
+    let call_id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let name = tool_ctx
+        .map(|ctx| ctx.flatten_response_function_name(item))
+        .unwrap_or_else(|| {
+            item.get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        });
+    let arguments = match item.get("arguments") {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => canonical_json_string(v),
+        None => "{}".to_string(),
+    };
+
+    json!({
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments
+        }
+    })
+}
+
+fn responses_custom_tool_call_to_chat_tool_call(
+    item: &Value,
+    tool_ctx: &ToolCompatContext,
+) -> Value {
     let call_id = item
         .get("call_id")
         .or_else(|| item.get("id"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let arguments = match item.get("arguments") {
-        Some(Value::String(s)) => s.clone(),
-        Some(v) => canonical_json_string(v),
-        None => "{}".to_string(),
-    };
+    let input = item
+        .get("input")
+        .and_then(|v| v.as_str())
+        .or_else(|| item.get("output").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    let (name, arguments) = tool_ctx.custom_history_arguments(name, input);
 
     json!({
         "id": call_id,
@@ -356,6 +437,13 @@ fn responses_tool_choice_to_chat(tool_choice: &Value) -> Value {
 
 /// Convert a non-streaming Chat Completions response into a Responses response.
 pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
+    chat_completion_to_response_with_context(body, None)
+}
+
+pub fn chat_completion_to_response_with_context(
+    body: Value,
+    tool_ctx: Option<&ToolCompatContext>,
+) -> Result<Value, ProxyError> {
     let choices = body
         .get("choices")
         .and_then(|v| v.as_array())
@@ -379,7 +467,7 @@ pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
     if let Some(message_item) = chat_message_to_response_output_item(message, &response_id) {
         output.push(message_item);
     }
-    output.extend(chat_tool_calls_to_response_output_items(message));
+    output.extend(chat_tool_calls_to_response_output_items(message, tool_ctx));
 
     let mut response = json!({
         "id": response_id,
@@ -540,21 +628,31 @@ fn strip_think_answer_separator(text: &str) -> &str {
     text.trim_start_matches(['\r', '\n', '\t', ' '])
 }
 
-fn chat_tool_calls_to_response_output_items(message: &Value) -> Vec<Value> {
+fn chat_tool_calls_to_response_output_items(
+    message: &Value,
+    tool_ctx: Option<&ToolCompatContext>,
+) -> Vec<Value> {
     let mut output = Vec::new();
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
         for (index, tool_call) in tool_calls.iter().enumerate() {
-            output.push(chat_tool_call_to_response_item(tool_call, index));
+            output.push(chat_tool_call_to_response_item(tool_call, index, tool_ctx));
         }
     } else if let Some(function_call) = message.get("function_call") {
-        output.push(chat_legacy_function_call_to_response_item(function_call));
+        output.push(chat_legacy_function_call_to_response_item(
+            function_call,
+            tool_ctx,
+        ));
     }
 
     output
 }
 
-fn chat_tool_call_to_response_item(tool_call: &Value, index: usize) -> Value {
+fn chat_tool_call_to_response_item(
+    tool_call: &Value,
+    index: usize,
+    tool_ctx: Option<&ToolCompatContext>,
+) -> Value {
     let call_id = tool_call
         .get("id")
         .and_then(|v| v.as_str())
@@ -569,17 +667,30 @@ fn chat_tool_call_to_response_item(tool_call: &Value, index: usize) -> Value {
         None => "{}".to_string(),
     };
 
-    json!({
+    if let Some(custom_item) =
+        tool_ctx.and_then(|ctx| ctx.custom_response_item(&call_id, name, &arguments))
+    {
+        return custom_item;
+    }
+
+    let mut item = json!({
         "id": format!("fc_{call_id}"),
         "type": "function_call",
         "status": "completed",
         "call_id": call_id,
         "name": name,
         "arguments": arguments
-    })
+    });
+    if let Some(ctx) = tool_ctx {
+        ctx.apply_namespace_to_response_item(&mut item);
+    }
+    item
 }
 
-fn chat_legacy_function_call_to_response_item(function_call: &Value) -> Value {
+fn chat_legacy_function_call_to_response_item(
+    function_call: &Value,
+    tool_ctx: Option<&ToolCompatContext>,
+) -> Value {
     let call_id = function_call
         .get("id")
         .and_then(|v| v.as_str())
@@ -595,14 +706,24 @@ fn chat_legacy_function_call_to_response_item(function_call: &Value) -> Value {
         None => "{}".to_string(),
     };
 
-    json!({
+    if let Some(custom_item) =
+        tool_ctx.and_then(|ctx| ctx.custom_response_item(call_id, name, &arguments))
+    {
+        return custom_item;
+    }
+
+    let mut item = json!({
         "id": format!("fc_{call_id}"),
         "type": "function_call",
         "status": "completed",
         "call_id": call_id,
         "name": name,
         "arguments": arguments
-    })
+    });
+    if let Some(ctx) = tool_ctx {
+        ctx.apply_namespace_to_response_item(&mut item);
+    }
+    item
 }
 
 pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
@@ -781,6 +902,188 @@ mod tests {
         assert_eq!(messages[2]["tool_call_id"], "call_2");
         assert_eq!(messages[2]["content"], "[\"main.rs\",\"lib.rs\"]");
         assert_eq!(messages[3]["role"], "user");
+    }
+
+    #[test]
+    fn responses_request_to_chat_maps_custom_and_namespace_tools_when_context_enabled() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_patch",
+                    "name": "apply_patch",
+                    "input": "*** Begin Patch\n*** Add File: docs/test.md\n+# Test\n*** End Patch"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_ns",
+                    "namespace": "mcp__editor__",
+                    "name": "save_all",
+                    "arguments": "{}"
+                }
+            ],
+            "tools": [
+                {"type": "custom", "name": "apply_patch"},
+                {
+                    "type": "namespace",
+                    "name": "mcp__editor__",
+                    "tools": [{
+                        "type": "function",
+                        "name": "save_all",
+                        "parameters": {"type": "object"}
+                    }]
+                }
+            ],
+            "tool_choice": {
+                "type": "function",
+                "namespace": "mcp__editor__",
+                "name": "save_all"
+            }
+        });
+        let ctx = ToolCompatContext::from_request(&input);
+
+        let result = responses_to_chat_completions_with_context(input, Some(&ctx)).unwrap();
+        let tool_names = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(tool_names.contains(&"apply_patch_add_file".to_string()));
+        assert!(tool_names.contains(&"apply_patch_batch".to_string()));
+        assert!(tool_names.contains(&"mcp__editor__save_all".to_string()));
+        assert_eq!(
+            result["messages"][0]["tool_calls"][0]["function"]["name"],
+            "apply_patch_add_file"
+        );
+        assert_eq!(
+            result["messages"][0]["tool_calls"][1]["function"]["name"],
+            "mcp__editor__save_all"
+        );
+        assert_eq!(
+            result["tool_choice"]["function"]["name"],
+            "mcp__editor__save_all"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_uses_legacy_path_without_tool_context() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_patch",
+                    "name": "apply_patch",
+                    "input": "*** Begin Patch\n*** Add File: docs/test.md\n+# Test\n*** End Patch"
+                },
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_patch",
+                    "output": "ok"
+                }
+            ],
+            "tools": [{"type": "custom", "name": "apply_patch"}]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(result.get("tools").is_none());
+        assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn responses_request_to_chat_maps_custom_tool_outputs_when_context_enabled() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_patch",
+                    "name": "apply_patch",
+                    "input": "*** Begin Patch\n*** Add File: docs/test.md\n+# Test\n*** End Patch"
+                },
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_patch",
+                    "output": "ok"
+                }
+            ],
+            "tools": [{"type": "custom", "name": "apply_patch"}]
+        });
+        let ctx = ToolCompatContext::from_request(&input);
+
+        let result = responses_to_chat_completions_with_context(input, Some(&ctx)).unwrap();
+
+        assert_eq!(
+            result["messages"][0]["tool_calls"][0]["function"]["name"],
+            "apply_patch_add_file"
+        );
+        assert_eq!(result["messages"][1]["role"], "tool");
+        assert_eq!(result["messages"][1]["tool_call_id"], "call_patch");
+        assert_eq!(result["messages"][1]["content"], "ok");
+    }
+
+    #[test]
+    fn chat_response_to_responses_restores_custom_and_namespace_calls() {
+        let request = json!({
+            "tools": [
+                {"type": "custom", "name": "apply_patch"},
+                {
+                    "type": "namespace",
+                    "name": "mcp__editor__",
+                    "tools": [{
+                        "type": "function",
+                        "name": "save_all",
+                        "parameters": {"type": "object"}
+                    }]
+                }
+            ]
+        });
+        let ctx = ToolCompatContext::from_request(&request);
+        let response = json!({
+            "id": "chatcmpl_1",
+            "created": 123,
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_patch",
+                            "type": "function",
+                            "function": {
+                                "name": "apply_patch_add_file",
+                                "arguments": "{\"path\":\"docs/test.md\",\"content\":\"# Test\\n\"}"
+                            }
+                        },
+                        {
+                            "id": "call_ns",
+                            "type": "function",
+                            "function": {
+                                "name": "mcp__editor__save_all",
+                                "arguments": "{}"
+                            }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = chat_completion_to_response_with_context(response, Some(&ctx)).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "custom_tool_call");
+        assert_eq!(result["output"][0]["name"], "apply_patch");
+        assert_eq!(
+            result["output"][0]["input"],
+            "*** Begin Patch\n*** Add File: docs/test.md\n+# Test\n*** End Patch"
+        );
+        assert_eq!(result["output"][1]["type"], "function_call");
+        assert_eq!(result["output"][1]["name"], "save_all");
+        assert_eq!(result["output"][1]["namespace"], "mcp__editor__");
     }
 
     #[test]

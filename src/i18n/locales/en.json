@@ -912,6 +912,8 @@
     "codexApiFormatResponses": "OpenAI Responses API (Native)",
     "codexApiFormatOpenAIChat": "OpenAI Chat Completions (Requires routing)",
     "codexApiFormatHint": "Select the Codex API format actually supported by this provider; the config stays on Responses for newer Codex versions, while Chat Completions is converted through local routing.",
+    "toolCompatEnabled": "Tool compatibility",
+    "toolCompatHint": "Map custom, namespace, and built-in tools to Chat functions, then restore them on response.",
     "authField": "Auth Field",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN (Default)",
     "authFieldApiKey": "ANTHROPIC_API_KEY",
