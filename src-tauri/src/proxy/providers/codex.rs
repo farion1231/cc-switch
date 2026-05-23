@@ -4,12 +4,36 @@
 //!
 //! ## 客户端检测
 //! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
+//!
+//! ## API 格式
+//! 支持通过 `meta.apiFormat` 在 OpenAI Responses（原生）和 Chat Completions 间切换。
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use regex::Regex;
 use std::sync::LazyLock;
+
+/// 从 Provider meta 解析 Codex API 格式
+///
+/// 优先级：
+/// 1. `meta.apiFormat`（SSOT）
+/// 2. 默认 `"openai_responses"`（Codex 原生格式）
+pub fn get_codex_api_format(provider: &Provider) -> &'static str {
+    if let Some(meta) = provider.meta.as_ref() {
+        if let Some(api_format) = meta.api_format.as_deref() {
+            return match api_format {
+                "openai_chat" => "openai_chat",
+                _ => "openai_responses",
+            };
+        }
+    }
+    "openai_responses"
+}
+
+pub fn codex_api_format_needs_transform(api_format: &str) -> bool {
+    api_format == "openai_chat"
+}
 
 /// 官方 Codex 客户端 User-Agent 正则
 #[allow(dead_code)]

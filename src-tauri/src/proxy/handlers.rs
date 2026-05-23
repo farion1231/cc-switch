@@ -16,10 +16,11 @@ use super::{
     },
     handler_context::RequestContext,
     providers::{
-        get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
+        get_adapter, get_claude_api_format, get_codex_api_format,
+        streaming::create_anthropic_sse_stream,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
-        transform_gemini, transform_responses,
+        transform_codex, transform_gemini, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
@@ -30,6 +31,7 @@ use super::{
     sse::{strip_sse_field, take_sse_block},
     types::*,
     usage::parser::TokenUsage,
+    hyper_client::ProxyResponse,
     ProxyError,
 };
 use crate::app_config::AppType;
@@ -534,6 +536,10 @@ pub async fn handle_chat_completions(
 }
 
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
+///
+/// 当 provider 的 `meta.apiFormat` 为 `"openai_chat"` 时，
+/// 自动将 Responses API 请求转换为 Chat Completions 格式转发给上游，
+/// 并将 Chat Completions 响应转换回 Responses API 格式返回给 Codex CLI。
 pub async fn handle_responses(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
@@ -553,12 +559,28 @@ pub async fn handle_responses(
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-    let endpoint = endpoint_with_query(&uri, "/responses");
 
-    let is_stream = body
+    let api_format = get_codex_api_format(&ctx.provider);
+    let needs_chat_transform =
+        super::providers::codex_api_format_needs_transform(api_format);
+
+    let was_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    // 如果需要转换为 Chat Completions，修改请求体和端点
+    let (transform_body, transform_endpoint) = if needs_chat_transform {
+        let mut chat_body = transform_codex::responses_to_chat_completions(body);
+        // 格式转换时用非流式请求保证完整性，响应端再包装为 SSE
+        if was_streaming {
+            chat_body["stream"] = json!(false);
+        }
+        (chat_body, "/chat/completions".to_string())
+    } else {
+        (body, "/responses".to_string())
+    };
+    let endpoint = endpoint_with_query(&uri, &transform_endpoint);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -566,7 +588,7 @@ pub async fn handle_responses(
             &AppType::Codex,
             method,
             &endpoint,
-            body,
+            transform_body,
             headers,
             extensions,
             ctx.get_providers(),
@@ -578,7 +600,7 @@ pub async fn handle_responses(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
+            log_forward_error(&state, &ctx, was_streaming, &err.error);
             return Err(err.error);
         }
     };
@@ -586,6 +608,51 @@ pub async fn handle_responses(
     let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
+
+    // 如果做了格式转换，需要把 Chat Completions 响应转回 Responses API 格式
+    if needs_chat_transform {
+        // 读取响应体和状态：forwarder 可能返回 Buffered/Reqwest/Hyper 多种类型
+        let upstream_status = response.status();
+        let body_bytes = match response {
+            ProxyResponse::Buffered { body, .. } => body,
+            other => {
+                read_decoded_body(other, "Codex/Transform", std::time::Duration::from_secs(30))
+                    .await
+                    .map(|(_, _, body)| body)
+                    .unwrap_or_default()
+            }
+        };
+
+        let chat_body: Value = serde_json::from_slice(&body_bytes).unwrap_or(json!({}));
+        let responses_body = transform_codex::chat_completions_to_responses(chat_body);
+
+        // 如果原始请求是流式，包装为 SSE 事件流（Codex CLI 需要 SSE 格式）
+        if was_streaming {
+            let sse_stream = transform_codex::wrap_responses_as_sse(responses_body);
+            let mut sse_response = axum::response::Response::new(
+                axum::body::Body::from_stream(sse_stream),
+            );
+            *sse_response.status_mut() = upstream_status;
+            let hm = sse_response.headers_mut();
+            hm.insert("content-type", "text/event-stream".parse().unwrap());
+            hm.insert("cache-control", "no-cache".parse().unwrap());
+            return Ok(sse_response);
+        }
+
+        let new_body = serde_json::to_vec(&responses_body).unwrap_or_default();
+        let reconstructed: axum::response::Response = (
+            upstream_status,
+            [(
+                "content-type".parse::<axum::http::HeaderName>().unwrap(),
+                "application/json".parse().unwrap(),
+            )]
+            .into_iter()
+            .collect::<axum::http::HeaderMap>(),
+            new_body,
+        )
+            .into_response();
+        return Ok(reconstructed);
+    }
 
     process_response(
         response,

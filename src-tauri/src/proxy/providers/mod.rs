@@ -26,6 +26,7 @@ pub mod streaming;
 pub mod streaming_gemini;
 pub mod streaming_responses;
 pub mod transform;
+pub mod transform_codex;
 pub mod transform_gemini;
 pub mod transform_responses;
 
@@ -40,7 +41,9 @@ pub use claude::{
     claude_api_format_needs_transform, get_claude_api_format,
     transform_claude_request_for_api_format, ClaudeAdapter,
 };
-pub use codex::CodexAdapter;
+pub use codex::{
+    codex_api_format_needs_transform, get_codex_api_format, CodexAdapter,
+};
 pub use gemini::GeminiAdapter;
 
 /// 供应商类型枚举

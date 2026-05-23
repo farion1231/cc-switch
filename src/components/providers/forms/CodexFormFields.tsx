@@ -3,6 +3,14 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { FormLabel } from "@/components/ui/form";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import {
@@ -46,6 +54,10 @@ interface CodexFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // API Format
+  apiFormat: string;
+  onApiFormatChange: (format: string) => void;
 }
 
 export function CodexFormFields({
@@ -71,6 +83,8 @@ export function CodexFormFields({
   modelName = "",
   onModelNameChange,
   speedTestEndpoints,
+  apiFormat,
+  onApiFormatChange,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -126,6 +140,38 @@ export function CodexFormFields({
           }),
         }}
       />
+
+      {/* Codex API 格式选择 */}
+      {shouldShowSpeedTest && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="codexApiFormat">
+            {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+          </FormLabel>
+          <Select value={apiFormat} onValueChange={onApiFormatChange}>
+            <SelectTrigger id="codexApiFormat" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai_responses">
+                {t("providerForm.apiFormatOpenAIResponses", {
+                  defaultValue: "OpenAI Responses API (原生)",
+                })}
+              </SelectItem>
+              <SelectItem value="openai_chat">
+                {t("providerForm.apiFormatOpenAIChat", {
+                  defaultValue: "OpenAI Chat Completions (需开启路由)",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.codexApiFormatHint", {
+              defaultValue:
+                "OpenAI Responses API 是 Codex CLI 原生格式。选择 Chat Completions 需要 cc-switch 路由进行格式转换。",
+            })}
+          </p>
+        </div>
+      )}
 
       {/* Codex Base URL 输入框 */}
       {shouldShowSpeedTest && (
