@@ -1,6 +1,14 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { FormLabel } from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
@@ -10,7 +18,7 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-import type { ProviderCategory } from "@/types";
+import type { CodexApiFormat, ProviderCategory } from "@/types";
 
 interface EndpointCandidate {
   url: string;
@@ -38,6 +46,10 @@ interface CodexFormFieldsProps {
   onCustomEndpointsChange?: (endpoints: string[]) => void;
   autoSelect: boolean;
   onAutoSelectChange: (checked: boolean) => void;
+
+  // API Format
+  apiFormat: CodexApiFormat;
+  onApiFormatChange: (format: CodexApiFormat) => void;
 
   // Model Name
   shouldShowModelField?: boolean;
@@ -67,6 +79,8 @@ export function CodexFormFields({
   onCustomEndpointsChange,
   autoSelect,
   onAutoSelectChange,
+  apiFormat,
+  onApiFormatChange,
   shouldShowModelField = true,
   modelName = "",
   onModelNameChange,
@@ -141,6 +155,43 @@ export function CodexFormFields({
           onFullUrlChange={onFullUrlChange}
           onManageClick={() => onEndpointModalToggle(true)}
         />
+      )}
+
+      {/* Codex API 格式选择 */}
+      {shouldShowSpeedTest && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="codexApiFormat">
+            {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+          </FormLabel>
+          <Select
+            value={apiFormat}
+            onValueChange={(value) =>
+              onApiFormatChange(value as CodexApiFormat)
+            }
+          >
+            <SelectTrigger id="codexApiFormat" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai_responses">
+                {t("providerForm.codexApiFormatResponses", {
+                  defaultValue: "OpenAI Responses API (原生)",
+                })}
+              </SelectItem>
+              <SelectItem value="openai_chat">
+                {t("providerForm.codexApiFormatOpenAIChat", {
+                  defaultValue: "OpenAI Chat Completions (需开启路由)",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.codexApiFormatHint", {
+              defaultValue:
+                "选择供应商真实支持的 Codex API 格式；Chat Completions 会通过本地路由自动转换为 Responses。",
+            })}
+          </p>
+        </div>
       )}
 
       {/* Codex Model Name 输入框 */}

@@ -178,6 +178,7 @@
     "noRoutingSupport": "不支持路由"
   },
   "codex": {
+    "needsRouting": "需要路由",
     "noRoutingSupport": "不支持路由"
   },
   "claudeDesktop": {
@@ -908,6 +909,9 @@
     "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启路由)",
     "apiFormatOpenAIResponses": "OpenAI Responses API (需开启路由)",
     "apiFormatGeminiNative": "Gemini Native generateContent (需开启路由)",
+    "codexApiFormatResponses": "OpenAI Responses API (原生)",
+    "codexApiFormatOpenAIChat": "OpenAI Chat Completions (需开启路由)",
+    "codexApiFormatHint": "选择供应商真实支持的 Codex API 格式；配置仍保持 Responses 以兼容新版 Codex，Chat Completions 会通过本地路由自动转换。",
     "authField": "认证字段",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（默认）",
     "authFieldApiKey": "ANTHROPIC_API_KEY",

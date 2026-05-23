@@ -161,7 +161,7 @@ export interface ProviderMeta {
   costMultiplier?: string;
   // 供应商计费模式来源
   pricingModelSource?: string;
-  // Claude API 格式（仅 Claude 供应商使用）
+  // API 格式（Claude / Codex 供应商使用）
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
@@ -203,6 +203,11 @@ export type ClaudeApiFormat =
   | "openai_chat"
   | "openai_responses"
   | "gemini_native";
+
+// Codex API 格式类型
+// - "openai_responses": OpenAI Responses API 格式，直接透传
+// - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
+export type CodexApiFormat = "openai_responses" | "openai_chat";
 
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";

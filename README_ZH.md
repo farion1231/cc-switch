@@ -294,7 +294,6 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 **方式一：通过 Homebrew 安装（推荐）**
 
 ```bash
-brew tap farion1231/ccswitch
 brew install --cask cc-switch
 ```
 
