@@ -15,6 +15,8 @@ export type ClaudeModelEnvField =
   | "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME";
 
 export const CLAUDE_ONE_M_MARKER = "[1M]";
+const DEEPSEEK_V4_PRO_MODEL = "deepseek-v4-pro";
+const DEEPSEEK_ONE_M_MARKER = "[1m]";
 
 export function hasClaudeOneMMarker(model: string): boolean {
   return model.trimEnd().toLowerCase().endsWith("[1m]");
@@ -29,7 +31,11 @@ export function stripClaudeOneMMarker(model: string): string {
 export function setClaudeOneMMarker(model: string, enabled: boolean): string {
   const base = stripClaudeOneMMarker(model).trim();
   if (!base) return "";
-  return enabled ? `${base}${CLAUDE_ONE_M_MARKER}` : base;
+  const marker =
+    base.toLowerCase() === DEEPSEEK_V4_PRO_MODEL
+      ? DEEPSEEK_ONE_M_MARKER
+      : CLAUDE_ONE_M_MARKER;
+  return enabled ? `${base}${marker}` : base;
 }
 
 /**

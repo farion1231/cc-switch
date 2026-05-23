@@ -79,7 +79,7 @@ describe("useModelState", () => {
   it("keeps the 1M marker on request models but strips it from fallback display names", () => {
     const settingsConfig = JSON.stringify({
       env: {
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro[1m]",
       },
     });
 
@@ -90,21 +90,18 @@ describe("useModelState", () => {
       }),
     );
 
-    expect(result.current.defaultSonnetModel).toBe("deepseek-v4-pro[1M]");
+    expect(result.current.defaultSonnetModel).toBe("deepseek-v4-pro[1m]");
     expect(result.current.defaultSonnetModelName).toBe("deepseek-v4-pro");
   });
 
   it("normalizes Claude Code 1M markers for UI toggles", () => {
     expect(hasClaudeOneMMarker("deepseek-v4-pro[1m]")).toBe(true);
-    expect(hasClaudeOneMMarker("deepseek-v4-pro [1M]  ")).toBe(true);
-    expect(stripClaudeOneMMarker("deepseek-v4-pro [1M]  ")).toBe(
-      "deepseek-v4-pro",
-    );
-    expect(setClaudeOneMMarker("deepseek-v4-pro [1M]", false)).toBe(
-      "deepseek-v4-pro",
-    );
+    expect(hasClaudeOneMMarker("kimi-k2 [1M]  ")).toBe(true);
+    expect(stripClaudeOneMMarker("kimi-k2 [1M]  ")).toBe("kimi-k2");
+    expect(setClaudeOneMMarker("kimi-k2 [1M]", false)).toBe("kimi-k2");
     expect(setClaudeOneMMarker("deepseek-v4-pro", true)).toBe(
-      "deepseek-v4-pro[1M]",
+      "deepseek-v4-pro[1m]",
     );
+    expect(setClaudeOneMMarker("kimi-k2", true)).toBe("kimi-k2[1M]");
   });
 });

@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn strips_one_m_suffix_before_upstream() {
-        let body = json!({"model": "deepseek-v4-pro[1M]"});
+        let body = json!({"model": "deepseek-v4-pro[1m]"});
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
     }
@@ -292,7 +292,7 @@ mod tests {
         let mut provider = create_provider_with_mapping();
         provider.settings_config = json!({
             "env": {
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro [1M]"
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro [1m]"
             }
         });
 

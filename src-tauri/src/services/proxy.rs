@@ -2553,7 +2553,7 @@ model = "gpt-5.1-codex"
                     "ANTHROPIC_MODEL": "claude-new",
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "DeepSeek V4 Flash",
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]",
                     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "DeepSeek V4 Pro",
                     "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-ultra [1m]"
                 },
