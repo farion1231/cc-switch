@@ -82,6 +82,17 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     ) && codex_provider_uses_chat_completions(provider)
 }
 
+/// Read the chat compatibility mode from provider meta.
+/// Supports both `chatCompatibilityMode` (camelCase) and
+/// `chat_compatibility_mode` (snake_case) for backward compat.
+pub fn codex_chat_compatibility_mode(provider: &Provider) -> Option<String> {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.chat_compatibility_mode.as_deref())
+        .map(ToString::to_string)
+}
+
 fn is_chat_wire_api(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -116,6 +127,25 @@ fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
     }
 
     doc.get("wire_api")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+}
+
+pub fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<TomlValue>().ok()?;
+
+    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
+        if let Some(model) = doc
+            .get("model_providers")
+            .and_then(|providers| providers.get(active_provider))
+            .and_then(|provider| provider.get("model"))
+            .and_then(|v| v.as_str())
+        {
+            return Some(model.to_string());
+        }
+    }
+
+    doc.get("model")
         .and_then(|v| v.as_str())
         .map(ToString::to_string)
 }
@@ -480,5 +510,42 @@ wire_api = "chat"
             &provider,
             "/responses/compact?stream=true"
         ));
+    }
+
+    #[test]
+    fn test_extract_codex_model_from_toml_top_level() {
+        let config = r#"
+model = "deepseek-v4-flash"
+base_url = "https://platform.deepseek.com/v1/chat/completions"
+"#;
+        assert_eq!(
+            extract_codex_model_from_toml(config),
+            Some("deepseek-v4-flash".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_codex_model_from_active_provider() {
+        let config = r#"
+model_provider = "chat_only"
+model = "gpt-4o"
+
+[model_providers.chat_only]
+name = "Chat Only"
+model = "deepseek-v4-flash"
+base_url = "https://platform.deepseek.com/v1/chat/completions"
+"#;
+        assert_eq!(
+            extract_codex_model_from_toml(config),
+            Some("deepseek-v4-flash".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_codex_model_from_toml_no_model() {
+        let config = r#"
+base_url = "https://api.openai.com/v1"
+"#;
+        assert_eq!(extract_codex_model_from_toml(config), None);
     }
 }

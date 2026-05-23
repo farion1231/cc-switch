@@ -18,7 +18,7 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-import type { CodexApiFormat, ProviderCategory } from "@/types";
+import type { CodexApiFormat, CodexChatCompatibilityMode, ProviderCategory } from "@/types";
 
 interface EndpointCandidate {
   url: string;
@@ -51,6 +51,10 @@ interface CodexFormFieldsProps {
   apiFormat: CodexApiFormat;
   onApiFormatChange: (format: CodexApiFormat) => void;
 
+  // Chat 兼容模式
+  chatCompatibilityMode: CodexChatCompatibilityMode;
+  onChatCompatibilityModeChange: (mode: CodexChatCompatibilityMode) => void;
+
   // Model Name
   shouldShowModelField?: boolean;
   modelName?: string;
@@ -81,6 +85,8 @@ export function CodexFormFields({
   onAutoSelectChange,
   apiFormat,
   onApiFormatChange,
+  chatCompatibilityMode,
+  onChatCompatibilityModeChange,
   shouldShowModelField = true,
   modelName = "",
   onModelNameChange,
@@ -202,6 +208,47 @@ export function CodexFormFields({
             {t("providerForm.codexApiFormatHint", {
               defaultValue:
                 "选择供应商真实支持的 Codex API 格式；Chat Completions 会通过本地路由自动转换为 Responses。",
+            })}
+          </p>
+        </div>
+      )}
+
+      {/* Codex Chat 兼容模式选择 — 仅在 openai_chat 时显示 */}
+      {shouldShowSpeedTest && apiFormat === "openai_chat" && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="codexChatCompatMode">
+            {t("providerForm.codexChatCompatibilityMode", {
+              defaultValue: "Chat 兼容模式",
+            })}
+          </FormLabel>
+          <Select
+            value={chatCompatibilityMode}
+            onValueChange={(value) =>
+              onChatCompatibilityModeChange(
+                value as CodexChatCompatibilityMode,
+              )
+            }
+          >
+            <SelectTrigger id="codexChatCompatMode" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="standard">
+                {t("providerForm.codexChatCompatStandard", {
+                  defaultValue: "标准 OpenAI Chat Completions",
+                })}
+              </SelectItem>
+              <SelectItem value="deepseek_thinking">
+                {t("providerForm.codexChatCompatDeepseekThinking", {
+                  defaultValue: "DeepSeek Thinking",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.codexChatCompatibilityModeHint", {
+              defaultValue:
+                "选择 Chat Completions 格式的兼容行为。DeepSeek Thinking 模式会适配 reasoning_content 与 tool_calls 的合并。",
             })}
           </p>
         </div>

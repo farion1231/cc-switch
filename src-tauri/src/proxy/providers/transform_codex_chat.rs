@@ -32,7 +32,11 @@ const AGENT_LOOP_HINT: &str =
     "\n\nWhen executing a multi-step task, call tools immediately in the same turn as your response text. Do not describe a step and wait for user confirmation; execute it directly with a tool call when a tool is needed.";
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
-pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
+pub fn responses_to_chat_completions(
+    body: Value,
+    compatibility_mode: Option<&str>,
+) -> Result<Value, ProxyError> {
+    let is_deepseek = compatibility_mode == Some("deepseek_thinking");
     let mut result = json!({});
 
     if let Some(model) = body.get("model") {
@@ -51,7 +55,7 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
     }
 
     if let Some(input) = body.get("input") {
-        append_responses_input_as_chat_messages(input, &mut messages)?;
+        append_responses_input_as_chat_messages(input, &mut messages, is_deepseek)?;
     }
 
     // For Codex requests (detected by presence of `instructions`), append an
@@ -87,11 +91,30 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
         result["max_completion_tokens"] = max_tokens.clone();
     }
 
-    for key in ["temperature", "top_p", "stream"] {
+    // In deepseek_thinking mode, temperature/top_p/penalty are invalid; omit them.
+    let sampling_keys = if is_deepseek {
+        &["stream"][..]
+    } else {
+        &["temperature", "top_p", "stream"][..]
+    };
+    for key in sampling_keys {
         if let Some(value) = body.get(key) {
             result[key] = value.clone();
         }
     }
+
+    // In deepseek_thinking mode, filter penalty fields from passthrough.
+    let passthrough_keys: Vec<&str> = EXTRA_CHAT_PASSTHROUGH_FIELDS
+        .iter()
+        .filter(|&&key| {
+            if is_deepseek {
+                !matches!(key, "frequency_penalty" | "presence_penalty")
+            } else {
+                true
+            }
+        })
+        .map(|&s| s)
+        .collect();
 
     // Responses API does not have stream_options; inject include_usage for
     // Chat Completions so upstream returns token counts in SSE chunks
@@ -99,10 +122,25 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
         result["stream_options"] = json!({"include_usage": true});
     }
 
-    if super::transform::supports_reasoning_effort(model) {
+    if super::transform::supports_reasoning_effort(model) || is_deepseek {
         if let Some(effort) = body.pointer("/reasoning/effort") {
-            result["reasoning_effort"] = effort.clone();
+            // In deepseek_thinking mode, map reasoning_effort:
+            //   low/medium -> high, high -> high, xhigh/max -> max
+            let mapped = if is_deepseek {
+                match effort.as_str().unwrap_or("") {
+                    "low" | "medium" | "high" => "high",
+                    "xhigh" | "max" => "max",
+                    _ => effort.as_str().unwrap_or("high"),
+                }
+            } else {
+                effort.as_str().unwrap_or("")
+            };
+            result["reasoning_effort"] = json!(mapped);
         }
+    }
+
+    if is_deepseek {
+        result["thinking"] = json!({ "type": "enabled" });
     }
 
     if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
@@ -121,7 +159,7 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
         }
     }
 
-    for key in EXTRA_CHAT_PASSTHROUGH_FIELDS {
+    for key in &passthrough_keys {
         if let Some(value) = body.get(*key) {
             result[*key] = value.clone();
         }
@@ -150,11 +188,15 @@ fn instruction_text(value: &Value) -> String {
 fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
+    is_deepseek: bool,
 ) -> Result<(), ProxyError> {
     let mut pending_tool_calls = Vec::new();
+    let mut pending_reasoning: Option<String> = None;
 
     match input {
         Value::String(text) => {
+            // No tool_calls coming — attach reasoning to last assistant.
+            attach_reasoning_to_last_assistant(messages, pending_reasoning.take(), is_deepseek);
             messages.push(json!({
                 "role": "user",
                 "content": text
@@ -162,31 +204,157 @@ fn append_responses_input_as_chat_messages(
         }
         Value::Array(items) => {
             for item in items {
-                append_responses_item_as_chat_message(item, messages, &mut pending_tool_calls)?;
+                append_responses_item_as_chat_message(
+                    item,
+                    messages,
+                    &mut pending_tool_calls,
+                    &mut pending_reasoning,
+                    is_deepseek,
+                )?;
             }
         }
         Value::Object(_) => {
-            append_responses_item_as_chat_message(input, messages, &mut pending_tool_calls)?;
+            append_responses_item_as_chat_message(
+                input,
+                messages,
+                &mut pending_tool_calls,
+                &mut pending_reasoning,
+                is_deepseek,
+            )?;
         }
         _ => {}
     }
 
-    flush_pending_tool_calls(messages, &mut pending_tool_calls);
+    // Flush reasoning together with tool_calls into one assistant message
+    // (required by DeepSeek thinking mode). If only reasoning remains, attach
+    // to last assistant.
+    flush_reasoning_with_tool_calls(
+        messages,
+        &mut pending_tool_calls,
+        &mut pending_reasoning,
+        is_deepseek,
+    );
     Ok(())
+}
+
+/// Attach reasoning to the last assistant message. If no assistant message
+/// exists, create a standalone one. Only used when there are no tool_calls.
+fn attach_reasoning_to_last_assistant(
+    messages: &mut Vec<Value>,
+    reasoning: Option<String>,
+    is_deepseek: bool,
+) {
+    if !is_deepseek || reasoning.is_none() {
+        return;
+    }
+    let reasoning = reasoning.unwrap();
+    // Find the last assistant message and attach reasoning.
+    for msg in messages.iter_mut().rev() {
+        if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+            msg["reasoning_content"] = json!(reasoning);
+            return;
+        }
+    }
+    // No assistant message found — create a standalone one.
+    messages.push(json!({
+        "role": "assistant",
+        "content": null,
+        "reasoning_content": reasoning
+    }));
+}
+
+/// Flush reasoning together with tool_calls into the SAME assistant message.
+/// This is the critical DeepSeek thinking mode fix: splitting reasoning and
+/// tool_calls causes "reasoning_content must be passed back" errors.
+fn flush_reasoning_with_tool_calls(
+    messages: &mut Vec<Value>,
+    pending_tool_calls: &mut Vec<Value>,
+    pending_reasoning: &mut Option<String>,
+    is_deepseek: bool,
+) {
+    let reasoning = pending_reasoning.take();
+    if pending_tool_calls.is_empty() && reasoning.is_none() {
+        return;
+    }
+
+    let has_reasoning = reasoning.is_some();
+    let has_tool_calls = !pending_tool_calls.is_empty();
+
+    if has_reasoning && has_tool_calls {
+        // Try to merge into the previous assistant message if it has content
+        // but no tool_calls — avoids creating a separate assistant message.
+        if let Some(last) = messages.last_mut() {
+            if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                && last.get("tool_calls").is_none()
+                && !last["content"].is_null()
+            {
+                last["tool_calls"] = json!(std::mem::take(pending_tool_calls));
+                last["reasoning_content"] = json!(reasoning.unwrap());
+                return;
+            }
+        }
+        // No mergeable assistant — create a new one with both fields.
+        messages.push(json!({
+            "role": "assistant",
+            "content": null,
+            "reasoning_content": reasoning.unwrap(),
+            "tool_calls": std::mem::take(pending_tool_calls)
+        }));
+    } else if has_tool_calls {
+        flush_pending_tool_calls_only(messages, pending_tool_calls);
+    } else if has_reasoning {
+        attach_reasoning_to_last_assistant(messages, reasoning, is_deepseek);
+    }
+}
+
+/// Flush tool_calls only (no reasoning). Merge into previous assistant if possible.
+fn flush_pending_tool_calls_only(
+    messages: &mut Vec<Value>,
+    pending_tool_calls: &mut Vec<Value>,
+) {
+    if pending_tool_calls.is_empty() {
+        return;
+    }
+    // Merge into previous assistant if it has content but no tool_calls.
+    if let Some(last) = messages.last_mut() {
+        if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
+            && last.get("tool_calls").is_none()
+            && !last["content"].is_null()
+        {
+            last["tool_calls"] = json!(std::mem::take(pending_tool_calls));
+            return;
+        }
+    }
+    messages.push(json!({
+        "role": "assistant",
+        "content": null,
+        "tool_calls": std::mem::take(pending_tool_calls)
+    }));
 }
 
 fn append_responses_item_as_chat_message(
     item: &Value,
     messages: &mut Vec<Value>,
     pending_tool_calls: &mut Vec<Value>,
+    pending_reasoning: &mut Option<String>,
+    is_deepseek: bool,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
     match item_type {
         Some("function_call") => {
+            // Do NOT flush pending_reasoning here — it will be merged into
+            // the same assistant message as tool_calls when flushed later.
             pending_tool_calls.push(responses_function_call_to_chat_tool_call(item));
         }
         Some("function_call_output") => {
-            flush_pending_tool_calls(messages, pending_tool_calls);
+            // Flush reasoning together with tool_calls so they end up in
+            // the SAME assistant message (required by DeepSeek thinking mode).
+            flush_reasoning_with_tool_calls(
+                messages,
+                pending_tool_calls,
+                pending_reasoning,
+                is_deepseek,
+            );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
             let output = match item.get("output") {
                 Some(Value::String(s)) => s.clone(),
@@ -200,11 +368,19 @@ fn append_responses_item_as_chat_message(
             }));
         }
         Some("reasoning") => {
-            // Reasoning items are Responses-specific context. Chat-only providers
-            // cannot consume encrypted reasoning state, so omit it.
+            if is_deepseek {
+                // Capture reasoning summary text for merging into the next assistant message.
+                if let Some(summary_text) = item.pointer("/summary/0/text").and_then(|v| v.as_str())
+                {
+                    *pending_reasoning = Some(summary_text.to_string());
+                }
+            }
+            // In standard mode, omit reasoning (previous behavior).
         }
         Some("message") | None => {
-            flush_pending_tool_calls(messages, pending_tool_calls);
+            // Flush tool_calls before processing the message — reasoning
+            // stays pending so it can merge with tool_calls later.
+            flush_pending_tool_calls_only(messages, pending_tool_calls);
             if item.get("role").is_some() || item.get("content").is_some() {
                 let msg = responses_message_item_to_chat_message(item);
                 if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
@@ -216,7 +392,7 @@ fn append_responses_item_as_chat_message(
             }
         }
         _ => {
-            flush_pending_tool_calls(messages, pending_tool_calls);
+            flush_pending_tool_calls_only(messages, pending_tool_calls);
             if item.get("role").is_some() || item.get("content").is_some() {
                 let msg = responses_message_item_to_chat_message(item);
                 if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
@@ -230,30 +406,6 @@ fn append_responses_item_as_chat_message(
     }
 
     Ok(())
-}
-
-fn flush_pending_tool_calls(messages: &mut Vec<Value>, pending_tool_calls: &mut Vec<Value>) {
-    if pending_tool_calls.is_empty() {
-        return;
-    }
-
-    // Merge tool_calls into the previous assistant message if it has content
-    // but no tool_calls — avoids creating split assistant messages.
-    if let Some(last) = messages.last_mut() {
-        if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
-            && last.get("tool_calls").is_none()
-            && !last["content"].is_null()
-        {
-            last["tool_calls"] = json!(std::mem::take(pending_tool_calls));
-            return;
-        }
-    }
-
-    messages.push(json!({
-        "role": "assistant",
-        "content": null,
-        "tool_calls": std::mem::take(pending_tool_calls)
-    }));
 }
 
 /// If the last message is an assistant with tool_calls but no content,
@@ -796,7 +948,7 @@ mod tests {
             "stream": true
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
 
         assert_eq!(result["model"], "gpt-5.4");
         assert_eq!(result["messages"][0]["role"], "system");
@@ -848,7 +1000,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages.len(), 4);
@@ -1024,7 +1176,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         // system from instructions
@@ -1059,7 +1211,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "system");
@@ -1093,7 +1245,7 @@ mod tests {
             "tool_choice": "auto"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
 
         // Only the 2 function tools should be present
         let tools = result["tools"].as_array().unwrap();
@@ -1117,7 +1269,7 @@ mod tests {
             "tool_choice": {"type": "file_search"}
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
 
         // tool_choice should not be present in the result
         assert!(result.get("tool_choice").is_none());
@@ -1130,7 +1282,7 @@ mod tests {
             "model": "gpt-5.4",
             "input": [{"role": "user", "content": "test"}]
         });
-        let result_no_stream = responses_to_chat_completions(input_no_stream).unwrap();
+        let result_no_stream = responses_to_chat_completions(input_no_stream, None).unwrap();
         assert!(result_no_stream.get("stream_options").is_none());
 
         // With stream: true, stream_options.include_usage should be injected
@@ -1139,7 +1291,7 @@ mod tests {
             "input": [{"role": "user", "content": "test"}],
             "stream": true
         });
-        let result_stream = responses_to_chat_completions(input_stream).unwrap();
+        let result_stream = responses_to_chat_completions(input_stream, None).unwrap();
         assert_eq!(
             result_stream["stream_options"],
             json!({"include_usage": true})
@@ -1152,7 +1304,7 @@ mod tests {
             "input": [{"role": "user", "content": "test"}],
             "stream": false
         });
-        let result_stream_false = responses_to_chat_completions(input_stream_false).unwrap();
+        let result_stream_false = responses_to_chat_completions(input_stream_false, None).unwrap();
         assert!(result_stream_false.get("stream_options").is_none());
     }
 
@@ -1164,7 +1316,7 @@ mod tests {
             "input": [{"role": "user", "content": "test"}]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
         let content = result["messages"][0]["content"].as_str().unwrap();
 
         assert!(content.starts_with("You are a coding assistant."));
@@ -1179,7 +1331,7 @@ mod tests {
             "input": [{"role": "user", "content": "test"}]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
         // No messages since no instructions and input is just a user message
         // (user messages from input go into messages array)
         let messages = result["messages"].as_array().unwrap();
@@ -1200,13 +1352,13 @@ mod tests {
             "input": [{"role": "user", "content": "test"}]
         });
 
-        let result1 = responses_to_chat_completions(input.clone()).unwrap();
+        let result1 = responses_to_chat_completions(input.clone(), None).unwrap();
         let content1 = result1["messages"][0]["content"].as_str().unwrap();
         let hint_count1 = content1.matches("call tools immediately").count();
         assert_eq!(hint_count1, 1, "hint should appear exactly once");
 
         // Convert the same input again (simulating repeated calls)
-        let result2 = responses_to_chat_completions(input.clone()).unwrap();
+        let result2 = responses_to_chat_completions(input.clone(), None).unwrap();
         let content2 = result2["messages"][0]["content"].as_str().unwrap();
         let hint_count2 = content2.matches("call tools immediately").count();
         assert_eq!(hint_count2, 1, "hint should still appear exactly once on repeated conversion");
@@ -1228,7 +1380,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         // Should be: system, user, assistant{content+tool_calls}, tool
@@ -1265,7 +1417,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions(input, None).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         // Should be: system, user, assistant1{content+tool_calls}, tool1,
@@ -1287,5 +1439,421 @@ mod tests {
         assert_eq!(messages[4]["tool_calls"][0]["function"]["name"], "read");
         assert_eq!(messages[5]["role"], "tool");
         assert_eq!(messages[5]["tool_call_id"], "c2");
+    }
+
+    // ==================== DeepSeek Thinking Mode Tests ====================
+
+    #[test]
+    fn standard_mode_omits_reasoning() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {"role": "user", "content": "test"},
+                {"role": "assistant", "content": "thinking..."},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "I should think about this."}]},
+                {"type": "function_call", "call_id": "c1", "name": "fn", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "result"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, None).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // No reasoning_content in any message in standard mode
+        for msg in messages {
+            assert!(
+                msg.get("reasoning_content").is_none(),
+                "reasoning_content should be omitted in standard mode"
+            );
+        }
+    }
+
+    #[test]
+    fn deepseek_thinking_preserves_reasoning_content() {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [
+                {"role": "user", "content": "test"},
+                {"role": "assistant", "content": "Here is the answer."},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "I should think about this carefully."}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Should have: user, assistant{content + reasoning_content}
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "Here is the answer.");
+        assert_eq!(
+            messages[1]["reasoning_content"],
+            "I should think about this carefully."
+        );
+    }
+
+    #[test]
+    fn deepseek_thinking_merges_reasoning_content_with_tool_calls() {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [
+                {"role": "user", "content": "What's the weather?"},
+                {"role": "assistant", "content": "Let me check."},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Need to call weather API."}]},
+                {"type": "function_call", "call_id": "c1", "name": "get_weather", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "Sunny"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Should be: user, assistant{content + reasoning_content + tool_calls}, tool
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "Let me check.");
+        assert_eq!(
+            messages[1]["reasoning_content"],
+            "Need to call weather API."
+        );
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "c1");
+        assert_eq!(messages[1]["tool_calls"][0]["function"]["name"], "get_weather");
+        assert_eq!(messages[2]["role"], "tool");
+    }
+
+    #[test]
+    fn deepseek_thinking_maps_reasoning_effort() {
+        let base = json!({
+            "model": "deepseek-chat",
+            "input": [{"role": "user", "content": "test"}],
+            "reasoning": {"effort": "PLACEHOLDER"}
+        });
+
+        for (input_effort, expected) in [
+            ("low", "high"),
+            ("medium", "high"),
+            ("high", "high"),
+            ("xhigh", "max"),
+            ("max", "max"),
+        ] {
+            let mut input = base.clone();
+            input["reasoning"]["effort"] = json!(input_effort);
+            let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+            assert_eq!(
+                result["reasoning_effort"], json!(expected),
+                "effort '{}' should map to '{}'",
+                input_effort, expected
+            );
+        }
+    }
+
+    #[test]
+    fn deepseek_thinking_strips_sampling_params() {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [{"role": "user", "content": "test"}],
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "stream": true
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+
+        assert!(
+            result.get("temperature").is_none(),
+            "temperature should be absent in deepseek_thinking mode"
+        );
+        assert!(
+            result.get("top_p").is_none(),
+            "top_p should be absent in deepseek_thinking mode"
+        );
+        // stream should still be present
+        assert_eq!(result["stream"], true);
+        // thinking should be injected
+        assert_eq!(result["thinking"]["type"], "enabled");
+    }
+
+    #[test]
+    fn standard_mode_does_not_strip_sampling_params() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{"role": "user", "content": "test"}],
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "stream": true
+        });
+
+        let result = responses_to_chat_completions(input, None).unwrap();
+
+        assert_eq!(result["temperature"], 0.7);
+        assert_eq!(result["top_p"], 0.9);
+        assert_eq!(result["stream"], true);
+        assert!(result.get("thinking").is_none());
+    }
+
+    #[test]
+    fn deepseek_thinking_multi_round_reasoning_preserved() {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [
+                {"role": "user", "content": "Run steps."},
+                // Round 1
+                {"role": "assistant", "content": "Step 1."},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Reasoning 1."}]},
+                {"type": "function_call", "call_id": "c1", "name": "fn1", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "r1"},
+                // Round 2
+                {"role": "assistant", "content": "Step 2."},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Reasoning 2."}]},
+                {"type": "function_call", "call_id": "c2", "name": "fn2", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c2", "output": "r2"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Round 1 assistant has reasoning 1
+        assert_eq!(messages[1]["reasoning_content"], "Reasoning 1.");
+        assert_eq!(messages[1]["content"], "Step 1.");
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "c1");
+
+        // Round 2 assistant has reasoning 2
+        assert_eq!(messages[3]["reasoning_content"], "Reasoning 2.");
+        assert_eq!(messages[3]["content"], "Step 2.");
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "c2");
+    }
+
+    #[test]
+    fn deepseek_thinking_injects_thinking_enabled() {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [{"role": "user", "content": "test"}]
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+        assert_eq!(result["thinking"]["type"], "enabled");
+    }
+
+    #[test]
+    fn deepseek_thinking_filters_penalty_from_passthrough() {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [{"role": "user", "content": "test"}],
+            "frequency_penalty": 0.5,
+            "presence_penalty": 0.3,
+            "metadata": {"key": "value"}
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+
+        assert!(result.get("frequency_penalty").is_none());
+        assert!(result.get("presence_penalty").is_none());
+        // Other passthrough fields should still work
+        assert_eq!(result["metadata"]["key"], "value");
+    }
+
+    #[test]
+    fn deepseek_thinking_reasoning_before_assistant_and_function_call() {
+        // Actual Responses API output order:
+        //   reasoning -> assistant message -> function_call -> function_call_output
+        // Tests that reasoning before an assistant message still merges into it.
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [
+                {"role": "user", "content": "What is 2+2?"},
+                {"role": "assistant", "content": "The answer is 4."},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Simple arithmetic."}]},
+                {"type": "function_call", "call_id": "c1", "name": "calculator", "arguments": "{\"expr\":\"2+2\"}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "4"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // user, assistant{content + reasoning_content + tool_calls}, tool
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "The answer is 4.");
+        assert_eq!(messages[1]["reasoning_content"], "Simple arithmetic.");
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "c1");
+        assert_eq!(messages[2]["role"], "tool");
+    }
+
+    #[test]
+    fn standard_mode_reasoning_before_assistant_still_omitted() {
+        // Same order as above, but in standard mode reasoning must be omitted.
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {"role": "user", "content": "What is 2+2?"},
+                {"role": "assistant", "content": "The answer is 4."},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Simple arithmetic."}]},
+                {"type": "function_call", "call_id": "c1", "name": "calculator", "arguments": "{\"expr\":\"2+2\"}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "4"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, None).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "The answer is 4.");
+        assert!(messages[1].get("reasoning_content").is_none());
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "c1");
+    }
+
+    // ==================== New DeepSeek Reasoning + Tool Calls Tests ====================
+
+    /// DeepSeek error case: reasoning -> function_call -> function_call_output
+    /// (no assistant message in between). Reasoning and tool_calls must land
+    /// in the SAME assistant message.
+    #[test]
+    fn deepseek_thinking_reasoning_before_function_call_without_message_merges_into_tool_call_assistant()
+     {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [
+                {"role": "user", "content": "What's the weather?"},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Need to call weather API."}]},
+                {"type": "function_call", "call_id": "c1", "name": "get_weather", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "Sunny"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Must be: user, assistant{reasoning_content + tool_calls}, tool
+        // NOT: user, assistant{reasoning only}, assistant{tool_calls}, tool
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], serde_json::Value::Null);
+        assert_eq!(
+            messages[1]["reasoning_content"],
+            "Need to call weather API."
+        );
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "c1");
+        assert_eq!(messages[1]["tool_calls"][0]["function"]["name"], "get_weather");
+        assert_eq!(messages[2]["role"], "tool");
+
+        // Verify no separate reasoning-only assistant message exists
+        let assistant_count = messages
+            .iter()
+            .filter(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"))
+            .count();
+        assert_eq!(assistant_count, 1, "should have exactly one assistant message");
+    }
+
+    /// Multiple function_calls with reasoning: all tool_calls merge into one
+    /// assistant message with reasoning_content, not separate messages.
+    #[test]
+    fn deepseek_thinking_reasoning_with_multiple_function_calls_merges_once() {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [
+                {"role": "user", "content": "Search and read file."},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Need to search first."}]},
+                {"type": "function_call", "call_id": "c1", "name": "search", "arguments": "{\"q\":\"test\"}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "found: main.rs"},
+                {"type": "function_call", "call_id": "c2", "name": "read", "arguments": "{\"file\":\"main.rs\"}"},
+                {"type": "function_call_output", "call_id": "c2", "output": "fn main() {}"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // First round: assistant{reasoning + tool_calls(c1)}, tool(c1)
+        // Second round: assistant{tool_calls(c2)}, tool(c2)
+        // Reasoning only merges into the FIRST round (where it was captured).
+        assert_eq!(messages.len(), 5);
+
+        // Round 1: assistant with reasoning_content and tool_calls
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["reasoning_content"], "Need to search first.");
+        assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "c1");
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["tool_call_id"], "c1");
+
+        // Round 2: assistant with tool_calls only (reasoning was consumed by round 1)
+        assert_eq!(messages[3]["role"], "assistant");
+        assert!(messages[3].get("reasoning_content").is_none());
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "c2");
+        assert_eq!(messages[4]["role"], "tool");
+        assert_eq!(messages[4]["tool_call_id"], "c2");
+    }
+
+    /// Standard mode: reasoning before function_call without message must still
+    /// be omitted — no reasoning_content on assistant message.
+    #[test]
+    fn standard_mode_reasoning_before_function_call_without_message_still_omitted() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {"role": "user", "content": "test"},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "I should think."}]},
+                {"type": "function_call", "call_id": "c1", "name": "fn", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "r1"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, None).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // user, assistant{tool_calls}, tool
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert!(
+            messages[1].get("reasoning_content").is_none(),
+            "reasoning_content must be absent in standard mode"
+        );
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "c1");
+    }
+
+    /// DeepSeek: reasoning -> assistant message -> function_call -> function_call_output
+    /// Reasoning must merge into the assistant message that has tool_calls.
+    #[test]
+    fn deepseek_thinking_reasoning_before_message_and_function_call_still_merges() {
+        let input = json!({
+            "model": "deepseek-chat",
+            "input": [
+                {"role": "user", "content": "What is 2+2?"},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "I should check my work."}]},
+                {"role": "assistant", "content": "Let me verify."},
+                {"type": "function_call", "call_id": "c1", "name": "calculator", "arguments": "{\"expr\":\"2+2\"}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "4"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input, Some("deepseek_thinking")).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // user, assistant{content + reasoning_content + tool_calls}, tool
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "Let me verify.");
+        assert_eq!(
+            messages[1]["reasoning_content"],
+            "I should check my work."
+        );
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "c1");
+        assert_eq!(messages[1]["tool_calls"][0]["function"]["name"], "calculator");
+        assert_eq!(messages[2]["role"], "tool");
+        assert_eq!(messages[2]["tool_call_id"], "c1");
+
+        // No separate reasoning-only assistant message
+        let assistant_count = messages
+            .iter()
+            .filter(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"))
+            .count();
+        assert_eq!(assistant_count, 1);
     }
 }

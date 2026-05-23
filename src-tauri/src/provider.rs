@@ -343,6 +343,11 @@ pub struct ProviderMeta {
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
     pub live_config_managed: Option<bool>,
+    /// Chat Completions 兼容模式（仅 Codex 供应商使用）
+    /// - "deepseek_thinking": DeepSeek Thinking 模式，保留 reasoning_content、
+    ///   映射 reasoning_effort、过滤无效采样参数
+    #[serde(rename = "chatCompatibilityMode", alias = "chat_compatibility_mode", skip_serializing_if = "Option::is_none")]
+    pub chat_compatibility_mode: Option<String>,
     /// 供应商类型标识（用于特殊供应商检测）
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
@@ -1126,5 +1131,36 @@ mod tests {
 
         assert!(toml.contains("base_url = \"https://example.com/openai\""));
         assert!(!toml.contains("https://example.com/openai/v1"));
+    }
+
+    #[test]
+    fn provider_meta_chat_compatibility_mode_alias() {
+        // camelCase JSON (primary format)
+        let json_camel = json!({
+            "chatCompatibilityMode": "deepseek_thinking"
+        });
+        let meta1: ProviderMeta = serde_json::from_value(json_camel).expect("camelCase alias");
+        assert_eq!(
+            meta1.chat_compatibility_mode,
+            Some("deepseek_thinking".to_string())
+        );
+
+        // snake_case JSON (alias for backward compat / manual DB edits)
+        let json_snake = json!({
+            "chat_compatibility_mode": "deepseek_thinking"
+        });
+        let meta2: ProviderMeta = serde_json::from_value(json_snake).expect("snake_case alias");
+        assert_eq!(
+            meta2.chat_compatibility_mode,
+            Some("deepseek_thinking".to_string())
+        );
+
+        // Serialization always produces camelCase (rename wins over alias)
+        let serialized = serde_json::to_value(&meta1).expect("serialize");
+        assert_eq!(
+            serialized.get("chatCompatibilityMode").and_then(|v| v.as_str()),
+            Some("deepseek_thinking")
+        );
+        assert!(serialized.get("chat_compatibility_mode").is_none());
     }
 }
