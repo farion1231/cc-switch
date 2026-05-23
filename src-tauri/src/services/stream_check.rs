@@ -278,9 +278,9 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
                 // Already handled via early dispatch above
-                unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
+                unreachable!("OpenCode/OpenClaw/Hermes/Pi 已通过 check_once_without_adapter 处理")
             }
         };
 
@@ -1382,7 +1382,7 @@ impl StreamCheckService {
                 // Try to extract first model from the models object
                 Self::extract_opencode_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
-            AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
                 // OpenClaw/Hermes use models array in settings_config
                 // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())

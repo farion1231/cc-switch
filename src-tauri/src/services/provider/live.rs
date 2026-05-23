@@ -349,7 +349,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop | AppType::Pi => false,
     }
 }
 
@@ -419,7 +419,7 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop | AppType::Pi => {
             Ok(settings.clone())
         }
     }
@@ -476,7 +476,7 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop | AppType::Pi => {
             Ok(settings.clone())
         }
     }
@@ -842,6 +842,32 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Pi => {
+            // Pi uses additive mode - write provider to models.json
+            use crate::pi_config;
+
+            let pi_provider_config = provider.settings_config.clone();
+
+            // Extract model_id from settings_config if present
+            let model_id = pi_provider_config
+                .get("pi_model_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            pi_config::set_pi_provider(&provider.id, &pi_provider_config)?;
+            log::info!("Pi provider '{}' written to models.json", provider.id);
+
+            // If this provider is current, set active in settings.json
+            let current_id =
+                crate::settings::get_current_provider(&AppType::Pi);
+            if current_id.as_deref() == Some(&provider.id) {
+                pi_config::set_active_pi_provider(
+                    &provider.id,
+                    model_id.as_deref(),
+                )?;
+                log::info!("Pi active provider set to '{}'", provider.id);
+            }
+        }
     }
     Ok(())
 }
@@ -1055,6 +1081,16 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Pi => {
+            use crate::pi_config;
+
+            let models = pi_config::read_models_json()?;
+            let settings = pi_config::read_settings_json().unwrap_or(json!({}));
+            Ok(json!({
+                "models": models,
+                "settings": settings
+            }))
+        }
     }
 }
 
@@ -1145,7 +1181,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1478,7 +1514,65 @@ pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppErro
     Ok(())
 }
 
-/// Remove an OpenClaw provider from live config
+/// Import Pi providers from live models.json into the CC Switch database.
+pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::pi_config;
+
+    let models_path = pi_config::get_models_json_path();
+    if !models_path.exists() {
+        return Ok(0);
+    }
+
+    let models = pi_config::read_models_json()?;
+    let providers = models
+        .get("providers")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let existing_ids = state.db.get_provider_ids("pi")?;
+
+    for (id, config) in &providers {
+        // Skip CC Switch-managed providers
+        if id.starts_with("cc-switch-") {
+            continue;
+        }
+
+        // Skip if already exists in database
+        if existing_ids.contains(id) {
+            log::debug!("Pi provider '{id}' already exists in database, skipping");
+            continue;
+        }
+
+        // Extract display name from provider config
+        let display_name = id.clone();
+
+        let mut provider = Provider::with_id(id.clone(), display_name, config.clone(), None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+        provider.icon = Some("pi".to_string());
+        provider.category = Some("custom".to_string());
+
+        if let Err(e) = state.db.save_provider("pi", &provider) {
+            log::warn!("Failed to import Pi provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported Pi provider '{id}' from live config");
+    }
+
+    Ok(imported)
+}
+
+/// Remove a Pi provider from live config
 ///
 /// This removes a specific provider from ~/.openclaw/openclaw.json
 /// without affecting other providers in the file.

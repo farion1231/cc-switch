@@ -68,6 +68,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     opencode: boolean;
     openclaw: boolean;
     hermes: boolean;
+    pi: boolean;
   }>(() => {
     if (initialData?.apps) {
       return { ...initialData.apps };
@@ -79,6 +80,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
+      pi: defaultEnabledApps.includes("pi"),
     };
   });
 
