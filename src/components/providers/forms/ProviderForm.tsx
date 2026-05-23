@@ -471,6 +471,16 @@ function ProviderFormFull({
       );
     });
 
+  // Sync apiFormat from initialData.meta after mount (e.g. when editing a
+  // saved Codex provider, the meta may arrive after the first render).
+  useEffect(() => {
+    if (initialData?.meta?.apiFormat === "openai_chat") {
+      setLocalCodexApiFormat("openai_chat");
+    } else if (initialData?.meta?.apiFormat === "openai_responses") {
+      setLocalCodexApiFormat("openai_responses");
+    }
+  }, [initialData?.meta?.apiFormat]);
+
   const [localCodexChatCompatibilityMode, setLocalCodexChatCompatibilityMode] =
     useState<CodexChatCompatibilityMode>(() => {
       const meta = initialData?.meta;
@@ -479,6 +489,15 @@ function ProviderFormFull({
       }
       return "standard";
     });
+
+  // Sync chatCompatibilityMode from initialData.meta after mount.
+  useEffect(() => {
+    if (initialData?.meta?.chatCompatibilityMode === "deepseek_thinking") {
+      setLocalCodexChatCompatibilityMode("deepseek_thinking");
+    } else if (initialData?.meta?.chatCompatibilityMode === "standard") {
+      setLocalCodexChatCompatibilityMode("standard");
+    }
+  }, [initialData?.meta?.chatCompatibilityMode]);
 
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
