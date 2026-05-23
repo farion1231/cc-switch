@@ -1146,7 +1146,20 @@ impl RequestForwarder {
 
         // 转换请求体（如果需要）
         let request_body = if codex_responses_to_chat {
-            super::providers::transform_codex_chat::responses_to_chat_completions(mapped_body)?
+            // Only in the Responses -> Chat Completions adapter path, override
+            // the model name from the provider's TOML config. This ensures the
+            // upstream Chat Completions endpoint receives the correct model
+            // even if the Codex client cached an old model name.
+            let compat_mode = super::providers::codex_chat_compatibility_mode(provider);
+            let body = apply_codex_config_model_override_if_chat_adapter(
+                mapped_body,
+                provider,
+                /* should_convert */ true,
+            );
+            super::providers::transform_codex_chat::responses_to_chat_completions(
+                body,
+                compat_mode.as_deref(),
+            )?
         } else if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
@@ -2255,6 +2268,36 @@ fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::Head
         .unwrap_or(false)
 }
 
+/// For Codex providers in the Responses -> Chat Completions adapter path,
+/// override the model name from the provider's TOML config. Only applies
+/// when `should_convert` is true (i.e., the adapter path is active).
+fn apply_codex_config_model_override_if_chat_adapter(
+    mut body: Value,
+    provider: &Provider,
+    should_convert: bool,
+) -> Value {
+    if !should_convert {
+        return body;
+    }
+
+    use super::providers::extract_codex_model_from_toml;
+
+    if let Some(config_str) = provider.settings_config.get("config").and_then(|v| v.as_str()) {
+        if let Some(model) = extract_codex_model_from_toml(config_str) {
+            if body.get("model").and_then(|v| v.as_str()) != Some(&model) {
+                log::debug!(
+                    "[Codex] model override (chat adapter): {:?} → {}",
+                    body.get("model").and_then(|v| v.as_str()).unwrap_or("<none>"),
+                    model
+                );
+                body["model"] = serde_json::json!(model);
+            }
+        }
+    }
+
+    body
+}
+
 #[cfg(test)]
 fn should_force_identity_encoding(
     endpoint: &str,
@@ -3076,5 +3119,77 @@ mod tests {
             let will_replace = is_copilot && !is_full_url;
             assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    /// Helper: create a Codex provider with TOML config containing a model.
+    fn codex_provider_with_config(model: &str, base_url: &str) -> Provider {
+        let toml_config = format!(
+            r#"model = "{}"
+base_url = "{}/v1/chat/completions"
+"#,
+            model, base_url
+        );
+
+        Provider {
+            id: "deepseek".to_string(),
+            name: "DeepSeek".to_string(),
+            settings_config: json!({
+                "config": toml_config
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    /// Codex chat adapter path: model should be overridden from provider config.
+    #[test]
+    fn codex_chat_adapter_overrides_model_from_provider_config() {
+        let provider = codex_provider_with_config("deepseek-v4-flash", "https://platform.deepseek.com");
+        let body = json!({"model": "qwen3.6-plus", "input": []});
+
+        // should_convert=true simulates the codex_responses_to_chat path
+        let result = apply_codex_config_model_override_if_chat_adapter(body, &provider, true);
+        assert_eq!(result["model"], "deepseek-v4-flash");
+    }
+
+    /// Codex native responses (no chat adapter): model should NOT be overridden.
+    #[test]
+    fn codex_native_responses_does_not_override_model() {
+        let provider = codex_provider_with_config("deepseek-v4-flash", "https://platform.deepseek.com");
+        let body = json!({"model": "o3", "input": []});
+
+        // should_convert=false simulates the native Responses passthrough path
+        let result = apply_codex_config_model_override_if_chat_adapter(body, &provider, false);
+        assert_eq!(result["model"], "o3");
+    }
+
+    /// Provider without config: model should NOT be overridden even in chat adapter path.
+    #[test]
+    fn codex_no_config_does_not_override_model() {
+        let provider = Provider {
+            id: "openai".to_string(),
+            name: "OpenAI".to_string(),
+            settings_config: json!({}),
+            website_url: None,
+            category: Some("codex".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let body = json!({"model": "gpt-5.4-mini", "input": []});
+
+        let result = apply_codex_config_model_override_if_chat_adapter(body, &provider, true);
+        assert_eq!(result["model"], "gpt-5.4-mini");
     }
 }

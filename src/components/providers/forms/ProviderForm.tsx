@@ -15,6 +15,7 @@ import type {
   ProviderTestConfig,
   ClaudeApiFormat,
   CodexApiFormat,
+  CodexChatCompatibilityMode,
   ClaudeApiKeyField,
 } from "@/types";
 import {
@@ -470,6 +471,15 @@ function ProviderFormFull({
       );
     });
 
+  const [localCodexChatCompatibilityMode, setLocalCodexChatCompatibilityMode] =
+    useState<CodexChatCompatibilityMode>(() => {
+      const meta = initialData?.meta;
+      if (meta?.chatCompatibilityMode === "deepseek_thinking") {
+        return "deepseek_thinking";
+      }
+      return "standard";
+    });
+
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
 
@@ -495,6 +505,13 @@ function ProviderFormFull({
       });
     },
     [setCodexConfig, debouncedValidate],
+  );
+
+  const handleCodexChatCompatibilityModeChange = useCallback(
+    (mode: CodexChatCompatibilityMode) => {
+      setLocalCodexChatCompatibilityMode(mode);
+    },
+    [],
   );
 
   useEffect(() => {
@@ -1313,6 +1330,13 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      chatCompatibilityMode:
+        appId === "codex" &&
+        category !== "official" &&
+        localCodexApiFormat === "openai_chat" &&
+        localCodexChatCompatibilityMode !== "standard"
+          ? localCodexChatCompatibilityMode
+          : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -1937,6 +1961,10 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
+              chatCompatibilityMode={localCodexChatCompatibilityMode}
+              onChatCompatibilityModeChange={
+                handleCodexChatCompatibilityModeChange
+              }
               shouldShowModelField={category !== "official"}
               modelName={codexModelName}
               onModelNameChange={handleCodexModelNameChange}

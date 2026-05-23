@@ -43,6 +43,8 @@ pub use claude::{
     transform_claude_request_for_api_format, ClaudeAdapter,
 };
 pub use codex::should_convert_codex_responses_to_chat;
+pub use codex::codex_chat_compatibility_mode;
+pub use codex::extract_codex_model_from_toml;
 pub use codex::CodexAdapter;
 pub use gemini::GeminiAdapter;
 

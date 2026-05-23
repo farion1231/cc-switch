@@ -185,6 +185,8 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // Codex Chat 兼容模式：用于 DeepSeek Thinking 等 provider 特殊适配
+  chatCompatibilityMode?: CodexChatCompatibilityMode;
 }
 
 // Skill 同步方式
@@ -208,6 +210,11 @@ export type ClaudeApiFormat =
 // - "openai_responses": OpenAI Responses API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
 export type CodexApiFormat = "openai_responses" | "openai_chat";
+
+// Codex Chat 兼容模式
+// - undefined / "standard": 标准 OpenAI Chat Completions，无特殊处理
+// - "deepseek_thinking": DeepSeek Thinking 模式，adapter 会合并 reasoning_content 与 tool_calls
+export type CodexChatCompatibilityMode = "standard" | "deepseek_thinking";
 
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
