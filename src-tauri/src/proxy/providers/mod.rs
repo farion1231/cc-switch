@@ -23,10 +23,12 @@ pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub mod models;
 pub mod streaming;
+pub mod streaming_codex_anthropic;
 pub mod streaming_codex_chat;
 pub mod streaming_gemini;
 pub mod streaming_responses;
 pub mod transform;
+pub mod transform_anthropic_to_codex;
 pub mod transform_codex_chat;
 pub mod transform_gemini;
 pub mod transform_responses;
@@ -44,6 +46,10 @@ pub use claude::{
 };
 pub use codex::should_convert_codex_responses_to_chat;
 pub use codex::CodexAdapter;
+pub use codex::{
+    build_anthropic_url_for_codex, codex_provider_uses_anthropic_api,
+    extract_anthropic_api_key_for_codex, should_convert_codex_to_anthropic,
+};
 pub use gemini::GeminiAdapter;
 
 /// 供应商类型枚举

@@ -183,12 +183,17 @@ export function CodexFormFields({
                   defaultValue: "OpenAI Chat Completions (需开启路由)",
                 })}
               </SelectItem>
+              <SelectItem value="anthropic">
+                {t("providerForm.codexApiFormatAnthropic", {
+                  defaultValue: "Anthropic Messages API (需开启路由)",
+                })}
+              </SelectItem>
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
             {t("providerForm.codexApiFormatHint", {
               defaultValue:
-                "选择供应商真实支持的 Codex API 格式；Chat Completions 会通过本地路由自动转换为 Responses。",
+                "选择供应商真实支持的 API 格式；Chat Completions 和 Anthropic 会通过本地路由自动转换为 Responses。",
             })}
           </p>
         </div>

@@ -16,11 +16,17 @@ use super::{
     },
     handler_context::RequestContext,
     providers::{
-        get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
+        get_adapter, get_claude_api_format,
+        streaming::create_anthropic_sse_stream,
+        streaming_codex_anthropic::{
+            create_openai_chat_sse_stream_from_anthropic,
+            create_responses_sse_stream_from_anthropic,
+        },
         streaming_codex_chat::create_responses_sse_stream_from_chat,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
-        streaming_responses::create_anthropic_sse_stream_from_responses, transform,
-        transform_codex_chat, transform_gemini, transform_responses,
+        streaming_responses::create_anthropic_sse_stream_from_responses,
+        transform, transform_anthropic_to_codex, transform_codex_chat, transform_gemini,
+        transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
@@ -525,6 +531,19 @@ pub async fn handle_chat_completions(
     ctx.provider = result.provider;
     let response = result.response;
 
+    // Codex → Anthropic: 响应格式转换
+    if super::providers::should_convert_codex_to_anthropic(&ctx.provider, &endpoint) {
+        return handle_codex_to_anthropic_transform(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            &endpoint,
+            connection_guard,
+        )
+        .await;
+    }
+
     process_response(
         response,
         &ctx,
@@ -588,6 +607,19 @@ pub async fn handle_responses(
     let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
+
+    // Codex → Anthropic: 响应格式转换（优先于 Responses→Chat 转换）
+    if super::providers::should_convert_codex_to_anthropic(&ctx.provider, &endpoint) {
+        return handle_codex_to_anthropic_transform(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            &endpoint,
+            connection_guard,
+        )
+        .await;
+    }
 
     if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
         return handle_codex_chat_to_responses_transform(
@@ -663,6 +695,19 @@ pub async fn handle_responses_compact(
     let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
+
+    // Codex → Anthropic: 响应格式转换（优先于 Responses→Chat 转换）
+    if super::providers::should_convert_codex_to_anthropic(&ctx.provider, &endpoint) {
+        return handle_codex_to_anthropic_transform(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            &endpoint,
+            connection_guard,
+        )
+        .await;
+    }
 
     if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
         return handle_codex_chat_to_responses_transform(
@@ -839,6 +884,230 @@ async fn handle_codex_chat_to_responses_transform(
             log::error!("[Codex] 构建 Responses 响应失败: {e}");
             ProxyError::Internal(format!("Failed to build response: {e}"))
         })
+}
+
+// ============================================================================
+// Codex → Anthropic 响应格式转换
+// ============================================================================
+
+/// 将 Anthropic Messages API 响应转换回 Codex CLI 期望的 OpenAI 格式
+/// （Chat Completions 或 Responses API，取决于原始请求端点）
+async fn handle_codex_to_anthropic_transform(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    is_stream: bool,
+    original_endpoint: &str,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+
+    // 上游错误直接透传
+    if !status.is_success() {
+        return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
+            .await;
+    }
+
+    let path = original_endpoint
+        .split_once('?')
+        .map_or(original_endpoint, |(p, _)| p);
+    let is_responses_endpoint = matches!(
+        path,
+        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
+    );
+
+    // 流式响应：Anthropic SSE → OpenAI SSE
+    if is_stream || response.is_sse() {
+        let stream = response.bytes_stream();
+
+        if is_responses_endpoint {
+            // Anthropic SSE → Responses API SSE
+            let sse_stream = create_responses_sse_stream_from_anthropic(stream);
+            let usage_collector = create_codex_usage_collector(state, ctx, is_responses_endpoint);
+            let logged_stream = create_logged_passthrough_stream(
+                sse_stream,
+                ctx.tag,
+                usage_collector,
+                ctx.streaming_timeout_config(),
+                connection_guard,
+            );
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                "Content-Type",
+                axum::http::HeaderValue::from_static("text/event-stream"),
+            );
+            headers.insert(
+                "Cache-Control",
+                axum::http::HeaderValue::from_static("no-cache"),
+            );
+            let body = axum::body::Body::from_stream(logged_stream);
+            return Ok((headers, body).into_response());
+        } else {
+            // Anthropic SSE → OpenAI Chat Completions SSE
+            let sse_stream = create_openai_chat_sse_stream_from_anthropic(stream);
+            let usage_collector = create_codex_usage_collector(state, ctx, false);
+            let logged_stream = create_logged_passthrough_stream(
+                sse_stream,
+                ctx.tag,
+                usage_collector,
+                ctx.streaming_timeout_config(),
+                connection_guard,
+            );
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                "Content-Type",
+                axum::http::HeaderValue::from_static("text/event-stream"),
+            );
+            headers.insert(
+                "Cache-Control",
+                axum::http::HeaderValue::from_static("no-cache"),
+            );
+            let body = axum::body::Body::from_stream(logged_stream);
+            return Ok((headers, body).into_response());
+        }
+    }
+
+    // 非流式响应：解析 Anthropic JSON 并转换
+    let _connection_guard = connection_guard;
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, resp_status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    let anthropic_response: Value = serde_json::from_slice(&body_bytes).map_err(|e| {
+        log::error!("[Codex→Anthropic] 解析 Anthropic 响应失败: {e}, body: {body_str}");
+        ProxyError::TransformError(format!("Failed to parse Anthropic response: {e}"))
+    })?;
+
+    let converted = if is_responses_endpoint {
+        transform_anthropic_to_codex::anthropic_to_responses_response(anthropic_response).map_err(
+            |e| {
+                log::error!("[Codex→Anthropic] Anthropic → Responses 转换失败: {e}");
+                e
+            },
+        )?
+    } else {
+        transform_anthropic_to_codex::anthropic_to_chat_completion_response(anthropic_response)
+            .map_err(|e| {
+                log::error!("[Codex→Anthropic] Anthropic → Chat 转换失败: {e}");
+                e
+            })?
+    };
+
+    // Usage logging
+    if let Some(usage) = converted.get("usage").and_then(|_| {
+        if is_responses_endpoint {
+            TokenUsage::from_codex_response_auto(&converted)
+        } else {
+            TokenUsage::from_openai_response(&converted)
+        }
+    }) {
+        let model = usage
+            .model
+            .clone()
+            .unwrap_or_else(|| ctx.request_model.clone());
+        let request_model = ctx.request_model.clone();
+        let latency_ms = ctx.latency_ms();
+        tokio::spawn({
+            let state = state.clone();
+            let provider_id = ctx.provider.id.clone();
+            let session_id = ctx.session_id.clone();
+            async move {
+                log_usage(
+                    &state,
+                    &provider_id,
+                    "codex",
+                    &model,
+                    &request_model,
+                    usage,
+                    latency_ms,
+                    None,
+                    false,
+                    resp_status.as_u16(),
+                    Some(session_id),
+                )
+                .await;
+            }
+        });
+    }
+
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    strip_hop_by_hop_response_headers(&mut response_headers);
+
+    let mut builder = axum::response::Response::builder().status(resp_status);
+    for (key, value) in response_headers.iter() {
+        builder = builder.header(key, value);
+    }
+    builder = builder.header("content-type", "application/json");
+
+    let response_body = serde_json::to_vec(&converted).map_err(|e| {
+        log::error!("[Codex→Anthropic] 序列化转换响应失败: {e}");
+        ProxyError::TransformError(format!("Failed to serialize converted response: {e}"))
+    })?;
+
+    builder
+        .body(axum::body::Body::from(response_body))
+        .map_err(|e| {
+            log::error!("[Codex→Anthropic] 构建响应失败: {e}");
+            ProxyError::Internal(format!("Failed to build response: {e}"))
+        })
+}
+
+/// 创建 Codex 用途日志收集器
+fn create_codex_usage_collector(
+    state: &ProxyState,
+    ctx: &RequestContext,
+    is_responses: bool,
+) -> Option<SseUsageCollector> {
+    if !usage_logging_enabled(state) {
+        return None;
+    }
+
+    let state = state.clone();
+    let provider_id = ctx.provider.id.clone();
+    let request_model = ctx.request_model.clone();
+    let start_time = ctx.start_time;
+    let session_id = ctx.session_id.clone();
+
+    Some(SseUsageCollector::new(
+        start_time,
+        Some(codex_stream_usage_event_filter),
+        move |events, first_token_ms| {
+            let usage = if is_responses {
+                TokenUsage::from_codex_stream_events_auto(&events).unwrap_or_default()
+            } else {
+                TokenUsage::from_openai_stream_events(&events).unwrap_or_default()
+            };
+            let model = usage.model.clone().unwrap_or_else(|| request_model.clone());
+            let latency_ms = start_time.elapsed().as_millis() as u64;
+
+            let state = state.clone();
+            let provider_id = provider_id.clone();
+            let request_model = request_model.clone();
+            let session_id = session_id.clone();
+
+            tokio::spawn(async move {
+                log_usage(
+                    &state,
+                    &provider_id,
+                    "codex",
+                    &model,
+                    &request_model,
+                    usage,
+                    latency_ms,
+                    first_token_ms,
+                    true,
+                    200,
+                    Some(session_id),
+                )
+                .await;
+            });
+        },
+    ))
 }
 
 // ============================================================================

@@ -669,7 +669,7 @@ export const extractCodexWireApi = (
 // 在 Codex 的 TOML 配置文本中写入或更新 wire_api 字段
 export const setCodexWireApi = (
   configText: string,
-  wireApi: "responses" | "chat",
+  wireApi: "responses" | "chat" | "anthropic",
 ): string => {
   const normalizedText = normalizeTomlText(configText);
   const lines = normalizedText ? normalizedText.split("\n") : [];

@@ -207,7 +207,8 @@ export type ClaudeApiFormat =
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
-export type CodexApiFormat = "openai_responses" | "openai_chat";
+// - "anthropic": Anthropic Messages API 格式，需要本地路由转换
+export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
 
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";

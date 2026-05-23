@@ -153,16 +153,18 @@ export function useProviderActions(
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
-      const isCodexChatFormat =
+      const isCodexProxyFormat =
         activeApp === "codex" &&
         (provider.meta?.apiFormat === "openai_chat" ||
+          provider.meta?.apiFormat === "anthropic" ||
           (typeof (provider.settingsConfig as Record<string, any>)?.config ===
             "string" &&
-            isCodexChatWireApi(
-              extractCodexWireApi(
+            (() => {
+              const wireApi = extractCodexWireApi(
                 (provider.settingsConfig as Record<string, any>).config,
-              ),
-            )));
+              );
+              return isCodexChatWireApi(wireApi) || wireApi === "anthropic";
+            })()));
 
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
@@ -185,10 +187,15 @@ export function useProviderActions(
           proxyRequiredReason = t("notifications.proxyReasonOpenAIResponses", {
             defaultValue: "使用 OpenAI Responses 接口格式",
           });
-        } else if (isCodexChatFormat) {
-          proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
-            defaultValue: "使用 OpenAI Chat 接口格式",
-          });
+        } else if (isCodexProxyFormat) {
+          proxyRequiredReason =
+            provider.meta?.apiFormat === "anthropic"
+              ? t("notifications.proxyReasonAnthropic", {
+                  defaultValue: "使用 Anthropic Messages 接口格式",
+                })
+              : t("notifications.proxyReasonOpenAIChat", {
+                  defaultValue: "使用 OpenAI Chat 接口格式",
+                });
         } else if (
           activeApp === "claude-desktop" &&
           provider.meta?.claudeDesktopMode === "proxy"

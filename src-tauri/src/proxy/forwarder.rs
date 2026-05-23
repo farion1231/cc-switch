@@ -27,7 +27,7 @@ use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::{app_config::AppType, provider::Provider};
 use futures::StreamExt;
 use http::Extensions;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
@@ -1110,7 +1110,12 @@ impl RequestForwarder {
         };
         let codex_responses_to_chat = matches!(app_type, AppType::Codex)
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
-        let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
+        let codex_to_anthropic = matches!(app_type, AppType::Codex)
+            && super::providers::should_convert_codex_to_anthropic(provider, endpoint);
+        let (effective_endpoint, passthrough_query) = if codex_to_anthropic {
+            // Rewrite any Codex endpoint to Anthropic Messages API
+            ("/v1/messages".to_string(), None)
+        } else if codex_responses_to_chat {
             rewrite_codex_responses_endpoint_to_chat(endpoint)
         } else if needs_transform && adapter.name() == "Claude" {
             let api_format = resolved_claude_api_format
@@ -1132,7 +1137,9 @@ impl RequestForwarder {
                 .to_ascii_lowercase()
                 .ends_with("/chat/completions");
 
-        let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
+        let url = if codex_to_anthropic {
+            super::providers::build_anthropic_url_for_codex(&base_url, &effective_endpoint)
+        } else if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
@@ -1145,7 +1152,17 @@ impl RequestForwarder {
         };
 
         // 转换请求体（如果需要）
-        let request_body = if codex_responses_to_chat {
+        let request_body = if codex_to_anthropic {
+            let is_responses_endpoint = matches!(
+                endpoint.split_once('?').map_or(endpoint, |(p, _)| p),
+                "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
+            );
+            if is_responses_endpoint {
+                super::providers::transform_responses::responses_request_to_anthropic(mapped_body)?
+            } else {
+                super::providers::transform::openai_chat_request_to_anthropic(mapped_body)?
+            }
+        } else if codex_responses_to_chat {
             super::providers::transform_codex_chat::responses_to_chat_completions(mapped_body)?
         } else if needs_transform {
             if adapter.name() == "Claude" {
@@ -1167,6 +1184,14 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Codex 直连 Anthropic 格式端点时，规范化已知兼容性字段
+        let request_body =
+            if matches!(app_type, AppType::Codex) && is_claude_messages_path(&effective_endpoint) {
+                normalize_anthropic_request_body(request_body)
+            } else {
+                request_body
+            };
+
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = prepare_upstream_request_body(request_body);
@@ -1180,15 +1205,41 @@ impl RequestForwarder {
         );
         let request_is_streaming =
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
-        let force_identity_encoding =
-            needs_transform || codex_responses_to_chat || request_is_streaming;
+        let force_identity_encoding = needs_transform
+            || codex_responses_to_chat
+            || codex_to_anthropic
+            || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
         let mut should_send_codex_oauth_session_headers = false;
 
         // 获取认证头（提前准备，用于内联替换）
-        let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
+        let mut auth_headers = if codex_to_anthropic {
+            // Codex → Anthropic: 使用 x-api-key + anthropic-version 认证
+            match super::providers::extract_anthropic_api_key_for_codex(provider) {
+                Some(key) => {
+                    use http::{HeaderName, HeaderValue};
+                    vec![
+                        (
+                            HeaderName::from_static("x-api-key"),
+                            HeaderValue::from_str(&key).map_err(|_| {
+                                ProxyError::AuthError("Invalid Anthropic API key".to_string())
+                            })?,
+                        ),
+                        (
+                            HeaderName::from_static("anthropic-version"),
+                            HeaderValue::from_static("2023-06-01"),
+                        ),
+                    ]
+                }
+                None => {
+                    return Err(ProxyError::AuthError(
+                        "No API key found for Anthropic provider".to_string(),
+                    ))
+                }
+            }
+        } else if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
                 if let Some(app_handle) = &self.app_handle {
@@ -2288,6 +2339,67 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     format!("{truncated}...")
 }
 
+/// 规范化 Anthropic Messages API 请求体中已知的兼容性问题。
+///
+/// - `tool_choice`：将字符串简写（`"auto"`、`"none"`、`"any"`）转换为 Anthropic API 要求的对象格式。
+///   部分上游（如 MiMo）严格要求对象格式，拒绝字符串形式。
+/// - `messages[].content`：确保每条消息都满足上游对内容字段的要求。
+///   - user/system 消息：`content` 必须包含至少一个非空文本块。
+///   - assistant 消息：至少需要 `content`（含非空文本块）、`reasoning_content`、`tool_calls` 之一。
+fn normalize_anthropic_request_body(mut body: Value) -> Value {
+    // tool_choice: string → object
+    if let Some(tc) = body.get("tool_choice").cloned() {
+        if let Some(s) = tc.as_str() {
+            body["tool_choice"] = json!({ "type": s });
+        }
+    }
+
+    // messages[].content: 确保每条消息满足上游要求
+    if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages.iter_mut() {
+            let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+            if role == "assistant" {
+                // assistant 消息需要至少一个内容字段
+                let has_content = has_meaningful_content(msg.get("content"));
+                let has_reasoning = msg.get("reasoning_content").is_some_and(|v| !v.is_null());
+                let has_tool_calls = msg
+                    .get("tool_calls")
+                    .and_then(|t| t.as_array())
+                    .is_some_and(|a| !a.is_empty());
+                if !has_content && !has_reasoning && !has_tool_calls {
+                    msg["content"] = json!([{ "type": "text", "text": "(empty)" }]);
+                }
+            } else {
+                // user/system 消息需要非空 content
+                if !has_meaningful_content(msg.get("content")) {
+                    msg["content"] = json!([{ "type": "text", "text": "(empty)" }]);
+                }
+            }
+        }
+    }
+
+    body
+}
+
+/// 判断 content 字段是否包含有意义的内容（非 null、非空数组、且至少有一个非空 text 块）。
+fn has_meaningful_content(content: Option<&Value>) -> bool {
+    match content {
+        Some(Value::Array(arr)) if !arr.is_empty() => {
+            // 至少有一个 text 块的 text 字段非空，或存在非 text 类型的块
+            arr.iter()
+                .any(|block| match block.get("type").and_then(|t| t.as_str()) {
+                    Some("text") => block
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .is_some_and(|s| !s.is_empty()),
+                    Some(_) => true, // tool_use / image / etc. 视为有效内容
+                    None => true,
+                })
+        }
+        _ => false,
+    }
+}
+
 fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
 }
@@ -3077,5 +3189,233 @@ mod tests {
             let will_replace = is_copilot && !is_full_url;
             assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    // ==================== normalize_anthropic_request_body 测试 ====================
+
+    #[test]
+    fn normalize_tool_choice_string_to_object() {
+        let body = json!({"model": "mimo-v2.5", "tool_choice": "auto", "messages": []});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(result["tool_choice"], json!({"type": "auto"}));
+    }
+
+    #[test]
+    fn normalize_tool_choice_none_string() {
+        let body = json!({"tool_choice": "none", "messages": []});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(result["tool_choice"], json!({"type": "none"}));
+    }
+
+    #[test]
+    fn normalize_tool_choice_any_string() {
+        let body = json!({"tool_choice": "any", "messages": []});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(result["tool_choice"], json!({"type": "any"}));
+    }
+
+    #[test]
+    fn normalize_tool_choice_object_unchanged() {
+        let body = json!({"tool_choice": {"type": "auto"}, "messages": []});
+        let result = normalize_anthropic_request_body(body.clone());
+        assert_eq!(result["tool_choice"], body["tool_choice"]);
+    }
+
+    #[test]
+    fn normalize_tool_choice_absent_unchanged() {
+        let body = json!({"model": "test", "messages": []});
+        let result = normalize_anthropic_request_body(body.clone());
+        assert!(result.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn normalize_user_message_missing_content() {
+        let body = json!({"messages": [{"role": "user"}]});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+    }
+
+    #[test]
+    fn normalize_user_message_null_content() {
+        let body = json!({"messages": [{"role": "user", "content": null}]});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+    }
+
+    #[test]
+    fn normalize_user_message_empty_array_content() {
+        let body = json!({"messages": [{"role": "user", "content": []}]});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+    }
+
+    #[test]
+    fn normalize_user_message_valid_content_unchanged() {
+        let body = json!({"messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+        ]});
+        let result = normalize_anthropic_request_body(body.clone());
+        assert_eq!(
+            result["messages"][0]["content"],
+            body["messages"][0]["content"]
+        );
+    }
+
+    #[test]
+    fn normalize_assistant_message_empty_all_fields() {
+        let body = json!({"messages": [{"role": "assistant"}]});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+    }
+
+    #[test]
+    fn normalize_assistant_message_with_tool_calls_only() {
+        let body = json!({"messages": [
+            {"role": "assistant", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "test", "arguments": "{}"}}]}
+        ]});
+        let result = normalize_anthropic_request_body(body.clone());
+        // 有 tool_calls，不应注入 content
+        assert!(result["messages"][0].get("content").is_none());
+    }
+
+    #[test]
+    fn normalize_assistant_message_with_content_only() {
+        let body = json!({"messages": [
+            {"role": "assistant", "content": [{"type": "text", "text": "hi"}]}
+        ]});
+        let result = normalize_anthropic_request_body(body.clone());
+        assert_eq!(
+            result["messages"][0]["content"],
+            body["messages"][0]["content"]
+        );
+    }
+
+    #[test]
+    fn normalize_assistant_message_with_reasoning_content() {
+        let body = json!({"messages": [
+            {"role": "assistant", "reasoning_content": "thinking..."}
+        ]});
+        let result = normalize_anthropic_request_body(body.clone());
+        // 有 reasoning_content，不应注入 content
+        assert!(result["messages"][0].get("content").is_none());
+    }
+
+    #[test]
+    fn normalize_system_message_missing_content() {
+        let body = json!({"messages": [{"role": "system"}]});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+    }
+
+    #[test]
+    fn normalize_user_message_empty_text_content() {
+        let body = json!({"messages": [
+            {"role": "user", "content": [{"type": "text", "text": ""}]}
+        ]});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+    }
+
+    #[test]
+    fn normalize_assistant_message_empty_text_content() {
+        // Codex 多轮对话中 assistant 消息可能包含空 text
+        let body = json!({"messages": [
+            {"role": "assistant", "content": [{"type": "text", "text": ""}]}
+        ]});
+        let result = normalize_anthropic_request_body(body);
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+    }
+
+    #[test]
+    fn normalize_content_with_tool_use_block_unchanged() {
+        let body = json!({"messages": [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "call_1", "name": "test", "input": {}}
+            ]}
+        ]});
+        let result = normalize_anthropic_request_body(body.clone());
+        // tool_use 块视为有效内容，不应被替换
+        assert_eq!(
+            result["messages"][0]["content"],
+            body["messages"][0]["content"]
+        );
+    }
+
+    #[test]
+    fn normalize_mixed_empty_and_valid_text_blocks() {
+        // content 数组中同时有空和非空 text 块 → 视为有效，不替换
+        let body = json!({"messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": ""},
+                {"type": "text", "text": "hello"}
+            ]}
+        ]});
+        let result = normalize_anthropic_request_body(body.clone());
+        assert_eq!(
+            result["messages"][0]["content"],
+            body["messages"][0]["content"]
+        );
+    }
+
+    #[test]
+    fn normalize_mixed_messages() {
+        let body = json!({"tool_choice": "auto", "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": ""}]},
+            {"role": "user"},
+            {"role": "assistant"}
+        ]});
+        let result = normalize_anthropic_request_body(body);
+
+        // tool_choice 转换
+        assert_eq!(result["tool_choice"], json!({"type": "auto"}));
+
+        // 有效消息不变
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([{"type": "text", "text": "hello"}])
+        );
+        assert_eq!(
+            result["messages"][1]["content"],
+            json!([{"type": "text", "text": "hi"}])
+        );
+
+        // 空 text 内容被替换
+        assert_eq!(
+            result["messages"][2]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+
+        // 缺失 content 的消息被填充
+        assert_eq!(
+            result["messages"][3]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+        assert_eq!(
+            result["messages"][4]["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
     }
 }

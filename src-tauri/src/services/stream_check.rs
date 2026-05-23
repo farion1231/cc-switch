@@ -17,7 +17,8 @@ use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{
-    get_adapter, AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter,
+    codex_provider_uses_anthropic_api, extract_anthropic_api_key_for_codex, get_adapter, AuthInfo,
+    AuthStrategy, ClaudeAdapter, ProviderAdapter,
 };
 
 /// 健康状态枚举
@@ -532,10 +533,24 @@ impl StreamCheckService {
             .as_ref()
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
-        let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
 
         // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
         let (actual_model, reasoning_effort) = Self::parse_model_with_effort(model);
+
+        // Anthropic 格式：使用 Messages API 端点和认证
+        if codex_provider_uses_anthropic_api(provider) {
+            return Self::check_codex_anthropic_stream(
+                client,
+                base_url,
+                &actual_model,
+                test_prompt,
+                timeout,
+                provider,
+            )
+            .await;
+        }
+
+        let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
 
         // 获取本地系统信息
         let os_name = Self::get_os_name();
@@ -596,6 +611,74 @@ impl StreamCheckService {
 
         Err(AppError::Message(
             "No valid Codex responses endpoint found".to_string(),
+        ))
+    }
+
+    /// Codex Anthropic 格式流式检查
+    ///
+    /// 当 apiFormat = "anthropic" 时，使用 Anthropic Messages API 格式发送测试请求。
+    async fn check_codex_anthropic_stream(
+        client: &Client,
+        base_url: &str,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+        provider: &Provider,
+    ) -> Result<(u16, String), AppError> {
+        let api_key = extract_anthropic_api_key_for_codex(provider)
+            .ok_or_else(|| AppError::Message("No Anthropic API key found".to_string()))?;
+
+        let base = base_url.trim_end_matches('/');
+        // 候选 URL：尝试直接拼 /v1/messages 和 base 本身（可能已含 /v1）
+        let urls = if base.ends_with("/v1") {
+            vec![format!("{base}/messages")]
+        } else {
+            vec![format!("{base}/v1/messages"), format!("{base}/messages")]
+        };
+
+        let body = json!({
+            "model": model,
+            "max_tokens": 1,
+            "messages": [{ "role": "user", "content": test_prompt }],
+            "stream": true
+        });
+
+        for (i, url) in urls.iter().enumerate() {
+            let response = client
+                .post(url)
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .timeout(timeout)
+                .json(&body)
+                .send()
+                .await
+                .map_err(Self::map_request_error)?;
+
+            let status = response.status().as_u16();
+
+            if !response.status().is_success() {
+                let error_text = response.text().await.unwrap_or_default();
+                if i == 0 && status == 404 && urls.len() > 1 {
+                    continue;
+                }
+                return Err(Self::http_status_error(status, error_text));
+            }
+
+            let mut stream = response.bytes_stream();
+            if let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(_) => return Ok((status, model.to_string())),
+                    Err(e) => return Err(AppError::Message(format!("Stream read failed: {e}"))),
+                }
+            }
+
+            return Err(AppError::Message("No response data received".to_string()));
+        }
+
+        Err(AppError::Message(
+            "No valid Anthropic messages endpoint found".to_string(),
         ))
     }
 

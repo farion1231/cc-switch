@@ -137,8 +137,23 @@ const codexApiFormatFromWireApi = (
     case "openai_responses":
     case "openai-responses":
       return "openai_responses";
+    case "anthropic":
+      return "anthropic";
     default:
       return undefined;
+  }
+};
+
+const codexApiFormatToWireApi = (
+  format: CodexApiFormat,
+): "responses" | "chat" | "anthropic" => {
+  switch (format) {
+    case "openai_chat":
+      return "chat";
+    case "anthropic":
+      return "anthropic";
+    default:
+      return "responses";
   }
 };
 
@@ -453,11 +468,12 @@ function ProviderFormFull({
 
   const [localCodexApiFormat, setLocalCodexApiFormat] =
     useState<CodexApiFormat>(() => {
-      if (initialData?.meta?.apiFormat === "openai_chat") {
-        return "openai_chat";
-      }
-      if (initialData?.meta?.apiFormat === "openai_responses") {
-        return "openai_responses";
+      if (
+        initialData?.meta?.apiFormat === "openai_chat" ||
+        initialData?.meta?.apiFormat === "openai_responses" ||
+        initialData?.meta?.apiFormat === "anthropic"
+      ) {
+        return initialData.meta.apiFormat;
       }
       return (
         codexApiFormatFromWireApi(
@@ -489,7 +505,7 @@ function ProviderFormFull({
     (format: CodexApiFormat) => {
       setLocalCodexApiFormat(format);
       setCodexConfig((prev) => {
-        const updated = setCodexWireApi(prev, "responses");
+        const updated = setCodexWireApi(prev, codexApiFormatToWireApi(format));
         debouncedValidate(updated);
         return updated;
       });
@@ -1111,7 +1127,10 @@ function ProviderFormFull({
         const authJson = JSON.parse(codexAuth);
         const normalizedCodexConfig =
           category !== "official" && (codexConfig ?? "").trim()
-            ? setCodexWireApi(codexConfig ?? "", "responses")
+            ? setCodexWireApi(
+                codexConfig ?? "",
+                codexApiFormatToWireApi(localCodexApiFormat),
+              )
             : (codexConfig ?? "");
         const configObj = {
           auth: authJson,

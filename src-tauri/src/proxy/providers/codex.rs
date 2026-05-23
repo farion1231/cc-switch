@@ -82,6 +82,131 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     ) && codex_provider_uses_chat_completions(provider)
 }
 
+/// Whether this Codex provider's upstream uses Anthropic Messages API,
+/// requiring OpenAI ↔ Anthropic format conversion.
+pub fn codex_provider_uses_anthropic_api(provider: &Provider) -> bool {
+    // 1) meta.api_format / settings_config.api_format / apiFormat
+    if let Some(api_format) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("api_format")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("apiFormat")
+                .and_then(|v| v.as_str())
+        })
+    {
+        return api_format.trim().eq_ignore_ascii_case("anthropic");
+    }
+
+    // 2) TOML config wire_api
+    if let Some(wire_api) = provider
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .and_then(extract_codex_wire_api_from_toml)
+    {
+        return wire_api.trim().eq_ignore_ascii_case("anthropic");
+    }
+
+    false
+}
+
+/// Whether the Codex handler should convert the request to Anthropic Messages
+/// format and send it to an Anthropic upstream, then convert the response back.
+pub fn should_convert_codex_to_anthropic(provider: &Provider, endpoint: &str) -> bool {
+    let path = endpoint
+        .split_once('?')
+        .map_or(endpoint, |(path, _query)| path);
+
+    matches!(
+        path,
+        "/chat/completions"
+            | "/v1/chat/completions"
+            | "/responses"
+            | "/v1/responses"
+            | "/responses/compact"
+            | "/v1/responses/compact"
+    ) && codex_provider_uses_anthropic_api(provider)
+}
+
+/// Extract API key for Anthropic upstream from a Codex provider's config.
+///
+/// Checks Anthropic-style env vars first (for providers configured with
+/// Anthropic keys), then falls back to Codex-style auth fields.
+pub fn extract_anthropic_api_key_for_codex(provider: &Provider) -> Option<String> {
+    // 1. Anthropic-style env vars
+    if let Some(env) = provider.settings_config.get("env") {
+        for key in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
+            if let Some(val) = env.get(key).and_then(|v| v.as_str()).map(str::trim) {
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+
+    // 2. Codex-style auth fields
+    if let Some(auth) = provider.settings_config.get("auth") {
+        for key in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "OPENAI_API_KEY",
+        ] {
+            if let Some(val) = auth.get(key).and_then(|v| v.as_str()).map(str::trim) {
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+
+    // 3. Direct apiKey / api_key
+    if let Some(key) = provider
+        .settings_config
+        .get("apiKey")
+        .or_else(|| provider.settings_config.get("api_key"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(key.to_string());
+    }
+
+    // 4. Config object
+    if let Some(config) = provider.settings_config.get("config") {
+        for key in ["api_key", "apiKey"] {
+            if let Some(val) = config.get(key).and_then(|v| v.as_str()).map(str::trim) {
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Build the upstream Anthropic Messages API URL from a Codex provider's
+/// base_url and the target endpoint (typically `/v1/messages`).
+pub fn build_anthropic_url_for_codex(base_url: &str, endpoint: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let ep = endpoint.trim_start_matches('/');
+    let mut url = format!("{base}/{ep}");
+    // Deduplicate /v1/v1
+    while url.contains("/v1/v1") {
+        url = url.replace("/v1/v1", "/v1");
+    }
+    url
+}
+
 fn is_chat_wire_api(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -480,5 +605,156 @@ wire_api = "chat"
             &provider,
             "/responses/compact?stream=true"
         ));
+    }
+
+    #[test]
+    fn test_codex_provider_uses_anthropic_api_from_meta() {
+        let mut provider = create_provider(json!({
+            "base_url": "https://api.anthropic.com"
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("anthropic".to_string()),
+            ..Default::default()
+        });
+
+        assert!(codex_provider_uses_anthropic_api(&provider));
+        assert!(!codex_provider_uses_chat_completions(&provider));
+    }
+
+    #[test]
+    fn test_codex_provider_uses_anthropic_api_from_settings_config() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.anthropic.com",
+            "api_format": "anthropic"
+        }));
+
+        assert!(codex_provider_uses_anthropic_api(&provider));
+    }
+
+    #[test]
+    fn test_codex_provider_uses_anthropic_api_from_toml_wire_api() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "anthropic_proxy"
+model = "claude-sonnet-4-6"
+
+[model_providers.anthropic_proxy]
+name = "Anthropic Proxy"
+base_url = "https://api.anthropic.com"
+wire_api = "anthropic"
+"#
+        }));
+
+        assert!(codex_provider_uses_anthropic_api(&provider));
+    }
+
+    #[test]
+    fn test_should_convert_codex_to_anthropic_endpoints() {
+        let mut provider = create_provider(json!({}));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("anthropic".to_string()),
+            ..Default::default()
+        });
+
+        assert!(should_convert_codex_to_anthropic(&provider, "/responses"));
+        assert!(should_convert_codex_to_anthropic(
+            &provider,
+            "/v1/responses?stream=true"
+        ));
+        assert!(should_convert_codex_to_anthropic(
+            &provider,
+            "/chat/completions"
+        ));
+        assert!(should_convert_codex_to_anthropic(
+            &provider,
+            "/v1/chat/completions"
+        ));
+        assert!(should_convert_codex_to_anthropic(
+            &provider,
+            "/responses/compact"
+        ));
+
+        // Should not trigger for non-matching endpoints
+        assert!(!should_convert_codex_to_anthropic(&provider, "/health"));
+        assert!(!should_convert_codex_to_anthropic(&provider, "/v1/models"));
+    }
+
+    #[test]
+    fn test_extract_anthropic_api_key_from_env() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-ant-test-key"
+            }
+        }));
+        assert_eq!(
+            extract_anthropic_api_key_for_codex(&provider),
+            Some("sk-ant-test-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_anthropic_api_key_from_auth() {
+        let provider = create_provider(json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test-key"
+            }
+        }));
+        assert_eq!(
+            extract_anthropic_api_key_for_codex(&provider),
+            Some("sk-test-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_anthropic_api_key_env_priority_over_auth() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "ant-token"
+            },
+            "auth": {
+                "OPENAI_API_KEY": "openai-key"
+            }
+        }));
+        // ANTHROPIC_AUTH_TOKEN in env has higher priority
+        assert_eq!(
+            extract_anthropic_api_key_for_codex(&provider),
+            Some("ant-token".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_anthropic_api_key_from_api_key_field() {
+        let provider = create_provider(json!({
+            "apiKey": "direct-key"
+        }));
+        assert_eq!(
+            extract_anthropic_api_key_for_codex(&provider),
+            Some("direct-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_anthropic_url_for_codex() {
+        assert_eq!(
+            build_anthropic_url_for_codex("https://api.anthropic.com", "/v1/messages"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            build_anthropic_url_for_codex("https://api.anthropic.com/", "/v1/messages"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            build_anthropic_url_for_codex("https://proxy.example.com/v1", "/v1/messages"),
+            "https://proxy.example.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn test_codex_provider_not_anthropic_by_default() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.openai.com/v1"
+        }));
+        assert!(!codex_provider_uses_anthropic_api(&provider));
+        assert!(!should_convert_codex_to_anthropic(&provider, "/responses"));
     }
 }

@@ -500,6 +500,351 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
     Ok(input)
 }
 
+/// OpenAI Responses API **请求** → Anthropic Messages API **请求**
+///
+/// Codex CLI 使用 Responses API 格式发送请求。当上游是 Anthropic 时，
+/// 需要将请求体从 Responses 格式转换为 Anthropic Messages 格式。
+pub fn responses_request_to_anthropic(body: Value) -> Result<Value, ProxyError> {
+    let mut result = json!({});
+
+    // model passthrough
+    if let Some(model) = body.get("model") {
+        result["model"] = model.clone();
+    }
+
+    let mut system_parts: Vec<Value> = Vec::new();
+    let mut messages: Vec<Value> = Vec::new();
+
+    // Track pending tool calls from assistant for matching with function_call_output
+    // key: call_id, value: (name, arguments_str)
+    let mut pending_tool_calls: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
+
+    if let Some(input) = body.get("input").and_then(|i| i.as_array()) {
+        for item in input {
+            let item_type = item
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("message");
+
+            match item_type {
+                "message" => {
+                    let role = item.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+                    let content_value = item.get("content");
+
+                    match role {
+                        "system" | "developer" => {
+                            // Extract system messages into the Anthropic `system` field
+                            if let Some(content) = content_value {
+                                if let Some(text) = content.as_str() {
+                                    if !text.is_empty() {
+                                        system_parts.push(json!({"type": "text", "text": text}));
+                                    }
+                                } else if let Some(parts) = content.as_array() {
+                                    for part in parts {
+                                        let part_type = part.get("type").and_then(|t| t.as_str());
+                                        let text = if part_type == Some("input_text") {
+                                            part.get("text").and_then(|t| t.as_str())
+                                        } else {
+                                            part.get("text").and_then(|t| t.as_str())
+                                        };
+                                        if let Some(text) = text {
+                                            if !text.is_empty() {
+                                                let mut block =
+                                                    json!({"type": "text", "text": text});
+                                                if let Some(cc) = part.get("cache_control") {
+                                                    block["cache_control"] = cc.clone();
+                                                }
+                                                system_parts.push(block);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "assistant" => {
+                            let mut anthropic_msg = json!({"role": "assistant"});
+                            let mut content_blocks: Vec<Value> = Vec::new();
+
+                            if let Some(content) = content_value {
+                                if let Some(text) = content.as_str() {
+                                    if !text.is_empty() {
+                                        content_blocks.push(json!({"type": "text", "text": text}));
+                                    }
+                                } else if let Some(parts) = content.as_array() {
+                                    for part in parts {
+                                        let part_type = part.get("type").and_then(|t| t.as_str());
+                                        match part_type {
+                                            Some("output_text") => {
+                                                if let Some(text) =
+                                                    part.get("text").and_then(|t| t.as_str())
+                                                {
+                                                    if !text.is_empty() {
+                                                        let mut block = json!({
+                                                            "type": "text",
+                                                            "text": text
+                                                        });
+                                                        if let Some(cc) = part.get("cache_control")
+                                                        {
+                                                            block["cache_control"] = cc.clone();
+                                                        }
+                                                        content_blocks.push(block);
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                // Unknown part type - pass through text if present
+                                                if let Some(text) =
+                                                    part.get("text").and_then(|t| t.as_str())
+                                                {
+                                                    if !text.is_empty() {
+                                                        content_blocks.push(json!({
+                                                            "type": "text",
+                                                            "text": text
+                                                        }));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !content_blocks.is_empty() {
+                                anthropic_msg["content"] = json!(content_blocks);
+                            }
+                            messages.push(anthropic_msg);
+                        }
+                        "user" => {
+                            let mut anthropic_msg = json!({"role": "user"});
+                            if let Some(content) = content_value {
+                                if let Some(text) = content.as_str() {
+                                    anthropic_msg["content"] = json!(text);
+                                } else if let Some(parts) = content.as_array() {
+                                    let content_blocks: Vec<Value> = parts
+                                        .iter()
+                                        .filter_map(|part| {
+                                            let part_type =
+                                                part.get("type").and_then(|t| t.as_str());
+                                            match part_type {
+                                                Some("input_text") => {
+                                                    let text = part
+                                                        .get("text")
+                                                        .and_then(|t| t.as_str())?;
+                                                    if text.is_empty() {
+                                                        return None;
+                                                    }
+                                                    let mut block =
+                                                        json!({"type": "text", "text": text});
+                                                    if let Some(cc) = part.get("cache_control") {
+                                                        block["cache_control"] = cc.clone();
+                                                    }
+                                                    Some(block)
+                                                }
+                                                Some("input_image") => {
+                                                    let url = part
+                                                        .get("image_url")
+                                                        .and_then(|u| u.as_str())
+                                                        .or_else(|| {
+                                                            part.get("image_url")
+                                                                .and_then(|u| u.get("url"))
+                                                                .and_then(|u| u.as_str())
+                                                        })?;
+                                                    if let Some(comma) = url.find(',') {
+                                                        let header = &url[..comma];
+                                                        let data = &url[comma + 1..];
+                                                        let media_type = header
+                                                            .strip_prefix("data:")
+                                                            .and_then(|h| h.strip_suffix(";base64"))
+                                                            .unwrap_or("image/png");
+                                                        Some(json!({
+                                                            "type": "image",
+                                                            "source": {
+                                                                "type": "base64",
+                                                                "media_type": media_type,
+                                                                "data": data
+                                                            }
+                                                        }))
+                                                    } else {
+                                                        None
+                                                    }
+                                                }
+                                                _ => None,
+                                            }
+                                        })
+                                        .collect();
+                                    if !content_blocks.is_empty() {
+                                        anthropic_msg["content"] = json!(content_blocks);
+                                    }
+                                }
+                            }
+                            messages.push(anthropic_msg);
+                        }
+                        _ => {}
+                    }
+                }
+
+                "function_call" => {
+                    // Assistant's tool call → record for later matching, and emit as tool_use content
+                    let call_id = item
+                        .get("call_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let args_str = item
+                        .get("arguments")
+                        .and_then(|a| a.as_str())
+                        .unwrap_or("{}")
+                        .to_string();
+
+                    pending_tool_calls.insert(call_id.clone(), (name.clone(), args_str.clone()));
+
+                    let input: Value = serde_json::from_str(&args_str).unwrap_or(json!({}));
+
+                    // Append tool_use to the last assistant message, or create one
+                    let tool_use_block = json!({
+                        "type": "tool_use",
+                        "id": call_id,
+                        "name": name,
+                        "input": input
+                    });
+
+                    if let Some(last) = messages.last_mut() {
+                        if last.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+                            if let Some(content) =
+                                last.get_mut("content").and_then(|c| c.as_array_mut())
+                            {
+                                content.push(tool_use_block);
+                            } else {
+                                last["content"] = json!([tool_use_block]);
+                            }
+                        } else {
+                            messages.push(json!({
+                                "role": "assistant",
+                                "content": [tool_use_block]
+                            }));
+                        }
+                    } else {
+                        messages.push(json!({
+                            "role": "assistant",
+                            "content": [tool_use_block]
+                        }));
+                    }
+                }
+
+                "function_call_output" => {
+                    // User's tool result → Anthropic user message with tool_result content
+                    let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let output_str = match item.get("output") {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(v) => serde_json::to_string(v).unwrap_or_default(),
+                        None => String::new(),
+                    };
+
+                    messages.push(json!({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": call_id,
+                            "content": output_str
+                        }]
+                    }));
+                }
+
+                "reasoning" => {
+                    // Reasoning items are handled server-side by Anthropic; skip
+                }
+
+                _ => {}
+            }
+        }
+    }
+
+    // Set system field
+    if !system_parts.is_empty() {
+        if system_parts.len() == 1 {
+            result["system"] = system_parts.into_iter().next().unwrap();
+        } else {
+            result["system"] = json!(system_parts);
+        }
+    }
+
+    result["messages"] = json!(messages);
+
+    // Passthrough parameters
+    if let Some(v) = body.get("max_output_tokens") {
+        result["max_tokens"] = v.clone();
+    }
+    for field in ["temperature", "top_p", "stream"] {
+        if let Some(v) = body.get(field) {
+            result[field] = v.clone();
+        }
+    }
+    if let Some(v) = body.get("stop") {
+        result["stop_sequences"] = v.clone();
+    }
+
+    // Convert tools: Responses format → Anthropic format
+    if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
+        let anthropic_tools: Vec<Value> = tools
+            .iter()
+            .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("function"))
+            .filter_map(|t| {
+                let function = t.get("function")?;
+                let name = function.get("name").and_then(|n| n.as_str())?;
+                let mut tool = json!({
+                    "name": name,
+                    "input_schema": function.get("parameters").cloned().unwrap_or(json!({"type": "object"}))
+                });
+                if let Some(desc) = function.get("description") {
+                    tool["description"] = desc.clone();
+                }
+                Some(tool)
+            })
+            .collect();
+        if !anthropic_tools.is_empty() {
+            result["tools"] = json!(anthropic_tools);
+        }
+    }
+
+    // Convert tool_choice
+    if let Some(v) = body.get("tool_choice") {
+        result["tool_choice"] = map_responses_tool_choice_to_anthropic(v);
+    }
+
+    Ok(result)
+}
+
+/// Map Responses API tool_choice → Anthropic tool_choice
+fn map_responses_tool_choice_to_anthropic(tool_choice: &Value) -> Value {
+    match tool_choice {
+        Value::String(s) => match s.as_str() {
+            "required" => json!("any"),
+            "auto" | "none" => json!(s),
+            _ => json!(s),
+        },
+        Value::Object(obj) => match obj.get("type").and_then(|t| t.as_str()) {
+            Some("function") => {
+                if let Some(name) = obj.get("name").and_then(|n| n.as_str()) {
+                    json!({"type": "tool", "name": name})
+                } else {
+                    json!("auto")
+                }
+            }
+            Some("auto") | Some("none") => {
+                json!(obj.get("type").and_then(|t| t.as_str()).unwrap_or("auto"))
+            }
+            _ => tool_choice.clone(),
+        },
+        _ => tool_choice.clone(),
+    }
+}
+
 /// OpenAI Responses 响应 → Anthropic 响应
 pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     let output = body
