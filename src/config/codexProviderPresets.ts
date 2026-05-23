@@ -58,6 +58,9 @@ model = "${modelName}"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
+[features]
+goals = true
+
 [model_providers.${cleanProviderName}]
 name = "${cleanProviderName}"
 base_url = "${baseUrl}"
@@ -124,6 +127,9 @@ export const codexProviderPresets: CodexProviderPreset[] = [
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 disable_response_storage = true
+
+[features]
+goals = true
 
 [model_providers.azure]
 name = "Azure OpenAI"
@@ -444,6 +450,9 @@ model_reasoning_effort = "high"
 disable_response_storage = true
 personality = "pragmatic"
 
+[features]
+goals = true
+
 [model_providers.e-flowcode]
 name = "e-flowcode"
 base_url = "https://e-flowcode.cc/v1"
@@ -483,6 +492,9 @@ model_auto_compact_token_limit = 9000000`,
 model = "gpt-5.4"
 model_reasoning_effort = "medium"
 disable_response_storage = true
+
+[features]
+goals = true
 
 [model_providers.custom]
 name = "custom"
